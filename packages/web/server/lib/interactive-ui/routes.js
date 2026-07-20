@@ -84,7 +84,14 @@ export const registerInteractiveUIRoutes = (app, { express, runtime, manager }) 
 
   app.delete('/api/interactive-ui/manager/extensions/:extensionId', async (req, res) => {
     try {
-      res.json(await manager.uninstall(req.params.extensionId));
+      const result = await manager.uninstall(req.params.extensionId);
+      try {
+        const credentials = await runtime.removeExtensionConnections(req.params.extensionId);
+        res.json({ ...result, credentials });
+      } catch (error) {
+        error.details = { ...(error.details ?? {}), extensionRemoved: true, recoveryPath: result.recoveryPath ?? null };
+        sendError(res, error);
+      }
     } catch (error) {
       sendError(res, error);
     }
@@ -134,6 +141,51 @@ export const registerInteractiveUIRoutes = (app, { express, runtime, manager }) 
   app.get('/api/interactive-ui/extensions', async (_req, res) => {
     try {
       res.json(await runtime.listExtensions());
+    } catch (error) {
+      sendError(res, error);
+    }
+  });
+
+  app.get('/api/interactive-ui/connections', async (_req, res) => {
+    try {
+      res.setHeader('Cache-Control', 'no-store');
+      res.json(await runtime.listConnections());
+    } catch (error) {
+      sendError(res, error);
+    }
+  });
+
+  app.put('/api/interactive-ui/connections/:extensionId/:connectorId', express.json({ limit: '32kb' }), async (req, res) => {
+    try {
+      res.setHeader('Cache-Control', 'no-store');
+      res.json(await runtime.configureConnection(req.params.extensionId, req.params.connectorId, req.body));
+    } catch (error) {
+      sendError(res, error);
+    }
+  });
+
+  app.post('/api/interactive-ui/connections/:extensionId/:connectorId/provision', express.json({ limit: '16kb' }), async (req, res) => {
+    try {
+      res.setHeader('Cache-Control', 'no-store');
+      res.json(await runtime.provisionConnection(req.params.extensionId, req.params.connectorId, req.body));
+    } catch (error) {
+      sendError(res, error);
+    }
+  });
+
+  app.post('/api/interactive-ui/connections/:extensionId/:connectorId/test', async (req, res) => {
+    try {
+      res.setHeader('Cache-Control', 'no-store');
+      res.json(await runtime.testConnection(req.params.extensionId, req.params.connectorId));
+    } catch (error) {
+      sendError(res, error);
+    }
+  });
+
+  app.delete('/api/interactive-ui/connections/:extensionId/:connectorId', async (req, res) => {
+    try {
+      res.setHeader('Cache-Control', 'no-store');
+      res.json(await runtime.removeConnection(req.params.extensionId, req.params.connectorId));
     } catch (error) {
       sendError(res, error);
     }

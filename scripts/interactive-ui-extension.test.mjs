@@ -34,6 +34,13 @@ test('scaffolds and validates a Declarative plus Trusted Native extension', asyn
     });
     assert.equal(scaffold.extensionId, 'com.acme.operations');
 
+    const manifest = JSON.parse(await readFile(path.join(target, 'openchamber.extension.json'), 'utf8'));
+    assert.deepEqual(manifest.connectors[0].auth, {
+      type: 'api-key',
+      placement: { type: 'header', name: 'Authorization', prefix: 'Bearer ' },
+    });
+    assert.deepEqual(manifest.connectors[0].test, { method: 'GET', path: '/interactive-ui/health' });
+
     const report = await validateExtension(target);
     assert.deepEqual(report.declarativeViews, ['com.acme.operations.overview']);
     assert.deepEqual(report.nativeViews, ['com.acme.operations.workspace']);
@@ -49,6 +56,33 @@ test('scaffolds and validates a Declarative plus Trusted Native extension', asyn
       }),
       /refusing to overwrite/,
     );
+  } finally {
+    await rm(temporaryRoot, { recursive: true, force: true });
+  }
+});
+
+test('validates issued-key provisioning without requiring a real setup code or network request', async () => {
+  const temporaryRoot = await mkdtemp(path.join(os.tmpdir(), 'openchamber-ocix-issued-key-'));
+  const target = path.join(temporaryRoot, 'operations');
+  try {
+    await scaffoldExtension({
+      targetDirectory: target,
+      extensionId: 'com.acme.operations',
+      name: 'Acme Operations',
+      toolPrefix: 'operations',
+    });
+    const manifestPath = path.join(target, 'openchamber.extension.json');
+    const manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
+    manifest.connectors[0].auth = {
+      type: 'issued-key',
+      provisioningUrl: '${OCIX_CREDENTIAL_ISSUER_URL}',
+      placement: { type: 'header', name: 'Authorization', prefix: 'Bearer ' },
+    };
+    manifest.permissions.network.push('${OCIX_CREDENTIAL_ISSUER_URL}');
+    await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+
+    const report = await validateExtension(target);
+    assert.equal(report.warnings.length, 0);
   } finally {
     await rm(temporaryRoot, { recursive: true, force: true });
   }

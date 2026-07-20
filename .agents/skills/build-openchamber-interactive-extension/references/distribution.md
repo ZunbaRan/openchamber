@@ -40,9 +40,10 @@ Use **Settings → Interactive UI Extensions** to:
 1. Choose a `.ocix`; OpenChamber verifies its embedded signing key and signed file index before extraction.
 2. Review the publisher fingerprint, Agent Tools/Skills, network origins, and Native-code permission, then confirm trust and installation.
 3. Installation validates in staging, moves the signed source to the managed version store, copies Tools to `~/.config/opencode/tools`, deploys Skills to `~/.config/opencode/skills`, commits ownership hashes, and refreshes managed OpenCode.
-4. Disable an extension to remove its UI and managed Agent Runtime without deleting installed versions; enable restores both.
-5. Install a higher semantic version to update while retaining the previous active version; rollback repoints both UI and Agent Runtime.
-6. Uninstall removes managed global Agent files and moves extension sources to recoverable trash before committing manager state.
+4. Configure each authenticated Connector under **Business connections**. This secret is separate from the publisher signing key and never belongs in the `.ocix` package.
+5. Disable an extension to remove its UI and managed Agent Runtime without deleting installed versions or its connection configuration; enable restores both.
+6. Install a higher semantic version to update while retaining the previous active version; rollback repoints both UI and Agent Runtime.
+7. Uninstall removes managed global Agent files, moves extension sources to recoverable trash, and deletes the extension's stored Connector credentials.
 
 Global Agent files are owned by the extension manager. Installation must fail without overwriting when a Tool or Skill target is user-owned, modified outside OpenChamber, or already owned by another enabled OCIX. Multiple extensions coexist in the shared directories; no extension-specific `OPENCODE_CONFIG_DIR` is used.
 

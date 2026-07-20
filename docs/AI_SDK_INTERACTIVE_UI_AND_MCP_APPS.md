@@ -3,7 +3,7 @@
 > **文档性质**：fork 内部决策记录与实施方案（不提交 upstream PR）
 > **分支**：`docs/interactive-ui-mcp-apps`  
 > **当前决策**：优先实现 **Interactive UI**；**MCP Apps 延后到 Roadmap**
-> **更新日期**：2026-07-18
+> **更新日期**：2026-07-20
 
 > Declarative / Native 双 runtime、企业扩展包规范和 Native 模块端到端调用路径详见 [OpenChamber Interactive UI 扩展架构与企业模块开发规范](./INTERACTIVE_UI_EXTENSION_ARCHITECTURE.md)。实际开发步骤见 [Installed Declarative / Trusted Native 开发手册](./INTERACTIVE_UI_EXTENSION_DEVELOPER_GUIDE.md)。
 
@@ -34,10 +34,10 @@ Roadmap 现在明确以三层结构组织能力，不再把“生成 UI”视为
 | 层 | 定位 | 当前状态（2026-07-18） |
 |---|---|---|
 | **Agent Generated Declarative** | 模型按任务组合平台 primitive；同页 renderer 安全重建；只处理 snapshot | **v1 已实现**：指标、图表、表格、流程、列表、状态和说明 |
-| **Installed Declarative / Trusted Native** | 企业开发者安装长期模块；经 Gateway 查询真实 API，并执行确认式写入 | **Managed Distribution Preview 已实现**：runtime、Gateway、脚手架、validator、自描述 Ed25519 `.ocix`、确认式信任、Tool/Skill 全局受管安装、Extension Manager、升级回滚与签名市场目录 |
+| **Installed Declarative / Trusted Native** | 企业开发者安装长期模块；经 Gateway 查询真实 API，并执行确认式写入 | **Managed Distribution Preview 已实现**：runtime、Gateway、脚手架、validator、自描述 Ed25519 `.ocix`、确认式信任、Tool/Skill 全局受管安装、Extension Manager、升级回滚、签名市场目录与 Connector Authentication v1 |
 | **HTML Artifact** | Agent 生成 HTML/CSS/SVG/受限 JS，用于模拟器、自定义图形和探索器 | **下一阶段**：对话内视觉无感 sandbox；不持 token、不直接调用 tool/Gateway |
 
-这里“Managed Distribution Preview 已实现”表示客户端分发链完整，不表示 OpenChamber 已经运营官方公共市场。审核、吊销、透明日志、RBAC 和托管服务仍是公共生态的运营治理。
+这里“Managed Distribution Preview 已实现”表示客户端分发链完整，不表示 OpenChamber 已经运营官方公共市场。审核、签名密钥吊销、透明日志和托管服务仍是公共生态的运营治理。业务 Key 的 scope、RBAC/ABAC、撤销和业务审计由第三方系统负责，OpenChamber 不建设第二套多用户权限系统。
 
 ---
 
@@ -514,7 +514,8 @@ Interactive UI 实现需要特别控制冲突面：
 | Now | Agent Generated Declarative：任务级布局组合、安全清洗、图表/表格/流程/指标 | **已实现第一版** |
 | Now | Installed Declarative / Trusted Native：Gateway 查询、确认式写入、脚手架、validator、开发手册与 skill | **Developer Preview v1 已实现** |
 | Now | Installed UI 分发治理：自描述 Ed25519 `.ocix`、确认式信任、Agent Tool/Skill 全局受管安装、Extension Manager、启停/升级/回滚、签名 marketplace catalog | **Managed Distribution Preview 已实现** |
-| Next | 公共生态治理：审核、吊销/透明日志、RBAC、Host SDK 兼容窗口与官方托管市场 | **Roadmap** |
+| Now | OCIX Connector Authentication v1：手工 Key、一次性连接码签发、Secret Store、连接测试/替换/断开和 Gateway 注入 | **已实现** |
+| Next | 公共生态治理：审核、签名密钥吊销/透明日志、Host SDK 兼容窗口与官方托管市场 | **Roadmap** |
 | Next | 继续扩充可信基础组件、schema/version 规范、lazy loading | **继续扩充组件集** |
 | Next | Agent HTML Artifact：透明自适应 sandbox、主题注入、follow-up bridge | **Roadmap，Declarative 稳定后实施** |
 | Next | 在 OpenCode 有权威增量数据后支持 partial/streaming UI | 条件性规划 |
@@ -531,7 +532,7 @@ Roadmap 表示技术方向，不代表已承诺发布日期。
 1. 用开发手册和 `$build-openchamber-interactive-extension` 将一个真实企业模块接入，验证 starter 之外的数据模型、错误和并发写入。
 2. 继续扩充 Declarative 安全组件集，并为 schema 增加更完整的契约测试和浏览器视觉回归。
 3. 为 HTML Artifact 写独立 ADR：fragment 资源、CSP、透明自适应容器、桥接 allowlist、历史重放和大小限制。
-4. 在现有签名/Extension Manager/版本治理之上增加吊销、透明日志、组织审批和细粒度企业权限。
+4. 在现有签名/Extension Manager/版本治理之上增加签名密钥吊销、透明日志与恶意包响应；业务细粒度权限继续由第三方 API 通过 scoped Key 执行。
 5. 为 VS Code 增加明确的 Gateway 实现；在此之前保持稳定 unsupported。
 6. MCP Apps 只跟踪上游能力变化，达到进入条件后另写 ADR 和 spike 方案。
 
@@ -541,6 +542,7 @@ Roadmap 表示技术方向，不代表已承诺发布日期。
 
 - [OpenChamber Interactive UI 扩展架构与企业模块开发规范](./INTERACTIVE_UI_EXTENSION_ARCHITECTURE.md)
 - [Installed Declarative / Trusted Native 开发手册](./INTERACTIVE_UI_EXTENSION_DEVELOPER_GUIDE.md)
+- [OCIX Connector Authentication & Credential Provisioning v1](./OCIX_CONNECTOR_AUTHENTICATION_V1.md)
 - [ChatGPT/Codex Desktop 可视化与 Artifact 本地静态调研](./CHATGPT_CODEX_DESKTOP_ARTIFACT_REVERSE_ENGINEERING.md)
 - [Vercel AI SDK Generative UI 实现与 ChatGPT/OpenChamber 对比](./VERCEL_AI_SDK_GENERATIVE_UI_IMPLEMENTATION_AND_COMPARISON.md)
 - [AI SDK UI – Generative User Interfaces](https://ai-sdk.dev/docs/ai-sdk-ui/generative-user-interfaces)

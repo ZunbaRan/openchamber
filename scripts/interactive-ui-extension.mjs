@@ -126,16 +126,20 @@ const collectAgentRuntimeFiles = async (directory, relative = 'agent-runtime', f
 
 const createValidationEnvironment = (manifest) => {
   const environment = {};
-  const connectorVariables = new Set();
+  const connectorUrlVariables = new Set();
   for (const connector of Array.isArray(manifest.connectors) ? manifest.connectors : []) {
     if (!isRecord(connector)) continue;
     const baseMatch = typeof connector.baseUrl === 'string' ? connector.baseUrl.match(ENV_REFERENCE_PATTERN) : null;
-    if (baseMatch) connectorVariables.add(baseMatch[1]);
+    if (baseMatch) connectorUrlVariables.add(baseMatch[1]);
     if (isRecord(connector.auth) && connector.auth.type === 'env-bearer' && typeof connector.auth.env === 'string') {
       environment[connector.auth.env] = 'ocix-validation-token';
     }
+    const provisioningMatch = isRecord(connector.auth) && typeof connector.auth.provisioningUrl === 'string'
+      ? connector.auth.provisioningUrl.match(ENV_REFERENCE_PATTERN)
+      : null;
+    if (provisioningMatch) connectorUrlVariables.add(provisioningMatch[1]);
   }
-  for (const variable of connectorVariables) environment[variable] = 'https://ocix-validator.invalid';
+  for (const variable of connectorUrlVariables) environment[variable] = 'https://ocix-validator.invalid';
   for (const permission of Array.isArray(manifest.permissions?.network) ? manifest.permissions.network : []) {
     const match = typeof permission === 'string' ? permission.match(ENV_REFERENCE_PATTERN) : null;
     if (match) environment[match[1]] = 'https://ocix-validator.invalid';

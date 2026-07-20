@@ -65,11 +65,16 @@ The manifest view must bind the exact tool name. If parsing, lookup, binding, as
 
 ## Gateway
 
-- Connector URLs and bearer environment-variable names live in the manifest; bearer values live only on the server.
+- Use `api-key` for a user-configured third-party Key, or `issued-key` when the provider exposes the OCIX v1 one-time setup-code exchange. `env-bearer` remains compatibility-only and `none` is for unauthenticated connectors.
+- Credential values live only in the OpenChamber server secret store. The manifest declares only placement and, for `issued-key`, the HTTPS provisioning URL.
+- Header placement defaults to `Authorization: Bearer <key>`. Query-string placement, embedded URL credentials, unsafe headers, and host-reserved `X-OpenChamber-*` headers are rejected.
 - Every connector origin must be repeated in `permissions.network`.
+- An `issued-key` provisioning origin must also be repeated in `permissions.network`.
+- Declare a fixed, safe `GET`/`HEAD` `test` request so Extension Manager can distinguish invalid (`401`) from insufficient-scope (`403`) Keys.
 - Action paths are fixed connector-relative paths.
 - Reads normally use `risk: read, permission: allow`; writes use `risk: write|destructive, permission: ask` unless explicitly denied.
 - Include a revision/ETag/business version in writes when overwriting stale data is possible.
+- Business scopes, RBAC/ABAC, revocation, and final audit belong to the third-party API. OpenChamber does not infer or replace them.
 
 ## Validation
 

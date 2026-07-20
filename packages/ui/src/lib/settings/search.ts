@@ -36,6 +36,14 @@ const SETTINGS_SEARCH_ITEMS: readonly SettingsSearchItem[] = [
     isAvailable: (ctx) => !ctx.isVSCode,
   },
   {
+    id: 'interactive-ui.connections',
+    page: 'interactive-ui.extensions',
+    titleKey: 'settings.interactiveUI.connections.title',
+    descriptionKey: 'settings.interactiveUI.connections.description',
+    keywords: ['connection', 'api key', 'credential', 'authentication', 'business system'],
+    isAvailable: (ctx) => !ctx.isVSCode,
+  },
+  {
     id: 'interactive-ui.publishers',
     page: 'interactive-ui.extensions',
     titleKey: 'settings.interactiveUI.publishers.title',

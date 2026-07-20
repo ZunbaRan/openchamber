@@ -59,6 +59,32 @@ export interface CatalogEntry {
   publisher: { id: string; name: string; keyId: string };
 }
 
+type ConnectionAuthType = 'none' | 'env-bearer' | 'api-key' | 'issued-key';
+
+export interface ManagedConnection {
+  extension: { id: string; name: string; version: string };
+  connector: {
+    id: string;
+    origin: string;
+    authType: ConnectionAuthType;
+    testable: boolean;
+    configurable: boolean;
+    provisionable: boolean;
+  };
+  credential: {
+    configured: boolean;
+    expired: boolean;
+    source?: string;
+    configuredAt?: string;
+    expiresAt?: string | null;
+    displayName?: string | null;
+  };
+}
+
+export interface ConnectionSnapshot {
+  connections: ManagedConnection[];
+}
+
 export interface ManagerSnapshot {
   extensions: InstalledExtension[];
   publishers: TrustedPublisher[];
@@ -66,6 +92,7 @@ export interface ManagerSnapshot {
 }
 
 export const EMPTY_MANAGER_SNAPSHOT: ManagerSnapshot = { extensions: [], publishers: [], marketplaces: [] };
+export const EMPTY_CONNECTION_SNAPSHOT: ConnectionSnapshot = { connections: [] };
 
 const isRecord = (value: unknown): value is Record<string, unknown> => (
   typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -249,4 +276,40 @@ export const normalizeCatalogEntries = (value: unknown): CatalogEntry[] => {
       },
     }];
   });
+};
+
+export const normalizeConnectionSnapshot = (value: unknown): ConnectionSnapshot => {
+  if (!isRecord(value) || !Array.isArray(value.connections)) return EMPTY_CONNECTION_SNAPSHOT;
+  return {
+    connections: value.connections.flatMap((entry): ManagedConnection[] => {
+      if (!isRecord(entry) || !isRecord(entry.extension) || !isRecord(entry.connector) || !isRecord(entry.credential)) return [];
+      const extensionId = stringValue(entry.extension.id);
+      const connectorId = stringValue(entry.connector.id);
+      const authType = stringValue(entry.connector.authType);
+      if (!extensionId || !connectorId || !['none', 'env-bearer', 'api-key', 'issued-key'].includes(authType)) return [];
+      return [{
+        extension: {
+          id: extensionId,
+          name: stringValue(entry.extension.name, extensionId),
+          version: stringValue(entry.extension.version),
+        },
+        connector: {
+          id: connectorId,
+          origin: stringValue(entry.connector.origin),
+          authType: authType as ConnectionAuthType,
+          testable: entry.connector.testable === true,
+          configurable: entry.connector.configurable === true,
+          provisionable: entry.connector.provisionable === true,
+        },
+        credential: {
+          configured: entry.credential.configured === true,
+          expired: entry.credential.expired === true,
+          ...(typeof entry.credential.source === 'string' ? { source: entry.credential.source } : {}),
+          ...(typeof entry.credential.configuredAt === 'string' ? { configuredAt: entry.credential.configuredAt } : {}),
+          ...(typeof entry.credential.expiresAt === 'string' || entry.credential.expiresAt === null ? { expiresAt: entry.credential.expiresAt } : {}),
+          ...(typeof entry.credential.displayName === 'string' || entry.credential.displayName === null ? { displayName: entry.credential.displayName } : {}),
+        },
+      }];
+    }),
+  };
 };

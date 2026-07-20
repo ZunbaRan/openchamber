@@ -1,7 +1,7 @@
 # OpenChamber Installed Declarative / Trusted Native 开发手册
 
 > 规范：OCIX v1 Managed Distribution Preview<br>
-> 更新日期：2026-07-18<br>
+> 更新日期：2026-07-20<br>
 > 配套 Agent skill：`.agents/skills/build-openchamber-interactive-extension/`<br>
 > 架构背景：[Interactive UI 扩展架构](./INTERACTIVE_UI_EXTENSION_ARCHITECTURE.md)
 
@@ -21,8 +21,9 @@ Installed Declarative / Trusted Native 已经达到“企业开发者预览 v1�
 - 自描述 Ed25519 `.ocix` 包：签名覆盖扩展身份、公钥和每个文件的 path、size、SHA-256；安装前展示 publisher fingerprint、Tool/Skill 与权限。
 - Extension Manager：确认式信任、Tool/Skill 全局受管安装、多扩展冲突保护、启停、更新、回滚、可恢复卸载和持久化信任库。
 - 自描述签名 marketplace catalog 协议、URL-only 添加流程、客户端和静态目录生成 CLI。
+- OCIX Connector Authentication v1：Extension Manager 内配置/签发/测试/断开业务连接，服务端 Secret Store 与 Gateway Key 注入。
 
-这已经是一条可用于企业私有分发、内测渠道和静态公共目录的完整技术链，但不等于 OpenChamber 官方已经运营一个公共市场。公网域名/CDN、扩展审核组织、离线根密钥仪式、密钥吊销/透明日志、恶意软件响应、RBAC/ABAC、OAuth session、Native ABI 兼容窗口、VS Code Gateway 和远程 OpenCode 双端协商仍属于部署方或后续平台治理。
+这已经是一条可用于企业私有分发、内测渠道和静态公共目录的完整技术链，但不等于 OpenChamber 官方已经运营一个公共市场。公网域名/CDN、扩展审核组织、离线根密钥仪式、签名密钥吊销/透明日志、恶意软件响应、Native ABI 兼容窗口、VS Code Gateway 和远程 OpenCode 双端协商仍属于部署方或后续平台治理。业务 Key 的权限、RBAC/ABAC、撤销和审计由接入的第三方系统负责，不是 OpenChamber 要复制的一套多用户权限系统。
 
 ## 2. 什么时候选择哪种 runtime
 
@@ -176,8 +177,16 @@ Content-Type: application/json
   "type": "http",
   "baseUrl": "${OCIX_BUSINESS_API_URL}",
   "auth": {
-    "type": "env-bearer",
-    "env": "OCIX_BUSINESS_API_TOKEN"
+    "type": "api-key",
+    "placement": {
+      "type": "header",
+      "name": "Authorization",
+      "prefix": "Bearer "
+    }
+  },
+  "test": {
+    "method": "GET",
+    "path": "/interactive-ui/health"
   }
 }
 ```
@@ -186,9 +195,15 @@ Content-Type: application/json
 
 - 只支持 HTTP(S)，URL 不能包含 username/password。
 - base URL 可以引用一个全大写环境变量。
-- `auth` 当前支持 `none` 和 `env-bearer`。
-- token value 从 server environment 读取，永远不会进入 registry、View descriptor 或浏览器 bundle。
+- 新扩展优先使用 `api-key`：用户从第三方系统创建最小权限 Key，再在 Settings → Interactive UI Extensions → Business connections 中配置。
+- 如果第三方实现一次性 setup code 交换端点，使用 `issued-key`。真正的 Key 由 OpenChamber 服务端取得，不返回浏览器。
+- `none` 用于无需凭据的 API；`env-bearer` 仅作为旧扩展/受控部署兼容类型。
+- v1 只允许 Header 注入，默认是 `Authorization: Bearer <key>`；危险 Header、URL 凭据和 query-string token 会被拒绝。
+- 建议声明固定的 `GET`/`HEAD` `test`，让设置页检查 Key 是否有效以及 scope 是否足够。
+- Key value 只保存在 server Secret Store，永远不会进入 registry、View descriptor、Agent Tool 结果或浏览器 bundle。
 - base URL 的 origin 必须出现在 `permissions.network`。
+
+完整 `api-key`、`issued-key` manifest、请求/响应 schema、存储边界和第三方实现要求见 [OCIX Connector Authentication & Credential Provisioning v1](./OCIX_CONNECTOR_AUTHENTICATION_V1.md)。第三方系统决定 Key 的权限、租户、过期、撤销、RBAC/ABAC 和最终业务授权；OpenChamber 不复刻这些规则。
 
 ### 5.3 Action
 
@@ -398,12 +413,11 @@ v1 loader 只为 manifest entry 提供受认证 asset route。生产 bundle 应�
 
 ```bash
 export OCIX_BUSINESS_API_URL=https://business.example.internal
-export OCIX_BUSINESS_API_TOKEN=replace-with-server-secret
 export OPENCHAMBER_INTERACTIVE_UI_EXTENSIONS_DIR="$PWD/local-extensions/acme-operations"
 bun run start:web
 ```
 
-不要把真实 token 写入 shell history、仓库、日志或截图。生产环境应由部署系统注入 secret。
+开发目录加载后，在 **Settings → Interactive UI Extensions → Business connections** 中配置第三方 Key。不要把真实 token 写入 shell history、仓库、日志或截图。开发根目录仍是 Host UI 调试旁路；完整安装和凭据生命周期必须用签名 `.ocix` 验收。
 
 `OPENCHAMBER_INTERACTIVE_UI_EXTENSIONS_DIR` 只用于快速调试 Host UI/Gateway，不会让 OpenCode 自动发现该裸目录里的 Tool/Skill。需要验收真实对话流时，应打包并从 Extension Manager 安装 `.ocix`；不要为每个扩展设置 `OPENCODE_CONFIG_DIR`。安装器会把所有已启用扩展统一接入全局 `~/.config/opencode/tools` 与 `~/.config/opencode/skills`。
 
@@ -531,7 +545,7 @@ OpenCode Server
   → component 调 host.business.query
   → POST /api/interactive-ui/actions/<query-action>
   → Gateway 检查 extension/view/action/connector/origin
-  → server 注入 bearer 并调用真实企业 API
+  → server 从 Secret Store 读取并注入 Key，调用真实企业 API
   → JSON 结果返回 component，页面更新
 ```
 
@@ -544,8 +558,8 @@ OpenCode Server
   → 返回 409 confirmation_required，不请求上游
   → Host 显示确认
   → 用户确认后以 confirmed=true 重试
-  → Gateway 注入 token，请求固定 action path
-  → 企业 API 校验用户/业务权限与 revision
+  → Gateway 注入 Key，请求固定 action path
+  → 企业 API 按该 Key 的 scope 校验业务权限与 revision
   → 返回更新结果和 requestId
   → View 刷新 query
 ```
@@ -638,8 +652,9 @@ skill 会要求 Agent 先划分 query/write、选择 runtime、使用脚手架�
 ## 14. 当前已知限制
 
 - `.ocix` Ed25519 包签名、内嵌公钥检查与确认式发布者信任、Agent Tool/Skill 全局受管安装、Extension Manager 和自描述签名 marketplace catalog 已实现并测试；`trust.signature` manifest 字段本身仍不是授权依据。
+- Connector Authentication v1 的手工 Key、一次性连接码签发、连接测试、替换、断开和卸载清理已实现；业务 RBAC/ABAC、Key scope、撤销与业务审计由第三方系统实现。
 - Marketplace key 等价于该目录的发布委托：目录一旦被攻破，攻击者可能声明新的 publisher key，因此生产环境必须保护离线市场 key，并规划 key rotation/revocation。
-- 当前没有在线吊销列表、签名透明日志、恶意软件扫描服务、组织级审批流或官方托管公共市场；这些是服务治理，不应由客户端假装完成。
+- 当前没有在线签名密钥吊销列表、签名透明日志、恶意软件扫描服务或官方托管公共市场；这些是分发生态治理，不应由客户端假装完成。
 - Native 仍是管理员或受信 marketplace 授权的同页代码；签名证明来源与完整性，不证明代码安全。
 - Native Host SDK v1 很窄，只有 React、Button、View registration 和 View props Host。
 - Native asset integrity 当前用于 descriptor/ETag；dynamic import 路径没有浏览器 SRI 参数。

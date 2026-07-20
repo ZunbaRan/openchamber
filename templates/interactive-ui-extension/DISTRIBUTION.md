@@ -39,6 +39,8 @@ node scripts/interactive-ui-extension.mjs verify /absolute/dist/__EXTENSION_ID__
 
 In OpenChamber, open **Settings → Interactive UI Extensions** and choose the `.ocix` file. OpenChamber verifies the embedded publisher key and signed contents, then shows the publisher fingerprint, packaged Agent Tools/Skills, network permissions, and Native-code status. Compare the fingerprint through an independent channel and confirm **Trust and install**.
 
+After installation, configure **Business connections** on the same page. The starter uses managed `api-key` authentication: create a least-privilege key in the third-party system and save it there. OpenChamber stores the key only on its server, injects it into declared Gateway requests, and never returns it to extension UI or Agent output. A provider that supports one-time setup-code exchange can instead declare `issued-key`; see `docs/OCIX_CONNECTOR_AUTHENTICATION_V1.md`.
+
 Keep `publisher.private.pem` offline. Never copy it, `.env`, API tokens, or business credentials into this extension.
 
 ## Agent runtime

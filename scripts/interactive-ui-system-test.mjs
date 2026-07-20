@@ -67,6 +67,13 @@ try {
   assert.equal(JSON.stringify(registry.payload).includes(token), false, 'connector token must never reach the client registry');
   assert.equal(JSON.stringify(registry.payload).includes(mock.url), false, 'connector base URL must remain server-side');
 
+  const connections = await readJson(await fetch(`${gateway}/api/interactive-ui/connections`));
+  assert.equal(connections.response.status, 200);
+  assert.equal(connections.payload.connections.length, 2);
+  assert.equal(connections.payload.connections.every((connection) => connection.connector.authType === 'env-bearer'), true);
+  assert.equal(connections.payload.connections.every((connection) => connection.credential.configured === true), true);
+  assert.equal(JSON.stringify(connections.payload).includes(token), false, 'connection management must expose status only');
+
   const processFlow = await readJson(await fetch(`${gateway}/api/interactive-ui/views/com.openchamber.builtin.interactive-ui.process-flow?tool=interactive_ui`));
   assert.equal(processFlow.response.status, 200);
   assert.equal(processFlow.payload.view.runtime, 'declarative');

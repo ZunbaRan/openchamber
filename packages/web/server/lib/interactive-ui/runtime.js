@@ -4,9 +4,21 @@ const MAX_VIEW_BYTES = 512 * 1024;
 const MAX_NATIVE_BUNDLE_BYTES = 2 * 1024 * 1024;
 const MAX_UPSTREAM_BYTES = 2 * 1024 * 1024;
 const ACTION_TIMEOUT_MS = 15_000;
+const CONNECTION_TEST_TIMEOUT_MS = 10_000;
 const EXTENSION_ID_PATTERN = /^[a-z0-9]+(?:[._-][a-z0-9]+)+$/i;
 const ACTION_ID_PATTERN = /^[a-z0-9]+(?:[._-][a-z0-9]+)+$/i;
 const ENV_REFERENCE_PATTERN = /^\$\{([A-Z][A-Z0-9_]*)\}$/;
+const HEADER_NAME_PATTERN = /^[A-Za-z][A-Za-z0-9-]{0,63}$/;
+const BLOCKED_CREDENTIAL_HEADERS = new Set([
+  'connection',
+  'content-length',
+  'cookie',
+  'host',
+  'origin',
+  'proxy-authorization',
+  'set-cookie',
+  'transfer-encoding',
+]);
 
 export class InteractiveUIRuntimeError extends Error {
   constructor(message, status = 400, code = 'invalid_request', details = undefined) {
@@ -64,6 +76,38 @@ const resolveEntryPath = (path, extensionDirectory, entry, allowedExtensions) =>
   return resolved;
 };
 
+const normalizeCredentialPlacement = (auth, connectorId) => {
+  const placement = isRecord(auth.placement) ? auth.placement : {};
+  if (placement.type !== undefined && placement.type !== 'header') {
+    throw new InteractiveUIRuntimeError(`Connector ${connectorId} credentials must use header placement`, 400, 'invalid_manifest');
+  }
+  const name = typeof placement.name === 'string' && placement.name.trim()
+    ? placement.name.trim()
+    : 'Authorization';
+  if (!HEADER_NAME_PATTERN.test(name) || BLOCKED_CREDENTIAL_HEADERS.has(name.toLowerCase()) || name.toLowerCase().startsWith('x-openchamber-')) {
+    throw new InteractiveUIRuntimeError(`Connector ${connectorId} uses an unsafe credential header`, 400, 'invalid_manifest');
+  }
+  const prefix = typeof placement.prefix === 'string'
+    ? placement.prefix
+    : name.toLowerCase() === 'authorization' ? 'Bearer ' : '';
+  if (prefix.length > 64 || /[\r\n\0]/.test(prefix)) {
+    throw new InteractiveUIRuntimeError(`Connector ${connectorId} uses an invalid credential prefix`, 400, 'invalid_manifest');
+  }
+  return { type: 'header', name, prefix };
+};
+
+const normalizeSafeRequest = (value, connectorId, label, allowedMethods) => {
+  if (!isRecord(value)) return null;
+  const method = typeof value.method === 'string' ? value.method.toUpperCase() : allowedMethods[0];
+  if (!allowedMethods.includes(method)) {
+    throw new InteractiveUIRuntimeError(`Connector ${connectorId} ${label} uses an unsupported HTTP method`, 400, 'invalid_manifest');
+  }
+  if (typeof value.path !== 'string' || !value.path.startsWith('/') || value.path.includes('://') || value.path.includes('..')) {
+    throw new InteractiveUIRuntimeError(`Connector ${connectorId} ${label} must use a fixed connector-relative path`, 400, 'invalid_manifest');
+  }
+  return { method, path: value.path };
+};
+
 const normalizeConnector = (connector, manifest, environment) => {
   if (!isRecord(connector) || typeof connector.id !== 'string' || connector.type !== 'http') {
     throw new InteractiveUIRuntimeError('Only named HTTP connectors are supported in OCIX v1', 400, 'invalid_manifest');
@@ -91,18 +135,47 @@ const normalizeConnector = (connector, manifest, environment) => {
     throw new InteractiveUIRuntimeError(`Connector ${connector.id} origin is not declared in permissions.network`, 400, 'network_not_allowed');
   }
   const auth = isRecord(connector.auth) ? connector.auth : { type: 'none' };
-  if (auth.type !== 'none' && auth.type !== 'env-bearer') {
+  if (!['none', 'env-bearer', 'api-key', 'issued-key'].includes(auth.type)) {
     throw new InteractiveUIRuntimeError(`Connector ${connector.id} uses an unsupported auth type`, 400, 'invalid_manifest');
   }
   if (auth.type === 'env-bearer' && (typeof auth.env !== 'string' || !/^[A-Z][A-Z0-9_]*$/.test(auth.env))) {
     throw new InteractiveUIRuntimeError(`Connector ${connector.id} must declare a valid bearer-token environment variable`, 400, 'invalid_manifest');
+  }
+  let normalizedAuth;
+  if (auth.type === 'env-bearer') {
+    normalizedAuth = { type: 'env-bearer', env: auth.env };
+  } else if (auth.type === 'api-key') {
+    normalizedAuth = { type: 'api-key', placement: normalizeCredentialPlacement(auth, connector.id) };
+  } else if (auth.type === 'issued-key') {
+    const provisioningUrlValue = resolveEnvReference(auth.provisioningUrl, environment, `Connector ${connector.id} provisioningUrl`);
+    let provisioningUrl;
+    try {
+      provisioningUrl = new URL(provisioningUrlValue);
+    } catch {
+      throw new InteractiveUIRuntimeError(`Connector ${connector.id} has an invalid provisioningUrl`, 400, 'invalid_manifest');
+    }
+    const loopback = ['127.0.0.1', 'localhost', '[::1]'].includes(provisioningUrl.hostname);
+    if ((provisioningUrl.protocol !== 'https:' && !(provisioningUrl.protocol === 'http:' && loopback)) || provisioningUrl.username || provisioningUrl.password) {
+      throw new InteractiveUIRuntimeError(`Connector ${connector.id} provisioningUrl must use HTTPS without embedded credentials`, 400, 'invalid_manifest');
+    }
+    if (!allowedOrigins.includes(provisioningUrl.origin)) {
+      throw new InteractiveUIRuntimeError(`Connector ${connector.id} provisioning origin is not declared in permissions.network`, 400, 'network_not_allowed');
+    }
+    normalizedAuth = {
+      type: 'issued-key',
+      placement: normalizeCredentialPlacement(auth, connector.id),
+      provisioningUrl: provisioningUrl.toString(),
+    };
+  } else {
+    normalizedAuth = { type: 'none' };
   }
   return {
     id: connector.id,
     type: 'http',
     baseUrl: baseUrl.toString(),
     origin: baseUrl.origin,
-    auth: auth.type === 'env-bearer' ? { type: 'env-bearer', env: auth.env } : { type: 'none' },
+    auth: normalizedAuth,
+    test: normalizeSafeRequest(connector.test, connector.id, 'test request', ['GET', 'HEAD']),
   };
 };
 
@@ -201,6 +274,7 @@ export const createInteractiveUIRuntime = ({
   fetchImpl = globalThis.fetch,
   extensionRoots = [],
   environment = process.env,
+  connectionStore = null,
   logger = console,
 } = {}) => {
   if (!fsPromises || !path || !crypto || typeof fetchImpl !== 'function') {
@@ -281,6 +355,130 @@ export const createInteractiveUIRuntime = ({
     throw new InteractiveUIRuntimeError(`Interactive view ${viewId} is not installed`, 404, 'view_not_found');
   };
 
+  const findConnector = async (extensionId, connectorId) => {
+    const { extensions } = await loadExtensions();
+    const extension = extensions.find((candidate) => candidate.id === extensionId);
+    if (!extension) throw new InteractiveUIRuntimeError(`Extension ${extensionId} is not installed`, 404, 'extension_not_found');
+    const connector = extension.connectors.find((candidate) => candidate.id === connectorId);
+    if (!connector) throw new InteractiveUIRuntimeError(`Connector ${connectorId} is not declared by ${extensionId}`, 404, 'connector_not_found');
+    return { extension, connector };
+  };
+
+  const getConnectionStatus = async (extensionId, connector) => {
+    if (connector.auth.type === 'none') return { configured: true, expired: false, source: 'none' };
+    if (connector.auth.type === 'env-bearer') {
+      const configured = typeof environment[connector.auth.env] === 'string' && Boolean(environment[connector.auth.env].trim());
+      return { configured, expired: false, source: 'environment' };
+    }
+    if (!connectionStore?.getStatus) return { configured: false, expired: false };
+    return connectionStore.getStatus(extensionId, connector.id);
+  };
+
+  const applyConnectorAuthentication = async (extensionId, connector, headers) => {
+    if (connector.auth.type === 'none') return;
+    if (connector.auth.type === 'env-bearer') {
+      const token = environment[connector.auth.env];
+      if (typeof token !== 'string' || !token.trim()) {
+        throw new InteractiveUIRuntimeError('Connector credentials are not configured', 503, 'connector_unconfigured');
+      }
+      headers.set('Authorization', `Bearer ${token.trim()}`);
+      return;
+    }
+    if (!connectionStore?.resolveCredential) {
+      throw new InteractiveUIRuntimeError('Connector credentials are not configured', 503, 'connector_unconfigured');
+    }
+    const credential = await connectionStore.resolveCredential(extensionId, connector.id);
+    if (!credential?.accessKey) {
+      throw new InteractiveUIRuntimeError('Connector credentials are not configured', 503, 'connector_unconfigured');
+    }
+    headers.set(
+      connector.auth.placement.name,
+      `${connector.auth.placement.prefix}${credential.accessKey}`,
+    );
+  };
+
+  const listConnections = async () => {
+    const { extensions, errors } = await loadExtensions();
+    return {
+      apiVersion: 1,
+      connections: await Promise.all(extensions.flatMap((extension) => extension.connectors.map(async (connector) => ({
+        extension: { id: extension.id, name: extension.name, version: extension.version },
+        connector: {
+          id: connector.id,
+          origin: connector.origin,
+          authType: connector.auth.type,
+          testable: Boolean(connector.test),
+          configurable: connector.auth.type === 'api-key',
+          provisionable: connector.auth.type === 'issued-key',
+        },
+        credential: await getConnectionStatus(extension.id, connector),
+      })))),
+      errors,
+    };
+  };
+
+  const configureConnection = async (extensionId, connectorId, input) => {
+    const { connector } = await findConnector(extensionId, connectorId);
+    if (connector.auth.type !== 'api-key' || !connectionStore?.setManualCredential) {
+      throw new InteractiveUIRuntimeError('Connector does not accept a manually configured access key', 409, 'manual_configuration_unsupported');
+    }
+    const credential = await connectionStore.setManualCredential(extensionId, connectorId, input?.accessKey);
+    return { extensionId, connectorId, credential };
+  };
+
+  const provisionConnection = async (extensionId, connectorId, input) => {
+    const { connector } = await findConnector(extensionId, connectorId);
+    if (connector.auth.type !== 'issued-key' || !connectionStore?.provisionCredential) {
+      throw new InteractiveUIRuntimeError('Connector does not support credential provisioning', 409, 'provisioning_unsupported');
+    }
+    const credential = await connectionStore.provisionCredential(extensionId, connector, input?.setupCode);
+    return { extensionId, connectorId, credential };
+  };
+
+  const removeConnection = async (extensionId, connectorId) => {
+    await findConnector(extensionId, connectorId);
+    if (!connectionStore?.removeCredential) return { removed: false };
+    return connectionStore.removeCredential(extensionId, connectorId);
+  };
+
+  const removeExtensionConnections = async (extensionId) => {
+    if (!connectionStore?.removeExtensionCredentials) return { removed: 0 };
+    return connectionStore.removeExtensionCredentials(extensionId);
+  };
+
+  const testConnection = async (extensionId, connectorId) => {
+    const { connector } = await findConnector(extensionId, connectorId);
+    if (!connector.test) throw new InteractiveUIRuntimeError('Connector does not declare a safe test request', 409, 'connection_test_unsupported');
+    const target = new URL(connector.test.path.slice(1), connector.baseUrl.endsWith('/') ? connector.baseUrl : `${connector.baseUrl}/`);
+    if (target.origin !== connector.origin) throw new InteractiveUIRuntimeError('Connection test escaped the connector origin', 403, 'network_not_allowed');
+    const requestId = crypto.randomUUID();
+    const headers = new Headers({ Accept: 'application/json', 'X-OpenChamber-Request-Id': requestId });
+    await applyConnectorAuthentication(extensionId, connector, headers);
+    let response;
+    try {
+      response = await fetchImpl(target, {
+        method: connector.test.method,
+        headers,
+        signal: AbortSignal.timeout(CONNECTION_TEST_TIMEOUT_MS),
+      });
+    } catch (error) {
+      const timeout = error?.name === 'TimeoutError';
+      throw new InteractiveUIRuntimeError(
+        timeout ? 'Connection test timed out' : 'Connection test failed',
+        502,
+        timeout ? 'connection_test_timeout' : 'upstream_unavailable',
+      );
+    }
+    const body = await response.arrayBuffer();
+    if (body.byteLength > MAX_UPSTREAM_BYTES) throw new InteractiveUIRuntimeError('Connection test response is too large', 502, 'upstream_response_too_large');
+    if (!response.ok) {
+      if (response.status === 401) throw new InteractiveUIRuntimeError('Access key is invalid or expired', 401, 'connector_unauthorized');
+      if (response.status === 403) throw new InteractiveUIRuntimeError('Access key does not have permission', 403, 'connector_forbidden');
+      throw new InteractiveUIRuntimeError(`Business system rejected the connection test (${response.status})`, response.status >= 400 && response.status < 500 ? response.status : 502, 'upstream_error');
+    }
+    return { ok: true, status: response.status, requestId, checkedAt: new Date().toISOString() };
+  };
+
   const getViewDescriptor = async (viewId, toolName = '') => {
     const { extension, view } = await findView(viewId);
     if (view.tools.length > 0 && (!toolName || !view.tools.includes(toolName))) {
@@ -346,13 +544,7 @@ export const createInteractiveUIRuntime = ({
 
     const requestId = crypto.randomUUID();
     const headers = new Headers({ Accept: 'application/json', 'X-OpenChamber-Request-Id': requestId });
-    if (connector.auth.type === 'env-bearer') {
-      const token = environment[connector.auth.env];
-      if (typeof token !== 'string' || !token.trim()) {
-        throw new InteractiveUIRuntimeError('Connector credentials are not configured', 503, 'connector_unconfigured');
-      }
-      headers.set('Authorization', `Bearer ${token.trim()}`);
-    }
+    await applyConnectorAuthentication(extension.id, connector, headers);
     const init = {
       method: action.request.method,
       headers,
@@ -393,6 +585,8 @@ export const createInteractiveUIRuntime = ({
     }
     if (!response.ok) {
       const upstreamMessage = isRecord(data) && typeof data.error === 'string' ? data.error : `Business system rejected the request (${response.status})`;
+      if (response.status === 401) throw new InteractiveUIRuntimeError(upstreamMessage, 401, 'connector_unauthorized');
+      if (response.status === 403) throw new InteractiveUIRuntimeError(upstreamMessage, 403, 'connector_forbidden');
       throw new InteractiveUIRuntimeError(upstreamMessage, response.status >= 400 && response.status < 500 ? response.status : 502, 'upstream_error');
     }
     logger.info?.('[InteractiveUI] Business action completed', {
@@ -425,5 +619,16 @@ export const createInteractiveUIRuntime = ({
     };
   };
 
-  return { listExtensions, getViewDescriptor, getNativeBundle, invokeAction };
+  return {
+    listExtensions,
+    listConnections,
+    configureConnection,
+    provisionConnection,
+    removeConnection,
+    removeExtensionConnections,
+    testConnection,
+    getViewDescriptor,
+    getNativeBundle,
+    invokeAction,
+  };
 };

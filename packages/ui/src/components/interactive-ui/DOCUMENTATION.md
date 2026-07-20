@@ -10,6 +10,7 @@ This directory owns the shared OCIX view host used by Web, Desktop, hosted mobil
 4. The built-in `generated-layout` boundary accepts a model-composed snapshot from `data.layout`, then `lib/interactive-ui/generatedLayout.ts` rebuilds it from an explicit allowlist. Generated layouts cannot declare queries, actions, bindings, scripts, or arbitrary host access, and their depth, node count, rows, columns, series, and string sizes are bounded.
 5. Native views lazy-load an authenticated, server-owned ESM URL and register a React component through `nativeRegistry.ts`.
 6. Both installed runtimes call business actions through `lib/interactive-ui/client.ts`; components never receive connector URLs or credentials.
+7. Settings → Interactive UI Extensions loads `/api/interactive-ui/connections` and lets the user configure a manual Key or exchange a one-time setup code, test it, replace it, or disconnect. Only public connection status reaches the browser.
 
 ## Invariants
 
@@ -23,6 +24,7 @@ This directory owns the shared OCIX view host used by Web, Desktop, hosted mobil
 - Installed Declarative writes trigger a query refresh after the confirmed Gateway action succeeds; failed or cancelled actions preserve the existing data.
 - Model-generated Declarative snapshots are data-only and cannot acquire the query/action privileges of an installed extension definition.
 - Query/action HTTP calls always use `runtimeFetch`.
+- Connection inputs are password fields and are sent directly to server management routes; they are never retained in the normalized snapshot, extension props, or Agent result.
 - VS Code returns explicit unsupported behavior until it has an extension-host Gateway implementation.
 
 ## Focused validation

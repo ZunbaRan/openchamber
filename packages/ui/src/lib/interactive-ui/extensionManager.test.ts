@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import {
   normalizeCatalogEntries,
   normalizeManagerSnapshot,
+  normalizeConnectionSnapshot,
   normalizeMarketplaceInspection,
   normalizePackageInspection,
 } from './extensionManager';
@@ -59,5 +60,27 @@ describe('normalizeManagerSnapshot', () => {
       fingerprint: 'sha256-value',
       extensionCount: 3,
     })?.extensionCount).toBe(3);
+  });
+});
+
+describe('normalizeConnectionSnapshot', () => {
+  test('keeps only public connection status and supported auth types', () => {
+    expect(normalizeConnectionSnapshot({
+      connections: [{
+        extension: { id: 'com.acme.crm', name: 'CRM', version: '1.0.0' },
+        connector: {
+          id: 'crm-api', origin: 'https://crm.example.com', authType: 'api-key', testable: true, configurable: true, provisionable: false,
+        },
+        credential: { configured: true, expired: false, source: 'manual', accessKey: 'must-not-survive' },
+      }, { connector: {} }],
+    })).toEqual({
+      connections: [{
+        extension: { id: 'com.acme.crm', name: 'CRM', version: '1.0.0' },
+        connector: {
+          id: 'crm-api', origin: 'https://crm.example.com', authType: 'api-key', testable: true, configurable: true, provisionable: false,
+        },
+        credential: { configured: true, expired: false, source: 'manual' },
+      }],
+    });
   });
 });

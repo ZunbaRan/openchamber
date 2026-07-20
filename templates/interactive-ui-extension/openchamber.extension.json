@@ -10,8 +10,16 @@
       "type": "http",
       "baseUrl": "${OCIX_BUSINESS_API_URL}",
       "auth": {
-        "type": "env-bearer",
-        "env": "OCIX_BUSINESS_API_TOKEN"
+        "type": "api-key",
+        "placement": {
+          "type": "header",
+          "name": "Authorization",
+          "prefix": "Bearer "
+        }
+      },
+      "test": {
+        "method": "GET",
+        "path": "/interactive-ui/health"
       }
     }
   ],

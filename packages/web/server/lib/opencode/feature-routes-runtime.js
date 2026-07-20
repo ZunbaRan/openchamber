@@ -46,6 +46,7 @@ import { installSkillsFromClawdHub } from '../skills-catalog/clawdhub/install.js
 import { createInteractiveUIRuntime } from '../interactive-ui/runtime.js';
 import { registerInteractiveUIRoutes } from '../interactive-ui/routes.js';
 import { createInteractiveUIExtensionManager } from '../interactive-ui/manager.js';
+import { createInteractiveUIConnectionStore } from '../interactive-ui/connection-store.js';
 
 export const createFeatureRoutesRuntime = (dependencies) => {
   const {
@@ -123,6 +124,12 @@ export const createFeatureRoutesRuntime = (dependencies) => {
       logger: console,
       refreshOpenCode: () => refreshOpenCodeAfterConfigChange('Interactive UI extension Agent Runtime changed'),
     });
+    const interactiveUIConnectionStore = createInteractiveUIConnectionStore({
+      dataDirectory: openchamberDataDir,
+      fsImpl: fsPromises,
+      pathImpl: path,
+      cryptoImpl: crypto,
+    });
     registerInteractiveUIRoutes(app, {
       express,
       manager: interactiveUIExtensionManager,
@@ -135,6 +142,7 @@ export const createFeatureRoutesRuntime = (dependencies) => {
           ...configuredInteractiveUIRoots,
         ],
         environment: processLike.env,
+        connectionStore: interactiveUIConnectionStore,
         logger: console,
       }),
     });

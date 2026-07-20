@@ -23,11 +23,14 @@ import { useI18n } from '@/lib/i18n';
 import { runtimeFetch } from '@/lib/runtime-fetch';
 import {
   EMPTY_MANAGER_SNAPSHOT,
+  EMPTY_CONNECTION_SNAPSHOT,
   normalizeCatalogEntries,
+  normalizeConnectionSnapshot,
   normalizeManagerSnapshot,
   normalizeMarketplaceInspection,
   normalizePackageInspection,
   type CatalogEntry,
+  type ConnectionSnapshot,
   type InstalledExtension,
   type ManagerSnapshot,
   type MarketplaceInspection,
@@ -57,6 +60,8 @@ export const ExtensionManagerPage: React.FC = () => {
   const { t } = useI18n();
   const packageInputRef = React.useRef<HTMLInputElement>(null);
   const [snapshot, setSnapshot] = React.useState<ManagerSnapshot>(EMPTY_MANAGER_SNAPSHOT);
+  const [connectionSnapshot, setConnectionSnapshot] = React.useState<ConnectionSnapshot>(EMPTY_CONNECTION_SNAPSHOT);
+  const [connectionInputs, setConnectionInputs] = React.useState<Record<string, string>>({});
   const [loading, setLoading] = React.useState(true);
   const [busy, setBusy] = React.useState<string | null>(null);
   const [confirmUninstall, setConfirmUninstall] = React.useState<InstalledExtension | null>(null);
@@ -68,7 +73,12 @@ export const ExtensionManagerPage: React.FC = () => {
   const refresh = React.useCallback(async () => {
     setLoading(true);
     try {
-      setSnapshot(normalizeManagerSnapshot(await requestJson<unknown>('/api/interactive-ui/manager')));
+      const [managerValue, connectionValue] = await Promise.all([
+        requestJson<unknown>('/api/interactive-ui/manager'),
+        requestJson<unknown>('/api/interactive-ui/connections'),
+      ]);
+      setSnapshot(normalizeManagerSnapshot(managerValue));
+      setConnectionSnapshot(normalizeConnectionSnapshot(connectionValue));
     } catch (error) {
       toast.error(t('settings.interactiveUI.toast.loadFailed'), { description: error instanceof Error ? error.message : undefined });
     } finally {
@@ -143,6 +153,21 @@ export const ExtensionManagerPage: React.FC = () => {
     }
   }, [t]);
 
+  const connectionKey = React.useCallback((extensionId: string, connectorId: string) => `${extensionId}:${connectorId}`, []);
+
+  const saveConnection = React.useCallback(async (extensionId: string, connectorId: string, mode: 'configure' | 'provision') => {
+    const key = connectionKey(extensionId, connectorId);
+    const value = connectionInputs[key]?.trim() ?? '';
+    if (!value) return;
+    const endpoint = `/api/interactive-ui/connections/${encodeURIComponent(extensionId)}/${encodeURIComponent(connectorId)}${mode === 'provision' ? '/provision' : ''}`;
+    const succeeded = await runMutation(`connection:${key}`, () => requestJson(endpoint, {
+      method: mode === 'provision' ? 'POST' : 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(mode === 'provision' ? { setupCode: value } : { accessKey: value }),
+    }), mode === 'provision' ? 'settings.interactiveUI.toast.connectionProvisioned' : 'settings.interactiveUI.toast.connectionSaved');
+    if (succeeded) setConnectionInputs((current) => ({ ...current, [key]: '' }));
+  }, [connectionInputs, connectionKey, runMutation]);
+
   return (
     <SettingsPageLayout
       title={t('settings.page.interactiveUI.title')}
@@ -214,6 +239,105 @@ export const ExtensionManagerPage: React.FC = () => {
                 </div>
               </div>
             ))}
+          </div>
+        )}
+      </SettingsSection>
+
+      <SettingsSection
+        settingsItem="interactive-ui.connections"
+        title={t('settings.interactiveUI.connections.title')}
+        description={t('settings.interactiveUI.connections.description')}
+      >
+        {connectionSnapshot.connections.length === 0 ? (
+          <p className={SETTINGS_HELPER_CLASS}>{t('settings.interactiveUI.connections.empty')}</p>
+        ) : (
+          <div className="divide-y divide-border/60">
+            {connectionSnapshot.connections.map((connection) => {
+              const key = connectionKey(connection.extension.id, connection.connector.id);
+              const statusKey = connection.credential.expired
+                ? 'settings.interactiveUI.connections.statusExpired'
+                : connection.credential.configured
+                  ? 'settings.interactiveUI.connections.statusConnected'
+                  : 'settings.interactiveUI.connections.statusNotConnected';
+              return (
+                <div key={key} className="space-y-3 py-5 first:pt-0">
+                  <div className="flex flex-col gap-2 @xl:flex-row @xl:items-start @xl:justify-between">
+                    <div className="min-w-0">
+                      <div className={SETTINGS_FIELD_LABEL_CLASS}>{connection.extension.name}</div>
+                      <div className={SETTINGS_HELPER_CLASS}>{connection.connector.id} · {connection.connector.origin}</div>
+                      <div className={connection.credential.expired ? 'text-sm text-status-warning' : SETTINGS_HELPER_CLASS}>
+                        {t(statusKey)}
+                        {connection.credential.displayName ? ` · ${connection.credential.displayName}` : ''}
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {connection.connector.testable && connection.credential.configured && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          disabled={busy === `connection-test:${key}`}
+                          onClick={() => void runMutation(`connection-test:${key}`, () => requestJson(`/api/interactive-ui/connections/${encodeURIComponent(connection.extension.id)}/${encodeURIComponent(connection.connector.id)}/test`, { method: 'POST' }), 'settings.interactiveUI.toast.connectionTested')}
+                        >
+                          {t('settings.interactiveUI.actions.testConnection')}
+                        </Button>
+                      )}
+                      {(connection.connector.configurable || connection.connector.provisionable) && connection.credential.configured && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          disabled={busy === `connection-remove:${key}`}
+                          onClick={() => void runMutation(`connection-remove:${key}`, () => requestJson(`/api/interactive-ui/connections/${encodeURIComponent(connection.extension.id)}/${encodeURIComponent(connection.connector.id)}`, { method: 'DELETE' }), 'settings.interactiveUI.toast.connectionRemoved')}
+                        >
+                          {t('settings.interactiveUI.actions.disconnect')}
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                  {connection.connector.configurable && (
+                    <SettingsStackedField
+                      label={t('settings.interactiveUI.fields.accessKey')}
+                      info={t('settings.interactiveUI.connections.accessKeyInfo')}
+                    >
+                      <div className="flex max-w-[24rem] gap-2">
+                        <Input
+                          type="password"
+                          autoComplete="new-password"
+                          className="h-8"
+                          value={connectionInputs[key] ?? ''}
+                          onChange={(event) => setConnectionInputs((current) => ({ ...current, [key]: event.target.value }))}
+                          placeholder={connection.credential.configured ? t('settings.interactiveUI.fields.replaceAccessKeyPlaceholder') : t('settings.interactiveUI.fields.accessKeyPlaceholder')}
+                          aria-label={t('settings.interactiveUI.fields.accessKey')}
+                        />
+                        <Button size="sm" disabled={!connectionInputs[key]?.trim() || busy === `connection:${key}`} onClick={() => void saveConnection(connection.extension.id, connection.connector.id, 'configure')}>
+                          {t('settings.interactiveUI.actions.saveConnection')}
+                        </Button>
+                      </div>
+                    </SettingsStackedField>
+                  )}
+                  {connection.connector.provisionable && (
+                    <SettingsStackedField
+                      label={t('settings.interactiveUI.fields.setupCode')}
+                      info={t('settings.interactiveUI.connections.setupCodeInfo')}
+                    >
+                      <div className="flex max-w-[24rem] gap-2">
+                        <Input
+                          type="password"
+                          autoComplete="one-time-code"
+                          className="h-8"
+                          value={connectionInputs[key] ?? ''}
+                          onChange={(event) => setConnectionInputs((current) => ({ ...current, [key]: event.target.value }))}
+                          placeholder={t('settings.interactiveUI.fields.setupCodePlaceholder')}
+                          aria-label={t('settings.interactiveUI.fields.setupCode')}
+                        />
+                        <Button size="sm" disabled={!connectionInputs[key]?.trim() || busy === `connection:${key}`} onClick={() => void saveConnection(connection.extension.id, connection.connector.id, 'provision')}>
+                          {t('settings.interactiveUI.actions.connect')}
+                        </Button>
+                      </div>
+                    </SettingsStackedField>
+                  )}
+                </div>
+              );
+            })}
           </div>
         )}
       </SettingsSection>

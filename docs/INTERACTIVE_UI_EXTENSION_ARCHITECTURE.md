@@ -4,11 +4,11 @@
 > **规范代号**：OCIX（OpenChamber Interactive Extension，暂定名）<br>
 > **规范版本**：Managed Distribution Preview v0.4<br>
 > **适用范围**：OpenChamber Web、Desktop、VS Code、Hosted Mobile、Capacitor Mobile<br>
-> **更新日期**：2026-07-18
+> **更新日期**：2026-07-20
 
 > **关联文档**：[OpenChamber Interactive UI 实施方案与 MCP Apps Roadmap](./AI_SDK_INTERACTIVE_UI_AND_MCP_APPS.md)
 
-> **实现进度（2026-07-18）**：仓库现已包含 OCIX v1 Managed Distribution Preview，包括严格 Result Envelope、Declarative Query/Action 与写后刷新、受信任 Native ESM 激活、Business Gateway、Agent 示例、双 runtime starter、扩展 CLI/validator、带内嵌公钥的 Ed25519 `.ocix` 签名、确认式发布者信任、Tool/Skill 全局受管安装、持久化 Extension Manager、启停/升级/回滚/可恢复卸载，以及自描述签名静态 marketplace catalog。远程 Host/Server 双端安装、workspace/fullscreen 容器、在线吊销/透明日志、组织 RBAC 和官方托管公共市场仍属于后续阶段。
+> **实现进度（2026-07-20）**：仓库现已包含 OCIX v1 Managed Distribution Preview，包括严格 Result Envelope、Declarative Query/Action 与写后刷新、受信任 Native ESM 激活、Business Gateway、Agent 示例、双 runtime starter、扩展 CLI/validator、带内嵌公钥的 Ed25519 `.ocix` 签名、确认式发布者信任、Tool/Skill 全局受管安装、持久化 Extension Manager、启停/升级/回滚/可恢复卸载、自描述签名静态 marketplace catalog，以及 Connector Authentication & Credential Provisioning v1。业务 Key 的 scope、RBAC/ABAC、撤销和业务审计明确归第三方系统；OpenChamber 不建设另一套多用户权限系统。远程 Host/Server 双端安装、workspace/fullscreen 容器、在线签名吊销/透明日志和官方托管公共市场仍属于后续阶段。
 
 ---
 
@@ -1549,7 +1549,7 @@ Native bundle 由 OpenChamber Server/Extension Manager 提供受控 URL：
       ↓
 17. View 通过 Business Client 查询实时 dashboard 数据
       ↓
-18. Business Gateway 注入用户身份和 token
+18. Business Gateway 从服务端 Secret Store 注入第三方颁发的 Key
       ↓
 19. 销售系统返回实时指标、订单和 revision
       ↓
@@ -1572,19 +1572,19 @@ Native bundle 由 OpenChamber Server/Extension Manager 提供受控 URL：
       ↓
 5. Host 检查 manifest action 声明与 runtime capability
       ↓
-6. Permission/Policy 检查用户是否允许执行写操作
+6. Host 按 manifest 执行 `permission: ask` 确认策略
       ↓
 7. Business Gateway 创建 idempotency key 和审计上下文
       ↓
-8. Gateway 使用服务端 token 调用 sales UI API
+8. Gateway 使用服务端保存的 scoped Key 调用 sales UI API
       ↓
-9. Sales Application Service 再次检查 RBAC、对象权限和 revision
+9. Sales Application Service 按该 Key 的 scope 检查权限、业务规则和 revision
       ↓
 10. ERP 执行批准
       ↓
 11. 业务服务返回新状态和新 revision
       ↓
-12. Gateway 写入 actor/session/tool/view/action 审计记录
+12. Gateway 记录 request/session/tool/view/action 上下文；Sales Service 记录最终业务审计
       ↓
 13. Native View 刷新 dashboard query
       ↓
@@ -1703,28 +1703,34 @@ OpenCode
 
 ---
 
-## 17. 认证、权限与审计
+## 17. Connector 认证、业务权限与审计
 
-### 17.1 Token
+### 17.1 服务端 Key
 
-- Native bundle 不包含 token。
-- Manifest 不包含 client secret。
-- 浏览器端不保存业务 refresh token。
-- Business Gateway 或远程 MCP server 管理 OAuth token。
-- Host SDK 返回业务数据，不暴露 token 本身。
-- connector 只允许访问 manifest 声明的 domain。
+- Native bundle、Declarative JSON、manifest、Tool/Skill 和 Result Envelope 均不包含 Key。
+- `api-key` 由用户在 Extension Manager 中配置；`issued-key` 用一次性 setup code 在服务端交换；`env-bearer` 仅兼容旧部署。
+- OpenChamber Secret Store 保存 Key，Business Gateway 只在请求第三方 API 的最后一跳注入。
+- Host SDK 只返回业务数据和受控错误，不暴露 Key、setup code 或签发 URL。
+- Connector 和签发端点只能访问 manifest `permissions.network` 声明的 Origin。
+- 完整协议见 [OCIX Connector Authentication & Credential Provisioning v1](./OCIX_CONNECTOR_AUTHENTICATION_V1.md)。
 
 ### 17.2 权限层次
 
-1. Extension install trust：是否允许安装 Native code。
-2. Connector permission：是否允许连接某业务系统。
-3. Tool permission：Agent 是否可调用某 MCP tool。
-4. Action permission：UI 是否可调用某业务 action。
-5. Server RBAC/ABAC：当前用户是否可操作目标对象。
-6. Business rule：对象状态是否允许该操作。
-7. User confirmation：高风险动作是否需要本次确认。
+OpenChamber 客户端边界：
 
-任何前端隐藏按钮都不能替代服务端权限。
+1. Extension install trust：是否允许安装签名包及同页 Native code。
+2. Network/Connector allowlist：扩展可以连接哪些固定 Origin。
+3. Tool/View/Action binding：调用是否属于已安装扩展的声明能力。
+4. User confirmation：写入或破坏性动作是否获得本次明确确认。
+
+第三方业务系统边界：
+
+1. Key 属于哪个租户、环境、主体和 scope。
+2. Key 是否有效、过期或已撤销。
+3. 当前对象、字段、状态和业务规则是否允许操作。
+4. revision/ETag、幂等和最终业务审计。
+
+OpenChamber 不解释第三方角色模型，也不需要承担多用户企业部署。前端隐藏按钮、OCIX `permission` 和确认弹窗都不能替代第三方 API 的最终权限校验。
 
 ### 17.3 风险等级
 
@@ -1733,7 +1739,7 @@ OpenCode
 | read | 查询仪表盘、订单详情 | allow 或企业策略 |
 | write | 创建工单、批准普通订单 | ask |
 | destructive | 删除、退款、生产发布 | ask + 强说明 |
-| privileged | 修改权限、导出敏感数据 | 管理策略 + 二次认证 |
+| privileged | 修改权限、导出敏感数据 | ask + 第三方系统拒绝无 scope 的 Key |
 
 ### 17.4 审计上下文
 
@@ -1926,7 +1932,7 @@ packages/web/server/lib/extensions/
 
 ## 22. 实施路线
 
-阶段状态不是发布日期承诺：A 已完成 v1；B/C 已达到 Managed Distribution Preview；D 的客户端分发治理已完成，组织与服务治理仍未完成；E/F 尚未实施。
+阶段状态不是发布日期承诺：A 已完成 v1；B/C 已达到 Managed Distribution Preview；D 的客户端分发治理与 Connector Authentication v1 已完成，签名生态运营治理仍未完成；业务权限治理明确由第三方系统负责；E/F 尚未实施。
 
 ### Phase A：Interactive UI Core
 
@@ -1957,15 +1963,14 @@ packages/web/server/lib/extensions/
 - 一个受控写操作。
 - Web/受管 Desktop 路径已实现；VS Code Gateway 与完整 Mobile 验证 **未完成**。
 
-### Phase D：企业治理
+### Phase D：分发治理与 Connector 认证
 
 - 签名静态目录/私有 marketplace、客户端目录浏览与安装 **已实现**。
 - 原子安装、enable/disable、升级、回滚和可恢复卸载 **已实现**。
 - 多扩展共享 `~/.config/opencode/tools`/`skills` 的受管 Agent Runtime 部署、冲突保护与 OpenCode refresh **已实现**。
-- 企业托管配置。
-- RBAC/ABAC。
-- 审计导出。
-- 在线 key revocation、透明日志和恶意包响应。
+- `api-key`、`issued-key`、服务端 Secret Store、连接测试/替换/断开和卸载清理 **已实现**。
+- 业务 Key 的 scope、RBAC/ABAC、撤销与业务审计由第三方 API **负责**。
+- 在线签名 key revocation、透明日志和恶意包响应。
 - capability compatibility matrix。
 
 ### Phase E：Agent HTML Artifact
@@ -2007,7 +2012,7 @@ packages/web/server/lib/extensions/
 - Dialog、Theme、Navigation 和 Business Client 工作正常。
 - bundle 崩溃只影响当前 View。
 - Native 权限和发布者信任对用户可见。
-- 用户业务操作通过服务端权限、幂等和审计。
+- 用户业务操作通过第三方服务端 Key 权限、幂等和审计；OpenChamber 负责确认和 Gateway allowlist。
 - 历史 ToolPart 可以恢复 snapshot。
 - 外部 OpenCode 缺少扩展时有清晰降级。
 
@@ -2032,8 +2037,8 @@ packages/web/server/lib/extensions/
 2. Web/Desktop/Hosted Mobile 使用 Host Extension Manager；VS Code 的扩展 asset 分发方式仍待定。
 3. Host SDK 的 semver 和兼容窗口。
 4. Native CSS 隔离是 namespace、CSS Modules 还是 Shadow Root。
-5. 当前 Extension Manager 是 Host 级；用户级/项目级/企业级策略优先级仍待定。
-6. Business Gateway 的 OAuth session 和远程部署模型。
+5. 当前 Connection Secret Store 依赖操作系统账号权限；系统 Keychain/KMS 存储后端仍需 ADR。
+6. 非 Key 型认证（例如必须交互登录的 OAuth）是否作为独立可选 Connector 类型。
 7. UI action result 如何以结构化 part 反馈给当前 Agent Session。
 8. 外部 OpenCode Server 的双端扩展协商。
 9. Declarative binding 采用 JSON Pointer、受限 JSONPath 还是自有路径语法。
