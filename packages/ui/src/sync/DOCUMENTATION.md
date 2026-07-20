@@ -61,6 +61,10 @@ Examples:
 - per-directory session/message bootstrap
 - session/message/part SSE updates
 
+Directory bootstrap must publish a closed session hierarchy: when a child is
+returned before the roots query catches up during cold startup, retain or
+recover its referenced parent instead of exposing an orphan-only snapshot.
+
 ### Global session list
 
 Use `useGlobalSessionsStore` when the UI needs a **shared global session cache**.
@@ -96,8 +100,9 @@ VS Code does not run the server permission-auto-accept runtime. The extension ho
    - title update
    - share
    - unshare
-   - archive
-   - delete
+    - archive
+    - delete
+    - move to another worktree directory
    - retention cleanup batch archive/delete
 
 This keeps cold/global lists responsive without requiring a refetch after every change.
@@ -121,6 +126,7 @@ Examples of global-store updates performed in `session-actions.ts`:
 - `shareSession()` / `unshareSession()` -> `upsertSession(result.data)`
 - `archiveSession()` -> `archiveSessions([id], archivedAt)`
 - `deleteSession()` -> `removeSessions([id])`
+- `moveSessionToDirectory()` -> move the session between directory stores and update the global directory index
 
 ## The golden rule
 

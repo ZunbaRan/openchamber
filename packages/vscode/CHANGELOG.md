@@ -1,4 +1,4 @@
-## [Unreleased]
+## [1.16.2] - 2026-07-18
 
 - **Settings:** pages now use a consistent responsive layout, navigation is grouped by area, and save failures are shown in the page header. Agent tool permissions now distinguish inherited and explicit rules and show session-granted rules separately (thanks to @makeittech).
 - Permissions: per-session auto-accept works again, persists across extension restarts, and applies to subagent sessions while an OpenChamber view is open.

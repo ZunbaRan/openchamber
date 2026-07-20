@@ -27,7 +27,7 @@ import { setSyncRefs, getAllSyncSessions } from "./sync-refs"
 import { stripMessageDiffSnapshots, stripSessionDiffSnapshots } from "./sanitize"
 import { applySessionEventToGlobalSessions } from "./session-event-router"
 import { syncDebug } from "./debug"
-import { getReconnectCandidateSessionIds } from "./reconnect-recovery"
+import { getReconnectCandidateSessionIds, mergeBootstrapSessions } from "./reconnect-recovery"
 import { opencodeClient } from "@/lib/opencode/client"
 import { usePermissionStore } from "@/stores/permissionStore"
 import { processVSCodePermissionAutoAccept } from "./vscode-permission-auto-accept"
@@ -1780,24 +1780,22 @@ export function SyncProvider(props: {
                 // Child load is best-effort; fall back to roots only.
               }
 
-              // Merge: keep root sessions from the first query (for accurate
-              // sessionTotal), plus any child sessions from the broader query.
-              const rootIds = new Set(rootSessions.map((s: { id: string }) => s.id))
-              const childSessions = allSessions.filter((s: { id: string; parentID?: string | null }) => s?.id && !rootIds.has(s.id) && s.parentID)
-
-              const sessions = rootSessions.concat(childSessions)
+              // A cold OpenCode process can briefly return children before its
+              // roots query catches up. Recover referenced parents from the
+              // broader response or cache instead of publishing orphan rows.
+              const currentSessions = store.getState().session
+              const { sessions, rootCount } = mergeBootstrapSessions(rootSessions, allSessions, currentSessions)
               // Race guard: if the list came back empty but event pipeline
               // already populated the store, don't clobber. OpenCode can
               // answer HTTP with empty sessions while WS delivers session
               // events for the same data (disk warmup race on app launch).
-              const currentSessions = store.getState().session
               if (sessions.length === 0 && currentSessions.length > 0) {
                 console.warn(
                   `[bootstrap] experimental.session.list returned empty for ${dir}; preserving ${currentSessions.length} existing sessions`,
                 )
                 return
               }
-              store.setState({ session: sessions, sessionTotal: rootSessions.length, limit: Math.max(sessions.length, 50) })
+              store.setState({ session: sessions, sessionTotal: rootCount, limit: Math.max(sessions.length, 50) })
               ingestDirectoryStateIntoRoutingIndex(routingIndex, directory, store.getState())
             }),
           })

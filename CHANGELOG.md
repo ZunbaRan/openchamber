@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.16.2] - 2026-07-18
+
 - **Terminal:** rebuilt terminal sessions across the Web, Desktop, and Mobile apps with faster rendering, retained scrollback after reconnecting, shell and login-shell selection, restart and selected-output attachment actions, live theme changes, and more accurate Unicode and full-screen app rendering. Mobile now includes a full-screen terminal workspace with touch scrolling and selection, quick keys, and Ctrl/Alt input.
 - **Pinned messages:** pin important user or assistant messages to restore their text to the agent after conversation compaction.
 - **Settings:** pages now use a consistent responsive layout, navigation is grouped into OpenChamber, Workspace, OpenCode, and Library sections, and save failures are shown in the page header. Agent tool permissions now distinguish inherited and explicit rules and show session-granted rules separately (thanks to @makeittech).

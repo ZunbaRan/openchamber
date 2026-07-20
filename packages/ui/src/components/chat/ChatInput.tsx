@@ -5029,8 +5029,8 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({ onOpenSettings, scrollTo
                             already open, letting the pill expand into its place. */}
                         <div
                             className={cn(
-                                'flex-shrink-0 overflow-hidden transition-all duration-200 ease-out',
-                                newSessionDraftOpen ? 'w-0 opacity-0' : 'w-11 opacity-100',
+                                'flex-shrink-0 transition-all duration-200 ease-out',
+                                newSessionDraftOpen ? 'w-0 opacity-0 overflow-hidden' : 'w-11 opacity-100',
                             )}
                         >
                             <button
