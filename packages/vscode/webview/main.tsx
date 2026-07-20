@@ -379,6 +379,10 @@ const handleLocalApiRequest = async (input: RequestInfo | URL, url: URL, init: R
     return unsupportedWebRouteResponse('Preview proxy');
   }
 
+  if (normalizedPathname.startsWith('/api/interactive-ui/')) {
+    return unsupportedWebRouteResponse('Interactive UI enterprise extensions');
+  }
+
   if (normalizedPathname.startsWith('/api/openchamber/tunnel/')) {
     return unsupportedWebRouteResponse('Remote tunnel settings');
   }

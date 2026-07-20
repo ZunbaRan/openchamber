@@ -1,0 +1,31 @@
+{
+  "$schema": "openchamber://extension/v1",
+  "id": "com.openchamber.builtin.interactive-ui",
+  "name": "OpenChamber Interactive UI",
+  "version": "1.0.0",
+  "connectors": [],
+  "views": [
+    {
+      "id": "com.openchamber.builtin.interactive-ui.process-flow",
+      "runtime": "declarative",
+      "entry": "ui/process-flow.view.json",
+      "tools": ["interactive_ui"],
+      "displayModes": ["inline", "workspace"]
+    },
+    {
+      "id": "com.openchamber.builtin.interactive-ui.generated",
+      "runtime": "declarative",
+      "entry": "ui/generated.view.json",
+      "tools": ["interactive_ui"],
+      "displayModes": ["inline", "workspace"]
+    }
+  ],
+  "actions": [],
+  "permissions": {
+    "network": []
+  },
+  "trust": {
+    "mode": "declarative",
+    "signature": "built-in-development"
+  }
+}

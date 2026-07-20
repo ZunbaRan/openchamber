@@ -28,6 +28,30 @@ interface SettingsSearchAvailabilityContext extends SettingsRuntimeContext {
 
 const SETTINGS_SEARCH_ITEMS: readonly SettingsSearchItem[] = [
   {
+    id: 'interactive-ui.installed',
+    page: 'interactive-ui.extensions',
+    titleKey: 'settings.interactiveUI.installed.title',
+    descriptionKey: 'settings.interactiveUI.installed.description',
+    keywords: ['ocix', 'extension', 'signed package', 'enable', 'rollback'],
+    isAvailable: (ctx) => !ctx.isVSCode,
+  },
+  {
+    id: 'interactive-ui.publishers',
+    page: 'interactive-ui.extensions',
+    titleKey: 'settings.interactiveUI.publishers.title',
+    descriptionKey: 'settings.interactiveUI.publishers.description',
+    keywords: ['publisher', 'trust', 'ed25519', 'public key', 'signature'],
+    isAvailable: (ctx) => !ctx.isVSCode,
+  },
+  {
+    id: 'interactive-ui.marketplaces',
+    page: 'interactive-ui.extensions',
+    titleKey: 'settings.interactiveUI.marketplaces.title',
+    descriptionKey: 'settings.interactiveUI.marketplaces.description',
+    keywords: ['marketplace', 'catalog', 'install'],
+    isAvailable: (ctx) => !ctx.isVSCode,
+  },
+  {
     id: 'appearance.language',
     page: 'appearance',
     titleKey: 'settings.appearance.language.label',

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Build OpenChamber Interactive Extension"
+  short_description: "Build and sign Declarative or Trusted Native UI"
+  default_prompt: "Use $build-openchamber-interactive-extension to build, validate, sign, and test an enterprise module that matches OpenChamber UI and distribution contracts."

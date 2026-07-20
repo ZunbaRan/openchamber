@@ -1,0 +1,68 @@
+{
+  "$schema": "openchamber://extension/v1",
+  "id": "com.openchamber.demo.sales",
+  "name": "OpenChamber Demo Sales",
+  "version": "1.0.0",
+  "publisher": "OpenChamber",
+  "connectors": [
+    {
+      "id": "sales-api",
+      "type": "http",
+      "baseUrl": "${OCIX_DEMO_API_URL}",
+      "auth": {
+        "type": "env-bearer",
+        "env": "OCIX_DEMO_TOKEN"
+      }
+    }
+  ],
+  "views": [
+    {
+      "id": "com.openchamber.demo.sales.summary",
+      "runtime": "declarative",
+      "entry": "ui/declarative/sales-summary.view.json",
+      "tools": ["sales_get_summary"],
+      "displayModes": ["inline", "workspace"]
+    },
+    {
+      "id": "com.openchamber.demo.sales.dashboard",
+      "runtime": "native",
+      "entry": "dist/ui.mjs",
+      "export": "extension",
+      "tools": ["sales_get_dashboard"],
+      "displayModes": ["inline", "workspace", "fullscreen"]
+    }
+  ],
+  "actions": [
+    {
+      "id": "sales.dashboard.query",
+      "connector": "sales-api",
+      "risk": "read",
+      "permission": "allow",
+      "request": {
+        "method": "POST",
+        "path": "/dashboard"
+      }
+    },
+    {
+      "id": "sales.order.approve",
+      "connector": "sales-api",
+      "risk": "write",
+      "permission": "ask",
+      "request": {
+        "method": "POST",
+        "path": "/orders/approve"
+      },
+      "confirmation": {
+        "title": "批准订单？",
+        "description": "批准后订单将进入履约流程。"
+      }
+    }
+  ],
+  "permissions": {
+    "network": ["${OCIX_DEMO_API_URL}"]
+  },
+  "trust": {
+    "mode": "native-code",
+    "signature": "development"
+  }
+}

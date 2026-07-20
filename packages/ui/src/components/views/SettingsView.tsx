@@ -57,6 +57,7 @@ import {
   type SettingsPageMeta,
 } from '@/lib/settings/metadata';
 import { buildSettingsSearchResults, type SettingsSearchResult } from '@/lib/settings/search';
+import { ExtensionManagerPage } from '@/components/sections/interactive-ui/ExtensionManagerPage';
 
 // UI Kit: fixed settings navigation width
 const SETTINGS_NAV_WIDTH = 256;
@@ -104,6 +105,7 @@ const pageOrder: SettingsPageSlug[] = [
   'mcp',
   'plugins',
   // 'content' group — Library
+  'interactive-ui.extensions',
   'magic-prompts',
   'snippets',
   'skills.installed',
@@ -206,6 +208,8 @@ export function getSettingsNavIcon(slug: SettingsPageSlug): IconName | null {
       return null;
     case 'plugins':
       return 'plug-2';
+    case 'interactive-ui.extensions':
+      return 'window';
 
     case 'skills.installed':
       return 'book-open';
@@ -382,6 +386,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose, forceMobile
         return t('settings.page.mcp.title');
       case 'plugins':
         return t('settings.page.plugins.title');
+      case 'interactive-ui.extensions':
+        return t('settings.page.interactiveUI.title');
       case 'skills.installed':
         return t('settings.page.skills.title');
       case 'skills.catalog':
@@ -671,6 +677,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose, forceMobile
         return <McpPage />;
       case 'plugins':
         return <PluginsPage />;
+      case 'interactive-ui.extensions':
+        return <ExtensionManagerPage />;
       case 'skills.installed':
         return <SkillsPage view="installed" />;
       case 'skills.catalog':

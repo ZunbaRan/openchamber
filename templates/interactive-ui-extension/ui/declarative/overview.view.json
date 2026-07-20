@@ -1,0 +1,62 @@
+{
+  "$schema": "openchamber://declarative-view/v1",
+  "id": "__EXTENSION_ID__.overview",
+  "title": "__EXTENSION_NAME__",
+  "queries": {
+    "overview": {
+      "action": "__EXTENSION_ID__.overview.query",
+      "input": {
+        "scope": { "$path": "context.scope", "fallback": "default" }
+      }
+    }
+  },
+  "layout": {
+    "type": "stack",
+    "children": [
+      {
+        "type": "metric-grid",
+        "columns": { "default": 3 },
+        "items": [
+          {
+            "label": "Active items",
+            "value": { "$path": "query.overview.activeCount", "fallback": 0, "format": "number" }
+          },
+          {
+            "label": "Total value",
+            "value": { "$path": "query.overview.totalValue", "fallback": 0, "format": "currency:CNY" }
+          },
+          {
+            "label": "Completion",
+            "value": { "$path": "query.overview.completionRate", "fallback": 0, "format": "percent" }
+          }
+        ]
+      },
+      {
+        "type": "data-table",
+        "title": "Items requiring attention",
+        "data": { "$path": "query.overview.items", "fallback": [] },
+        "rowKey": "id",
+        "columns": [
+          { "key": "name", "label": "Item" },
+          { "key": "owner", "label": "Owner" },
+          { "key": "status", "label": "Status", "render": "status" }
+        ],
+        "rowActions": [
+          {
+            "id": "approve-item",
+            "label": "Approve",
+            "action": "__EXTENSION_ID__.item.approve",
+            "when": {
+              "value": { "$row": "status" },
+              "equals": "pending"
+            },
+            "input": {
+              "itemId": { "$row": "id" },
+              "revision": { "$row": "revision" }
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

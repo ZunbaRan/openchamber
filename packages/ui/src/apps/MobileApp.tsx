@@ -82,6 +82,7 @@ const MOBILE_SETTINGS_PAGES = [
   'magic-prompts',
   'behavior',
   'mcp',
+  'interactive-ui.extensions',
   'providers',
   'usage',
   'voice',

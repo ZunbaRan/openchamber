@@ -54,6 +54,8 @@ import { areRenderRelevantPartsEqual } from '../renderCompare';
 import { useI18n } from '@/lib/i18n';
 import { getDiffPatchEntries, getPatchText, type DiffPatchEntry } from './toolDiffUtils';
 import { isEmbeddedSessionChat } from '@/components/layout/contextPanelEmbeddedChat';
+import { parseInteractiveResultEnvelope } from '@/lib/interactive-ui/result';
+import { InteractiveUIView } from '@/components/interactive-ui/InteractiveUIView';
 
 const TOOL_ROW_TEXT_CLASS = '!text-[length:var(--text-meta)] !leading-5 sm:!leading-6 tracking-normal';
 const TOOL_ROW_TITLE_CLASS = cn('typography-meta font-medium', TOOL_ROW_TEXT_CLASS);
@@ -1492,6 +1494,7 @@ interface ToolExpandedContentProps {
     state: ToolStateUnion;
     currentDirectory: string;
     isExpanded: boolean;
+    isMobile: boolean;
     onShowPopup?: (content: ToolPopupContent) => void;
 }
 
@@ -1500,6 +1503,7 @@ const ToolExpandedContent: React.FC<ToolExpandedContentProps> = React.memo(({
     state,
     currentDirectory,
     isExpanded,
+    isMobile,
     onShowPopup,
 }) => {
     const { t } = useI18n();
@@ -1512,6 +1516,10 @@ const ToolExpandedContent: React.FC<ToolExpandedContentProps> = React.memo(({
     const rawOutput = stateWithData.output;
     const hasStringOutput = typeof rawOutput === 'string' && rawOutput.length > 0;
     const outputString = typeof rawOutput === 'string' ? rawOutput : '';
+    const interactiveEnvelope = React.useMemo(
+        () => parseInteractiveResultEnvelope(outputString),
+        [outputString],
+    );
 
     const fileDiff = isRecord(metadata?.filediff) ? metadata.filediff : undefined;
     const diffContent = getPatchText((metadata as { patch?: unknown } | undefined)?.patch)
@@ -1589,6 +1597,31 @@ const ToolExpandedContent: React.FC<ToolExpandedContentProps> = React.memo(({
     );
 
     const renderResultContent = () => {
+        if (state.status === 'completed' && interactiveEnvelope) {
+            const fallback = renderScrollableBlock(
+                <ToolScrollableTextOutput
+                    output={outputString}
+                    part={part}
+                    metadata={metadata}
+                    input={input}
+                />,
+                { className: 'p-1' },
+            );
+            return (
+                <InteractiveUIView
+                    envelope={interactiveEnvelope}
+                    tool={{
+                        id: part.id,
+                        name: part.tool,
+                        input,
+                        output: outputString,
+                    }}
+                    fallback={fallback}
+                    isMobile={isMobile}
+                />
+            );
+        }
+
         const getEntryAbsolutePath = (entry: DiffPatchEntry) => (
             entry.title.startsWith('/') ? entry.title : `${currentDirectory}/${entry.title}`.replace(/\/+/g, '/')
         );
@@ -2078,6 +2111,20 @@ const ToolPartContent: React.FC<ToolPartProps> = ({
     const taskOutputString = React.useMemo(() => {
         return typeof stateWithData.output === 'string' ? stateWithData.output : undefined;
     }, [stateWithData.output]);
+    const interactiveResult = React.useMemo(
+        () => isFinalized && !isError && taskOutputString
+            ? parseInteractiveResultEnvelope(taskOutputString)
+            : null,
+        [isError, isFinalized, taskOutputString],
+    );
+    const autoExpandedInteractivePartRef = React.useRef<string | null>(null);
+
+    React.useEffect(() => {
+        if (!interactiveResult || isTaskTool || isExpanded) return;
+        if (autoExpandedInteractivePartRef.current === part.id) return;
+        autoExpandedInteractivePartRef.current = part.id;
+        onToggle(part.id);
+    }, [interactiveResult, isExpanded, isTaskTool, onToggle, part.id]);
 
     const parsedTaskMetadata = React.useMemo(() => {
         return parseTaskMetadataBlock(taskOutputString);
@@ -2464,6 +2511,7 @@ const ToolPartContent: React.FC<ToolPartProps> = ({
                                 state={state}
                                 currentDirectory={currentDirectory}
                                 isExpanded={isExpanded}
+                                isMobile={isMobile}
                                 onShowPopup={onShowPopup}
                             />
                         </div>

@@ -1,0 +1,187 @@
+import type React from 'react';
+
+export const INTERACTIVE_RESULT_SCHEMA = 'openchamber://interactive-result/v1' as const;
+export const DECLARATIVE_VIEW_SCHEMA = 'openchamber://declarative-view/v1' as const;
+
+export type InteractiveDisplayMode = 'inline' | 'workspace' | 'fullscreen';
+export type InteractiveResultMode = 'snapshot' | 'live';
+
+export interface InteractiveDataRef {
+  connector: string;
+  resource: string;
+  revision?: string;
+}
+
+export interface InteractiveResultEnvelope {
+  $schema: typeof INTERACTIVE_RESULT_SCHEMA;
+  view: string;
+  schemaVersion: 1;
+  mode: InteractiveResultMode;
+  summary?: string;
+  context?: unknown;
+  data?: unknown;
+  dataRef?: InteractiveDataRef;
+  updatedAt?: string;
+}
+
+export interface InteractiveViewDescriptor {
+  extension: {
+    id: string;
+    name: string;
+    version: string;
+  };
+  view: {
+    id: string;
+    runtime: 'declarative' | 'native';
+    displayModes: InteractiveDisplayMode[];
+  };
+  declarative?: DeclarativeViewDefinition;
+  native?: {
+    assetPath: string;
+    exportName: string;
+    integrity: string;
+  };
+}
+
+export interface InteractiveToolContext {
+  id: string;
+  name: string;
+  input?: unknown;
+  output?: unknown;
+  error?: string;
+}
+
+export interface InteractiveActionRequest {
+  extensionId: string;
+  viewId: string;
+  instanceId: string;
+  action: string;
+  input: unknown;
+  tool?: Pick<InteractiveToolContext, 'id' | 'name'>;
+  confirmed?: boolean;
+}
+
+export interface InteractiveConfirmation {
+  title?: string;
+  description?: string;
+}
+
+export interface InteractiveActionErrorPayload {
+  error?: string;
+  code?: string;
+  confirmationRequired?: boolean;
+  confirmation?: InteractiveConfirmation;
+}
+
+export interface InteractiveBusinessHost {
+  query<TOutput = unknown>(action: string, input: unknown): Promise<TOutput>;
+  execute<TOutput = unknown>(action: string, input: unknown): Promise<TOutput>;
+}
+
+export interface InteractiveViewHost {
+  apiVersion: 1;
+  business: InteractiveBusinessHost;
+  dialog: {
+    confirm(options: InteractiveConfirmation): Promise<boolean>;
+  };
+  notifications: {
+    show(input: { message: string; tone?: 'success' | 'error' | 'info' }): void;
+  };
+  context: {
+    runtime: 'web' | 'desktop' | 'vscode';
+    locale: string;
+  };
+}
+
+export interface NativeViewProps {
+  instanceId: string;
+  extensionId: string;
+  viewId: string;
+  status: 'completed';
+  context: unknown;
+  snapshot?: unknown;
+  dataRef?: InteractiveDataRef;
+  tool: InteractiveToolContext;
+  display: {
+    mode: InteractiveDisplayMode;
+    mobile: boolean;
+  };
+  host: InteractiveViewHost;
+}
+
+export type NativeViewComponent = React.ComponentType<NativeViewProps>;
+
+export interface NativeActivationHost {
+  apiVersion: 1;
+  react: typeof React;
+  ui: {
+    Button: React.ComponentType<Record<string, unknown>>;
+  };
+  views: {
+    register(definition: {
+      id: string;
+      component: NativeViewComponent;
+      displayModes?: InteractiveDisplayMode[];
+    }): () => void;
+  };
+}
+
+export interface InteractiveNativeExtension {
+  id: string;
+  apiVersion: 1;
+  activate(host: NativeActivationHost): void | (() => void);
+}
+
+export interface DeclarativeBinding {
+  $path?: string;
+  $row?: string;
+  fallback?: unknown;
+  format?: string;
+}
+
+export interface DeclarativeQueryDefinition {
+  action: string;
+  input?: unknown;
+}
+
+export interface DeclarativeActionDefinition {
+  id?: string;
+  label: string;
+  action: string;
+  input?: unknown;
+  confirm?: InteractiveConfirmation;
+  when?: {
+    value: unknown;
+    equals?: unknown;
+  };
+}
+
+export interface DeclarativeViewNode {
+  type: string;
+  title?: string;
+  label?: string;
+  value?: unknown;
+  data?: unknown;
+  items?: unknown[];
+  columns?: unknown;
+  children?: DeclarativeViewNode[];
+  rowKey?: string;
+  rowActions?: DeclarativeActionDefinition[];
+  [key: string]: unknown;
+}
+
+export interface DeclarativeViewDefinition {
+  $schema: typeof DECLARATIVE_VIEW_SCHEMA;
+  id: string;
+  title?: string;
+  queries?: Record<string, DeclarativeQueryDefinition>;
+  layout: DeclarativeViewNode;
+}
+
+export interface DeclarativeBindingScope {
+  data?: unknown;
+  context?: unknown;
+  query?: Record<string, unknown>;
+  row?: unknown;
+  host?: Record<string, unknown>;
+}

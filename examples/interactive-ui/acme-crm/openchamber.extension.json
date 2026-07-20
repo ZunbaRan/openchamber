@@ -1,0 +1,61 @@
+{
+  "$schema": "openchamber://extension/v1",
+  "id": "com.openchamber.demo.crm",
+  "name": "Acme Enterprise CRM",
+  "version": "1.0.0",
+  "publisher": "OpenChamber",
+  "connectors": [
+    {
+      "id": "crm-api",
+      "type": "http",
+      "baseUrl": "${OCIX_DEMO_API_URL}",
+      "auth": {
+        "type": "env-bearer",
+        "env": "OCIX_DEMO_TOKEN"
+      }
+    }
+  ],
+  "views": [
+    {
+      "id": "com.openchamber.demo.crm.dashboard",
+      "runtime": "native",
+      "entry": "dist/ui.mjs",
+      "export": "extension",
+      "tools": ["crm_open_dashboard"],
+      "displayModes": ["inline", "workspace", "fullscreen"]
+    }
+  ],
+  "actions": [
+    {
+      "id": "crm.dashboard.query",
+      "connector": "crm-api",
+      "risk": "read",
+      "permission": "allow",
+      "request": {
+        "method": "POST",
+        "path": "/crm/dashboard"
+      }
+    },
+    {
+      "id": "crm.opportunity.advance",
+      "connector": "crm-api",
+      "risk": "write",
+      "permission": "ask",
+      "request": {
+        "method": "POST",
+        "path": "/crm/opportunities/advance"
+      },
+      "confirmation": {
+        "title": "推进商机阶段？",
+        "description": "该操作会更新企业 CRM 中的商机状态。"
+      }
+    }
+  ],
+  "permissions": {
+    "network": ["${OCIX_DEMO_API_URL}"]
+  },
+  "trust": {
+    "mode": "native-code",
+    "signature": "development"
+  }
+}

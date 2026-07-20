@@ -43,6 +43,9 @@ import { scanSkillsRepository } from '../skills-catalog/scan.js';
 import { installSkillsFromRepository } from '../skills-catalog/install.js';
 import { scanClawdHubPage } from '../skills-catalog/clawdhub/scan.js';
 import { installSkillsFromClawdHub } from '../skills-catalog/clawdhub/install.js';
+import { createInteractiveUIRuntime } from '../interactive-ui/runtime.js';
+import { registerInteractiveUIRoutes } from '../interactive-ui/routes.js';
+import { createInteractiveUIExtensionManager } from '../interactive-ui/manager.js';
 
 export const createFeatureRoutesRuntime = (dependencies) => {
   const {
@@ -100,7 +103,41 @@ export const createFeatureRoutesRuntime = (dependencies) => {
       getOpenChamberEventClients,
       writeSseEvent,
       permissionAutoAcceptRuntime,
+      express,
+      processLike,
     } = routeDependencies;
+
+    const configuredInteractiveUIRoots = typeof processLike.env.OPENCHAMBER_INTERACTIVE_UI_EXTENSIONS_DIR === 'string'
+      ? processLike.env.OPENCHAMBER_INTERACTIVE_UI_EXTENSIONS_DIR
+          .split(path.delimiter)
+          .map((entry) => entry.trim())
+          .filter(Boolean)
+      : [];
+    const interactiveUIExtensionManager = createInteractiveUIExtensionManager({
+      dataDirectory: openchamberDataDir,
+      opencodeConfigDirectory: path.join(os.homedir(), '.config', 'opencode'),
+      fsImpl: fsPromises,
+      pathImpl: path,
+      cryptoImpl: crypto,
+      environment: processLike.env,
+      logger: console,
+      refreshOpenCode: () => refreshOpenCodeAfterConfigChange('Interactive UI extension Agent Runtime changed'),
+    });
+    registerInteractiveUIRoutes(app, {
+      express,
+      manager: interactiveUIExtensionManager,
+      runtime: createInteractiveUIRuntime({
+        fsPromises,
+        path,
+        crypto,
+        extensionRoots: async () => [
+          ...await interactiveUIExtensionManager.getEnabledExtensionRoots(),
+          ...configuredInteractiveUIRoots,
+        ],
+        environment: processLike.env,
+        logger: console,
+      }),
+    });
 
     registerSettingsUtilityRoutes(app, {
       readCustomThemesFromDisk,

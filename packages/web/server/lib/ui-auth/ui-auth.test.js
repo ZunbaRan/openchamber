@@ -198,6 +198,19 @@ describe('ui auth client credential seam', () => {
     });
     expect(absoluteServeCalled).toBe(true);
 
+    const nativeExtensionReq = {
+      method: 'GET',
+      path: '/api/interactive-ui/extensions/com.acme.sales/native/com.acme.sales.dashboard',
+      url: `/api/interactive-ui/extensions/com.acme.sales/native/com.acme.sales.dashboard?oc_url_token=${encodeURIComponent(urlToken)}`,
+      headers: {},
+    };
+    const nativeExtensionRes = createResponse();
+    let nativeExtensionCalled = false;
+    await auth.requireAuth(nativeExtensionReq, nativeExtensionRes, () => {
+      nativeExtensionCalled = true;
+    });
+    expect(nativeExtensionCalled).toBe(true);
+
     const mountedServeReq = {
       method: 'GET',
       baseUrl: '/api',

@@ -1,0 +1,252 @@
+export interface InstalledVersion {
+  version: string;
+  installedAt: string;
+  packageHash: string;
+  source: { type: string; marketplaceId?: string };
+  publisher: { id: string; name: string; keyId: string; fingerprint: string };
+  agentRuntime: AgentRuntimeSummary;
+}
+
+export interface AgentRuntimeSummary {
+  tools: Array<{ name: string; entry: string }>;
+  skills: Array<{ name: string; entry: string; files: string[] }>;
+  unresolvedViewTools: string[];
+}
+
+export interface PackageInspection {
+  extension: { id: string; name: string; version: string };
+  publisher: { id: string; name: string; keyId: string; fingerprint: string; trusted: boolean };
+  permissions: { network: string[]; nativeCode: boolean };
+  agentRuntime: AgentRuntimeSummary;
+}
+
+export interface MarketplaceInspection {
+  id: string;
+  name: string;
+  keyId: string;
+  catalogUrl: string;
+  fingerprint: string;
+  extensionCount: number;
+}
+
+export interface InstalledExtension {
+  id: string;
+  name: string;
+  enabled: boolean;
+  activeVersion: string;
+  activationHistory: string[];
+  versions: Record<string, InstalledVersion>;
+}
+
+export interface TrustedPublisher {
+  id: string;
+  name: string;
+  keys: Array<{ keyId: string; fingerprint: string; source: string; trustedAt: string }>;
+}
+
+export interface Marketplace {
+  id: string;
+  name: string;
+  keyId: string;
+  catalogUrl: string;
+  fingerprint: string;
+}
+
+export interface CatalogEntry {
+  id: string;
+  name: string;
+  version: string;
+  publisher: { id: string; name: string; keyId: string };
+}
+
+export interface ManagerSnapshot {
+  extensions: InstalledExtension[];
+  publishers: TrustedPublisher[];
+  marketplaces: Marketplace[];
+}
+
+export const EMPTY_MANAGER_SNAPSHOT: ManagerSnapshot = { extensions: [], publishers: [], marketplaces: [] };
+
+const isRecord = (value: unknown): value is Record<string, unknown> => (
+  typeof value === 'object' && value !== null && !Array.isArray(value)
+);
+
+const stringValue = (value: unknown, fallback = ''): string => typeof value === 'string' ? value : fallback;
+
+const normalizeAgentRuntime = (value: unknown): AgentRuntimeSummary => {
+  const runtime = isRecord(value) ? value : {};
+  return {
+    tools: Array.isArray(runtime.tools) ? runtime.tools.flatMap((tool) => (
+      isRecord(tool) && typeof tool.name === 'string' && typeof tool.entry === 'string'
+        ? [{ name: tool.name, entry: tool.entry }]
+        : []
+    )) : [],
+    skills: Array.isArray(runtime.skills) ? runtime.skills.flatMap((skill) => (
+      isRecord(skill) && typeof skill.name === 'string' && typeof skill.entry === 'string'
+        ? [{
+            name: skill.name,
+            entry: skill.entry,
+            files: Array.isArray(skill.files) ? skill.files.filter((file): file is string => typeof file === 'string') : [],
+          }]
+        : []
+    )) : [],
+    unresolvedViewTools: Array.isArray(runtime.unresolvedViewTools)
+      ? runtime.unresolvedViewTools.filter((name): name is string => typeof name === 'string')
+      : [],
+  };
+};
+
+const normalizeVersion = (value: unknown, fallbackVersion: string): InstalledVersion | null => {
+  if (!isRecord(value)) return null;
+  const version = stringValue(value.version, fallbackVersion);
+  const publisher = isRecord(value.publisher) ? value.publisher : {};
+  const source = isRecord(value.source) ? value.source : {};
+  if (!version) return null;
+  return {
+    version,
+    installedAt: stringValue(value.installedAt),
+    packageHash: stringValue(value.packageHash),
+    source: {
+      type: stringValue(source.type, 'unknown'),
+      ...(typeof source.marketplaceId === 'string' ? { marketplaceId: source.marketplaceId } : {}),
+    },
+    publisher: {
+      id: stringValue(publisher.id),
+      name: stringValue(publisher.name),
+      keyId: stringValue(publisher.keyId),
+      fingerprint: stringValue(publisher.fingerprint),
+    },
+    agentRuntime: normalizeAgentRuntime(value.agentRuntime),
+  };
+};
+
+export const normalizePackageInspection = (value: unknown): PackageInspection | null => {
+  if (!isRecord(value) || !isRecord(value.extension) || !isRecord(value.publisher)) return null;
+  const id = stringValue(value.extension.id);
+  const version = stringValue(value.extension.version);
+  const publisherId = stringValue(value.publisher.id);
+  const fingerprint = stringValue(value.publisher.fingerprint);
+  if (!id || !version || !publisherId || !fingerprint) return null;
+  const permissions = isRecord(value.permissions) ? value.permissions : {};
+  return {
+    extension: { id, name: stringValue(value.extension.name, id), version },
+    publisher: {
+      id: publisherId,
+      name: stringValue(value.publisher.name, publisherId),
+      keyId: stringValue(value.publisher.keyId),
+      fingerprint,
+      trusted: value.publisher.trusted === true,
+    },
+    permissions: {
+      network: Array.isArray(permissions.network)
+        ? permissions.network.filter((entry): entry is string => typeof entry === 'string')
+        : [],
+      nativeCode: permissions.nativeCode === true,
+    },
+    agentRuntime: normalizeAgentRuntime(value.agentRuntime),
+  };
+};
+
+export const normalizeMarketplaceInspection = (value: unknown): MarketplaceInspection | null => {
+  if (!isRecord(value)) return null;
+  const id = stringValue(value.id);
+  const catalogUrl = stringValue(value.catalogUrl);
+  const fingerprint = stringValue(value.fingerprint);
+  if (!id || !catalogUrl || !fingerprint) return null;
+  return {
+    id,
+    name: stringValue(value.name, id),
+    keyId: stringValue(value.keyId),
+    catalogUrl,
+    fingerprint,
+    extensionCount: Number.isSafeInteger(value.extensionCount) ? value.extensionCount as number : 0,
+  };
+};
+
+const normalizeExtension = (value: unknown): InstalledExtension | null => {
+  if (!isRecord(value)) return null;
+  const id = stringValue(value.id);
+  const activeVersion = stringValue(value.activeVersion);
+  if (!id || !activeVersion) return null;
+  const versionsValue = isRecord(value.versions) ? value.versions : {};
+  const versions = Object.fromEntries(Object.entries(versionsValue).flatMap(([version, metadata]) => {
+    const normalized = normalizeVersion(metadata, version);
+    return normalized ? [[version, normalized]] : [];
+  }));
+  return {
+    id,
+    name: stringValue(value.name, id),
+    enabled: value.enabled !== false,
+    activeVersion,
+    activationHistory: Array.isArray(value.activationHistory)
+      ? value.activationHistory.filter((version): version is string => typeof version === 'string')
+      : [],
+    versions,
+  };
+};
+
+const normalizePublisher = (value: unknown): TrustedPublisher | null => {
+  if (!isRecord(value)) return null;
+  const id = stringValue(value.id);
+  if (!id) return null;
+  return {
+    id,
+    name: stringValue(value.name, id),
+    keys: Array.isArray(value.keys) ? value.keys.flatMap((key) => {
+      if (!isRecord(key) || typeof key.keyId !== 'string') return [];
+      return [{
+        keyId: key.keyId,
+        fingerprint: stringValue(key.fingerprint),
+        source: stringValue(key.source),
+        trustedAt: stringValue(key.trustedAt),
+      }];
+    }) : [],
+  };
+};
+
+const normalizeMarketplace = (value: unknown): Marketplace | null => {
+  if (!isRecord(value) || typeof value.id !== 'string') return null;
+  return {
+    id: value.id,
+    name: stringValue(value.name, value.id),
+    keyId: stringValue(value.keyId),
+    catalogUrl: stringValue(value.catalogUrl),
+    fingerprint: stringValue(value.fingerprint),
+  };
+};
+
+export const normalizeManagerSnapshot = (value: unknown): ManagerSnapshot => {
+  if (!isRecord(value)) return EMPTY_MANAGER_SNAPSHOT;
+  return {
+    extensions: Array.isArray(value.extensions) ? value.extensions.flatMap((extension) => {
+      const normalized = normalizeExtension(extension);
+      return normalized ? [normalized] : [];
+    }) : [],
+    publishers: Array.isArray(value.publishers) ? value.publishers.flatMap((publisher) => {
+      const normalized = normalizePublisher(publisher);
+      return normalized ? [normalized] : [];
+    }) : [],
+    marketplaces: Array.isArray(value.marketplaces) ? value.marketplaces.flatMap((marketplace) => {
+      const normalized = normalizeMarketplace(marketplace);
+      return normalized ? [normalized] : [];
+    }) : [],
+  };
+};
+
+export const normalizeCatalogEntries = (value: unknown): CatalogEntry[] => {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((entry) => {
+    if (!isRecord(entry) || typeof entry.id !== 'string' || typeof entry.name !== 'string' || typeof entry.version !== 'string') return [];
+    const publisher = isRecord(entry.publisher) ? entry.publisher : {};
+    return [{
+      id: entry.id,
+      name: entry.name,
+      version: entry.version,
+      publisher: {
+        id: stringValue(publisher.id),
+        name: stringValue(publisher.name),
+        keyId: stringValue(publisher.keyId),
+      },
+    }];
+  });
+};

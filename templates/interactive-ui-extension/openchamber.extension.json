@@ -1,0 +1,68 @@
+{
+  "$schema": "openchamber://extension/v1",
+  "id": "__EXTENSION_ID__",
+  "name": "__EXTENSION_NAME__",
+  "version": "1.0.0",
+  "publisher": "Your Organization",
+  "connectors": [
+    {
+      "id": "business-api",
+      "type": "http",
+      "baseUrl": "${OCIX_BUSINESS_API_URL}",
+      "auth": {
+        "type": "env-bearer",
+        "env": "OCIX_BUSINESS_API_TOKEN"
+      }
+    }
+  ],
+  "views": [
+    {
+      "id": "__EXTENSION_ID__.overview",
+      "runtime": "declarative",
+      "entry": "ui/declarative/overview.view.json",
+      "tools": ["__TOOL_PREFIX___open_overview"],
+      "displayModes": ["inline", "workspace"]
+    },
+    {
+      "id": "__EXTENSION_ID__.workspace",
+      "runtime": "native",
+      "entry": "dist/ui.mjs",
+      "export": "extension",
+      "tools": ["__TOOL_PREFIX___open_workspace"],
+      "displayModes": ["inline", "workspace", "fullscreen"]
+    }
+  ],
+  "actions": [
+    {
+      "id": "__EXTENSION_ID__.overview.query",
+      "connector": "business-api",
+      "risk": "read",
+      "permission": "allow",
+      "request": {
+        "method": "POST",
+        "path": "/interactive-ui/overview"
+      }
+    },
+    {
+      "id": "__EXTENSION_ID__.item.approve",
+      "connector": "business-api",
+      "risk": "write",
+      "permission": "ask",
+      "request": {
+        "method": "POST",
+        "path": "/interactive-ui/items/approve"
+      },
+      "confirmation": {
+        "title": "Confirm this business update?",
+        "description": "This action writes to the connected enterprise system."
+      }
+    }
+  ],
+  "permissions": {
+    "network": ["${OCIX_BUSINESS_API_URL}"]
+  },
+  "trust": {
+    "mode": "native-code",
+    "signature": "development"
+  }
+}
