@@ -104,60 +104,114 @@ const addDesiredAsset = (desired, relativeTarget, asset) => {
   desired.set(relativeTarget, asset);
 };
 
-const buildDesiredAssets = async ({ state, versionsDirectory, fsImpl, pathImpl, cryptoImpl }) => {
+const resolveRuntimeSource = (pathImpl, rootDirectory, entry) => {
+  const normalizedEntry = normalizeTarget(pathImpl, entry);
+  const root = pathImpl.resolve(rootDirectory);
+  const source = pathImpl.resolve(root, ...normalizedEntry.split('/'));
+  const relative = pathImpl.relative(root, source);
+  if (!relative || relative.startsWith('..') || pathImpl.isAbsolute(relative)) {
+    throw new InteractiveUIAgentRuntimeError('Agent Runtime source escaped its extension directory', 'invalid_agent_runtime_target', 500);
+  }
+  return source;
+};
+
+const addRuntimeAssets = async ({
+  desired,
+  extensionId,
+  version,
+  extensionDirectory,
+  agentRuntime,
+  fsImpl,
+  pathImpl,
+  cryptoImpl,
+}) => {
+  if (typeof extensionId !== 'string' || !extensionId || typeof version !== 'string' || !version
+    || typeof extensionDirectory !== 'string' || !extensionDirectory || !isRecord(agentRuntime)) {
+    throw new InteractiveUIAgentRuntimeError('Agent Runtime source descriptor is invalid', 'agent_runtime_source_invalid', 500);
+  }
+
+  for (const tool of Array.isArray(agentRuntime.tools) ? agentRuntime.tools : []) {
+    if (!isRecord(tool) || typeof tool.name !== 'string' || !tool.name || typeof tool.entry !== 'string') {
+      throw new InteractiveUIAgentRuntimeError('Agent Tool source descriptor is invalid', 'agent_runtime_source_invalid', 500);
+    }
+    const source = resolveRuntimeSource(pathImpl, extensionDirectory, tool.entry);
+    const sourceStat = await statOrNull(fsImpl, source);
+    if (!sourceStat?.isFile()) {
+      throw new InteractiveUIAgentRuntimeError(`Installed Agent Tool is missing: ${tool.name}`, 'agent_runtime_source_missing', 500);
+    }
+    const extensionName = pathImpl.extname(tool.entry);
+    const relativeTarget = normalizeTarget(pathImpl, `tools/${tool.name}${extensionName}`);
+    const content = await fsImpl.readFile(source);
+    addDesiredAsset(desired, relativeTarget, {
+      extensionId,
+      version,
+      kind: 'tool',
+      name: tool.name,
+      content,
+      sha256: hash(cryptoImpl, content),
+    });
+  }
+
+  for (const skill of Array.isArray(agentRuntime.skills) ? agentRuntime.skills : []) {
+    if (!isRecord(skill) || typeof skill.name !== 'string' || !skill.name) {
+      throw new InteractiveUIAgentRuntimeError('Agent Skill source descriptor is invalid', 'agent_runtime_source_invalid', 500);
+    }
+    const prefix = `agent-runtime/skills/${skill.name}/`;
+    for (const entry of Array.isArray(skill.files) ? skill.files : []) {
+      if (typeof entry !== 'string' || !entry.startsWith(prefix)) {
+        throw new InteractiveUIAgentRuntimeError(`Installed Agent Skill path is invalid: ${entry}`, 'invalid_agent_runtime_target', 500);
+      }
+      const skillRelative = entry.slice(prefix.length);
+      const source = resolveRuntimeSource(pathImpl, extensionDirectory, entry);
+      const content = await fsImpl.readFile(source).catch((error) => {
+        if (error?.code === 'ENOENT') {
+          throw new InteractiveUIAgentRuntimeError(`Installed Agent Skill file is missing: ${entry}`, 'agent_runtime_source_missing', 500);
+        }
+        throw error;
+      });
+      const relativeTarget = normalizeTarget(pathImpl, `skills/${skill.name}/${skillRelative}`);
+      addDesiredAsset(desired, relativeTarget, {
+        extensionId,
+        version,
+        kind: 'skill',
+        name: skill.name,
+        content,
+        sha256: hash(cryptoImpl, content),
+      });
+    }
+  }
+};
+
+const buildDesiredAssets = async ({ state, versionsDirectory, builtInRuntime, fsImpl, pathImpl, cryptoImpl }) => {
   const desired = new Map();
+  if (builtInRuntime !== null && builtInRuntime !== undefined) {
+    await addRuntimeAssets({
+      desired,
+      extensionId: builtInRuntime.extensionId,
+      version: builtInRuntime.version,
+      extensionDirectory: builtInRuntime.rootDirectory,
+      agentRuntime: builtInRuntime.agentRuntime,
+      fsImpl,
+      pathImpl,
+      cryptoImpl,
+    });
+  }
   for (const extension of Object.values(state.extensions ?? {})) {
     if (!extension?.enabled) continue;
     const version = extension.activeVersion;
     const metadata = extension.versions?.[version];
     const agentRuntime = metadata?.agentRuntime;
     if (!isRecord(agentRuntime)) continue;
-    const extensionDirectory = pathImpl.join(versionsDirectory, extension.id, version);
-
-    for (const tool of Array.isArray(agentRuntime.tools) ? agentRuntime.tools : []) {
-      const source = pathImpl.join(extensionDirectory, ...tool.entry.split('/'));
-      const sourceStat = await statOrNull(fsImpl, source);
-      if (!sourceStat?.isFile()) {
-        throw new InteractiveUIAgentRuntimeError(`Installed Agent Tool is missing: ${tool.name}`, 'agent_runtime_source_missing', 500);
-      }
-      const extensionName = pathImpl.extname(tool.entry);
-      const relativeTarget = normalizeTarget(pathImpl, `tools/${tool.name}${extensionName}`);
-      const content = await fsImpl.readFile(source);
-      addDesiredAsset(desired, relativeTarget, {
-        extensionId: extension.id,
-        version,
-        kind: 'tool',
-        name: tool.name,
-        content,
-        sha256: hash(cryptoImpl, content),
-      });
-    }
-
-    for (const skill of Array.isArray(agentRuntime.skills) ? agentRuntime.skills : []) {
-      const prefix = `agent-runtime/skills/${skill.name}/`;
-      for (const entry of Array.isArray(skill.files) ? skill.files : []) {
-        if (!entry.startsWith(prefix)) {
-          throw new InteractiveUIAgentRuntimeError(`Installed Agent Skill path is invalid: ${entry}`, 'invalid_agent_runtime_target', 500);
-        }
-        const skillRelative = entry.slice(prefix.length);
-        const source = pathImpl.join(extensionDirectory, ...entry.split('/'));
-        const content = await fsImpl.readFile(source).catch((error) => {
-          if (error?.code === 'ENOENT') {
-            throw new InteractiveUIAgentRuntimeError(`Installed Agent Skill file is missing: ${entry}`, 'agent_runtime_source_missing', 500);
-          }
-          throw error;
-        });
-        const relativeTarget = normalizeTarget(pathImpl, `skills/${skill.name}/${skillRelative}`);
-        addDesiredAsset(desired, relativeTarget, {
-          extensionId: extension.id,
-          version,
-          kind: 'skill',
-          name: skill.name,
-          content,
-          sha256: hash(cryptoImpl, content),
-        });
-      }
-    }
+    await addRuntimeAssets({
+      desired,
+      extensionId: extension.id,
+      version,
+      extensionDirectory: pathImpl.join(versionsDirectory, extension.id, version),
+      agentRuntime,
+      fsImpl,
+      pathImpl,
+      cryptoImpl,
+    });
   }
   return desired;
 };
@@ -210,6 +264,9 @@ const validateExistingTargets = async ({ desired, previousAssets, configDirector
       const relativeCandidate = `tools/${name}${extension}`;
       const candidate = pathImpl.join(configDirectory, 'tools', `${name}${extension}`);
       if (await statOrNull(fsImpl, candidate) && !previousAssets[relativeCandidate]) {
+        const desiredAsset = desired.get(relativeCandidate);
+        const existingContent = desiredAsset ? await readFileOrNull(fsImpl, candidate) : null;
+        if (desiredAsset && existingContent && hash(cryptoImpl, existingContent) === desiredAsset.sha256) continue;
         throw new InteractiveUIAgentRuntimeError(
           `OpenCode Tool ${name} already exists and is not managed by OCIX`,
           'agent_tool_conflict',
@@ -230,6 +287,11 @@ const validateExistingTargets = async ({ desired, previousAssets, configDirector
     for (const file of existingFiles) {
       const relativeCandidate = `skills/${name}/${file}`;
       if (!previousAssets[relativeCandidate]) {
+        const desiredAsset = desired.get(relativeCandidate);
+        const existingContent = desiredAsset
+          ? await readFileOrNull(fsImpl, pathImpl.join(configDirectory, ...relativeCandidate.split('/')))
+          : null;
+        if (desiredAsset && existingContent && hash(cryptoImpl, existingContent) === desiredAsset.sha256) continue;
         throw new InteractiveUIAgentRuntimeError(
           `OpenCode Skill ${name} already exists and is not managed by OCIX`,
           'agent_skill_conflict',
@@ -256,6 +318,7 @@ export const reconcileOpenCodeAgentRuntime = async ({
   previousAssets = {},
   configDirectory,
   versionsDirectory,
+  builtInRuntime = null,
   fsImpl = fsPromises,
   pathImpl = nodePath,
   cryptoImpl = crypto,
@@ -265,7 +328,7 @@ export const reconcileOpenCodeAgentRuntime = async ({
   }
   const resolvedConfigDirectory = pathImpl.resolve(configDirectory);
   const normalizedPreviousAssets = normalizePreviousAssets(pathImpl, previousAssets);
-  const desired = await buildDesiredAssets({ state, versionsDirectory, fsImpl, pathImpl, cryptoImpl });
+  const desired = await buildDesiredAssets({ state, versionsDirectory, builtInRuntime, fsImpl, pathImpl, cryptoImpl });
   await validateExistingTargets({ desired, previousAssets: normalizedPreviousAssets, configDirectory: resolvedConfigDirectory, fsImpl, pathImpl, cryptoImpl });
 
   const allRelativeTargets = new Set([...Object.keys(normalizedPreviousAssets), ...desired.keys()]);

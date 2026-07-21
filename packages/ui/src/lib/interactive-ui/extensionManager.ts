@@ -17,6 +17,11 @@ export interface PackageInspection {
   extension: { id: string; name: string; version: string };
   publisher: { id: string; name: string; keyId: string; fingerprint: string; trusted: boolean };
   permissions: { network: string[]; nativeCode: boolean };
+  agentRouting: {
+    domain: string;
+    intents: string[];
+    dataAuthority: string;
+  } | null;
   agentRuntime: AgentRuntimeSummary;
 }
 
@@ -155,6 +160,7 @@ export const normalizePackageInspection = (value: unknown): PackageInspection | 
   const fingerprint = stringValue(value.publisher.fingerprint);
   if (!id || !version || !publisherId || !fingerprint) return null;
   const permissions = isRecord(value.permissions) ? value.permissions : {};
+  const routing = isRecord(value.agentRouting) ? value.agentRouting : null;
   return {
     extension: { id, name: stringValue(value.extension.name, id), version },
     publisher: {
@@ -170,6 +176,15 @@ export const normalizePackageInspection = (value: unknown): PackageInspection | 
         : [],
       nativeCode: permissions.nativeCode === true,
     },
+    agentRouting: routing && typeof routing.domain === 'string' && typeof routing.dataAuthority === 'string'
+      ? {
+          domain: routing.domain,
+          intents: Array.isArray(routing.intents)
+            ? routing.intents.filter((intent): intent is string => typeof intent === 'string')
+            : [],
+          dataAuthority: routing.dataAuthority,
+        }
+      : null,
     agentRuntime: normalizeAgentRuntime(value.agentRuntime),
   };
 };

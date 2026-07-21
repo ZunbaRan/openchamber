@@ -30,6 +30,11 @@ import { runtimeFetch } from "@/lib/runtime-fetch";
 import { getRuntimeKey } from "@/lib/runtime-switch";
 import { getRegisteredRuntimeAPIs } from "@/contexts/runtimeAPIRegistry";
 import { markStartupTrace } from "@/lib/startupTrace";
+import { getInteractiveUIRoutingContext } from "@/lib/interactive-ui/routing";
+import {
+  recordRoutingDispatch,
+  recordRoutingDispatchFailure,
+} from "@/lib/interactive-ui/routingInspector";
 import {
   assertProviderCircuitClosed,
   recordProviderSuccess,
@@ -855,6 +860,17 @@ class OpencodeService {
     let response: Response;
 
     try {
+      const interactiveUIRouting = await getInteractiveUIRoutingContext();
+      recordRoutingDispatch({
+        sessionId: params.id,
+        messageId,
+        context: interactiveUIRouting,
+        text: [
+          params.prefaceText,
+          params.text,
+          ...(params.additionalParts?.map((part) => part.text) ?? []),
+        ].filter((value): value is string => typeof value === 'string').join('\n'),
+      });
       const result = await this.client.session.promptAsync({
         sessionID: params.id,
         ...(requestDirectory ? { directory: requestDirectory } : {}),
@@ -867,6 +883,7 @@ class OpencodeService {
         messageID: messageId,
         ...(params.delivery ? { delivery: params.delivery } : {}),
         ...(params.format ? { format: params.format } : {}),
+        ...(interactiveUIRouting?.system ? { system: interactiveUIRouting.system } : {}),
         parts,
       });
       if (result.response instanceof Response) {
@@ -889,6 +906,7 @@ class OpencodeService {
       // tunnel the POST may already be running server-side even though the
       // client lost the response.
       recordProviderError(params.providerID);
+      recordRoutingDispatchFailure(params.id, messageId);
       throw error;
     }
 
@@ -907,6 +925,7 @@ class OpencodeService {
     const error = new Error(`Failed to send message (${response.status})${suffix}`) as Error & { status?: number };
     error.status = response.status;
     recordProviderError(params.providerID, response.status);
+    recordRoutingDispatchFailure(params.id, messageId);
     throw error;
   }
 

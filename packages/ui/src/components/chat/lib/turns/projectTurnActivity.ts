@@ -1,14 +1,10 @@
-import { ACTIVITY_STANDALONE_TOOL_NAMES } from './constants';
+import { isStandaloneTool } from '../../message/parts/toolRenderUtils';
 import type {
     ChatMessageEntry,
     TurnActivityGroup,
     TurnActivityRecord,
     TurnPartRecord,
 } from './types';
-
-const isStandaloneTool = (toolName: unknown): boolean => {
-    return typeof toolName === 'string' && ACTIVITY_STANDALONE_TOOL_NAMES.has(toolName.toLowerCase());
-};
 
 const getPartEndTime = (part: unknown): number | undefined => {
     const stateEnd = (part as { state?: { time?: { end?: unknown } } }).state?.time?.end;
@@ -89,8 +85,8 @@ export const projectTurnActivity = (input: ProjectActivityInput): ProjectActivit
         });
     });
 
-    const taskMessageById = new Map<string, string>();
-    const taskOrder: string[] = [];
+    const standaloneMessageById = new Map<string, string>();
+    const standaloneOrder: string[] = [];
     const partsByAfterTool = new Map<string | null, TurnActivityRecord[]>();
     let currentAfterToolPartId: string | null = null;
 
@@ -110,12 +106,12 @@ export const projectTurnActivity = (input: ProjectActivityInput): ProjectActivit
             const toolName = isTool
                 ? (part as { tool?: unknown }).tool
                 : undefined;
-            const standaloneTool = isTool && isStandaloneTool(toolName);
+            const standaloneTool = isTool && isStandaloneTool(toolName, part);
             if (standaloneTool) {
                 const toolPartId = partId;
-                if (!taskMessageById.has(toolPartId)) {
-                    taskMessageById.set(toolPartId, message.info.id);
-                    taskOrder.push(toolPartId);
+                if (!standaloneMessageById.has(toolPartId)) {
+                    standaloneMessageById.set(toolPartId, message.info.id);
+                    standaloneOrder.push(toolPartId);
                 }
                 currentAfterToolPartId = toolPartId;
             }
@@ -191,7 +187,7 @@ export const projectTurnActivity = (input: ProjectActivityInput): ProjectActivit
         return firstWithAny;
     };
 
-    const orderedKeys: Array<string | null> = [null, ...taskOrder];
+    const orderedKeys: Array<string | null> = [null, ...standaloneOrder];
     orderedKeys.forEach((afterToolPartId) => {
         const segmentParts = partsByAfterTool.get(afterToolPartId) ?? [];
         if (segmentParts.length === 0) {
@@ -200,7 +196,7 @@ export const projectTurnActivity = (input: ProjectActivityInput): ProjectActivit
 
         const anchorMessageId = afterToolPartId === null
             ? pickStartAnchor(segmentParts)
-            : taskMessageById.get(afterToolPartId);
+            : standaloneMessageById.get(afterToolPartId);
 
         if (!anchorMessageId) {
             return;

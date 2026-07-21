@@ -1,0 +1,211 @@
+# Interactive UI / OCIX 开发踩坑手册
+
+> 适用范围：Agent Generated Declarative、Installed Declarative、Trusted Native、HTML Artifact、OCIX Agent Runtime 与 OpenCode 路由。  
+> 本文记录已经在真实开发与统一验收中出现过的问题。它用于故障预防，不替代架构规范和开发手册。
+
+## 1. 先建立正确的系统模型
+
+Interactive UI 不是一个独立组件页，而是一条跨越 Agent、Tool、Host、扩展和业务 API 的链路：
+
+```text
+用户消息
+  → OpenChamber 读取当前 Runtime capability 与已启用 OCIX routing metadata
+  → 把路由上下文交给 OpenCode / 模型
+  → 模型选择业务 Tool、interactive_ui 或 html_artifact
+  → Tool 返回严格 Result Envelope
+  → ToolPart 识别成功结果并物化 View
+  → Declarative / Trusted Native / Artifact Host 在对话流渲染
+  → 业务 View 经 Business Gateway 请求第三方 API
+  → 结果、错误、确认写入和刷新继续留在同一对话流
+```
+
+任意一段“看起来成功”都不能替代全链路完成。尤其要分别证明：
+
+- `Tool selected`：模型选择了正确 Tool；
+- `View rendered`：Host 识别并显示了有效 View；
+- `Business data loaded`：企业模块获得了真实且非空的 API 数据。
+
+## 2. 开发过程中出现过的主要陷阱
+
+### 2.1 独立演示页通过，不代表产品通过
+
+**症状**：Native 和 Declarative fixture 页面能显示，但用户在 OpenChamber 对话里看不到任何 Interactive UI。
+
+**根因**：fixture 绕过了 capability catalog、模型路由、Tool discovery、Result Envelope、ToolPart 和消息历史等真实边界。
+
+**修正原则**：独立页只用于缩短组件开发反馈；完成证据必须来自真实 OpenChamber 对话流。业务扩展还必须连接真实测试 API，fallback 空页面不算通过。
+
+### 2.2 空页面不能被包装成成功结果
+
+**症状**：模型第一次调用 `interactive_ui` 时传入了空、畸形或字符串化的 `sections`，UI 出现空白成功卡片；模型随后又调用一次 Tool 修正，形成两个主 View。
+
+**根因**：Tool 把“解析失败后得到空数组”当作合法结果，渲染层无法区分空成功与真正成功。
+
+**修正原则**：
+
+- 接受模型可能把 `sections` 作为 JSON 字符串传入，但解析后仍要做严格验证；
+- 没有有效 section 或没有受支持 widget 时必须返回 Tool error；
+- 只有 `completed` 且输出包含正确 OpenChamber Result schema 的 ToolPart 才算成功主 View；
+- 失败修正调用保留在 `toolStates`，但不能计入重复成功 View。
+
+对应回归入口是 `packages/web/server/lib/interactive-ui/builtin/agent-runtime/tools/interactive_ui.ts`、Generated sanitizer 测试和模型路由矩阵。
+
+### 2.3 一个意图产生两个主 View
+
+**症状**：CRM workspace 已成功打开后，模型又补一个 CRM overview、`interactive_ui` 或 `html_artifact`。
+
+**根因**：系统提示、Tool description、OCIX Skill 和能力目录没有共同表达“最强意图”和“成功后停止”。
+
+**修正原则**：
+
+1. 企业领域明确匹配时，已安装业务 Tool 优先于通用生成 Tool；
+2. 标准组件可表达时，`interactive_ui` 优先于 Artifact；
+3. 只有 Declarative 无法合理表达时才选择 `html_artifact`；
+4. 第一个主 View 成功后停止继续创建等价主 View；
+5. 用固定语料验证路由，不为某个模型单独修改 prompt、acceptable tools 或阈值。
+
+### 2.4 安装 UI 不等于 Agent 已发现 Tool
+
+**症状**：Extension Manager 显示扩展已安装，但对话中模型从未调用扩展 Tool。
+
+**根因**：OCIX 有 Host 和 Agent 两半。View、Native bundle 和 Gateway 属于 Host；Custom Tool 与 routing Skill 属于 OpenCode Agent Runtime。
+
+**修正原则**：一个可独立安装的 `.ocix` 应同时携带：
+
+```text
+ui/declarative 或 ui/native
+agent-runtime/tools/*.ts
+agent-runtime/skills/*/SKILL.md
+openchamber.extension.json
+```
+
+OpenChamber 安装器统一协调所有已启用扩展的 Tool/Skill，并在 OpenCode 启动前或扩展状态变化后完成发现。不再为每个扩展设置独立 `OPENCODE_CONFIG_DIR`。外部 OpenCode Server 是例外：Host 本地安装 UI，远端管理员仍需在远端部署 Agent Runtime。
+
+### 2.5 Skill 不是业务传输层
+
+**症状**：Skill 描述了 CRM 操作，但没有 Tool，或者 Agent 被要求从 Skill 直接请求 API。
+
+**根因**：混淆了“告诉模型何时选择能力”和“真正执行能力”。
+
+**修正原则**：Skill 负责路由说明；Tool 负责输入校验、返回 Envelope 和触发受治理的业务能力；Business Gateway 或独立 MCP 负责外部调用。不要把 Key、Token 或任意 HTTP 调用放进 Skill 文本。
+
+### 2.6 OpenCode 重启中的 503 不是“Tool 已消失”
+
+**症状**：安装、禁用或卸载 OCIX 后，测试很快观察到一次 `503`，误判 Tool 已移除，然后继续下一次状态变更，导致多个 managed restart 重叠。
+
+**根因**：把传输失败当成权威空清单。
+
+**修正原则**：只有一次成功返回的 Tool inventory 才能证明 Tool 存在或不存在。`502/503/504` 只表示 Runtime 暂时不可用，等待健康恢复后重新读取权威状态。
+
+### 2.7 传输错误和语义错误不能共用重试策略
+
+**症状**：模型选错 Tool 后测试自动重试直到碰巧通过，掩盖真实路由不稳定；反过来，OpenCode 短暂重启又被当作语义失败。
+
+**修正原则**：
+
+- session create 的 `502/503/504`、请求超时或 completion timeout 可以有限重试；
+- Tool 选错、重复主 View、Artifact 越权等语义错误不自动重试；
+- 每次 attempt 都写入报告，不能把第二次成功描述为首轮成功。
+
+### 2.8 测试辅助模型会制造无关噪音
+
+**症状**：路由测试之外还出现 session recap、suggestion 等模型请求，造成额外并发、超时和难以解释的日志。
+
+**修正原则**：隔离演示与验收配置可以关闭 recap/suggestion 等非被测能力；不要因此修改普通产品默认值。
+
+### 2.9 Tool 状态、View 和长文本重复展示
+
+**症状**：同一调用同时展示 Tool 卡片、完整 JSON、主 View 和长篇模型复述，用户看到多层重复内容。
+
+**修正原则**：一个调用只保留一个 Tool 状态和一个主 View。View 后的长 recap 折叠为 Agent notes；原始 Tool output 只作为渲染失败或不支持 Runtime 时的 fallback。
+
+### 2.10 Generated Declarative 是不可信数据
+
+**症状**：为了增加表现力，直接允许模型输出 action、query、binding、脚本、任意样式或宿主访问。
+
+**风险**：这会把安全的声明式层升级成未签名代码/权限层，绕过 OCIX 和 Artifact 的边界。
+
+**修正原则**：Generated 路径只允许有界标准组件组合，并限制深度、节点数、行列数和文本长度。禁止 action、query、binding、script、`className`、任意颜色和 Host 访问。真实业务查询与写入必须进入 Installed Declarative / Trusted Native；自由表现代码进入 Artifact。
+
+### 2.11 iframe 有 sandbox 不等于 Scripts Artifact 已安全
+
+**症状**：浏览器 API 看起来被禁用，就把任意模型 JavaScript 标记为 stable。
+
+**根因**：普通 Web/Desktop iframe 仍缺少宿主可独立终止的 CPU 死循环和内存攻击边界；部分导航和下载能力也不能只靠 CSP 字符串推断。
+
+**修正原则**：
+
+- Static Artifact 可作为稳定能力；
+- Scripts Artifact 保持 `experimental / default-off`；
+- 使用受信 Broker 与 opaque-origin 子 frame；
+- 安全测试必须观察真实目标请求数、导航阻断信号和 Runtime error，而非只检查属性字符串；
+- Artifact 永远不能获得 Connector、Token、Tool、Gateway、Cookie、文件系统或任意网络。
+
+详细边界见 [HTML Artifact Runtime ADR](./HTML_ARTIFACT_RUNTIME_ADR.md)。
+
+### 2.12 显示模式切换不应重建 Artifact
+
+**症状**：inline 切到 workspace/fullscreen 后，模拟器状态、滚动位置或局部输入丢失。
+
+**根因**：切换容器时重新创建 iframe 或重新 materialize 内容。
+
+**修正原则**：三个显示模式复用同一个 iframe 和 content ID；模式是 Host 布局状态，不是 Artifact 内容版本。
+
+### 2.13 Desktop 390 不是 Hosted Mobile 390
+
+**症状**：把桌面浏览器缩到 390px 后通过，就宣称移动端通过；实际 Hosted Mobile 入口仍有侧栏、页面横向滚动或表格撑宽。
+
+**修正原则**：分别测试 Desktop responsive 和真实 Hosted Mobile 入口。页面本身不得横向溢出；只有表格、复杂图等局部组件可以受控滚动。
+
+### 2.14 进程生命周期不能只依赖 Ctrl+C
+
+**症状**：终端反复 `Ctrl+C` 后仍有 PushWatcher、OpenCode 子进程或 47832 监听；stop 脚本又可能误杀只是“命令文本包含 demo 文件名”的 shell。
+
+**根因**：父进程先退出后子进程被 reparent，或用子字符串匹配进程命令。
+
+**修正原则**：
+
+- 日常启动/停止使用 `bun run demo:interactive-ui:start` 和 `bun run demo:interactive-ui:stop`；
+- 启动器记录受管状态和端口所有权；
+- 停止前先快照进程树，再处理父进程退出后残留的 descendants；
+- 识别进程时解析真实入口，不做宽泛子字符串匹配；
+- 测试结束必须确认根进程、子进程和监听端口都消失。
+
+### 2.15 Secret 和上游错误不能进入 UI 或报告
+
+**症状**：失败时把完整授权 URL、Bearer Token、Access Key 或第三方响应正文写进日志、截图或 JSON 报告。
+
+**修正原则**：Secret 只留在服务端 Secret Store / Gateway 注入边界。UI、Agent output、Tool envelope、日志和验收报告只使用稳定错误分类与脱敏摘要。第三方 API 仍负责最终权限校验。
+
+## 3. 推荐的开发闭环
+
+1. 读取最近的 `DOCUMENTATION.md`、本仓库 `AGENTS.md` 和匹配的项目 Skill。
+2. 明确修改属于 Agent、Host、扩展、Gateway、Artifact 还是桌面 Runtime。
+3. 先写或更新最窄的合同测试，修复后运行所属 package 的 type-check/lint。
+4. 若跨越 Tool/Host 边界，回到真实 OpenChamber 对话流验证，不以 fixture 结束。
+5. 若涉及业务扩展，分别断言 Tool、View、真实数据和确认写入。
+6. 若涉及安全边界，运行真实浏览器攻击探针并检查脱敏输出。
+7. 若涉及进程、Electron 或打包资源，运行对应 Runtime/打包验收，静态检查不够。
+8. 更新能力标签：`stable`、`experimental`、`unsupported`、`unverified` 或 `blocked`。
+
+## 4. 完成前检查表
+
+- [ ] 真实对话流可触发，不只 fixture 可显示；
+- [ ] 一个意图只有一个成功主 View；
+- [ ] 无效 Envelope 明确失败，不出现空成功；
+- [ ] 企业路径的 Tool、View、真实数据分别通过；
+- [ ] 安装、启停、升级、回滚、卸载后的 Tool inventory 来自成功响应；
+- [ ] fallback 没有被算作业务成功；
+- [ ] Runtime、报告、日志和截图无 Secret；
+- [ ] Artifact 权限没有因视觉需求被扩大；
+- [ ] demo/test 清理了 OCIX、会话、进程、端口和临时目录；
+- [ ] 验证范围与最终声明完全一致。
+
+## 5. 关联资料
+
+- [Interactive UI 美化、HTML Artifact 与统一测试执行计划](./INTERACTIVE_UI_BEAUTIFICATION_HTML_ARTIFACT_EXECUTION_PLAN.md)
+- [Interactive UI 统一验收报告](./INTERACTIVE_UI_UNIFIED_ACCEPTANCE_REPORT.md)
+- [Installed Declarative / Trusted Native 开发手册](./INTERACTIVE_UI_EXTENSION_DEVELOPER_GUIDE.md)
+- [Interactive UI Agent 路由计划](./INTERACTIVE_UI_AGENT_ROUTING_PLAN.md)
+- [HTML Artifact Runtime ADR](./HTML_ARTIFACT_RUNTIME_ADR.md)
+

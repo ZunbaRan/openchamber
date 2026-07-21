@@ -10,6 +10,7 @@ const originalPath = process.env.PATH;
 const originalLocalAppData = process.env.LOCALAPPDATA;
 const originalSystemRoot = process.env.SystemRoot;
 const originalBundledOpencodeCliDir = process.env.OPENCHAMBER_BUNDLED_OPENCODE_CLI_DIR;
+const originalBundledOnlyTestMode = process.env.OPENCHAMBER_TEST_BUNDLED_OPENCODE_ONLY;
 const originalResourcesPath = process.resourcesPath;
 const originalWslBinary = process.env.WSL_BINARY;
 const originalOpenChamberWslBinary = process.env.OPENCHAMBER_WSL_BINARY;
@@ -72,6 +73,12 @@ afterEach(() => {
     process.env.OPENCHAMBER_BUNDLED_OPENCODE_CLI_DIR = originalBundledOpencodeCliDir;
   } else {
     delete process.env.OPENCHAMBER_BUNDLED_OPENCODE_CLI_DIR;
+  }
+
+  if (typeof originalBundledOnlyTestMode === 'string') {
+    process.env.OPENCHAMBER_TEST_BUNDLED_OPENCODE_ONLY = originalBundledOnlyTestMode;
+  } else {
+    delete process.env.OPENCHAMBER_TEST_BUNDLED_OPENCODE_ONLY;
   }
 
   Object.defineProperty(process, 'resourcesPath', {
@@ -225,6 +232,27 @@ describe('OpenCode env runtime', () => {
       spawnSync: () => ({ status: 1, stdout: '', stderr: '' }),
       homedir: () => emptyHome,
     });
+
+    expect(runtime.resolveOpencodeCliPath()).toBe(bundledBinary);
+    expect(state.resolvedOpencodeBinarySource).toBe('bundled');
+  });
+
+  it('can force the packaged CLI only for deterministic packaged-runtime acceptance', () => {
+    const bundledDir = createTempDir('openchamber-bundled-opencode-');
+    const bundledBinary = path.join(bundledDir, process.platform === 'win32' ? 'opencode.exe' : 'opencode');
+    const pathDir = createTempDir('openchamber-path-opencode-');
+    const pathBinary = path.join(pathDir, process.platform === 'win32' ? 'opencode.exe' : 'opencode');
+    fs.writeFileSync(bundledBinary, '#!/bin/sh\nexit 0\n');
+    fs.writeFileSync(pathBinary, '#!/bin/sh\nexit 0\n');
+    if (process.platform !== 'win32') {
+      fs.chmodSync(bundledBinary, 0o755);
+      fs.chmodSync(pathBinary, 0o755);
+    }
+    process.env.OPENCHAMBER_BUNDLED_OPENCODE_CLI_DIR = bundledDir;
+    process.env.OPENCHAMBER_TEST_BUNDLED_OPENCODE_ONLY = 'true';
+    process.env.PATH = pathDir;
+    delete process.env.OPENCODE_BINARY;
+    const { runtime, state } = createRuntime({});
 
     expect(runtime.resolveOpencodeCliPath()).toBe(bundledBinary);
     expect(state.resolvedOpencodeBinarySource).toBe('bundled');

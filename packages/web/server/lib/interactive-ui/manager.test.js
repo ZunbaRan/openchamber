@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { createInteractiveUIExtensionManager } from './manager.js';
 import { createExtensionPackage, createSignedExtensionCatalog, generatePublisherKeyPair } from './package-format.js';
+import { createBuiltInInteractiveUIRuntime } from './builtin-runtime.js';
 
 const temporaryDirectories = [];
 
@@ -25,6 +26,7 @@ const createPackage = async ({
   toolName = 'operations_open',
   skillName = 'acme-operations',
 } = {}) => {
+  const domain = extensionId.split(/[._-]/).at(-1);
   const directory = await createTemporaryDirectory('ocix-manager-extension-');
   await fs.mkdir(path.join(directory, 'ui'), { recursive: true });
   await fs.mkdir(path.join(directory, 'agent-runtime', 'tools'), { recursive: true });
@@ -34,12 +36,19 @@ const createPackage = async ({
     id: extensionId,
     name: extensionName,
     version,
+    agentRouting: {
+      domain,
+      intents: [`${domain}.overview`],
+      examples: { en: [`Open ${extensionName}`] },
+      dataAuthority: 'user-provided',
+    },
     connectors: [],
     views: [{
       id: `${extensionId}.overview`,
       runtime: 'declarative',
       entry: 'ui/view.json',
       tools: [toolName],
+      routing: { intents: [`${domain}.overview`], priority: 80, operation: 'read' },
       displayModes: ['inline', 'workspace'],
     }],
     actions: [],
@@ -71,6 +80,89 @@ const trustPublisher = (manager, publicKey) => manager.trustPublisher({
 });
 
 describe('Interactive UI extension manager', () => {
+  it('installs the production built-in Tools and Skill idempotently before OpenCode starts', async () => {
+    const dataDirectory = await createTemporaryDirectory('ocix-manager-builtin-data-');
+    const opencodeConfigDirectory = await createTemporaryDirectory('ocix-manager-builtin-config-');
+    let refreshCount = 0;
+    const builtInRuntime = createBuiltInInteractiveUIRuntime();
+    const manager = createInteractiveUIExtensionManager({
+      dataDirectory,
+      opencodeConfigDirectory,
+      builtInRuntime,
+      refreshOpenCode: async () => {
+        refreshCount += 1;
+        return { reloaded: true, external: false };
+      },
+    });
+
+    expect(await manager.initialize()).toMatchObject({ changed: true, reloaded: false });
+    expect(await manager.initialize()).toMatchObject({ changed: false, reloaded: false });
+    expect(refreshCount).toBe(0);
+    const installedInteractiveUITool = await fs.readFile(path.join(opencodeConfigDirectory, 'tools', 'interactive_ui.ts'), 'utf8');
+    const installedInteractiveUISkill = await fs.readFile(path.join(opencodeConfigDirectory, 'skills', 'interactive-ui-visualization', 'SKILL.md'), 'utf8');
+    expect(installedInteractiveUITool).toContain('openchamber://interactive-result/v1');
+    expect(installedInteractiveUITool).toContain('不同量纲');
+    expect(installedInteractiveUITool).toContain('interactive_ui requires at least one valid section');
+    expect(installedInteractiveUITool).toContain('interactive_ui requires at least one supported widget');
+    expect(installedInteractiveUITool).toContain('normalizeTableCellValue');
+    expect(installedInteractiveUITool).toContain('只补一句');
+    const installedHTMLArtifactTool = await fs.readFile(path.join(opencodeConfigDirectory, 'tools', 'html_artifact.ts'), 'utf8');
+    expect(installedHTMLArtifactTool).toContain('openchamber://html-artifact-result/v1');
+    expect(installedHTMLArtifactTool).toContain('禁止硬编码白色画布');
+    expect(installedHTMLArtifactTool).toContain('Artifact HTML contains executable markup');
+    expect(installedHTMLArtifactTool).toContain('scripts: tool.schema.boolean().describe');
+    expect(installedInteractiveUISkill).toContain('name: interactive-ui-visualization');
+    expect(installedInteractiveUISkill).toContain('incompatible units');
+    expect(await manager.list()).toMatchObject({
+      builtInRuntime: {
+        id: 'com.openchamber.builtin.interactive-ui',
+        version: '1.0.0',
+        status: 'ready',
+      },
+      extensions: [],
+    });
+  });
+
+  it('preserves an unmanaged Tool and reports a built-in initialization conflict', async () => {
+    const dataDirectory = await createTemporaryDirectory('ocix-manager-builtin-conflict-data-');
+    const opencodeConfigDirectory = await createTemporaryDirectory('ocix-manager-builtin-conflict-config-');
+    await fs.mkdir(path.join(opencodeConfigDirectory, 'tools'), { recursive: true });
+    const existingTool = path.join(opencodeConfigDirectory, 'tools', 'interactive_ui.ts');
+    await fs.writeFile(existingTool, 'export default { description: "user-owned" };\n');
+    const manager = createInteractiveUIExtensionManager({
+      dataDirectory,
+      opencodeConfigDirectory,
+      builtInRuntime: createBuiltInInteractiveUIRuntime(),
+    });
+
+    await expect(manager.initialize()).rejects.toMatchObject({ code: 'agent_tool_conflict' });
+    expect(await fs.readFile(existingTool, 'utf8')).toContain('user-owned');
+    expect((await manager.list()).builtInRuntime).toMatchObject({
+      status: 'conflict',
+      errorCode: 'agent_tool_conflict',
+    });
+  });
+
+  it('adopts byte-identical built-in files without overwriting their content', async () => {
+    const dataDirectory = await createTemporaryDirectory('ocix-manager-builtin-adopt-data-');
+    const opencodeConfigDirectory = await createTemporaryDirectory('ocix-manager-builtin-adopt-config-');
+    const builtInRuntime = createBuiltInInteractiveUIRuntime();
+    const source = path.join(builtInRuntime.rootDirectory, 'agent-runtime', 'tools', 'interactive_ui.ts');
+    const target = path.join(opencodeConfigDirectory, 'tools', 'interactive_ui.ts');
+    const sourceContent = await fs.readFile(source);
+    await fs.mkdir(path.dirname(target), { recursive: true });
+    await fs.writeFile(target, sourceContent);
+    const manager = createInteractiveUIExtensionManager({
+      dataDirectory,
+      opencodeConfigDirectory,
+      builtInRuntime,
+    });
+
+    await expect(manager.initialize()).resolves.toMatchObject({ changed: true });
+    expect(await fs.readFile(target)).toEqual(sourceContent);
+    expect((await manager.list()).builtInRuntime.status).toBe('ready');
+  });
+
   it('installs, updates, disables, rolls back, and recoverably uninstalls signed extensions', async () => {
     const dataDirectory = await createTemporaryDirectory('ocix-manager-data-');
     const opencodeConfigDirectory = await createTemporaryDirectory('ocix-opencode-config-');
@@ -90,6 +182,11 @@ describe('Interactive UI extension manager', () => {
     const inspection = await manager.inspectPackage(versionOne.buffer);
     expect(inspection.publisher.trusted).toBe(false);
     expect(inspection.agentRuntime.tools.map((tool) => tool.name)).toEqual(['operations_open']);
+    expect(inspection.agentRouting).toMatchObject({
+      domain: 'operations',
+      intents: ['operations.overview'],
+      dataAuthority: 'user-provided',
+    });
     await expect(manager.installPackage(versionOne.buffer)).rejects.toMatchObject({ code: 'publisher_confirmation_required' });
     expect((await manager.installPackage(versionOne.buffer, { confirmedPublisherFingerprint: inspection.publisher.fingerprint })).installed).toBe(true);
     expect(await fs.readFile(path.join(opencodeConfigDirectory, 'tools', 'operations_open.ts'), 'utf8')).toContain('1.0.0');

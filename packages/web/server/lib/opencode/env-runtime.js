@@ -330,6 +330,14 @@ export const createOpenCodeEnvRuntime = (deps) => {
   };
 
   const resolveOpencodeCliPath = () => {
+    // Packaged-runtime acceptance needs to prove the bundled fallback on
+    // developer machines that already have OpenCode installed. Keep this
+    // narrow switch test-only; normal resolution still respects explicit and
+    // user-installed binaries before falling back to the packaged CLI.
+    if (process.env.OPENCHAMBER_TEST_BUNDLED_OPENCODE_ONLY === 'true') {
+      return bundledOpenCodeCliFallback();
+    }
+
     const explicit = [
       process.env.OPENCODE_BINARY,
       process.env.OPENCODE_PATH,

@@ -41,7 +41,7 @@
           { "key": "id", "label": "订单" },
           { "key": "customer", "label": "客户" },
           { "key": "amount", "label": "金额", "format": "currency:CNY" },
-          { "key": "status", "label": "状态", "render": "status" }
+          { "key": "statusLabel", "label": "状态", "render": "status" }
         ],
         "rowActions": [
           {

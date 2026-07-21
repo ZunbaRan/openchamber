@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import fsPromises from 'node:fs/promises';
 import nodePath from 'node:path';
 import AdmZip from 'adm-zip';
+import { normalizeInteractiveUIRouting } from './routing.js';
 
 const EXTENSION_PACKAGE_SCHEMA = 'openchamber://extension-package/v1';
 const EXTENSION_CATALOG_SCHEMA = 'openchamber://extension-catalog/v1';
@@ -20,7 +21,7 @@ const BLOCKED_KEY_IDS = new Set(['__proto__', 'prototype', 'constructor']);
 const TOOL_FILE_PATTERN = /^agent-runtime\/tools\/([a-z][a-z0-9_]*)(\.(?:ts|js|mjs|cjs))$/;
 const SKILL_FILE_PATTERN = /^agent-runtime\/skills\/([a-z0-9]+(?:-[a-z0-9]+)*)\/(.+)$/;
 const RESERVED_TOOL_NAMES = new Set([
-  'apply_patch', 'bash', 'edit', 'glob', 'grep', 'interactive_ui', 'list', 'read', 'skill', 'task', 'todo', 'webfetch', 'write',
+  'apply_patch', 'bash', 'edit', 'glob', 'grep', 'html_artifact', 'interactive_ui', 'list', 'read', 'skill', 'task', 'todo', 'webfetch', 'write',
 ]);
 
 export class InteractiveUIPackageError extends Error {
@@ -173,6 +174,14 @@ const parseManifest = (content) => {
   }
   if (typeof manifest.version !== 'string' || !SEMVER_PATTERN.test(manifest.version)) {
     throw new InteractiveUIPackageError('Extension manifest version must use semantic versioning', 'invalid_manifest');
+  }
+  try {
+    normalizeInteractiveUIRouting(manifest);
+  } catch (error) {
+    throw new InteractiveUIPackageError(
+      error instanceof Error ? error.message : 'Extension Agent routing metadata is invalid',
+      'invalid_agent_routing',
+    );
   }
   return manifest;
 };

@@ -31,6 +31,7 @@ const TOOL_ROW_TITLE_CLASS = cn('typography-meta font-medium', TOOL_ROW_TEXT_CLA
 const TOOL_ROW_DESCRIPTION_CLASS = cn('typography-meta', TOOL_ROW_TEXT_CLASS);
 
 interface ProgressiveGroupProps {
+    sessionId?: string;
     parts: TurnActivityPart[];
     isExpanded: boolean;
     collapsedPreviewCount?: number;
@@ -370,6 +371,7 @@ type AggregatedRow =
     | { type: 'tool-fallback'; activity: TurnActivityPart };
 
 interface ExpandableToolRowProps {
+    sessionId?: string;
     activity: TurnActivityPart;
     isExpanded: boolean;
     isMobile: boolean;
@@ -381,6 +383,7 @@ interface ExpandableToolRowProps {
 }
 
 const ExpandableToolRow: React.FC<ExpandableToolRowProps> = ({
+    sessionId,
     activity,
     isExpanded,
     isMobile,
@@ -397,6 +400,7 @@ const ExpandableToolRow: React.FC<ExpandableToolRowProps> = ({
     const content = (
         <ToolPart
             part={activity.part as ToolPartType}
+            sessionId={sessionId}
             isExpanded={isExpanded}
             onToggle={handleToggle}
             isMobile={isMobile}
@@ -421,6 +425,7 @@ const ExpandableToolRow: React.FC<ExpandableToolRowProps> = ({
 
 const MemoExpandableToolRow = React.memo(ExpandableToolRow, (prev, next) => {
     return prev.isExpanded === next.isExpanded
+        && prev.sessionId === next.sessionId
         && prev.isMobile === next.isMobile
         && prev.onToggleTool === next.onToggleTool
         && prev.onShowPopup === next.onShowPopup
@@ -817,6 +822,7 @@ const InlineJustificationBlock = React.memo(({ activity, onContentChange, action
 });
 
 const ProgressiveGroup: React.FC<ProgressiveGroupProps> = ({
+    sessionId,
     parts,
     isExpanded,
     collapsedPreviewCount = 0,
@@ -908,6 +914,7 @@ const ProgressiveGroup: React.FC<ProgressiveGroupProps> = ({
                     <MemoExpandableToolRow
                         key={row.activity.id}
                         activity={row.activity}
+                        sessionId={sessionId}
                         isExpanded={expandedTools.has(row.activity.id)}
                         isMobile={isMobile}
                         onToggleTool={onToggleTool}
@@ -934,6 +941,7 @@ const ProgressiveGroup: React.FC<ProgressiveGroupProps> = ({
                     <MemoExpandableToolRow
                         key={row.activity.id}
                         activity={row.activity}
+                        sessionId={sessionId}
                         isExpanded={expandedTools.has(row.activity.id)}
                         isMobile={isMobile}
                         onToggleTool={onToggleTool}

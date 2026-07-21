@@ -21,6 +21,7 @@ import {
 } from '@/components/sections/shared/SettingsSection';
 import { useI18n } from '@/lib/i18n';
 import { runtimeFetch } from '@/lib/runtime-fetch';
+import { clearInteractiveUIRoutingCache } from '@/lib/interactive-ui/routing';
 import {
   EMPTY_MANAGER_SNAPSHOT,
   EMPTY_CONNECTION_SNAPSHOT,
@@ -36,6 +37,7 @@ import {
   type MarketplaceInspection,
   type PackageInspection,
 } from '@/lib/interactive-ui/extensionManager';
+import { RoutingInspectorSection } from './RoutingInspectorSection';
 
 const requestJson = async <T,>(url: string, init?: RequestInit): Promise<T> => {
   const response = await runtimeFetch(url, init);
@@ -92,6 +94,7 @@ export const ExtensionManagerPage: React.FC = () => {
     setBusy(key);
     try {
       await operation();
+      clearInteractiveUIRoutingCache();
       toast.success(t(successKey));
       await refresh();
       return true;
@@ -342,6 +345,8 @@ export const ExtensionManagerPage: React.FC = () => {
         )}
       </SettingsSection>
 
+      <RoutingInspectorSection />
+
       <SettingsSection
         settingsItem="interactive-ui.publishers"
         title={t('settings.interactiveUI.publishers.title')}
@@ -433,6 +438,15 @@ export const ExtensionManagerPage: React.FC = () => {
                   skills: pendingPackage.inspection.agentRuntime.skills.map((skill) => skill.name).join(', ') || '—',
                 })}
               </div>
+              {pendingPackage.inspection.agentRouting && (
+                <div className={SETTINGS_HELPER_CLASS}>
+                  {t('settings.interactiveUI.packageReview.agentRouting', {
+                    domain: pendingPackage.inspection.agentRouting.domain,
+                    authority: pendingPackage.inspection.agentRouting.dataAuthority,
+                    intents: pendingPackage.inspection.agentRouting.intents.join(', ') || '—',
+                  })}
+                </div>
+              )}
               <div className={SETTINGS_HELPER_CLASS}>
                 {t('settings.interactiveUI.packageReview.permissions', {
                   network: pendingPackage.inspection.permissions.network.join(', ') || '—',

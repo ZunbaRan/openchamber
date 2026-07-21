@@ -6,7 +6,9 @@ import { parse as parseJsonc } from 'jsonc-parser';
 
 // ============== PATH CONSTANTS ==============
 
-const OPENCODE_CONFIG_DIR = path.join(os.homedir(), '.config', 'opencode');
+const OPENCODE_CONFIG_DIR = typeof process.env.OPENCODE_CONFIG_DIR === 'string' && process.env.OPENCODE_CONFIG_DIR.trim()
+  ? path.resolve(process.env.OPENCODE_CONFIG_DIR.trim())
+  : path.join(os.homedir(), '.config', 'opencode');
 const AGENT_DIR = path.join(OPENCODE_CONFIG_DIR, 'agents');
 const COMMAND_DIR = path.join(OPENCODE_CONFIG_DIR, 'commands');
 const SKILL_DIR = path.join(OPENCODE_CONFIG_DIR, 'skills');

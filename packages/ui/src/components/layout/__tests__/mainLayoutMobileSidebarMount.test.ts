@@ -23,7 +23,7 @@ describe('MainLayout mobile SessionSidebar mount (issue #1695 regression guard)'
     });
 
     test('desktop SessionSidebar is rendered inside Sidebar without drawer-visibility gating', () => {
-        const desktopSidebarIndex = mainLayoutSource.indexOf('<SessionSidebar />');
+        const desktopSidebarIndex = mainLayoutSource.indexOf('<SessionSidebar onSessionSelected={handleDesktopSessionSelected} />');
         expect(desktopSidebarIndex).toBeGreaterThan(-1);
 
         const windowStart = Math.max(0, desktopSidebarIndex - 300);
@@ -31,5 +31,19 @@ describe('MainLayout mobile SessionSidebar mount (issue #1695 regression guard)'
 
         expect(precedingWindow).toContain('<Sidebar');
         expect(/mobileLeftDrawerVisible\s*&&/.test(precedingWindow)).toBe(false);
+    });
+
+    test('narrow desktop windows auto-collapse the persistent sidebar without switching mobile runtime', () => {
+        expect(mainLayoutSource).toContain('const LEFT_SIDEBAR_AUTO_CLOSE_WIDTH = 720');
+        expect(mainLayoutSource).toContain('const LEFT_SIDEBAR_AUTO_OPEN_WIDTH = 800');
+        expect(mainLayoutSource).toContain('setSidebarOpen(false)');
+        expect(mainLayoutSource).toContain('leftSidebarAutoClosedRef.current = true');
+        expect(mainLayoutSource).toContain('setSidebarOpen(true)');
+    });
+
+    test('selecting a session closes the persistent sidebar in a narrow desktop window', () => {
+        expect(mainLayoutSource).toContain('const handleDesktopSessionSelected = React.useCallback(() => {');
+        expect(mainLayoutSource).toContain('window.innerWidth >= LEFT_SIDEBAR_AUTO_CLOSE_WIDTH');
+        expect(mainLayoutSource).toContain('<SessionSidebar onSessionSelected={handleDesktopSessionSelected} />');
     });
 });

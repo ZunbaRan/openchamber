@@ -19,6 +19,8 @@ const json = (response, status, body) => {
 };
 
 export const startMockBusinessServer = async ({ port = 0, token = 'demo-secret' } = {}) => {
+  const orderStatusLabels = { pending: '待批准', review: '待复核', approved: '已批准' };
+  const crmStageLabels = { qualified: '已筛选', proposal: '方案阶段', negotiation: '谈判阶段', won: '已赢单' };
   const orders = new Map([
     ['SO-1001', { id: 'SO-1001', customer: '星河制造', amount: 328000, status: 'pending', revision: 1 }],
     ['SO-1002', { id: 'SO-1002', customer: '远山零售', amount: 186000, status: 'review', revision: 3 }],
@@ -55,7 +57,10 @@ export const startMockBusinessServer = async ({ port = 0, token = 'demo-secret' 
             { date: '07-15', revenue: 510000 },
             { date: '07-22', revenue: 710000 }
           ],
-          anomalies: Array.from(orders.values()),
+          anomalies: Array.from(orders.values(), (order) => ({
+            ...order,
+            statusLabel: orderStatusLabels[order.status] ?? order.status,
+          })),
           updatedAt: new Date().toISOString(),
         });
         return;
@@ -77,7 +82,10 @@ export const startMockBusinessServer = async ({ port = 0, token = 'demo-secret' 
         }
         order.status = 'approved';
         order.revision += 1;
-        json(response, 200, { order: { ...order }, message: `订单 ${order.id} 已批准` });
+        json(response, 200, {
+          order: { ...order, statusLabel: orderStatusLabels[order.status] ?? order.status },
+          message: `订单 ${order.id} 已批准`,
+        });
         return;
       }
       if (request.method === 'POST' && request.url === '/crm/dashboard') {
@@ -90,7 +98,10 @@ export const startMockBusinessServer = async ({ port = 0, token = 'demo-secret' 
           pipelineValue,
           weightedWinRate: pipelineValue > 0 ? weightedValue / pipelineValue : 0,
           customers,
-          opportunities: pipeline,
+          opportunities: pipeline.map((opportunity) => ({
+            ...opportunity,
+            stageLabel: crmStageLabels[opportunity.stage] ?? opportunity.stage,
+          })),
           updatedAt: new Date().toISOString(),
         });
         return;
@@ -115,8 +126,11 @@ export const startMockBusinessServer = async ({ port = 0, token = 'demo-secret' 
         opportunity.probability = [0.4, 0.65, 0.82, 1][currentStage + 1];
         opportunity.revision += 1;
         json(response, 200, {
-          opportunity: { ...opportunity },
-          message: `商机 ${opportunity.name} 已推进到 ${opportunity.stage}`,
+          opportunity: {
+            ...opportunity,
+            stageLabel: crmStageLabels[opportunity.stage] ?? opportunity.stage,
+          },
+          message: `商机 ${opportunity.name} 已推进到${crmStageLabels[opportunity.stage] ?? opportunity.stage}`,
         });
         return;
       }

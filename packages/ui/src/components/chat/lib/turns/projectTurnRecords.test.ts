@@ -127,6 +127,44 @@ describe('projectTurnRecords', () => {
         expect(next.turns[0]?.stream.isRetrying).toBe(false);
     });
 
+    test('keeps rich Interactive UI results as standalone answer content', () => {
+        const user = createMessageEntry({ id: 'u1', role: 'user', createdAt: 1 });
+        const assistant = createMessageEntry({ id: 'a1', role: 'assistant', parentID: 'u1', createdAt: 2 });
+        assistant.parts = [
+            {
+                id: 'tool_bash',
+                type: 'tool',
+                tool: 'bash',
+                state: { status: 'completed', output: 'prepared' },
+            } as Part,
+            {
+                id: 'tool_crm',
+                type: 'tool',
+                tool: 'crm_open_overview',
+                state: {
+                    status: 'completed',
+                    output: JSON.stringify({
+                        $schema: 'openchamber://interactive-result/v1',
+                        schemaVersion: 1,
+                        view: 'com.acme.crm.overview',
+                        mode: 'live',
+                    }),
+                },
+            } as Part,
+        ];
+
+        const projection = projectTurnRecords([user, assistant]);
+        const turn = projection.turns[0];
+        const groupedToolIds = turn?.activitySegments.flatMap((segment) => (
+            segment.parts
+                .filter((activity) => activity.kind === 'tool')
+                .map((activity) => activity.id)
+        ));
+
+        expect(turn?.activityParts.map((activity) => activity.id)).toEqual(['tool_bash', 'tool_crm']);
+        expect(groupedToolIds).toEqual(['tool_bash']);
+    });
+
     test('reuses the whole turns array when every turn is unchanged', () => {
         const user = createMessageEntry({ id: 'u1', role: 'user', createdAt: 1 });
         const assistant = createMessageEntry({ id: 'a1', role: 'assistant', parentID: 'u1', createdAt: 2 });

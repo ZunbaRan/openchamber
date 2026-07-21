@@ -12,7 +12,15 @@ afterEach(async () => {
   await Promise.all(temporaryDirectories.splice(0).map((directory) => fs.rm(directory, { recursive: true, force: true })));
 });
 
-const createFixture = async (fetchImpl, { headerName = 'X-API-Key', authType = 'api-key' } = {}) => {
+const createFixture = async (fetchImpl, {
+  headerName = 'X-API-Key',
+  authType = 'api-key',
+  routing = false,
+  actionRisk = 'read',
+  actionPermission = 'allow',
+  actionPath = '/customers',
+  networkPermissions = ['https://crm.example.com'],
+} = {}) => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ocix-runtime-auth-'));
   const dataDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'ocix-runtime-auth-data-'));
   temporaryDirectories.push(root, dataDirectory);
@@ -22,6 +30,14 @@ const createFixture = async (fetchImpl, { headerName = 'X-API-Key', authType = '
     id: 'com.acme.crm',
     name: 'Acme CRM',
     version: '1.0.0',
+    ...(routing ? {
+      agentRouting: {
+        domain: 'crm',
+        intents: ['crm.overview', 'crm.pipeline.view'],
+        examples: { en: ['show the pipeline'] },
+        dataAuthority: 'connected-business-system',
+      },
+    } : {}),
     connectors: [{
       id: 'crm-api',
       type: 'http',
@@ -38,15 +54,22 @@ const createFixture = async (fetchImpl, { headerName = 'X-API-Key', authType = '
           },
       test: { method: 'GET', path: '/health' },
     }],
-    views: [{ id: 'com.acme.crm.overview', runtime: 'declarative', entry: 'ui/view.json', tools: ['crm_open'] }],
+    views: [{
+      id: 'com.acme.crm.overview',
+      runtime: 'declarative',
+      entry: 'ui/view.json',
+      tools: ['crm_open'],
+      ...(routing ? { routing: { intents: ['crm.overview', 'crm.pipeline.view'], priority: 90, operation: 'read' } } : {}),
+    }],
     actions: [{
       id: 'com.acme.crm.query',
       connector: 'crm-api',
-      risk: 'read',
-      permission: 'allow',
-      request: { method: 'POST', path: '/customers' },
+      risk: actionRisk,
+      permission: actionPermission,
+      request: { method: 'POST', path: actionPath },
+      confirmation: { title: 'Confirm CRM change', description: 'Review the business change before sending it.' },
     }],
-    permissions: { network: ['https://crm.example.com'] },
+    permissions: { network: networkPermissions },
     trust: { mode: 'declarative', signature: 'test' },
   }));
   await fs.writeFile(path.join(root, 'ui', 'view.json'), JSON.stringify({
@@ -74,6 +97,24 @@ const createFixture = async (fetchImpl, { headerName = 'X-API-Key', authType = '
 };
 
 describe('Interactive UI connector authentication', () => {
+  it('publishes a redacted routing context and updates connector availability', async () => {
+    const { runtime } = await createFixture(async () => new Response(JSON.stringify({ ok: true })), { routing: true });
+    const before = await runtime.getRoutingCapabilities();
+    expect(before.extensions[0]).toMatchObject({
+      id: 'com.acme.crm',
+      connection: { required: true, status: 'unconfigured' },
+    });
+    expect(before.system).toContain('tool=crm_open');
+    expect(before.system).not.toContain('crm.example.com');
+    expect(before.system).not.toContain('show the pipeline');
+
+    await runtime.configureConnection('com.acme.crm', 'crm-api', { accessKey: 'routing-secret' });
+    const after = await runtime.getRoutingCapabilities();
+    expect(after.extensions[0].connection.status).toBe('configured');
+    expect(after.revision).not.toBe(before.revision);
+    expect(JSON.stringify(after)).not.toContain('routing-secret');
+  });
+
   it('keeps API keys out of management responses and injects them only in upstream requests', async () => {
     const upstream = [];
     const { runtime } = await createFixture(async (url, init) => {
@@ -115,7 +156,21 @@ describe('Interactive UI connector authentication', () => {
       extensionId: 'com.acme.crm',
       viewId: 'com.acme.crm.overview',
       input: {},
-    })).rejects.toMatchObject({ code: 'connector_forbidden', status: 403 });
+    })).rejects.toMatchObject({
+      code: 'connector_forbidden',
+      status: 403,
+      message: 'Access key does not have permission',
+    });
+    status = 409;
+    await expect(runtime.invokeAction('com.acme.crm.query', {
+      extensionId: 'com.acme.crm',
+      viewId: 'com.acme.crm.overview',
+      input: {},
+    })).rejects.toMatchObject({
+      code: 'upstream_error',
+      status: 409,
+      message: 'Business system rejected the request (409)',
+    });
   });
 
   it('exchanges an issued-key setup code on the server and exposes status only', async () => {
@@ -157,5 +212,72 @@ describe('Interactive UI connector authentication', () => {
     const registry = await runtime.listExtensions();
     expect(registry.extensions).toEqual([]);
     expect(registry.errors[0].error).toContain('unsafe credential header');
+  });
+
+  it('rejects cross-extension action contexts before contacting the business system', async () => {
+    let upstreamCalls = 0;
+    const { runtime } = await createFixture(async () => {
+      upstreamCalls += 1;
+      return new Response('{}');
+    });
+    await runtime.configureConnection('com.acme.crm', 'crm-api', { accessKey: 'scoped-key' });
+
+    await expect(runtime.invokeAction('com.acme.crm.query', {
+      extensionId: 'com.attacker.extension',
+      viewId: 'com.acme.crm.overview',
+      input: {},
+    })).rejects.toMatchObject({ code: 'extension_view_mismatch', status: 403 });
+    await expect(runtime.invokeAction('com.attacker.delete', {
+      extensionId: 'com.acme.crm',
+      viewId: 'com.acme.crm.overview',
+      input: {},
+    })).rejects.toMatchObject({ code: 'action_not_allowed', status: 403 });
+    expect(upstreamCalls).toBe(0);
+  });
+
+  it('requires explicit confirmation for ask actions and enforces deny without an upstream request', async () => {
+    let askCalls = 0;
+    const { runtime: askRuntime } = await createFixture(async () => {
+      askCalls += 1;
+      return new Response(JSON.stringify({ ok: true }));
+    }, { actionRisk: 'write', actionPermission: 'ask' });
+    await askRuntime.configureConnection('com.acme.crm', 'crm-api', { accessKey: 'scoped-key' });
+    const actionContext = { extensionId: 'com.acme.crm', viewId: 'com.acme.crm.overview', input: { stage: 'won' } };
+
+    await expect(askRuntime.invokeAction('com.acme.crm.query', actionContext)).rejects.toMatchObject({
+      code: 'confirmation_required',
+      status: 409,
+      details: { confirmationRequired: true },
+    });
+    expect(askCalls).toBe(0);
+    await expect(askRuntime.invokeAction('com.acme.crm.query', { ...actionContext, confirmed: true }))
+      .resolves.toMatchObject({ data: { ok: true } });
+    expect(askCalls).toBe(1);
+
+    let denyCalls = 0;
+    const { runtime: denyRuntime } = await createFixture(async () => {
+      denyCalls += 1;
+      return new Response('{}');
+    }, { actionRisk: 'destructive', actionPermission: 'deny' });
+    await denyRuntime.configureConnection('com.acme.crm', 'crm-api', { accessKey: 'scoped-key' });
+    await expect(denyRuntime.invokeAction('com.acme.crm.query', { ...actionContext, confirmed: true }))
+      .rejects.toMatchObject({ code: 'action_denied', status: 403 });
+    expect(denyCalls).toBe(0);
+  });
+
+  it('rejects undeclared network origins and connector-escaping action paths at manifest load', async () => {
+    const { runtime: missingNetworkPermission } = await createFixture(async () => new Response('{}'), {
+      networkPermissions: [],
+    });
+    const missingPermissionRegistry = await missingNetworkPermission.listExtensions();
+    expect(missingPermissionRegistry.extensions).toEqual([]);
+    expect(missingPermissionRegistry.errors[0].error).toContain('not declared in permissions.network');
+
+    const { runtime: escapingAction } = await createFixture(async () => new Response('{}'), {
+      actionPath: '/../admin',
+    });
+    const escapingActionRegistry = await escapingAction.listExtensions();
+    expect(escapingActionRegistry.extensions).toEqual([]);
+    expect(escapingActionRegistry.errors[0].error).toContain('fixed connector-relative path');
   });
 });

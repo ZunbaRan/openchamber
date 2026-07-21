@@ -44,7 +44,6 @@ export const parseInteractiveResultEnvelope = (output: string): InteractiveResul
 
   const dataRef = parseDataRef(parsed.dataRef);
   if (parsed.dataRef !== undefined && !dataRef) return null;
-  if (parsed.mode === 'live' && parsed.data === undefined && !dataRef) return null;
 
   return {
     $schema: INTERACTIVE_RESULT_SCHEMA,

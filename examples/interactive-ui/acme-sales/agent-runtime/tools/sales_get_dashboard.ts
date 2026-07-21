@@ -1,7 +1,7 @@
 import { tool } from '@opencode-ai/plugin';
 
 export default tool({
-  description: 'Open the demo sales dashboard for a region and period',
+  description: 'Fetch authoritative sales-system data for a region and period and open the native sales dashboard. Prefer this business Tool over generic interactive_ui for sales dashboards and order operations, including when connection setup must be reported. After it returns, its OCIX View is already rendered: do not call interactive_ui/html_artifact or create a second visualization for the same sales data.',
   args: {
     region: tool.schema.string().describe('Sales region, for example east'),
     period: tool.schema.string().describe('Reporting period in YYYY-MM format'),

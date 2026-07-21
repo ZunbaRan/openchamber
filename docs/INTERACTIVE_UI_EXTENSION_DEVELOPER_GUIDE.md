@@ -31,13 +31,14 @@ Installed Declarative / Trusted Native 已经达到“企业开发者预览 v1�
 |---|---:|---:|
 | 指标、状态、键值、列表、流程 | 首选 | 可以 |
 | 标准 bar/line/area/donut 图表 | 首选 | 可以 |
+| 时间线、活动、对比、tabs/accordion、code、sparkline、标准 Git graph/tree/diff | 首选 | 可以 |
 | 标准表格和确认式行操作 | 首选 | 可以 |
 | 需要平台自动统一布局和主题 | 首选 | 需要遵循 Host 样式 |
 | 多步骤表单、复杂本地状态 | 受限 | 首选 |
 | 现有 React 业务模块拆分 | 不适合直接搬运 | 首选 |
 | 地图、画布、拖拽、复杂编辑器 | 当前不适合 | 首选 |
 | 公共不可信第三方代码 | 不执行代码，可用 | 不允许默认信任 |
-| 模型一次性生成任意视觉 | 用 Agent Generated 子集 | 应使用未来 HTML Artifact，不是 Native |
+| 模型一次性生成任意视觉 | 先用 Agent Generated 子集 | DSL 确有缺口时使用独立 HTML Artifact，不是 Native/OCIX |
 
 建议从 Declarative 开始。只有当标准 primitive 无法表达交互时再使用 Native。一个扩展可以同时提供 overview Declarative View 和 workspace Native View。
 
@@ -161,6 +162,7 @@ Content-Type: application/json
 | `id` | 至少两段的 namespaced ID，如 `com.acme.operations` |
 | `name` | 注册表显示名 |
 | `version` | CLI 要求 semver；Native 更新后必须递增 |
+| `agentRouting` | 可选的受约束 Agent 路由元数据：业务域、意图、示例和数据权威性 |
 | `connectors` | 服务端 HTTP(S) 连接定义 |
 | `views` | Declarative/Native entry 与 tool binding |
 | `actions` | Gateway allowlist |
@@ -169,7 +171,54 @@ Content-Type: application/json
 
 `publisher` 等额外元数据可以保留，但 v1 registry 不把它作为授权依据。
 
-### 5.2 Connector
+### 5.2 Agent Routing
+
+新扩展应声明结构化路由元数据，让 OpenChamber 能从当前已启用的 OCIX 动态生成 Agent Capability Catalog：
+
+```json
+{
+  "agentRouting": {
+    "domain": "operations",
+    "intents": [
+      "operations.overview",
+      "operations.item.view",
+      "operations.item.approve"
+    ],
+    "examples": {
+      "zh-CN": ["打开运营概览", "查看待审批项目"],
+      "en": ["open operations overview", "show pending items"]
+    },
+    "dataAuthority": "connected-business-system"
+  },
+  "views": [
+    {
+      "id": "com.acme.operations.overview",
+      "tools": ["operations_open_overview"],
+      "routing": {
+        "intents": ["operations.overview", "operations.item.view"],
+        "priority": 80,
+        "operation": "read"
+      }
+    }
+  ]
+}
+```
+
+规则：
+
+- `domain` 和 `intents` 是短标识符，不是自由文本提示词；intent 必须位于 domain namespace 中。
+- `dataAuthority` 只能是 `generated`、`user-provided` 或 `connected-business-system`。企业扩展通常使用最后一种。
+- 多 View 扩展必须为每个 View 声明 `routing`，消除 overview/workspace 歧义；`priority` 为 0–100，`operation` 为 `read`、`write` 或 `mixed`。
+- `views[].tools` 必须至少绑定一个小写下划线 Tool 名称；打包的 Tool 文件名必须与它完全相同。
+- `examples` 只用于开发和验收，不会拼接进系统提示词。系统上下文只包含经过校验的 ID、intent、operation、dataAuthority 和脱敏连接状态。
+- Tool description 本身仍须独立说明业务域、真实数据来源和与通用 `interactive_ui` 的优先级，因为没有 routing 字段的旧 OCIX 仍然兼容运行。
+- 业务 Connector 未配置或过期时仍应选择业务 Tool，由它返回配置要求；不得退回通用 Tool 伪造企业数据。
+
+OpenChamber Web 在发送用户消息前调用 `GET /api/interactive-ui/capabilities`，并通过 OpenCode `session.promptAsync(..., system)` 原生字段附加固定模板的路由上下文。它不修改 `AGENTS.md`，不写入每扩展 `OPENCODE_CONFIG_DIR`，上下文最长 12,000 字符并按 Runtime 缓存 10 秒。外部 OpenCode Server 也能接收这段上下文，但只有远端实际存在的 Tool 才可调用；缺少 Agent Runtime 时必须报告双端部署缺失。
+
+开发与验收时可以在 **Settings → Interactive UI Extensions → Routing Inspector** 查看最近的实际链路。它显示发送时注入的可用 Tool、声明的 intent/priority/operation/connection、实际观察到的 Tool 状态，以及 View 是否完成加载。这里的“候选”表示注入给模型的能力集合，并不是对模型隐藏推理或语义相关度的猜测。复制出的诊断报告已缩短会话/消息 ID，且不包含问题原文、Tool 输入输出、业务数据、接口地址或凭据。
+
+### 5.3 Connector
 
 ```json
 {
@@ -205,7 +254,7 @@ Content-Type: application/json
 
 完整 `api-key`、`issued-key` manifest、请求/响应 schema、存储边界和第三方实现要求见 [OCIX Connector Authentication & Credential Provisioning v1](./OCIX_CONNECTOR_AUTHENTICATION_V1.md)。第三方系统决定 Key 的权限、租户、过期、撤销、RBAC/ABAC 和最终业务授权；OpenChamber 不复刻这些规则。
 
-### 5.3 Action
+### 5.4 Action
 
 ```json
 {
@@ -290,6 +339,8 @@ Skill 只告诉 Agent：什么用户意图对应 overview/workspace、何时询�
 | 指标 | `metric-grid`, `metric`, `progress`, `status`, `badge`, `key-value` |
 | 内容 | `text`, `markdown`, `list`, `callout`, `flow` |
 | 数据 | `data-table`, `chart` |
+| 进阶数据/历史 | `timeline`, `activity-feed`, `comparison`, `sparkline`, `git-graph`, `tree`, `diff-summary` |
+| 进阶组织 | `tabs`, `accordion`, `code-block`, `divider` |
 | 受控入口 | `generated-layout`，只应由 built-in generated View 使用 |
 
 `chart.variant` 当前支持 bar、line、area 和 donut；`series` 声明数值字段，`xKey` 声明分类字段。
@@ -346,7 +397,7 @@ export const extension = {
   apiVersion: 1,
   activate(host) {
     const React = host.react;
-    const Button = host.ui.Button;
+    const { Button, Card, CardHeader, CardTitle, CardContent, EmptyState, Notice } = host.ui;
     function WorkspaceView(props) {
       // render with React.createElement or compiled JSX
     }
@@ -396,12 +447,12 @@ Native 不得直接 `fetch` 业务 origin。这样 connector URL、token、确�
 
 ### 8.5 OpenChamber 风格
 
-- 使用 Host 提供的 `Button`，不要自制按钮 chrome。
-- 使用 semantic class/token，如 `text-foreground`、`text-muted-foreground`、`border-border`、`--surface-elevated`、`--status-*-background`。
+- 使用 Host UI Kit：`Button`、Card family、`Badge`、`Notice`、`Skeleton`、`Separator`、`Progress`、Table family、Tabs family、`Input`、`Textarea` 和 `EmptyState`；不可用、未授权、禁止、陈旧和错误反馈统一使用 `Notice`，不要自制重复 chrome。
+- 使用 `.ocix-scope` 下的 semantic class/token，如 `--ocix-surface`、`--ocix-surface-muted`、`--ocix-foreground`、`--ocix-muted-foreground`、`--ocix-border` 和 `--ocix-{success,warning,error,info}`。
 - 不硬编码 hex 或 Tailwind palette 色。
-- 只使用 OpenChamber 构建中已经存在的 utility/class；外部 bundle 的任意动态 class 不会自动被 Tailwind 扫描生成。
+- 只使用 OpenChamber 构建中已经存在且由 Host UI Kit 文档保证的 utility/class；外部 bundle 的任意动态 class 不会自动被 Tailwind 扫描生成。扩展自身的响应式网格不要假设 `sm:*` / `xl:*` 一定存在，可使用 `repeat(auto-fit, minmax(...))` 的受限 inline style，或等待 Host UI Kit 提供对应布局 primitive。
 - 设计窄屏布局、横向 table overflow、loading、empty、error 和 disabled state。
-- 当前 Native Host SDK 只公开 React 和 Button；需要新共享 primitive 时应版本化扩展 Host SDK，而不是 import OpenChamber 私有源码。
+- Host UI Kit 是 `uiVersion: 1` 的只增契约；需要新共享 primitive 时应版本化扩展 Host SDK，而不是 import OpenChamber 私有源码。
 
 ### 8.6 Bundle 规则
 
@@ -531,7 +582,9 @@ OpenCode Server
 
 ```text
 用户：“打开运营工作台，看看待审批项目”
-  → OpenCode Agent 根据 tool description/skill 选择 operations_open_workspace
+  → OpenChamber 获取当前 OCIX Capability Catalog（无 Secret / Connector URL）
+  → 通过 OpenCode prompt system 字段注入固定路由策略
+  → OpenCode Agent 根据显式请求、Catalog、tool description/skill 选择 operations_open_workspace
   → Tool 返回 strict Interactive Result Envelope 字符串
   → OpenChamber 收到 completed ToolPart
   → parser 校验 schema/view/version/mode
@@ -571,6 +624,8 @@ OpenCode Server
 | 失败 | 用户结果 |
 |---|---|
 | Tool 未选中 | 普通文本回答；可明确要求使用 tool |
+| 外部 OpenCode 缺少 OCIX Tool | 明确报告 Agent Runtime 半边未部署；不伪造替代看板 |
+| Connector 未配置/过期 | 仍进入业务 Tool，由模块显示连接配置要求 |
 | Envelope 非法 | 普通 Tool UI |
 | View 未安装 | 可见错误 + 原始 Tool UI |
 | tool/view 不匹配 | 403 + fallback |
@@ -656,11 +711,12 @@ skill 会要求 Agent 先划分 query/write、选择 runtime、使用脚手架�
 - Marketplace key 等价于该目录的发布委托：目录一旦被攻破，攻击者可能声明新的 publisher key，因此生产环境必须保护离线市场 key，并规划 key rotation/revocation。
 - 当前没有在线签名密钥吊销列表、签名透明日志、恶意软件扫描服务或官方托管公共市场；这些是分发生态治理，不应由客户端假装完成。
 - Native 仍是管理员或受信 marketplace 授权的同页代码；签名证明来源与完整性，不证明代码安全。
-- Native Host SDK v1 很窄，只有 React、Button、View registration 和 View props Host。
+- Native Host SDK v1 已包含常用 Card/Badge/Table/Tabs/Form/State primitives，但不是完整的任意组件框架；缺失能力应走 Host SDK 版本化，而不是私有源码 import。
 - Native asset integrity 当前用于 descriptor/ETag；dynamic import 路径没有浏览器 SRI 参数。
 - Native 没有完整 hot unload 和 ABI 兼容协商。
-- workspace/fullscreen display mode 容器尚未完成，正常会话只使用 inline。
+- Installed Native 的 workspace/fullscreen 产品容器仍未统一；HTML Artifact 已支持同一 iframe 的 inline/workspace/fullscreen。
 - VS Code 尚无 Interactive UI Gateway，保持明确 unsupported。
-- HTML Artifact 与 MCP Apps 仍在 Roadmap。
+- HTML Artifact Runtime v1 已实现独立 schema、Tool、内容寻址重放、sandbox/CSP、主题/resize/follow-up Bridge 和展开模式；scripts 生产默认关闭，且 Artifact 永远不能获得 Connector/Token/Tool/Gateway/网络权限。VS Code 与 active E2EE relay 仍明确 unsupported。
+- MCP Apps 仍在 Roadmap。
 
 这些限制不影响在受控企业部署中开发和验证真实模块，但上线到公共生态前必须完成治理阶段。

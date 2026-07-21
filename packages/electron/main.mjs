@@ -2383,6 +2383,11 @@ const createBrowserWindow = ({ label, restoreGeometry, url, runtimeConfig = {} }
     try {
       const url = new URL(raw);
       if (url.protocol === 'devtools:') return true;
+      // Renderer-driven reloads of the packaged UI surface are reported as a
+      // normal navigation. Keep the privileged scheme restricted to our one
+      // registered host; otherwise first-launch/recovery reloads are blocked
+      // by this guard and the window remains on a stale boot outcome.
+      if (url.protocol === `${UI_PROTOCOL}:` && url.hostname === 'app') return true;
       if (url.protocol !== 'http:' && url.protocol !== 'https:') return false;
       if (state.localOrigin) {
         try {
@@ -3828,6 +3833,14 @@ const handleInvoke = async (browserWindow, command, args = {}) => {
         localAvailable: Boolean(state.sidecarUrl || state.localOrigin),
       });
       state.initScript = buildInitScript(state.localOrigin, state.bootOutcome, state.apiBaseUrl, state.clientToken, state.requestHeaders || {});
+      // A first-launch chooser persists the local host and then reloads the
+      // existing packaged window. dom-ready prefers the window-scoped script,
+      // so keep it in sync with the newly authoritative boot outcome; leaving
+      // the original not-configured script here traps the reloaded UI on the
+      // installer even though the in-process server and OpenCode are ready.
+      if (browserWindow && !browserWindow.isDestroyed()) {
+        browserWindow.__ocInitScript = state.initScript;
+      }
       log.info('[electron] hosts config updated, recomputed bootOutcome', state.bootOutcome);
       return null;
     }

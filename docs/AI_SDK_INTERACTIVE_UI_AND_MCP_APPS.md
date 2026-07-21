@@ -1,5 +1,7 @@
 # OpenChamber Interactive UI 实施方案与 MCP Apps Roadmap
 
+> 视觉升级、HTML Artifact Runtime 和最终统一测试的详细执行顺序见 [Interactive UI 视觉、HTML Artifact 与统一验收计划](./INTERACTIVE_UI_VISUAL_HTML_ARTIFACT_AND_UNIFIED_TEST_PLAN.md)。
+
 > **文档性质**：fork 内部决策记录与实施方案（不提交 upstream PR）
 > **分支**：`docs/interactive-ui-mcp-apps`  
 > **当前决策**：优先实现 **Interactive UI**；**MCP Apps 延后到 Roadmap**
@@ -31,11 +33,11 @@ OpenChamber 当前不需要替换 OpenCode 消息流，也不需要引入第二�
 
 Roadmap 现在明确以三层结构组织能力，不再把“生成 UI”视为一种单一 runtime：
 
-| 层 | 定位 | 当前状态（2026-07-18） |
+| 层 | 定位 | 当前状态（2026-07-20） |
 |---|---|---|
 | **Agent Generated Declarative** | 模型按任务组合平台 primitive；同页 renderer 安全重建；只处理 snapshot | **v1 已实现**：指标、图表、表格、流程、列表、状态和说明 |
 | **Installed Declarative / Trusted Native** | 企业开发者安装长期模块；经 Gateway 查询真实 API，并执行确认式写入 | **Managed Distribution Preview 已实现**：runtime、Gateway、脚手架、validator、自描述 Ed25519 `.ocix`、确认式信任、Tool/Skill 全局受管安装、Extension Manager、升级回滚、签名市场目录与 Connector Authentication v1 |
-| **HTML Artifact** | Agent 生成 HTML/CSS/SVG/受限 JS，用于模拟器、自定义图形和探索器 | **下一阶段**：对话内视觉无感 sandbox；不持 token、不直接调用 tool/Gateway |
+| **HTML Artifact** | Agent 生成 HTML/CSS/SVG/受限 JS，用于模拟器、自定义图形和探索器 | **Runtime v1 已实现**：独立严格 schema、Agent Tool、内容寻址存储、历史重放、静态/脚本 feature gate、sandbox/CSP、主题与高度 Bridge、inline/workspace/fullscreen 和 fallback；不持 token、不直连 Tool/Gateway |
 
 这里“Managed Distribution Preview 已实现”表示客户端分发链完整，不表示 OpenChamber 已经运营官方公共市场。审核、签名密钥吊销、透明日志和托管服务仍是公共生态的运营治理。业务 Key 的 scope、RBAC/ABAC、撤销和业务审计由第三方系统负责，OpenChamber 不建设第二套多用户权限系统。
 
@@ -363,10 +365,10 @@ OpenChamber 不引入第二套 AI SDK 消息 runtime，而是在现有 OpenCode 
 
 后者的关键不在 iframe 外观，而在宿主体验：透明背景、内容高度通知、最大高度限制、主题/locale/timezone 注入、窄屏响应式，以及仅开放 follow-up message、外链等受控桥接。应用资源也明确拒绝 inline visualization 直接调用 tools。
 
-这验证了 OpenChamber 的后续路线，但不改变当前优先级：
+这验证了 OpenChamber 的路线；当前实现状态是：
 
-- **现在**：Agent Generated Declarative，同页、安全、足够覆盖大部分数据型任务。
-- **随后**：HTML Artifact，用于自定义 SVG、模拟器和探索器；隔离层视觉无感，但安全上必须存在。
+- **默认**：Agent Generated Declarative，同页、安全，覆盖大部分数据型任务。
+- **表现力兜底**：HTML Artifact，用于自定义 SVG、模拟器和探索器；隔离层视觉无感，但安全边界真实存在。
 - **企业模块**：继续使用安装式 Declarative/Trusted Native，通过 Gateway 获得真实业务 API 能力。
 
 详细证据、版本、调用路径和逆向边界见 [ChatGPT/Codex Desktop 可视化与 Artifact 本地静态调研](./CHATGPT_CODEX_DESKTOP_ARTIFACT_REVERSE_ENGINEERING.md)。Vercel AI SDK UI、实验性 RSC `streamUI` 与本地实现的逐项对比见 [Vercel AI SDK Generative UI 实现与 ChatGPT/OpenChamber 对比](./VERCEL_AI_SDK_GENERATIVE_UI_IMPLEMENTATION_AND_COMPARISON.md)。
@@ -516,8 +518,9 @@ Interactive UI 实现需要特别控制冲突面：
 | Now | Installed UI 分发治理：自描述 Ed25519 `.ocix`、确认式信任、Agent Tool/Skill 全局受管安装、Extension Manager、启停/升级/回滚、签名 marketplace catalog | **Managed Distribution Preview 已实现** |
 | Now | OCIX Connector Authentication v1：手工 Key、一次性连接码签发、Secret Store、连接测试/替换/断开和 Gateway 注入 | **已实现** |
 | Next | 公共生态治理：审核、签名密钥吊销/透明日志、Host SDK 兼容窗口与官方托管市场 | **Roadmap** |
-| Next | 继续扩充可信基础组件、schema/version 规范、lazy loading | **继续扩充组件集** |
-| Next | Agent HTML Artifact：透明自适应 sandbox、主题注入、follow-up bridge | **Roadmap，Declarative 稳定后实施** |
+| Now | OCIX 固定色板、现有节点美化、进阶 Declarative primitives 与 Native Host UI Kit | **已实现；统一视觉验收进行中** |
+| Now | Agent HTML Artifact：独立 schema、Tool、存储/重放、sandbox/CSP、透明自适应容器、主题/follow-up Bridge、展开模式 | **Runtime v1 已实现；统一安全与跨 runtime 验收进行中** |
+| Next | 继续扩充可信基础组件、schema/version 规范和视觉回归基线 | **继续扩充组件集** |
 | Next | 在 OpenCode 有权威增量数据后支持 partial/streaming UI | 条件性规划 |
 | Later | MCP Apps capability 与 metadata 端到端 spike | **Roadmap** |
 | Later | MCP App sandbox、App Bridge、tool proxy 与安全策略 | **Roadmap** |
@@ -529,12 +532,13 @@ Roadmap 表示技术方向，不代表已承诺发布日期。
 
 ## 14. 下一步
 
-1. 用开发手册和 `$build-openchamber-interactive-extension` 将一个真实企业模块接入，验证 starter 之外的数据模型、错误和并发写入。
-2. 继续扩充 Declarative 安全组件集，并为 schema 增加更完整的契约测试和浏览器视觉回归。
-3. 为 HTML Artifact 写独立 ADR：fragment 资源、CSP、透明自适应容器、桥接 allowlist、历史重放和大小限制。
-4. 在现有签名/Extension Manager/版本治理之上增加签名密钥吊销、透明日志与恶意包响应；业务细粒度权限继续由第三方 API 通过 scoped Key 执行。
-5. 为 VS Code 增加明确的 Gateway 实现；在此之前保持稳定 unsupported。
-6. MCP Apps 只跟踪上游能力变化，达到进入条件后另写 ADR 和 spike 方案。
+1. 完成 Declarative、Installed/Native 与 HTML Artifact 的统一功能、安全、明暗/窄屏视觉和历史回放验收，并固化可重复命令与证据。
+2. 用更新后的 `$build-openchamber-interactive-extension` 将一个真实企业模块接入，验证 starter 之外的数据模型、错误和并发写入。
+3. 继续扩充 Declarative 安全组件集，并为 schema 增加浏览器视觉回归基线；标准组件足够表达时仍不升级到 Artifact。
+4. 按 [HTML Artifact Runtime ADR](./HTML_ARTIFACT_RUNTIME_ADR.md) 继续治理缓存配额、引用清理和跨 runtime 能力；不放宽 Connector/Token/网络边界。
+5. 在现有签名/Extension Manager/版本治理之上增加签名密钥吊销、透明日志与恶意包响应；业务细粒度权限继续由第三方 API 通过 scoped Key 执行。
+6. 为 VS Code 增加明确的 Gateway/Artifact 文档资源实现；在此之前保持稳定 unsupported。
+7. MCP Apps 只跟踪上游能力变化，达到进入条件后另写 ADR 和 spike 方案。
 
 ---
 

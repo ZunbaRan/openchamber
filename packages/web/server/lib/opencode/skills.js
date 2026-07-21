@@ -155,16 +155,19 @@ function getSkillWritePath(skillName, workingDirectory, requestedScope) {
 
 function discoverSkills(workingDirectory) {
   const skills = new Map();
+  const externalSkillsDisabled = process.env.OPENCODE_DISABLE_EXTERNAL_SKILLS === 'true';
 
-  for (const externalRootName of ['.claude', '.agents']) {
-    const homeRoot = path.join(os.homedir(), externalRootName, 'skills');
-    const source = externalRootName === '.agents' ? 'agents' : 'claude';
-    for (const skillMdPath of walkSkillMdFiles(homeRoot)) {
-      addSkillFromMdFile(skills, skillMdPath, SKILL_SCOPE.USER, source);
+  if (!externalSkillsDisabled) {
+    for (const externalRootName of ['.claude', '.agents']) {
+      const homeRoot = path.join(os.homedir(), externalRootName, 'skills');
+      const source = externalRootName === '.agents' ? 'agents' : 'claude';
+      for (const skillMdPath of walkSkillMdFiles(homeRoot)) {
+        addSkillFromMdFile(skills, skillMdPath, SKILL_SCOPE.USER, source);
+      }
     }
   }
 
-  if (workingDirectory) {
+  if (workingDirectory && !externalSkillsDisabled) {
     const worktreeRoot = findWorktreeRoot(workingDirectory) || path.resolve(workingDirectory);
     const ancestors = getAncestors(workingDirectory, worktreeRoot);
     for (const ancestor of ancestors) {

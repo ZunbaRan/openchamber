@@ -27,6 +27,39 @@ agent-runtime/
 - Skill directory names use lowercase kebab-case. `SKILL.md` frontmatter must declare the same `name` and a non-empty `description`.
 - Tool and Skill names are global across installed OCIX packages. Treat a collision as an extension design error; do not overwrite another extension or a user-owned global file.
 
+## Agent routing
+
+New OCIX packages should declare both extension-level and View-level routing:
+
+```json
+{
+  "agentRouting": {
+    "domain": "operations",
+    "intents": ["operations.overview", "operations.item.approve"],
+    "examples": { "en": ["open operations", "approve an item"] },
+    "dataAuthority": "connected-business-system"
+  },
+  "views": [{
+    "id": "com.acme.operations.workspace",
+    "tools": ["operations_open_workspace"],
+    "routing": {
+      "intents": ["operations.overview", "operations.item.approve"],
+      "priority": 85,
+      "operation": "mixed"
+    }
+  }]
+}
+```
+
+- `domain` and intents are bounded identifiers, and intents stay inside the domain namespace. They are not prose.
+- `dataAuthority` is one of `generated`, `user-provided`, or `connected-business-system`.
+- Multi-View extensions declare routing on every View. View intents are a subset of extension intents; priority is 0-100; operation is `read`, `write`, or `mixed`.
+- Every routed View binds at least one lowercase underscore Tool name. Package validation checks the schema before signing and again before installation.
+- Examples are short bilingual review/test phrases. OpenChamber does not inject them, extension names, URLs, or descriptions into the system prompt.
+- The generated capability context is delivered through OpenCode's per-prompt `system` field and refreshes from enabled manifests and coarse Connector state. It never modifies `AGENTS.md`.
+- Tool descriptions remain mandatory. State the authoritative business data source, priority over generic `interactive_ui`, read/write semantics, and behavior when setup is missing.
+- Routing order is explicit Tool, matching business Tool, other specialized/MCP Tool, generic `interactive_ui`, then text. A missing/expired Connector does not authorize fake generic business data.
+
 ## Envelope
 
 The completed tool string must be one JSON object with:
@@ -48,10 +81,13 @@ The manifest view must bind the exact tool name. If parsing, lookup, binding, as
 ## Declarative
 
 - Schema: `openchamber://declarative-view/v1`.
-- Supported primitives: `stack`, `section`, `row`, `grid`, `metric-grid`, `metric`, `text`, `markdown`, `progress`, `status`, `badge`, `key-value`, `flow`, `chart`, `list`, `callout`, and `data-table`.
+- Supported primitives: `stack`, `section`, `row`, `grid`, `metric-grid`, `metric`, `text`, `markdown`, `progress`, `status`, `badge`, `key-value`, `flow`, `chart`, `list`, `callout`, `data-table`, `divider`, `timeline`, `activity-feed`, `comparison`, `tabs`, `accordion`, `code-block`, `sparkline`, `git-graph`, `tree`, and `diff-summary`.
 - Bindings use `$path` against `data`, `context`, `query`, or `host`; table actions use `$row`.
 - Installed definitions may declare queries and row actions, but every action must exist in the extension manifest.
 - No JavaScript, raw HTML, arbitrary expressions, or host globals are accepted in Declarative definitions.
+- Use semantic fields such as tone, trend, state, density, alignment, and format. Do not add colors, arbitrary styles/classes, CSS variables, URLs, or executable content to the View schema.
+- First query uses a stable Skeleton. Refresh keeps the last valid data visible; empty, unconfigured, and error are separate states.
+- Agent Generated Declarative uses the same visual primitives but passes through a stricter sanitizer and never inherits installed query/action/binding privileges.
 
 ## Trusted Native
 
@@ -59,9 +95,18 @@ The manifest view must bind the exact tool name. If parsing, lookup, binding, as
 - The object must contain the exact extension `id`, `apiVersion: 1`, and `activate(activationHost)`.
 - Use `activationHost.react`; do not bundle a second React copy.
 - Register only view IDs inside the extension namespace.
-- Use `activationHost.ui.Button` and semantic OpenChamber CSS classes/tokens.
+- Use `activationHost.ui`: Button; Card/Header/Title/Content; Badge; Notice; Skeleton; Separator; Progress; Table/Header/Body/Row/Head/Cell; Tabs/List/Trigger/Content; Input; Textarea; and EmptyState. Use `Notice` for unavailable, unauthorized, forbidden, stale, and error feedback. Treat this as the stable v1 Host UI Kit and feature-detect additions.
+- Use semantic OpenChamber/OCIX CSS classes and tokens only. Do not inject global CSS, override host tokens, hard-code a parallel palette, or reach into private host DOM.
 - Use `props.host.business.query/execute`; never fetch business APIs or read credentials in the browser bundle.
 - `execute` automatically follows the server's confirmation-required challenge for `permission: ask` actions.
+- Explicitly refresh Native query state after a successful write; preserve the previous valid state on failed/cancelled refresh.
+
+## HTML Artifact boundary
+
+- `openchamber://html-artifact-result/v1` is a separate Agent result contract, not an OCIX View and not a package asset format.
+- Use it only when safe Declarative primitives cannot reasonably express a one-off custom SVG, simulator, or explorer.
+- Artifact HTML has no Connector, Token, Gateway, Tool, filesystem, storage, parent-DOM, or network access. Never move an authenticated enterprise module into Artifact to avoid package governance.
+- Standard visualizations should stay Declarative; long-lived authenticated business experiences should stay Installed Declarative/Trusted Native.
 
 ## Gateway
 

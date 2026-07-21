@@ -3,6 +3,21 @@
   "id": "com.openchamber.builtin.interactive-ui",
   "name": "OpenChamber Interactive UI",
   "version": "1.0.0",
+  "agentRouting": {
+    "domain": "visualization",
+    "intents": [
+      "visualization.compose",
+      "visualization.process",
+      "visualization.dashboard",
+      "visualization.chart",
+      "visualization.table"
+    ],
+    "examples": {
+      "zh-CN": ["画一下这个流程", "把这些数据做成图表", "可视化我提供的结果"],
+      "en": ["visualize this process", "chart these results", "show this data as a dashboard"]
+    },
+    "dataAuthority": "generated"
+  },
   "connectors": [],
   "views": [
     {
@@ -10,6 +25,11 @@
       "runtime": "declarative",
       "entry": "ui/process-flow.view.json",
       "tools": ["interactive_ui"],
+      "routing": {
+        "intents": ["visualization.process"],
+        "priority": 10,
+        "operation": "read"
+      },
       "displayModes": ["inline", "workspace"]
     },
     {
@@ -17,6 +37,16 @@
       "runtime": "declarative",
       "entry": "ui/generated.view.json",
       "tools": ["interactive_ui"],
+      "routing": {
+        "intents": [
+          "visualization.compose",
+          "visualization.dashboard",
+          "visualization.chart",
+          "visualization.table"
+        ],
+        "priority": 10,
+        "operation": "read"
+      },
       "displayModes": ["inline", "workspace"]
     }
   ],

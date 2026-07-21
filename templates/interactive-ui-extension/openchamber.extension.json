@@ -4,6 +4,23 @@
   "name": "__EXTENSION_NAME__",
   "version": "1.0.0",
   "publisher": "Your Organization",
+  "agentRouting": {
+    "domain": "__TOOL_PREFIX__",
+    "intents": [
+      "__TOOL_PREFIX__.overview",
+      "__TOOL_PREFIX__.item.view",
+      "__TOOL_PREFIX__.item.approve",
+      "__TOOL_PREFIX__.workspace"
+    ],
+    "examples": {
+      "en": [
+        "Open the __EXTENSION_NAME__ overview",
+        "Show pending __EXTENSION_NAME__ items",
+        "Open the __EXTENSION_NAME__ workspace"
+      ]
+    },
+    "dataAuthority": "connected-business-system"
+  },
   "connectors": [
     {
       "id": "business-api",
@@ -29,6 +46,11 @@
       "runtime": "declarative",
       "entry": "ui/declarative/overview.view.json",
       "tools": ["__TOOL_PREFIX___open_overview"],
+      "routing": {
+        "intents": ["__TOOL_PREFIX__.overview", "__TOOL_PREFIX__.item.view"],
+        "priority": 80,
+        "operation": "read"
+      },
       "displayModes": ["inline", "workspace"]
     },
     {
@@ -37,6 +59,11 @@
       "entry": "dist/ui.mjs",
       "export": "extension",
       "tools": ["__TOOL_PREFIX___open_workspace"],
+      "routing": {
+        "intents": ["__TOOL_PREFIX__.workspace", "__TOOL_PREFIX__.item.approve"],
+        "priority": 85,
+        "operation": "mixed"
+      },
       "displayModes": ["inline", "workspace", "fullscreen"]
     }
   ],

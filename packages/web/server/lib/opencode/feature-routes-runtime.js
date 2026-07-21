@@ -47,6 +47,8 @@ import { createInteractiveUIRuntime } from '../interactive-ui/runtime.js';
 import { registerInteractiveUIRoutes } from '../interactive-ui/routes.js';
 import { createInteractiveUIExtensionManager } from '../interactive-ui/manager.js';
 import { createInteractiveUIConnectionStore } from '../interactive-ui/connection-store.js';
+import { createHTMLArtifactStore } from '../interactive-ui/artifact-store.js';
+import { createBuiltInInteractiveUIRuntime } from '../interactive-ui/builtin-runtime.js';
 
 export const createFeatureRoutesRuntime = (dependencies) => {
   const {
@@ -114,30 +116,54 @@ export const createFeatureRoutesRuntime = (dependencies) => {
           .map((entry) => entry.trim())
           .filter(Boolean)
       : [];
+    const testOpenCodeConfigDirectory = typeof processLike.env.OPENCHAMBER_TEST_OPENCODE_CONFIG_DIR === 'string'
+      && processLike.env.OPENCHAMBER_TEST_OPENCODE_CONFIG_DIR.trim()
+      ? path.resolve(processLike.env.OPENCHAMBER_TEST_OPENCODE_CONFIG_DIR.trim())
+      : null;
+    if (testOpenCodeConfigDirectory) {
+      processLike.env.OPENCODE_CONFIG_DIR = testOpenCodeConfigDirectory;
+    }
+    const builtInInteractiveUIRuntime = createBuiltInInteractiveUIRuntime({ pathImpl: path });
     const interactiveUIExtensionManager = createInteractiveUIExtensionManager({
       dataDirectory: openchamberDataDir,
-      opencodeConfigDirectory: path.join(os.homedir(), '.config', 'opencode'),
+      opencodeConfigDirectory: testOpenCodeConfigDirectory ?? path.join(os.homedir(), '.config', 'opencode'),
       fsImpl: fsPromises,
       pathImpl: path,
       cryptoImpl: crypto,
       environment: processLike.env,
       logger: console,
       refreshOpenCode: () => refreshOpenCodeAfterConfigChange('Interactive UI extension Agent Runtime changed'),
+      builtInRuntime: builtInInteractiveUIRuntime,
     });
+    try {
+      await interactiveUIExtensionManager.initialize();
+    } catch (error) {
+      if (error?.status !== 409) throw error;
+      console.error(`[InteractiveUI] Built-in Agent Runtime was not installed (${error.code || 'agent_runtime_conflict'}); existing OpenCode files were preserved`);
+    }
     const interactiveUIConnectionStore = createInteractiveUIConnectionStore({
       dataDirectory: openchamberDataDir,
       fsImpl: fsPromises,
       pathImpl: path,
       cryptoImpl: crypto,
     });
+    const htmlArtifactStore = createHTMLArtifactStore({
+      dataDirectory: openchamberDataDir,
+      fsImpl: fsPromises,
+      pathImpl: path,
+      cryptoImpl: crypto,
+      environment: processLike.env,
+    });
     registerInteractiveUIRoutes(app, {
       express,
       manager: interactiveUIExtensionManager,
+      artifactStore: htmlArtifactStore,
       runtime: createInteractiveUIRuntime({
         fsPromises,
         path,
         crypto,
         extensionRoots: async () => [
+          builtInInteractiveUIRuntime.rootDirectory,
           ...await interactiveUIExtensionManager.getEnabledExtensionRoots(),
           ...configuredInteractiveUIRoots,
         ],

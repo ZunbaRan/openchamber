@@ -89,7 +89,13 @@ const readProcessTable = () => {
 
 const commandRunsDemo = (command) => {
   if (typeof command !== 'string' || command.length === 0) return false;
-  return command.includes(demoScriptPath) || command.includes('scripts/interactive-ui-demo.mjs');
+  const tokens = command.trim().split(/\s+/);
+  const executable = path.basename(tokens[0] || '');
+  if (executable !== 'node' && executable !== 'bun') return false;
+  return tokens.slice(1).some((token) => {
+    const normalized = token.replace(/^["']|["']$/g, '');
+    return normalized === demoScriptPath || normalized === 'scripts/interactive-ui-demo.mjs';
+  });
 };
 
 const isProjectDemoProcess = (entry) => {
@@ -181,14 +187,23 @@ const stopProcessTree = async (rootPid) => {
     return waitForExit(rootPid, 3_000);
   }
 
+  // Snapshot descendants before signaling the root. Managed OpenCode may still
+  // be shutting down when the parent exits and is then immediately reparented,
+  // so it can no longer be discovered through the original PPID afterwards.
+  const descendants = descendantsOf(rootPid, readProcessTable()).reverse();
   signalProcess(rootPid, 'SIGTERM');
-  if (await waitForExit(rootPid, 8_000)) return true;
+  const rootStopped = await waitForExit(rootPid, 8_000);
+  for (const entry of descendants) signalProcess(entry.pid, 'SIGTERM');
+  await Promise.all(descendants.map((entry) => waitForExit(entry.pid, 3_000)));
 
-  const table = readProcessTable();
-  const descendants = descendantsOf(rootPid, table).reverse();
-  for (const entry of descendants) signalProcess(entry.pid, 'SIGKILL');
-  signalProcess(rootPid, 'SIGKILL');
-  return waitForExit(rootPid, 3_000);
+  const remainingDescendants = descendants.filter((entry) => isProcessRunning(entry.pid));
+  for (const entry of remainingDescendants) signalProcess(entry.pid, 'SIGKILL');
+  if (!rootStopped) signalProcess(rootPid, 'SIGKILL');
+  const [rootExited, ...descendantsExited] = await Promise.all([
+    waitForExit(rootPid, 3_000),
+    ...remainingDescendants.map((entry) => waitForExit(entry.pid, 3_000)),
+  ]);
+  return rootExited && descendantsExited.every(Boolean);
 };
 
 const readLogTail = (maximumCharacters = 4_000) => {

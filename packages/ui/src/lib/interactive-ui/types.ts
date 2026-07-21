@@ -113,9 +113,32 @@ export type NativeViewComponent = React.ComponentType<NativeViewProps>;
 
 export interface NativeActivationHost {
   apiVersion: 1;
+  uiVersion: 1;
   react: typeof React;
   ui: {
     Button: React.ComponentType<Record<string, unknown>>;
+    Card: React.ComponentType<Record<string, unknown>>;
+    CardHeader: React.ComponentType<Record<string, unknown>>;
+    CardTitle: React.ComponentType<Record<string, unknown>>;
+    CardContent: React.ComponentType<Record<string, unknown>>;
+    Badge: React.ComponentType<Record<string, unknown>>;
+    Notice: React.ComponentType<Record<string, unknown>>;
+    Skeleton: React.ComponentType<Record<string, unknown>>;
+    Separator: React.ComponentType<Record<string, unknown>>;
+    Progress: React.ComponentType<Record<string, unknown>>;
+    Table: React.ComponentType<Record<string, unknown>>;
+    TableHeader: React.ComponentType<Record<string, unknown>>;
+    TableBody: React.ComponentType<Record<string, unknown>>;
+    TableRow: React.ComponentType<Record<string, unknown>>;
+    TableHead: React.ComponentType<Record<string, unknown>>;
+    TableCell: React.ComponentType<Record<string, unknown>>;
+    Tabs: React.ComponentType<Record<string, unknown>>;
+    TabsList: React.ComponentType<Record<string, unknown>>;
+    TabsTrigger: React.ComponentType<Record<string, unknown>>;
+    TabsContent: React.ComponentType<Record<string, unknown>>;
+    Input: React.ComponentType<Record<string, unknown>>;
+    Textarea: React.ComponentType<Record<string, unknown>>;
+    EmptyState: React.ComponentType<Record<string, unknown>>;
   };
   views: {
     register(definition: {

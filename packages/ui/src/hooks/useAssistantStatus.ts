@@ -87,6 +87,11 @@ const TOOL_STATUS_PHRASES: Record<string, string> = {
     question: 'asking question',
     plan_enter: 'switching to planning',
     plan_exit: 'switching to building',
+    interactive_ui: 'composing Interactive UI',
+    html_artifact: 'building HTML Artifact',
+    crm_open_dashboard: 'loading CRM workspace',
+    sales_get_summary: 'loading sales summary',
+    sales_get_dashboard: 'loading sales workspace',
 };
 const WORKING_PHRASES = [
     'working',

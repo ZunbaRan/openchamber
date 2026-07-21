@@ -156,6 +156,25 @@ const sanitizeMarketplaces = (marketplaces) => ({
 
 const sanitizeExtensions = (state) => Object.values(state.extensions ?? {}).map((extension) => clone(extension));
 
+const summarizeAgentRouting = (manifest) => isRecord(manifest?.agentRouting)
+  ? {
+      domain: manifest.agentRouting.domain,
+      intents: clone(manifest.agentRouting.intents),
+      dataAuthority: manifest.agentRouting.dataAuthority,
+      views: (Array.isArray(manifest.views) ? manifest.views : []).map((view) => ({
+        id: view.id,
+        tools: clone(view.tools ?? []),
+        routing: isRecord(view.routing)
+          ? {
+              intents: clone(view.routing.intents ?? []),
+              priority: view.routing.priority ?? 50,
+              operation: view.routing.operation ?? 'read',
+            }
+          : null,
+      })),
+    }
+  : null;
+
 const summarizeVerifiedPackage = (verified) => ({
   extension: {
     id: verified.manifest.id,
@@ -175,6 +194,7 @@ const summarizeVerifiedPackage = (verified) => ({
       : [],
     nativeCode: verified.manifest.trust?.mode === 'native-code',
   },
+  agentRouting: summarizeAgentRouting(verified.manifest),
   agentRuntime: clone(verified.agentRuntime),
 });
 
@@ -188,6 +208,7 @@ export const createInteractiveUIExtensionManager = ({
   environment = process.env,
   logger = console,
   refreshOpenCode = async () => ({ reloaded: false, external: false }),
+  builtInRuntime = null,
 } = {}) => {
   if (typeof dataDirectory !== 'string' || !dataDirectory.trim() || typeof fetchImpl !== 'function') {
     throw new Error('Interactive UI extension manager dependencies are incomplete');
@@ -203,6 +224,9 @@ export const createInteractiveUIExtensionManager = ({
   const resolvedOpenCodeConfigDirectory = pathImpl.resolve(
     opencodeConfigDirectory ?? pathImpl.join(managerDirectory, 'opencode-config'),
   );
+  let builtInRuntimeStatus = builtInRuntime
+    ? { id: builtInRuntime.extensionId, version: builtInRuntime.version, status: 'pending' }
+    : { status: 'not-configured' };
   let mutationQueue = Promise.resolve();
 
   const mutate = (operation) => {
@@ -236,12 +260,13 @@ export const createInteractiveUIExtensionManager = ({
     return state;
   };
 
-  const commitStateWithAgentRuntime = async (previousState, nextState) => {
+  const commitStateWithAgentRuntime = async (previousState, nextState, { reload = true } = {}) => {
     const deployment = await reconcileOpenCodeAgentRuntime({
       state: nextState,
       previousAssets: previousState.agentRuntime?.assets ?? {},
       configDirectory: resolvedOpenCodeConfigDirectory,
       versionsDirectory,
+      builtInRuntime,
       fsImpl,
       pathImpl,
       cryptoImpl,
@@ -253,7 +278,7 @@ export const createInteractiveUIExtensionManager = ({
       await deployment.rollback();
       throw error;
     }
-    if (!deployment.changed) return { changed: false, reloaded: false, external: false };
+    if (!deployment.changed || !reload) return { changed: deployment.changed, reloaded: false, external: false };
     try {
       return { changed: true, ...await refreshOpenCode() };
     } catch (error) {
@@ -346,6 +371,9 @@ export const createInteractiveUIExtensionManager = ({
 
   const installVerifiedPackage = async ({ verified, source, previousState, nextState }) => {
     const { id, name, version } = verified.manifest;
+    if (id === builtInRuntime?.extensionId) {
+      throw new InteractiveUIExtensionManagerError('Built-in Interactive UI cannot be replaced by an OCIX package', 'reserved_extension', 409);
+    }
     const destination = pathImpl.join(versionsDirectory, id, version);
     const existingVersion = nextState.extensions[id]?.versions?.[version];
     if (existingVersion) {
@@ -482,10 +510,33 @@ export const createInteractiveUIExtensionManager = ({
     return roots;
   };
 
+  const initialize = () => mutate(async () => {
+    try {
+      const previousState = await readState();
+      const nextState = clone(previousState);
+      const openCode = await commitStateWithAgentRuntime(previousState, nextState, { reload: false });
+      builtInRuntimeStatus = builtInRuntime
+        ? { id: builtInRuntime.extensionId, version: builtInRuntime.version, status: 'ready' }
+        : { status: 'not-configured' };
+      return openCode;
+    } catch (error) {
+      builtInRuntimeStatus = builtInRuntime
+        ? {
+            id: builtInRuntime.extensionId,
+            version: builtInRuntime.version,
+            status: error?.status === 409 ? 'conflict' : 'error',
+            errorCode: typeof error?.code === 'string' ? error.code : 'agent_runtime_error',
+          }
+        : { status: 'not-configured' };
+      throw error;
+    }
+  });
+
   const list = async () => {
     const [state, trust, marketplaces] = await Promise.all([readState(), readTrust(), readMarketplaces()]);
     return {
       apiVersion: 1,
+      builtInRuntime: clone(builtInRuntimeStatus),
       extensions: sanitizeExtensions(state),
       ...sanitizeTrust(trust),
       ...sanitizeMarketplaces(marketplaces),
@@ -700,6 +751,7 @@ export const createInteractiveUIExtensionManager = ({
   });
 
   return {
+    initialize,
     list,
     getEnabledExtensionRoots,
     trustPublisher,

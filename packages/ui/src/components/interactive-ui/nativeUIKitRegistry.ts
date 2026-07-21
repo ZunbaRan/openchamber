@@ -1,0 +1,51 @@
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Skeleton } from '@/components/ui/skeleton';
+import { Textarea } from '@/components/ui/textarea';
+import {
+  NativeBadge,
+  NativeCard,
+  NativeCardContent,
+  NativeCardHeader,
+  NativeCardTitle,
+  NativeEmptyState,
+  NativeNotice,
+  NativeProgress,
+  NativeSeparator,
+  NativeTable,
+  NativeTableBody,
+  NativeTableCell,
+  NativeTableHead,
+  NativeTableHeader,
+  NativeTableRow,
+  NativeTabs,
+  NativeTabsContent,
+  NativeTabsList,
+  NativeTabsTrigger,
+} from './NativeUIKit';
+
+export const nativeUIKit = {
+  Button,
+  Card: NativeCard,
+  CardHeader: NativeCardHeader,
+  CardTitle: NativeCardTitle,
+  CardContent: NativeCardContent,
+  Badge: NativeBadge,
+  Notice: NativeNotice,
+  Skeleton,
+  Separator: NativeSeparator,
+  Progress: NativeProgress,
+  Table: NativeTable,
+  TableHeader: NativeTableHeader,
+  TableBody: NativeTableBody,
+  TableRow: NativeTableRow,
+  TableHead: NativeTableHead,
+  TableCell: NativeTableCell,
+  Tabs: NativeTabs,
+  TabsList: NativeTabsList,
+  TabsTrigger: NativeTabsTrigger,
+  TabsContent: NativeTabsContent,
+  Input,
+  Textarea,
+  EmptyState: NativeEmptyState,
+};

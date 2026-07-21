@@ -4,6 +4,22 @@
   "name": "Acme Enterprise CRM",
   "version": "1.0.0",
   "publisher": "OpenChamber",
+  "agentRouting": {
+    "domain": "crm",
+    "intents": [
+      "crm.overview",
+      "crm.customer.view",
+      "crm.pipeline.view",
+      "crm.opportunity.view",
+      "crm.followup.view",
+      "crm.opportunity.advance"
+    ],
+    "examples": {
+      "zh-CN": ["打开 CRM 工作台", "查看客户和商机", "销售管道怎么样", "推进这个商机"],
+      "en": ["open the CRM workspace", "show customers and opportunities", "review the sales pipeline"]
+    },
+    "dataAuthority": "connected-business-system"
+  },
   "connectors": [
     {
       "id": "crm-api",
@@ -22,6 +38,18 @@
       "entry": "dist/ui.mjs",
       "export": "extension",
       "tools": ["crm_open_dashboard"],
+      "routing": {
+        "intents": [
+          "crm.overview",
+          "crm.customer.view",
+          "crm.pipeline.view",
+          "crm.opportunity.view",
+          "crm.followup.view",
+          "crm.opportunity.advance"
+        ],
+        "priority": 90,
+        "operation": "mixed"
+      },
       "displayModes": ["inline", "workspace", "fullscreen"]
     }
   ],

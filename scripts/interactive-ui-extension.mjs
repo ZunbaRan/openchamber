@@ -18,7 +18,7 @@ import {
 const REPO_ROOT = path.resolve(import.meta.dirname, '..');
 const TEMPLATE_ROOT = path.join(REPO_ROOT, 'templates', 'interactive-ui-extension');
 const EXTENSION_ID_PATTERN = /^[a-z0-9]+(?:[._-][a-z0-9]+)+$/i;
-const TOOL_PREFIX_PATTERN = /^[a-z][a-z0-9_]*$/;
+const TOOL_PREFIX_PATTERN = /^[a-z][a-z0-9_]{0,47}$/;
 const ENV_REFERENCE_PATTERN = /^\$\{([A-Z][A-Z0-9_]*)\}$/;
 const SAFE_PATH_SEGMENT = /^[A-Za-z0-9_-]+$/;
 const BLOCKED_PATH_SEGMENTS = new Set(['__proto__', 'prototype', 'constructor']);
@@ -26,10 +26,12 @@ const DECLARATIVE_BINDING_ROOTS = new Set(['data', 'context', 'query', 'host']);
 const SUPPORTED_NODE_TYPES = new Set([
   'generated-layout', 'stack', 'section', 'row', 'grid', 'metric-grid', 'metric',
   'text', 'markdown', 'progress', 'status', 'badge', 'key-value', 'flow', 'chart',
-  'list', 'callout', 'data-table',
+  'list', 'callout', 'data-table', 'divider', 'timeline', 'activity-feed',
+  'comparison', 'tabs', 'accordion', 'code-block', 'sparkline', 'git-graph',
+  'tree', 'diff-summary',
 ]);
 const BANNED_DECLARATIVE_KEYS = new Set(['dangerouslySetInnerHTML', 'html', 'script', 'srcDoc', 'srcdoc']);
-const REPOSITORY_PROVIDED_TOOL_NAMES = new Set(['interactive_ui', 'crm_open_dashboard']);
+const REPOSITORY_PROVIDED_TOOL_NAMES = new Set(['html_artifact', 'interactive_ui', 'crm_open_dashboard']);
 
 const isRecord = (value) => typeof value === 'object' && value !== null && !Array.isArray(value);
 
@@ -68,7 +70,7 @@ export const scaffoldExtension = async ({ targetDirectory, extensionId, name, to
   if (typeof name !== 'string' || !name.trim()) throw new Error('Extension name is required');
   const normalizedToolPrefix = toolPrefix ?? extensionId.split(/[._-]/).at(-1)?.toLowerCase();
   if (!TOOL_PREFIX_PATTERN.test(normalizedToolPrefix ?? '')) {
-    throw new Error('Tool prefix must start with a lowercase letter and contain only lowercase letters, digits, or underscores');
+    throw new Error('Tool prefix must be 1-48 characters, start with a lowercase letter, and contain only lowercase letters, digits, or underscores');
   }
   if (typeof targetDirectory !== 'string' || !targetDirectory.trim()) throw new Error('Target directory is required');
 
@@ -185,6 +187,22 @@ const validateDeclarativeDefinition = (definition, declaredActions) => {
       }
       if (value.type === 'metric-grid' && !Array.isArray(value.items)) {
         errors.push(`${location}.items: metric-grid requires an items array`);
+      }
+      if (value.type === 'section' && value.variant !== undefined && value.variant !== 'bordered') {
+        errors.push(`${location}.variant: section supports bordered only`);
+      }
+      if (value.type === 'metric' && value.tone !== undefined && !['neutral', 'info', 'success', 'warning', 'error', 'positive', 'negative'].includes(value.tone)) {
+        errors.push(`${location}.tone: metric tone is invalid`);
+      }
+      if (value.type === 'metric' && value.trend !== undefined && !['up', 'down', 'flat'].includes(value.trend)) {
+        errors.push(`${location}.trend: metric trend is invalid`);
+      }
+      if (value.type === 'flow' && Array.isArray(value.data)) {
+        value.data.forEach((step, index) => {
+          if (isRecord(step) && step.status !== undefined && !['completed', 'active', 'error', 'pending'].includes(step.status)) {
+            errors.push(`${location}.data[${index}].status: flow step status is invalid`);
+          }
+        });
       }
       if (value.type === 'data-table' && !Array.isArray(value.columns)) {
         errors.push(`${location}.columns: data-table requires a columns array`);

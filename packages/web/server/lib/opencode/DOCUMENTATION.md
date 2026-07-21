@@ -54,7 +54,7 @@ This module provides OpenCode server integration utilities for the web server ru
 - `OPENCODE_DATA_DIR`: OpenCode data directory path constant.
 
 ## Public exports (shared.js)
-- `OPENCODE_CONFIG_DIR`, `AGENT_DIR`, `COMMAND_DIR`, `SKILL_DIR`, `CONFIG_FILE`, `CUSTOM_CONFIG_FILE`: Path constants.
+- `OPENCODE_CONFIG_DIR`, `AGENT_DIR`, `COMMAND_DIR`, `SKILL_DIR`, `CONFIG_FILE`, `CUSTOM_CONFIG_FILE`: Path constants. `OPENCODE_CONFIG_DIR` honors the same-named environment override when it is set before server startup, which keeps OpenChamber config/Skill routes aligned with the managed OpenCode process and supports isolated runtime verification.
 - `AGENT_SCOPE`, `COMMAND_SCOPE`, `SKILL_SCOPE`: Scope constants with USER and PROJECT values.
 - `ensureDirs()`: Creates required OpenCode directories.
 - `parseMdFile(filePath)`, `writeMdFile(filePath, frontmatter, body)`: Markdown file operations with YAML frontmatter.
@@ -67,6 +67,7 @@ This module provides OpenCode server integration utilities for the web server ru
 - `walkSkillMdFiles(rootDir)`: Recursively finds all SKILL.md files.
 - `addSkillFromMdFile(skillsMap, skillMdPath, scope, source)`: Parses and indexes a skill file.
 - `resolveSkillSearchDirectories(workingDirectory)`: Returns skill search path order (config, project, home, custom).
+- `discoverSkills(workingDirectory)` follows OpenCode's `OPENCODE_DISABLE_EXTERNAL_SKILLS=true` switch for `.claude` and `.agents` discovery; native OpenCode config Skills remain available.
 - `listSkillSupportingFiles(skillDir)`, `readSkillSupportingFile(skillDir, relativePath)`, `writeSkillSupportingFile(skillDir, relativePath, content)`, `deleteSkillSupportingFile(skillDir, relativePath)`: Skill supporting file management.
 
 ## Public exports (routes.js)

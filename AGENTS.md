@@ -82,10 +82,23 @@ Project skills live under `.agents/skills/*/SKILL.md`. Before editing, load ever
 | UI components, styling, colors, buttons, or icons | `theme-system` |
 | User-facing or accessible UI text, labels, aria, toasts, dialogs, or navigation copy | `locale-ui-patterns` |
 | Settings UI, settings dialogs, configuration surfaces, or settings search | `settings-ui-patterns` |
+| OCIX extension schema/authoring, Agent Tool/Skill packaging, publisher signing, marketplaces, or extension distribution | `build-openchamber-interactive-extension` |
 | Sortable or drag-to-reorder behavior, especially `@dnd-kit` and touch/wrapping layouts | `drag-to-reorder` |
 | iOS Simulator build, launch, preview, gestures, or `serve-sim` control | `serve-sim` |
 
 Pure code-reading or explanation does not require implementation skills unless needed to interpret a specialized subsystem.
+
+## Interactive UI and OCIX Routing
+
+For work in Agent Generated Declarative, Installed Declarative, Trusted Native, HTML Artifact, OCIX distribution, or their acceptance pipeline, read the matching operational guide before editing:
+
+| Work | Required project guide |
+|---|---|
+| Implementing or debugging the Agent → Tool → View → business API conversation path | [Development pitfalls](docs/INTERACTIVE_UI_DEVELOPMENT_PITFALLS.md) |
+| Building/signing `.ocix`, publishing catalogs, deploying Agent Runtime, or packaging Electron Desktop | [Packaging pitfalls](docs/INTERACTIVE_UI_PACKAGING_PITFALLS.md) |
+| Selecting, running, retrying, cleaning up, or reporting Interactive UI/OCIX tests | [Agent autonomous testing](docs/INTERACTIVE_UI_AGENT_AUTONOMOUS_TESTING.md) |
+
+The canonical current release evidence is [the unified acceptance report](docs/INTERACTIVE_UI_UNIFIED_ACCEPTANCE_REPORT.md). The execution order and frozen gates are in [the execution plan](docs/INTERACTIVE_UI_BEAUTIFICATION_HTML_ARTIFACT_EXECUTION_PLAN.md). Do not replace those evidence documents with fixture-only observations.
 
 ## Validation
 

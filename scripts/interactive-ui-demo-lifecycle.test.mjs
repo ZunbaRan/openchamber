@@ -32,6 +32,8 @@ test('parseProcessTable preserves process tree identity and commands', () => {
 test('commandRunsDemo only accepts the Interactive UI demo entrypoint', () => {
   assert.equal(commandRunsDemo(`node ${projectRoot}/scripts/interactive-ui-demo.mjs`), true);
   assert.equal(commandRunsDemo('node scripts/interactive-ui-demo.mjs'), true);
+  assert.equal(commandRunsDemo('node --inspect scripts/interactive-ui-demo.mjs'), true);
+  assert.equal(commandRunsDemo('zsh -c "node --check scripts/interactive-ui-demo.mjs && bun run demo:interactive-ui:stop"'), false);
   assert.equal(commandRunsDemo('node scripts/interactive-ui-demo-stop.mjs'), false);
   assert.equal(commandRunsDemo('node packages/web/server/index.js'), false);
 });

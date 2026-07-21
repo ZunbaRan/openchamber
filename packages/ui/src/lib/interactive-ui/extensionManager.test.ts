@@ -41,12 +41,22 @@ describe('normalizeManagerSnapshot', () => {
       extension: { id: 'com.acme.operations', name: 'Operations', version: '1.0.0' },
       publisher: { id: 'com.acme.publisher', name: 'Acme', keyId: 'release', fingerprint: 'sha256-value', trusted: false },
       permissions: { network: ['https://api.example.com'], nativeCode: true },
+      agentRouting: {
+        domain: 'operations',
+        intents: ['operations.overview', 'operations.item.approve'],
+        dataAuthority: 'connected-business-system',
+      },
       agentRuntime: {
         tools: [{ name: 'operations_open', entry: 'agent-runtime/tools/operations_open.ts' }, null],
         skills: [{ name: 'operations-ui', entry: 'agent-runtime/skills/operations-ui/SKILL.md', files: ['SKILL.md', 42] }],
       },
     });
     expect(inspection?.agentRuntime.tools.map((tool) => tool.name)).toEqual(['operations_open']);
+    expect(inspection?.agentRouting).toEqual({
+      domain: 'operations',
+      intents: ['operations.overview', 'operations.item.approve'],
+      dataAuthority: 'connected-business-system',
+    });
     expect(inspection?.permissions.nativeCode).toBe(true);
     expect(normalizePackageInspection({ extension: {}, publisher: {} })).toBeNull();
   });

@@ -2,6 +2,7 @@
 @import "tw-animate-css";
 @import "./styles/design-system.css";
 @import "./styles/typography.css";
+@import "./styles/ocix-theme.css";
 @import "./styles/mobile.css";
 /* Load KaTeX styles eagerly with the main bundle. Importing them inside the
    lazy MarkdownRendererImpl chunk meant a stylesheet was injected late on the
@@ -373,6 +374,41 @@ textarea[data-chat-input="true"]:focus-visible {
     #000 calc(100% - var(--scroll-shadow-size)),
     transparent 100%
   );
+}
+
+[data-scroll-shadow="true"][data-orientation="horizontal"] {
+  mask-mode: alpha;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-size: 100% 100%;
+  mask-size: 100% 100%;
+}
+
+[data-scroll-shadow="true"][data-orientation="horizontal"][data-left-right-scroll="true"] {
+  mask-image: linear-gradient(
+    to right,
+    transparent 0%,
+    #000 var(--scroll-shadow-size),
+    #000 calc(100% - var(--scroll-shadow-size)),
+    transparent 100%
+  );
+  -webkit-mask-image: linear-gradient(
+    to right,
+    transparent 0%,
+    #000 var(--scroll-shadow-size),
+    #000 calc(100% - var(--scroll-shadow-size)),
+    transparent 100%
+  );
+}
+
+[data-scroll-shadow="true"][data-orientation="horizontal"][data-left-scroll="true"] {
+  mask-image: linear-gradient(to right, transparent 0%, #000 var(--scroll-shadow-size), #000 100%);
+  -webkit-mask-image: linear-gradient(to right, transparent 0%, #000 var(--scroll-shadow-size), #000 100%);
+}
+
+[data-scroll-shadow="true"][data-orientation="horizontal"][data-right-scroll="true"] {
+  mask-image: linear-gradient(to right, #000 0%, #000 calc(100% - var(--scroll-shadow-size)), transparent 100%);
+  -webkit-mask-image: linear-gradient(to right, #000 0%, #000 calc(100% - var(--scroll-shadow-size)), transparent 100%);
 }
 
 

@@ -1178,6 +1178,13 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({ onOpenSettings, scrollTo
         });
     }, [currentDirectory, runtimeGit, fetchGitStatus]);
 
+    React.useEffect(() => sessionEvents.onComposerPrefillRequest((request) => {
+        if (request.sessionId && request.sessionId !== currentSessionId) return;
+        setInputMode('normal');
+        setMessage((previous) => appendInlineText(previous, request.text));
+        window.requestAnimationFrame(() => textareaRef.current?.focus());
+    }), [currentSessionId]);
+
     const handleStartReviewFlow = React.useCallback(async (execution: ReviewFlowExecution) => {
         if (!currentSessionId) return;
         const directory = useSessionUIStore.getState().getDirectoryForSession(currentSessionId) || currentDirectory || '';

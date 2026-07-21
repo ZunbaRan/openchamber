@@ -44,6 +44,14 @@ const SETTINGS_SEARCH_ITEMS: readonly SettingsSearchItem[] = [
     isAvailable: (ctx) => !ctx.isVSCode,
   },
   {
+    id: 'interactive-ui.routing-inspector',
+    page: 'interactive-ui.extensions',
+    titleKey: 'settings.interactiveUI.routingInspector.title',
+    descriptionKey: 'settings.interactiveUI.routingInspector.description',
+    keywords: ['routing', 'inspector', 'diagnostics', 'tool selection', 'agent'],
+    isAvailable: (ctx) => !ctx.isVSCode,
+  },
+  {
     id: 'interactive-ui.publishers',
     page: 'interactive-ui.extensions',
     titleKey: 'settings.interactiveUI.publishers.title',

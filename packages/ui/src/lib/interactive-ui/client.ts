@@ -4,6 +4,7 @@ import type {
   InteractiveActionRequest,
   InteractiveViewDescriptor,
 } from './types';
+import type { HTMLArtifactResultEnvelope } from './artifactResult';
 
 export class InteractiveUIRequestError extends Error {
   readonly status: number;
@@ -50,4 +51,36 @@ export const invokeInteractiveAction = async <TOutput = unknown>(
   });
   const payload = await readJsonResponse<{ data: TOutput }>(response);
   return payload.data;
+};
+
+export interface HTMLArtifactMaterialization {
+  artifactId: string;
+  schemaVersion: 1;
+  scripts: boolean;
+  inlineHeight: number;
+  preferred: 'inline' | 'workspace' | 'fullscreen';
+  allowExpand: boolean;
+  documentBytes: number;
+  cspRevision: number;
+  cacheHit: boolean;
+  cacheRebuilt: boolean;
+  sessionReferenceTracked: boolean;
+  documentPath: string;
+  metadataPath: string;
+}
+
+export const materializeHTMLArtifact = async (
+  envelope: HTMLArtifactResultEnvelope,
+  sessionId?: string,
+): Promise<HTMLArtifactMaterialization> => {
+  const response = await runtimeFetch('/api/interactive-ui/artifacts/materialize', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+      ...(sessionId ? { 'X-OpenChamber-Session-ID': sessionId } : {}),
+    },
+    body: JSON.stringify(envelope),
+  });
+  return readJsonResponse<HTMLArtifactMaterialization>(response);
 };

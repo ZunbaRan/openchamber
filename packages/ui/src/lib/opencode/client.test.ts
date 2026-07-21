@@ -8,6 +8,7 @@ const configResolvers: Array<(response: ConfigResponse) => void> = [];
 let configCalls = 0;
 const promptAsyncCalls: unknown[][] = [];
 const promptAsyncResults: Array<unknown> = [];
+let routingPayload: unknown = [];
 
 const promptAsyncMock = mock(async (...args: unknown[]) => {
   promptAsyncCalls.push(args);
@@ -48,7 +49,7 @@ mock.module('@/lib/runtime-switch', () => ({
 }));
 
 mock.module('@/lib/runtime-fetch', () => ({
-  runtimeFetch: mock(async () => new Response(JSON.stringify([]), {
+  runtimeFetch: mock(async () => new Response(JSON.stringify(routingPayload), {
     headers: { 'Content-Type': 'application/json' },
   })),
 }));
@@ -58,10 +59,15 @@ mock.module('@/lib/startupTrace', () => ({
 }));
 
 const { opencodeClient } = await import(`./client?cache-test=${Date.now()}`);
+const { clearInteractiveUIRoutingCache } = await import('@/lib/interactive-ui/routing');
+const { getRoutingInspectionSnapshot, resetRoutingInspectorForTests } = await import('@/lib/interactive-ui/routingInspector');
 
 beforeEach(() => {
   promptAsyncCalls.length = 0;
   promptAsyncResults.length = 0;
+  routingPayload = [];
+  clearInteractiveUIRoutingCache();
+  resetRoutingInspectorForTests();
 });
 
 describe('opencodeClient getConfig cache', () => {
@@ -110,6 +116,41 @@ describe('opencodeClient prompt retry behavior', () => {
 
     expect(promptAsyncCalls.length).toBe(1);
     expect(error instanceof Error ? error.message : String(error)).toContain('Failed to send message (504)');
+  });
+
+  test('injects the redacted Interactive UI capability context through the OpenCode system field', async () => {
+    routingPayload = {
+      apiVersion: 1,
+      revision: 'sha256-test',
+      system: '<openchamber_interactive_ui_routing>tool=crm_open</openchamber_interactive_ui_routing>',
+      skippedExtensions: 0,
+      extensions: [{
+        id: 'com.acme.crm',
+        version: '1.0.0',
+        domain: 'crm',
+        dataAuthority: 'connected-business-system',
+        connection: { required: true, configured: true, expired: false, status: 'configured' },
+        tools: [{
+          name: 'crm_open',
+          views: ['com.acme.crm.overview'],
+          intents: ['crm.overview'],
+          priority: 90,
+          operation: 'read',
+          dataAuthority: 'connected-business-system',
+        }],
+      }],
+    };
+
+    await sendPrompt('anthropic-routing');
+
+    expect(promptAsyncCalls).toHaveLength(1);
+    expect((promptAsyncCalls[0]?.[0] as { system?: string })?.system)
+      .toBe('<openchamber_interactive_ui_routing>tool=crm_open</openchamber_interactive_ui_routing>');
+    const trace = getRoutingInspectionSnapshot()[0];
+    expect(trace.sessionId).toBe('ses_1');
+    expect(trace.systemInjected).toBe(true);
+    expect(trace.candidates[0]?.tool).toBe('crm_open');
+    expect(trace.status).toBe('awaiting-tool');
   });
 
   test('does not retry transport failures because the tunnel may have lost only the response', async () => {

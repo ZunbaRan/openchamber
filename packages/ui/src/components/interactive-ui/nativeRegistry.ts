@@ -1,5 +1,4 @@
 import React from 'react';
-import { Button } from '@/components/ui/button';
 import { getRuntimeUrlResolver } from '@/lib/runtime-url';
 import { refreshRuntimeUrlAuthToken } from '@/lib/runtime-auth';
 import type {
@@ -7,6 +6,7 @@ import type {
   NativeActivationHost,
   NativeViewComponent,
 } from '@/lib/interactive-ui/types';
+import { nativeUIKit } from './nativeUIKitRegistry';
 
 const nativeViews = new Map<string, NativeViewComponent>();
 const extensionLoads = new Map<string, Promise<void>>();
@@ -29,8 +29,9 @@ const activateNativeExtension = (
 
   const activationHost: NativeActivationHost = {
     apiVersion: 1,
+    uiVersion: 1,
     react: React,
-    ui: { Button: Button as NativeActivationHost['ui']['Button'] },
+    ui: nativeUIKit as unknown as NativeActivationHost['ui'],
     views: {
       register(definition) {
         if (!definition.id.startsWith(`${expectedExtensionId}.`)) {

@@ -21,12 +21,31 @@ describe('parseInteractiveResultEnvelope', () => {
     });
   });
 
+  test('accepts a query-driven live envelope with context only', () => {
+    const result = parseInteractiveResultEnvelope(JSON.stringify({
+      $schema: 'openchamber://interactive-result/v1',
+      view: 'com.acme.operations.workspace',
+      schemaVersion: 1,
+      mode: 'live',
+      summary: 'Operations workspace opened',
+      context: { scope: 'default' },
+    }));
+    expect(result).toEqual({
+      $schema: 'openchamber://interactive-result/v1',
+      view: 'com.acme.operations.workspace',
+      schemaVersion: 1,
+      mode: 'live',
+      summary: 'Operations workspace opened',
+      context: { scope: 'default' },
+    });
+  });
+
   test('does not heuristically activate arbitrary JSON or prose', () => {
     expect(parseInteractiveResultEnvelope('{"view":"com.acme.sales.dashboard"}')).toBeNull();
     expect(parseInteractiveResultEnvelope('Result: {"$schema":"openchamber://interactive-result/v1"}')).toBeNull();
   });
 
-  test('rejects unsupported versions and incomplete live references', () => {
+  test('rejects unsupported versions and malformed live references', () => {
     expect(parseInteractiveResultEnvelope(JSON.stringify({
       $schema: 'openchamber://interactive-result/v1',
       view: 'com.acme.sales.dashboard',
@@ -38,6 +57,7 @@ describe('parseInteractiveResultEnvelope', () => {
       view: 'com.acme.sales.dashboard',
       schemaVersion: 1,
       mode: 'live',
+      dataRef: { connector: 'sales-api' },
     }))).toBeNull();
   });
 });

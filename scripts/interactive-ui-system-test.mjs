@@ -6,9 +6,15 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import express from 'express';
 import { startMockBusinessServer } from '../examples/interactive-ui/mock-business-server.mjs';
+import {
+  learningRateSimulatorArtifact,
+  staticNeuralNetworkArtifact,
+  topologyExplorerArtifact,
+} from '../examples/interactive-ui/artifact-fixtures.mjs';
 import { createInteractiveUIRuntime } from '../packages/web/server/lib/interactive-ui/runtime.js';
 import { registerInteractiveUIRoutes } from '../packages/web/server/lib/interactive-ui/routes.js';
 import { createInteractiveUIExtensionManager } from '../packages/web/server/lib/interactive-ui/manager.js';
+import { createHTMLArtifactStore } from '../packages/web/server/lib/interactive-ui/artifact-store.js';
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const extensionRoot = path.join(projectRoot, 'examples', 'interactive-ui');
@@ -24,6 +30,13 @@ const close = (server) => new Promise((resolve, reject) => server.close((error) 
 const readJson = async (response) => {
   const payload = await response.json();
   return { response, payload };
+};
+
+const decodeBrokerArtifact = (brokerHtml) => {
+  assert.match(brokerHtml, /data-ocix-artifact-broker/);
+  const encoded = brokerHtml.match(/data:text\/html;base64,([A-Za-z0-9+/=]+)/)?.[1];
+  assert(encoded, 'scripts artifact broker must embed a base64 data document');
+  return Buffer.from(encoded, 'base64').toString('utf8');
 };
 
 const mock = await startMockBusinessServer({ token });
@@ -44,7 +57,14 @@ try {
     logger: { info() {}, warn() {} },
   });
   const manager = createInteractiveUIExtensionManager({ dataDirectory: managerDataDirectory });
-  registerInteractiveUIRoutes(app, { express, runtime, manager });
+  const artifactStore = createHTMLArtifactStore({
+    dataDirectory: managerDataDirectory,
+    fsImpl: fs,
+    pathImpl: path,
+    cryptoImpl: crypto,
+    environment: { OPENCHAMBER_HTML_ARTIFACTS_SCRIPTS: 'true' },
+  });
+  registerInteractiveUIRoutes(app, { express, runtime, manager, artifactStore });
   gatewayServer = await listen(app);
   const address = gatewayServer.address();
   assert(address && typeof address !== 'string');
@@ -73,6 +93,85 @@ try {
   assert.equal(connections.payload.connections.every((connection) => connection.connector.authType === 'env-bearer'), true);
   assert.equal(connections.payload.connections.every((connection) => connection.credential.configured === true), true);
   assert.equal(JSON.stringify(connections.payload).includes(token), false, 'connection management must expose status only');
+
+  const capabilities = await readJson(await fetch(`${gateway}/api/interactive-ui/capabilities`));
+  assert.equal(capabilities.response.status, 200);
+  assert.equal(capabilities.payload.extensions.length, 3);
+  assert.match(capabilities.payload.revision, /^sha256-/);
+  assert.equal(capabilities.payload.extensions.find((extension) => extension.id === 'com.openchamber.demo.crm')
+    .tools.some((tool) => tool.name === 'crm_open_dashboard' && tool.priority === 90), true);
+  assert.match(capabilities.payload.system, /matching installed business tool/);
+  assert.equal(capabilities.payload.system.includes(token), false, 'routing prompt must not contain connector tokens');
+  assert.equal(capabilities.payload.system.includes(mock.url), false, 'routing prompt must not contain connector URLs');
+  assert.equal(capabilities.payload.system.includes('打开 CRM 工作台'), false, 'developer examples must not enter the routing prompt');
+  assert.match(capabilities.payload.system, /html_artifact/);
+
+  const artifactCapabilities = await readJson(await fetch(`${gateway}/api/interactive-ui/artifacts/capabilities`));
+  assert.deepEqual(artifactCapabilities.payload, {
+    schemaVersion: 1,
+    static: true,
+    scripts: true,
+    scriptsMode: 'experimental',
+    cspRevision: 3,
+    runtimeSupport: {
+      web: { static: 'supported', scripts: 'experimental' },
+      managedDesktop: { static: 'supported', scripts: 'experimental' },
+      hostedMobile: { static: 'supported', scripts: 'unsupported' },
+      capacitorMobile: { static: 'supported', scripts: 'unsupported' },
+      vscode: { static: 'unsupported', scripts: 'unsupported' },
+      e2eeRelay: { static: 'unsupported', scripts: 'unsupported' },
+    },
+  });
+
+  const staticArtifactEnvelope = staticNeuralNetworkArtifact;
+  const staticArtifact = await readJson(await fetch(`${gateway}/api/interactive-ui/artifacts/materialize`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(staticArtifactEnvelope),
+  }));
+  assert.equal(staticArtifact.response.status, 201);
+  assert.match(staticArtifact.payload.artifactId, /^[a-f0-9]{64}$/);
+  const staticDocument = await fetch(`${gateway}${staticArtifact.payload.documentPath}`);
+  assert.equal(staticDocument.status, 200);
+  assert.match(staticDocument.headers.get('content-security-policy'), /connect-src 'none'/);
+  assert.equal(staticDocument.headers.get('content-security-policy').includes('script-src'), false);
+  assert.match(await staticDocument.text(), /三层神经网络结构/);
+
+  const interactiveArtifact = await readJson(await fetch(`${gateway}/api/interactive-ui/artifacts/materialize`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(learningRateSimulatorArtifact),
+  }));
+  assert.equal(interactiveArtifact.response.status, 201);
+  const interactiveDocument = await fetch(`${gateway}${interactiveArtifact.payload.documentPath}`);
+  assert.match(interactiveDocument.headers.get('content-security-policy'), /script-src 'unsafe-inline'/);
+  assert.match(interactiveDocument.headers.get('content-security-policy'), /frame-src data:/);
+  assert.match(interactiveDocument.headers.get('content-security-policy'), /sandbox allow-scripts/);
+  assert.equal(interactiveDocument.headers.get('content-security-policy').includes('unsafe-eval'), false);
+  const interactiveDocumentHtml = decodeBrokerArtifact(await interactiveDocument.text());
+  assert.match(interactiveDocumentHtml, /Math\.exp/);
+  assert.match(interactiveDocumentHtml, /curve\.setAttribute\('d'/);
+  assert.match(interactiveDocumentHtml, /openchamberArtifact/);
+
+  const topologyArtifact = await readJson(await fetch(`${gateway}/api/interactive-ui/artifacts/materialize`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(topologyExplorerArtifact),
+  }));
+  assert.equal(topologyArtifact.response.status, 201);
+  const topologyDocument = await fetch(`${gateway}${topologyArtifact.payload.documentPath}`);
+  assert.equal(topologyDocument.status, 200);
+  const topologyDocumentHtml = decodeBrokerArtifact(await topologyDocument.text());
+  assert.match(topologyDocumentHtml, /data-filter="api"/);
+
+  const artifactCacheHit = await readJson(await fetch(`${gateway}/api/interactive-ui/artifacts/materialize`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(staticArtifactEnvelope),
+  }));
+  assert.equal(artifactCacheHit.response.status, 200);
+  assert.equal(artifactCacheHit.payload.artifactId, staticArtifact.payload.artifactId);
+  assert.equal(artifactCacheHit.payload.cacheHit, true);
 
   const processFlow = await readJson(await fetch(`${gateway}/api/interactive-ui/views/com.openchamber.builtin.interactive-ui.process-flow?tool=interactive_ui`));
   assert.equal(processFlow.response.status, 200);
@@ -208,10 +307,16 @@ try {
     ok: true,
     extensions: registry.payload.extensions.map((extension) => extension.id),
     runtimes: registry.payload.extensions.flatMap((extension) => extension.views.map((view) => view.runtime)),
+    routingRevision: capabilities.payload.revision,
     gateway,
     mockBusinessSystem: mock.url,
     approvedOrder: approval.payload.data.order,
     advancedOpportunity: crmAdvance.payload.data.opportunity,
+    artifacts: {
+      static: staticArtifact.payload.artifactId,
+      interactive: interactiveArtifact.payload.artifactId,
+      topology: topologyArtifact.payload.artifactId,
+    },
     envelope,
   }, null, 2));
 } finally {

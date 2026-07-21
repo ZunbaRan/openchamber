@@ -19,11 +19,14 @@ type CreateListener = (request: SessionCreateRequest) => void;
 type DirectoryListener = () => void;
 type GitRefreshHint = { directory: string };
 type GitRefreshListener = (hint: GitRefreshHint) => void;
+type ComposerPrefillRequest = { sessionId?: string; text: string };
+type ComposerPrefillListener = (request: ComposerPrefillRequest) => void;
 
 const deleteListeners = new Set<DeleteListener>();
 const createListeners = new Set<CreateListener>();
 const directoryListeners = new Set<DirectoryListener>();
 const gitRefreshListeners = new Set<GitRefreshListener>();
+const composerPrefillListeners = new Set<ComposerPrefillListener>();
 
 export const sessionEvents = {
   onDeleteRequest(listener: DeleteListener) {
@@ -68,5 +71,15 @@ export const sessionEvents = {
       return;
     }
     gitRefreshListeners.forEach((listener) => listener(hint));
+  },
+  onComposerPrefillRequest(listener: ComposerPrefillListener) {
+    composerPrefillListeners.add(listener);
+    return () => {
+      composerPrefillListeners.delete(listener);
+    };
+  },
+  requestComposerPrefill(request: ComposerPrefillRequest) {
+    if (!request.text.trim() || request.text.length > 4_000) return;
+    composerPrefillListeners.forEach((listener) => listener(request));
   },
 };

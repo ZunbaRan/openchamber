@@ -6,12 +6,19 @@ const MAX_CHILDREN = 20;
 const MAX_ROWS = 50;
 const MAX_COLUMNS = 8;
 const MAX_SERIES = 5;
+const MAX_GRAPH_ITEMS = 60;
 const MAX_TEXT_LENGTH = 6_000;
 const SAFE_DATA_KEY = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/;
+const SAFE_GRAPH_ID = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,79}$/;
+const BLOCKED_DATA_KEYS = new Set(['__proto__', 'prototype', 'constructor']);
 
 const TONES = new Set(['neutral', 'info', 'success', 'warning', 'error']);
+const METRIC_TONES = new Set([...TONES, 'positive', 'negative']);
+const TRENDS = new Set(['up', 'down', 'flat']);
+const STEP_STATUSES = new Set(['completed', 'active', 'error', 'pending']);
 const CHART_VARIANTS = new Set(['bar', 'line', 'area', 'donut']);
 const COLUMN_FORMATS = new Set(['number', 'percent', 'date']);
+const COLUMN_ALIGNMENTS = new Set(['left', 'center', 'right']);
 
 const asRecord = (value: unknown): Record<string, unknown> | null => (
   typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -30,8 +37,22 @@ const sanitizeScalar = (value: unknown): string | number | boolean | null | unde
   return undefined;
 };
 
+const isSafeDataKey = (value: unknown): value is string => (
+  typeof value === 'string'
+  && SAFE_DATA_KEY.test(value)
+  && !BLOCKED_DATA_KEYS.has(value)
+);
+
 const sanitizeTone = (value: unknown): string | undefined => (
   typeof value === 'string' && TONES.has(value) ? value : undefined
+);
+
+const sanitizeMetricTone = (value: unknown): string | undefined => (
+  typeof value === 'string' && METRIC_TONES.has(value) ? value : undefined
+);
+
+const sanitizeTrend = (value: unknown): string | undefined => (
+  typeof value === 'string' && TRENDS.has(value) ? value : undefined
 );
 
 const sanitizeColumns = (value: unknown): number => {
@@ -49,7 +70,7 @@ const sanitizeDataRows = (value: unknown): Array<Record<string, string | number 
     const record = asRecord(entry);
     if (!record) return null;
     const pairs = compact(Object.entries(record).slice(0, MAX_COLUMNS).map(([key, cell]) => {
-      if (!SAFE_DATA_KEY.test(key)) return null;
+      if (!isSafeDataKey(key)) return null;
       const sanitized = sanitizeScalar(cell);
       return sanitized === undefined ? null : [key, sanitized] as const;
     }));
@@ -79,6 +100,7 @@ export const sanitizeGeneratedLayout = (input: unknown): DeclarativeViewNode | n
       return {
         type: source.type,
         ...(title ? { title } : {}),
+        ...(source.type === 'section' && source.variant === 'bordered' ? { variant: 'bordered' } : {}),
         ...((source.type === 'row' || source.type === 'grid') ? { columns: sanitizeColumns(source.columns) } : {}),
         children,
       };
@@ -92,12 +114,17 @@ export const sanitizeGeneratedLayout = (input: unknown): DeclarativeViewNode | n
           const metricLabel = sanitizeString(metric.label, 120);
           const metricValue = sanitizeScalar(metric.value);
           const detail = sanitizeString(metric.detail, 240);
+          const trendValue = sanitizeString(metric.trendValue, 80);
+          const tone = sanitizeMetricTone(metric.tone);
+          const trend = sanitizeTrend(metric.trend);
           if (!metricLabel || metricValue === undefined) return null;
           return {
             label: metricLabel,
             value: metricValue,
             ...(detail ? { detail } : {}),
-            ...(sanitizeTone(metric.tone) ? { tone: sanitizeTone(metric.tone) } : {}),
+            ...(tone ? { tone } : {}),
+            ...(trend ? { trend } : {}),
+            ...(trendValue ? { trendValue } : {}),
           };
         }))
         : [];
@@ -108,13 +135,17 @@ export const sanitizeGeneratedLayout = (input: unknown): DeclarativeViewNode | n
       const metricValue = sanitizeScalar(source.value);
       if (metricValue === undefined) return null;
       const detail = sanitizeString(source.detail, 240);
-      const tone = sanitizeTone(source.tone);
+      const trendValue = sanitizeString(source.trendValue, 80);
+      const tone = sanitizeMetricTone(source.tone);
+      const trend = sanitizeTrend(source.trend);
       return {
         type: 'metric',
         ...(label ? { label } : {}),
         value: metricValue,
         ...(detail ? { detail } : {}),
         ...(tone ? { tone } : {}),
+        ...(trend ? { trend } : {}),
+        ...(trendValue ? { trendValue } : {}),
       };
     }
 
@@ -166,27 +197,34 @@ export const sanitizeGeneratedLayout = (input: unknown): DeclarativeViewNode | n
         if (!entry) return null;
         const stepTitle = sanitizeString(entry.title, 120);
         const description = sanitizeString(entry.description, 500);
-        return stepTitle ? { title: stepTitle, ...(description ? { description } : {}) } : null;
+        const status = typeof entry.status === 'string' && STEP_STATUSES.has(entry.status) ? entry.status : undefined;
+        return stepTitle ? { title: stepTitle, ...(description ? { description } : {}), ...(status ? { status } : {}) } : null;
       }));
       return { type: 'flow', data };
+    }
+
+    if (source.type === 'divider') {
+      return { type: 'divider' };
     }
 
     if (source.type === 'data-table') {
       const columns = Array.isArray(source.columns)
         ? compact(source.columns.slice(0, MAX_COLUMNS).map((column) => {
           const entry = asRecord(column);
-          if (!entry || typeof entry.key !== 'string' || !SAFE_DATA_KEY.test(entry.key)) return null;
+          if (!entry || !isSafeDataKey(entry.key)) return null;
           const columnLabel = sanitizeString(entry.label, 120);
           const rawFormat = sanitizeString(entry.format, 32);
           const format = rawFormat && (COLUMN_FORMATS.has(rawFormat) || /^currency:[A-Za-z]{3}$/.test(rawFormat))
             ? rawFormat
             : undefined;
           const render = entry.render === 'status' ? 'status' : undefined;
+          const align = typeof entry.align === 'string' && COLUMN_ALIGNMENTS.has(entry.align) ? entry.align : undefined;
           return {
             key: entry.key,
             ...(columnLabel ? { label: columnLabel } : {}),
             ...(format ? { format } : {}),
             ...(render ? { render } : {}),
+            ...(align ? { align } : {}),
           };
         }))
         : [];
@@ -200,11 +238,11 @@ export const sanitizeGeneratedLayout = (input: unknown): DeclarativeViewNode | n
 
     if (source.type === 'chart') {
       const variant = typeof source.variant === 'string' && CHART_VARIANTS.has(source.variant) ? source.variant : 'bar';
-      const xKey = typeof source.xKey === 'string' && SAFE_DATA_KEY.test(source.xKey) ? source.xKey : 'label';
+      const xKey = isSafeDataKey(source.xKey) ? source.xKey : 'label';
       const series = Array.isArray(source.series)
         ? compact(source.series.slice(0, MAX_SERIES).map((item) => {
           const entry = asRecord(item);
-          if (!entry || typeof entry.key !== 'string' || !SAFE_DATA_KEY.test(entry.key)) return null;
+          if (!entry || !isSafeDataKey(entry.key)) return null;
           const seriesLabel = sanitizeString(entry.label, 120);
           return { key: entry.key, ...(seriesLabel ? { label: seriesLabel } : {}) };
         }))
@@ -219,6 +257,138 @@ export const sanitizeGeneratedLayout = (input: unknown): DeclarativeViewNode | n
       };
     }
 
+    if (source.type === 'timeline' || source.type === 'activity-feed') {
+      const items = Array.isArray(source.items)
+        ? compact(source.items.slice(0, 30).map((item) => {
+          const entry = asRecord(item);
+          if (!entry) return null;
+          const itemTitle = sanitizeString(entry.title, 160);
+          const actor = sanitizeString(entry.actor, 120);
+          if (source.type === 'timeline' && !itemTitle) return null;
+          if (source.type === 'activity-feed' && !actor && !itemTitle) return null;
+          const description = sanitizeString(entry.description, 500);
+          const action = sanitizeString(entry.action, 240);
+          const timestamp = sanitizeString(entry.timestamp, 120);
+          const tone = sanitizeTone(entry.tone);
+          const status = typeof entry.status === 'string' && STEP_STATUSES.has(entry.status) ? entry.status : undefined;
+          return {
+            ...(itemTitle ? { title: itemTitle } : {}),
+            ...(actor ? { actor } : {}),
+            ...(action ? { action } : {}),
+            ...(description ? { description } : {}),
+            ...(timestamp ? { timestamp } : {}),
+            ...(tone ? { tone } : {}),
+            ...(status ? { status } : {}),
+          };
+        }))
+        : [];
+      return { type: source.type, ...(title ? { title } : {}), items };
+    }
+
+    if (source.type === 'comparison') {
+      const columns = Array.isArray(source.columns)
+        ? compact(source.columns.slice(0, MAX_COLUMNS).map((column) => {
+          const entry = asRecord(column);
+          if (!entry || !isSafeDataKey(entry.key)) return null;
+          const columnLabel = sanitizeString(entry.label, 120);
+          return { key: entry.key, ...(columnLabel ? { label: columnLabel } : {}) };
+        }))
+        : [];
+      return { type: 'comparison', ...(title ? { title } : {}), columns, data: sanitizeDataRows(source.data) };
+    }
+
+    if (source.type === 'tabs' || source.type === 'accordion') {
+      const items = Array.isArray(source.items)
+        ? compact(source.items.slice(0, 8).map((item) => {
+          const entry = asRecord(item);
+          if (!entry) return null;
+          const itemLabel = sanitizeString(entry.label ?? entry.title, 120);
+          if (!itemLabel) return null;
+          const children = Array.isArray(entry.children)
+            ? compact(entry.children.slice(0, MAX_CHILDREN).map((child) => sanitizeNode(child, depth + 1)))
+            : [];
+          return { label: itemLabel, children };
+        }))
+        : [];
+      return {
+        type: source.type,
+        ...(title ? { title } : {}),
+        ...(source.type === 'accordion' && source.defaultOpen === false ? { defaultOpen: false } : {}),
+        items,
+      };
+    }
+
+    if (source.type === 'code-block') {
+      const value = sanitizeString(source.value ?? source.data);
+      if (value === undefined) return null;
+      const language = sanitizeString(source.language, 40);
+      return { type: 'code-block', ...(title ? { title } : {}), ...(language ? { language } : {}), value };
+    }
+
+    if (source.type === 'sparkline') {
+      const rawValues = Array.isArray(source.values) ? source.values : Array.isArray(source.data) ? source.data : [];
+      const values = rawValues.slice(0, MAX_GRAPH_ITEMS).map(Number).filter(Number.isFinite);
+      if (values.length === 0) return null;
+      const sparkValue = sanitizeScalar(source.value);
+      return {
+        type: 'sparkline',
+        ...(label ? { label } : {}),
+        ...(sparkValue !== undefined ? { value: sparkValue } : {}),
+        values,
+      };
+    }
+
+    if (source.type === 'git-graph') {
+      const rawCommits = Array.isArray(source.commits) ? source.commits : Array.isArray(source.data) ? source.data : [];
+      const commits = compact(rawCommits.slice(0, 40).map((commit, index) => {
+          const entry = asRecord(commit);
+          if (!entry) return null;
+          const rawId = typeof entry.id === 'string' && SAFE_GRAPH_ID.test(entry.id) ? entry.id : `commit-${index + 1}`;
+          const message = sanitizeString(entry.message ?? entry.title, 240);
+          if (!message) return null;
+          const branch = typeof entry.branch === 'string' && SAFE_GRAPH_ID.test(entry.branch) ? entry.branch : 'main';
+          const parents = Array.isArray(entry.parents)
+            ? entry.parents.filter((parent): parent is string => typeof parent === 'string' && SAFE_GRAPH_ID.test(parent)).slice(0, 4)
+            : [];
+          const author = sanitizeString(entry.author, 120);
+          const timestamp = sanitizeString(entry.timestamp, 120);
+          return { id: rawId, message, branch, parents, ...(author ? { author } : {}), ...(timestamp ? { timestamp } : {}) };
+        }));
+      return { type: 'git-graph', ...(title ? { title } : {}), commits };
+    }
+
+    if (source.type === 'tree') {
+      const rawItems = Array.isArray(source.items) ? source.items : Array.isArray(source.data) ? source.data : [];
+      const items = compact(rawItems.slice(0, MAX_GRAPH_ITEMS).map((item, index) => {
+          const entry = asRecord(item);
+          if (!entry) return null;
+          const itemLabel = sanitizeString(entry.label ?? entry.title, 160);
+          if (!itemLabel) return null;
+          const id = typeof entry.id === 'string' && SAFE_GRAPH_ID.test(entry.id) ? entry.id : `node-${index + 1}`;
+          const parentId = typeof entry.parentId === 'string' && SAFE_GRAPH_ID.test(entry.parentId) ? entry.parentId : undefined;
+          const description = sanitizeString(entry.description, 500);
+          const tone = sanitizeTone(entry.tone);
+          const status = typeof entry.status === 'string' && STEP_STATUSES.has(entry.status) ? entry.status : undefined;
+          return { id, label: itemLabel, ...(parentId ? { parentId } : {}), ...(description ? { description } : {}), ...(tone ? { tone } : {}), ...(status ? { status } : {}) };
+        }));
+      return { type: 'tree', ...(title ? { title } : {}), items };
+    }
+
+    if (source.type === 'diff-summary') {
+      const rawItems = Array.isArray(source.items) ? source.items : Array.isArray(source.data) ? source.data : [];
+      const items = compact(rawItems.slice(0, MAX_ROWS).map((item) => {
+          const entry = asRecord(item);
+          if (!entry) return null;
+          const path = sanitizeString(entry.path ?? entry.title, 500);
+          if (!path) return null;
+          const status = sanitizeString(entry.status, 80);
+          const additions = typeof entry.additions === 'number' && Number.isFinite(entry.additions) ? Math.max(0, Math.trunc(entry.additions)) : 0;
+          const deletions = typeof entry.deletions === 'number' && Number.isFinite(entry.deletions) ? Math.max(0, Math.trunc(entry.deletions)) : 0;
+          return { path, ...(status ? { status } : {}), additions, deletions };
+        }));
+      return { type: 'diff-summary', ...(title ? { title } : {}), items };
+    }
+
     if (source.type === 'list') {
       const items = Array.isArray(source.items)
         ? compact(source.items.slice(0, 30).map((item) => {
@@ -228,7 +398,13 @@ export const sanitizeGeneratedLayout = (input: unknown): DeclarativeViewNode | n
           const itemTitle = sanitizeString(entry.title, 160);
           const description = sanitizeString(entry.description, 500);
           const badge = sanitizeString(entry.badge, 80);
-          return itemTitle ? { title: itemTitle, ...(description ? { description } : {}), ...(badge ? { badge } : {}) } : null;
+          const badgeTone = sanitizeTone(entry.badgeTone);
+          return itemTitle ? {
+            title: itemTitle,
+            ...(description ? { description } : {}),
+            ...(badge ? { badge } : {}),
+            ...(badgeTone ? { badgeTone } : {}),
+          } : null;
         }))
         : [];
       return { type: 'list', ...(title ? { title } : {}), ordered: source.ordered === true, items };

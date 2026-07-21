@@ -1,3 +1,9 @@
+import {
+  buildInteractiveUICapabilityCatalog,
+  normalizeInteractiveUIRouting,
+  renderInteractiveUIRoutingSystemPrompt,
+} from './routing.js';
+
 const MANIFEST_FILE = 'openchamber.extension.json';
 const MAX_MANIFEST_BYTES = 512 * 1024;
 const MAX_VIEW_BYTES = 512 * 1024;
@@ -213,7 +219,7 @@ const normalizeAction = (action, connectorIds) => {
   };
 };
 
-const normalizeView = (view, extensionId) => {
+const normalizeView = (view, extensionId, routing) => {
   if (!isRecord(view) || typeof view.id !== 'string' || !view.id.startsWith(`${extensionId}.`)) {
     throw new InteractiveUIRuntimeError('View IDs must be inside the extension namespace', 400, 'invalid_manifest');
   }
@@ -229,6 +235,7 @@ const normalizeView = (view, extensionId) => {
     entry: view.entry,
     exportName: typeof view.export === 'string' && view.export.trim() ? view.export.trim() : 'extension',
     tools: Array.isArray(view.tools) ? view.tools.filter((tool) => typeof tool === 'string' && tool.trim()).map((tool) => tool.trim()) : [],
+    routing: routing ?? null,
     displayModes: Array.isArray(view.displayModes)
       ? view.displayModes.filter((mode) => ['inline', 'workspace', 'fullscreen'].includes(mode))
       : ['inline'],
@@ -242,7 +249,10 @@ const normalizeManifest = (raw, directory, environment) => {
   if (typeof raw.name !== 'string' || !raw.name.trim() || typeof raw.version !== 'string' || !raw.version.trim()) {
     throw new InteractiveUIRuntimeError(`Extension ${raw.id} must declare name and version`, 400, 'invalid_manifest');
   }
-  const views = Array.isArray(raw.views) ? raw.views.map((view) => normalizeView(view, raw.id)) : [];
+  const normalizedRouting = normalizeInteractiveUIRouting(raw);
+  const views = Array.isArray(raw.views)
+    ? raw.views.map((view) => normalizeView(view, raw.id, normalizedRouting.viewRouting.get(view?.id)))
+    : [];
   if (views.length === 0) throw new InteractiveUIRuntimeError(`Extension ${raw.id} does not declare any views`, 400, 'invalid_manifest');
   const viewIds = new Set(views.map((view) => view.id));
   if (viewIds.size !== views.length) throw new InteractiveUIRuntimeError(`Extension ${raw.id} has duplicate view IDs`, 409, 'duplicate_view');
@@ -261,6 +271,7 @@ const normalizeManifest = (raw, directory, environment) => {
     name: raw.name.trim(),
     version: raw.version.trim(),
     directory,
+    agentRouting: normalizedRouting.agentRouting,
     views,
     connectors,
     actions,
@@ -484,6 +495,14 @@ export const createInteractiveUIRuntime = ({
     if (view.tools.length > 0 && (!toolName || !view.tools.includes(toolName))) {
       throw new InteractiveUIRuntimeError(`Tool ${toolName || '(missing)'} is not bound to view ${viewId}`, 403, 'tool_view_mismatch');
     }
+    logger.info?.('[InteractiveUI] Agent routing outcome', {
+      extensionId: extension.id,
+      viewId: view.id,
+      tool: toolName || null,
+      domain: extension.agentRouting?.domain ?? null,
+      dataAuthority: extension.agentRouting?.dataAuthority ?? null,
+      operation: view.routing?.operation ?? null,
+    });
     const base = {
       extension: { id: extension.id, name: extension.name, version: extension.version },
       view: { id: view.id, runtime: view.runtime, displayModes: view.displayModes },
@@ -584,10 +603,17 @@ export const createInteractiveUIRuntime = ({
       }
     }
     if (!response.ok) {
-      const upstreamMessage = isRecord(data) && typeof data.error === 'string' ? data.error : `Business system rejected the request (${response.status})`;
-      if (response.status === 401) throw new InteractiveUIRuntimeError(upstreamMessage, 401, 'connector_unauthorized');
-      if (response.status === 403) throw new InteractiveUIRuntimeError(upstreamMessage, 403, 'connector_forbidden');
-      throw new InteractiveUIRuntimeError(upstreamMessage, response.status >= 400 && response.status < 500 ? response.status : 502, 'upstream_error');
+      if (response.status === 401) {
+        throw new InteractiveUIRuntimeError('Access key is invalid or expired', 401, 'connector_unauthorized');
+      }
+      if (response.status === 403) {
+        throw new InteractiveUIRuntimeError('Access key does not have permission', 403, 'connector_forbidden');
+      }
+      throw new InteractiveUIRuntimeError(
+        `Business system rejected the request (${response.status})`,
+        response.status >= 400 && response.status < 500 ? response.status : 502,
+        'upstream_error',
+      );
     }
     logger.info?.('[InteractiveUI] Business action completed', {
       requestId,
@@ -607,11 +633,19 @@ export const createInteractiveUIRuntime = ({
         id: extension.id,
         name: extension.name,
         version: extension.version,
+        agentRouting: extension.agentRouting
+          ? {
+              domain: extension.agentRouting.domain,
+              intents: extension.agentRouting.intents,
+              dataAuthority: extension.agentRouting.dataAuthority,
+            }
+          : null,
         views: extension.views.map((view) => ({
           id: view.id,
           runtime: view.runtime,
           tools: view.tools,
           displayModes: view.displayModes,
+          routing: view.routing,
         })),
         actions: extension.actions.map((action) => ({ id: action.id, risk: action.risk, permission: action.permission })),
       })),
@@ -619,8 +653,28 @@ export const createInteractiveUIRuntime = ({
     };
   };
 
+  const getRoutingCapabilities = async () => {
+    const { extensions, errors } = await loadExtensions();
+    const statuses = new Map();
+    await Promise.all(extensions.map(async (extension) => {
+      statuses.set(extension.id, await Promise.all(
+        extension.connectors.map((connector) => getConnectionStatus(extension.id, connector)),
+      ));
+    }));
+    const catalog = buildInteractiveUICapabilityCatalog(extensions, statuses);
+    const serialized = JSON.stringify(catalog);
+    return {
+      apiVersion: 1,
+      revision: `sha256-${crypto.createHash('sha256').update(serialized).digest('base64')}`,
+      extensions: catalog,
+      system: renderInteractiveUIRoutingSystemPrompt(catalog),
+      skippedExtensions: errors.length,
+    };
+  };
+
   return {
     listExtensions,
+    getRoutingCapabilities,
     listConnections,
     configureConnection,
     provisionConnection,

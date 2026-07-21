@@ -213,6 +213,20 @@ const TOOL_METADATA: Record<string, ToolMetadata> = {
       category: 'ai',
       outputLanguage: 'json',
       inputFields: []
+    },
+
+    interactive_ui: {
+      displayName: 'Interactive UI',
+      category: 'ai',
+      outputLanguage: 'json',
+      inputFields: []
+    },
+
+    html_artifact: {
+      displayName: 'HTML Artifact',
+      category: 'ai',
+      outputLanguage: 'html',
+      inputFields: []
     }
   };
 

@@ -1,7 +1,7 @@
 import { tool } from '@opencode-ai/plugin';
 
 export default tool({
-  description: '当用户询问企业 CRM、客户、商机、销售管道或跟进情况时，打开对话内 CRM Interactive UI 工作台。Use for CRM/customer/opportunity/pipeline questions.',
+  description: '从已连接的企业 CRM 获取真实客户、商机、销售管道和跟进数据，并在当前对话中打开唯一的 CRM 主工作台。CRM 领域请求应优先使用此 Tool；连接未配置时也应调用本 Tool 以返回配置提示，不得生成替代业务数据。成功返回后 View 已由 OpenChamber 渲染，本回合不要再调用 interactive_ui/html_artifact 或把相同数据重做成第二个看板。Use this connected-business-system Tool first; after it returns, do not select another visualization Tool for the same CRM data.',
   args: {
     focus: tool.schema.string().optional().describe('可选关注范围，例如 overview、customers 或 pipeline'),
   },

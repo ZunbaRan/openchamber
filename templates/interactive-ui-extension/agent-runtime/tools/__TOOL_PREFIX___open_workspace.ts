@@ -1,7 +1,7 @@
 import { tool } from '@opencode-ai/plugin';
 
 export default tool({
-  description: 'Open the installed __EXTENSION_NAME__ Trusted Native workspace for richer enterprise interaction and confirmed writes.',
+  description: 'Open the installed __EXTENSION_NAME__ Trusted Native workspace for authoritative enterprise interaction and confirmed writes. Prefer this connected-business-system Tool over generic interactive_ui for the declared business domain, including when connector setup must be reported. After it returns, its OCIX View is already rendered; do not call another visualization Tool for the same business data.',
   args: {
     scope: tool.schema.string().optional().describe('Optional enterprise scope, team, region, or tenant key'),
   },

@@ -41,6 +41,8 @@ const SettingsWindow = lazyWithChunkRecovery(() => import('@/components/views/Se
 const MultiRunWindow = lazyWithChunkRecovery(() => import('@/components/views/MultiRunWindow').then(m => ({ default: m.MultiRunWindow })));
 
 export const MainLayout: React.FC = () => {
+    const LEFT_SIDEBAR_AUTO_CLOSE_WIDTH = 720;
+    const LEFT_SIDEBAR_AUTO_OPEN_WIDTH = 800;
     const RIGHT_SIDEBAR_AUTO_CLOSE_WIDTH = 1140;
     const RIGHT_SIDEBAR_AUTO_OPEN_WIDTH = 1220;
     const BOTTOM_TERMINAL_AUTO_CLOSE_HEIGHT = 640;
@@ -49,6 +51,7 @@ export const MainLayout: React.FC = () => {
     const isRightSidebarOpen = useUIStore((state) => state.isRightSidebarOpen);
     const isBottomTerminalOpen = useUIStore((state) => state.isBottomTerminalOpen);
     const setRightSidebarOpen = useUIStore((state) => state.setRightSidebarOpen);
+    const setSidebarOpen = useUIStore((state) => state.setSidebarOpen);
     const setBottomTerminalOpen = useUIStore((state) => state.setBottomTerminalOpen);
     const activeMainTab = useUIStore((state) => state.activeMainTab);
     const setIsMobile = useUIStore((state) => state.setIsMobile);
@@ -59,6 +62,7 @@ export const MainLayout: React.FC = () => {
     const setMultiRunLauncherOpen = useUIStore((state) => state.setMultiRunLauncherOpen);
     const multiRunLauncherPrefillPrompt = useUIStore((state) => state.multiRunLauncherPrefillPrompt);
     const { isMobile, isTablet } = useDeviceInfo();
+    const leftSidebarAutoClosedRef = React.useRef(false);
     const rightSidebarAutoClosedRef = React.useRef(false);
     const bottomTerminalAutoClosedRef = React.useRef(false);
     const mobilePanelsResetRef = React.useRef(false);
@@ -72,6 +76,19 @@ export const MainLayout: React.FC = () => {
         setMobileLeftDrawerOpen(open);
         useUIStore.getState().setSessionSwitcherOpen(open);
     }, []);
+    const handleDesktopSessionSelected = React.useCallback(() => {
+        if (
+            typeof window === 'undefined'
+            || isMobile
+            || isTablet
+            || window.innerWidth >= LEFT_SIDEBAR_AUTO_CLOSE_WIDTH
+        ) {
+            return;
+        }
+
+        setSidebarOpen(false);
+        leftSidebarAutoClosedRef.current = true;
+    }, [isMobile, isTablet, setSidebarOpen]);
     const mobileRightDrawerOpenRef = React.useRef(false);
     const initialDrawerWidthRef = React.useRef(typeof window === 'undefined' ? 0 : window.innerWidth);
 
@@ -273,6 +290,19 @@ export const MainLayout: React.FC = () => {
             // Treat panel auto-collapse/restore as desktop-only so keyboard
             // viewport changes do not churn drawer or terminal layout state.
             if (!isMobile && !isTablet) {
+                const shouldCloseLeftSidebar = width < LEFT_SIDEBAR_AUTO_CLOSE_WIDTH;
+                const canAutoOpenLeftSidebar = width >= LEFT_SIDEBAR_AUTO_OPEN_WIDTH;
+
+                if (shouldCloseLeftSidebar) {
+                    if (state.isSidebarOpen) {
+                        setSidebarOpen(false);
+                        leftSidebarAutoClosedRef.current = true;
+                    }
+                } else if (canAutoOpenLeftSidebar && leftSidebarAutoClosedRef.current) {
+                    setSidebarOpen(true);
+                    leftSidebarAutoClosedRef.current = false;
+                }
+
                 const shouldCloseRightSidebar = width < RIGHT_SIDEBAR_AUTO_CLOSE_WIDTH;
                 const canAutoOpenRightSidebar = width >= RIGHT_SIDEBAR_AUTO_OPEN_WIDTH;
 
@@ -322,7 +352,7 @@ export const MainLayout: React.FC = () => {
                 window.cancelAnimationFrame(frameId);
             }
         };
-    }, [isMobile, isTablet, setBottomTerminalOpen, setRightSidebarOpen]);
+    }, [isMobile, isTablet, setBottomTerminalOpen, setRightSidebarOpen, setSidebarOpen]);
 
     React.useEffect(() => {
         if (typeof window === 'undefined') {
@@ -333,9 +363,14 @@ export const MainLayout: React.FC = () => {
             const width = window.innerWidth;
             const height = window.innerHeight;
 
+            const leftCanAutoOpen = width >= LEFT_SIDEBAR_AUTO_OPEN_WIDTH;
             const rightCanAutoOpen = width >= RIGHT_SIDEBAR_AUTO_OPEN_WIDTH;
             const bottomCanAutoOpen =
                 height >= BOTTOM_TERMINAL_AUTO_OPEN_HEIGHT;
+
+            if (state.isSidebarOpen !== prevState.isSidebarOpen && leftCanAutoOpen) {
+                leftSidebarAutoClosedRef.current = false;
+            }
 
             if (state.isRightSidebarOpen !== prevState.isRightSidebarOpen && rightCanAutoOpen) {
                 rightSidebarAutoClosedRef.current = false;
@@ -520,7 +555,7 @@ export const MainLayout: React.FC = () => {
                             className="border-border/50"
                             topBar={<SidebarTopBar />}
                         >
-                            <SessionSidebar />
+                            <SessionSidebar onSessionSelected={handleDesktopSessionSelected} />
                         </Sidebar>
                         <div className="relative flex flex-1 min-w-0 flex-col overflow-hidden bg-background" data-page-scroll-lock="true">
                             <Header />

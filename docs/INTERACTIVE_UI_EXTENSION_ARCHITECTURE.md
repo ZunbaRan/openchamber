@@ -6,7 +6,7 @@
 > **适用范围**：OpenChamber Web、Desktop、VS Code、Hosted Mobile、Capacitor Mobile<br>
 > **更新日期**：2026-07-20
 
-> **关联文档**：[OpenChamber Interactive UI 实施方案与 MCP Apps Roadmap](./AI_SDK_INTERACTIVE_UI_AND_MCP_APPS.md)
+> **关联文档**：[OpenChamber Interactive UI 实施方案与 MCP Apps Roadmap](./AI_SDK_INTERACTIVE_UI_AND_MCP_APPS.md) · [视觉、HTML Artifact 与统一验收计划](./INTERACTIVE_UI_VISUAL_HTML_ARTIFACT_AND_UNIFIED_TEST_PLAN.md)
 
 > **实现进度（2026-07-20）**：仓库现已包含 OCIX v1 Managed Distribution Preview，包括严格 Result Envelope、Declarative Query/Action 与写后刷新、受信任 Native ESM 激活、Business Gateway、Agent 示例、双 runtime starter、扩展 CLI/validator、带内嵌公钥的 Ed25519 `.ocix` 签名、确认式发布者信任、Tool/Skill 全局受管安装、持久化 Extension Manager、启停/升级/回滚/可恢复卸载、自描述签名静态 marketplace catalog，以及 Connector Authentication & Credential Provisioning v1。业务 Key 的 scope、RBAC/ABAC、撤销和业务审计明确归第三方系统；OpenChamber 不建设另一套多用户权限系统。远程 Host/Server 双端安装、workspace/fullscreen 容器、在线签名吊销/透明日志和官方托管公共市场仍属于后续阶段。
 

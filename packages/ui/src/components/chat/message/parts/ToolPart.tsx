@@ -16,6 +16,7 @@ import { useUIStore } from '@/stores/useUIStore';
 import { sessionEvents } from '@/lib/sessionEvents';
 import { ScrollShadow } from '@/components/ui/ScrollShadow';
 import { Button } from '@/components/ui/button';
+import { Skeleton } from '@/components/ui/skeleton';
 import { toast } from '@/components/ui';
 import { Text } from '@/components/ui/text';
 import { FileTypeIcon } from '@/components/icons/FileTypeIcon';
@@ -56,6 +57,12 @@ import { getDiffPatchEntries, getPatchText, type DiffPatchEntry } from './toolDi
 import { isEmbeddedSessionChat } from '@/components/layout/contextPanelEmbeddedChat';
 import { parseInteractiveResultEnvelope } from '@/lib/interactive-ui/result';
 import { InteractiveUIView } from '@/components/interactive-ui/InteractiveUIView';
+import { parseHTMLArtifactResultEnvelope } from '@/lib/interactive-ui/artifactResult';
+import { recordRoutingToolObservation } from '@/lib/interactive-ui/routingInspector';
+import { shouldHideToolInputPreview } from './toolRenderUtils';
+
+const HTMLArtifactView = React.lazy(() => import('@/components/interactive-ui/HTMLArtifactView')
+    .then((module) => ({ default: module.HTMLArtifactView })));
 
 const TOOL_ROW_TEXT_CLASS = '!text-[length:var(--text-meta)] !leading-5 sm:!leading-6 tracking-normal';
 const TOOL_ROW_TITLE_CLASS = cn('typography-meta font-medium', TOOL_ROW_TEXT_CLASS);
@@ -65,6 +72,7 @@ type ToolStateWithMetadata = ToolStateUnion & { metadata?: Record<string, unknow
 
 interface ToolPartProps {
     part: ToolPartType;
+    sessionId?: string;
     isExpanded: boolean;
     onToggle: (toolId: string) => void;
     isMobile: boolean;
@@ -1491,6 +1499,7 @@ DiffPreview.displayName = 'DiffPreview';
 
 interface ToolExpandedContentProps {
     part: ToolPartType;
+    sessionId?: string;
     state: ToolStateUnion;
     currentDirectory: string;
     isExpanded: boolean;
@@ -1500,6 +1509,7 @@ interface ToolExpandedContentProps {
 
 const ToolExpandedContent: React.FC<ToolExpandedContentProps> = React.memo(({
     part,
+    sessionId,
     state,
     currentDirectory,
     isExpanded,
@@ -1520,6 +1530,10 @@ const ToolExpandedContent: React.FC<ToolExpandedContentProps> = React.memo(({
         () => parseInteractiveResultEnvelope(outputString),
         [outputString],
     );
+    const htmlArtifactEnvelope = React.useMemo(
+        () => parseHTMLArtifactResultEnvelope(outputString),
+        [outputString],
+    );
 
     const fileDiff = isRecord(metadata?.filediff) ? metadata.filediff : undefined;
     const diffContent = getPatchText((metadata as { patch?: unknown } | undefined)?.patch)
@@ -1532,9 +1546,8 @@ const ToolExpandedContent: React.FC<ToolExpandedContentProps> = React.memo(({
         [currentDirectory, diffContent, metadata]
     );
     const hasVisualDiffEntry = diffEntries.some((entry) => entry.renderMode === 'diff');
-    const hideToolInputPreview = part.tool === 'apply_patch'
-        || part.tool === 'edit'
-        || part.tool === 'multiedit';
+    const hideToolInputPreview = Boolean(interactiveEnvelope || htmlArtifactEnvelope)
+        || shouldHideToolInputPreview(part.tool);
     const diagnosticSection = React.useMemo(
         () => getToolDiagnosticSection(part.tool, input, metadata, currentDirectory),
         [currentDirectory, input, metadata, part.tool],
@@ -1597,6 +1610,33 @@ const ToolExpandedContent: React.FC<ToolExpandedContentProps> = React.memo(({
     );
 
     const renderResultContent = () => {
+        if (state.status === 'completed' && htmlArtifactEnvelope) {
+            const fallback = renderScrollableBlock(
+                <ToolScrollableTextOutput
+                    output={outputString}
+                    part={part}
+                    metadata={metadata}
+                    input={input}
+                />,
+                { className: 'p-1' },
+            );
+            const loadingFallback = (
+                <div className="tool-output-surface space-y-3 rounded-xl border border-border/60 p-4">
+                    <Skeleton className="h-5 w-2/5" />
+                    <Skeleton className="h-40 w-full" />
+                </div>
+            );
+            return (
+                <React.Suspense fallback={loadingFallback}>
+                    <HTMLArtifactView
+                        envelope={htmlArtifactEnvelope}
+                        fallback={fallback}
+                        sessionId={sessionId}
+                        toolPartId={part.id}
+                    />
+                </React.Suspense>
+            );
+        }
         if (state.status === 'completed' && interactiveEnvelope) {
             const fallback = renderScrollableBlock(
                 <ToolScrollableTextOutput
@@ -1618,6 +1658,7 @@ const ToolExpandedContent: React.FC<ToolExpandedContentProps> = React.memo(({
                     }}
                     fallback={fallback}
                     isMobile={isMobile}
+                    traceContext={{ sessionId, toolPartId: part.id }}
                 />
             );
         }
@@ -1967,6 +2008,7 @@ ToolExpandedContent.displayName = 'ToolExpandedContent';
 
 const ToolPartContent: React.FC<ToolPartProps> = ({
     part,
+    sessionId,
     isExpanded,
     onToggle,
     isMobile,
@@ -1984,6 +2026,20 @@ const ToolPartContent: React.FC<ToolPartProps> = ({
     const status = state?.status as string | undefined;
     const isFinalized = status === 'completed' || status === 'error' || status === 'aborted' || status === 'failed' || status === 'timeout' || status === 'cancelled';
     const isError = status === 'error' || status === 'failed';
+    const inspectionEnvelope = React.useMemo(() => {
+        const output = (state as ToolStateWithMetadata | undefined)?.output;
+        return typeof output === 'string' ? parseInteractiveResultEnvelope(output) : null;
+    }, [state]);
+
+    React.useEffect(() => {
+        recordRoutingToolObservation({
+            sessionId,
+            toolPartId: part.id,
+            tool: part.tool,
+            status,
+            ...(inspectionEnvelope?.view ? { viewId: inspectionEnvelope.view } : {}),
+        });
+    }, [inspectionEnvelope?.view, part.id, part.tool, sessionId, status]);
 
     const [activeLatched, setActiveLatched] = React.useState<boolean>(!isFinalized);
     const previousPartIdRef = React.useRef<string | undefined>(part.id);
@@ -2117,14 +2173,21 @@ const ToolPartContent: React.FC<ToolPartProps> = ({
             : null,
         [isError, isFinalized, taskOutputString],
     );
+    const htmlArtifactResult = React.useMemo(
+        () => isFinalized && !isError && taskOutputString
+            ? parseHTMLArtifactResultEnvelope(taskOutputString)
+            : null,
+        [isError, isFinalized, taskOutputString],
+    );
+    const hasRichResult = Boolean(interactiveResult || htmlArtifactResult);
     const autoExpandedInteractivePartRef = React.useRef<string | null>(null);
 
     React.useEffect(() => {
-        if (!interactiveResult || isTaskTool || isExpanded) return;
+        if ((!interactiveResult && !htmlArtifactResult) || isTaskTool || isExpanded) return;
         if (autoExpandedInteractivePartRef.current === part.id) return;
         autoExpandedInteractivePartRef.current = part.id;
         onToggle(part.id);
-    }, [interactiveResult, isExpanded, isTaskTool, onToggle, part.id]);
+    }, [htmlArtifactResult, interactiveResult, isExpanded, isTaskTool, onToggle, part.id]);
 
     const parsedTaskMetadata = React.useMemo(() => {
         return parseTaskMetadataBlock(taskOutputString);
@@ -2250,10 +2313,17 @@ const ToolPartContent: React.FC<ToolPartProps> = ({
     const normalizedPart = normalizedPartTool !== part.tool ? ({ ...part, tool: normalizedPartTool } as ToolPartType) : part;
     const descriptionPath = getToolDescriptionPath(normalizedPart, state, currentDirectory);
     const description = getToolDescription(normalizedPart, state, currentDirectory);
-    const displayName = getToolMetadata(normalizedPartTool || part.tool).displayName;
+    const displayName = interactiveResult
+        ? 'Interactive UI'
+        : htmlArtifactResult
+            ? 'HTML Artifact'
+            : getToolMetadata(normalizedPartTool || part.tool).displayName;
     
     // Tool title/description — shown inline as context
     const justificationText = React.useMemo(() => {
+        if (hasRichResult) {
+            return null;
+        }
         if (normalizedPartTool === 'bash') {
             return null;
         }
@@ -2278,7 +2348,7 @@ const ToolPartContent: React.FC<ToolPartProps> = ({
             return inputDesc;
         }
         return null;
-    }, [descriptionPath, normalizedPartTool, stateWithData, input]);
+    }, [descriptionPath, hasRichResult, normalizedPartTool, stateWithData, input]);
     const runtime = React.useContext(RuntimeAPIContext);
 
     const handleMainClick = (e: { stopPropagation: () => void }) => {
@@ -2438,10 +2508,10 @@ const ToolPartContent: React.FC<ToolPartProps> = ({
                                     {justificationText}
                                 </span>
                             )}
-                            {!justificationText && normalizedPartTool === 'lsp' && descriptionPath ? (
+                            {!hasRichResult && !justificationText && normalizedPartTool === 'lsp' && descriptionPath ? (
                                 renderAnimatedPathWithIcon(descriptionPath, animateTailText, false, showToolFileIcons)
                             ) : null}
-                            {!justificationText && normalizedPartTool !== 'lsp' && description && (
+                            {!hasRichResult && !justificationText && normalizedPartTool !== 'lsp' && description && (
                                 descriptionPath && description === descriptionPath ? (
                                     renderAnimatedPathWithIcon(descriptionPath, animateTailText, false, showToolFileIcons)
                                 ) : (
@@ -2508,6 +2578,7 @@ const ToolPartContent: React.FC<ToolPartProps> = ({
                             />
                             <ToolExpandedContent
                                 part={part}
+                                sessionId={sessionId}
                                 state={state}
                                 currentDirectory={currentDirectory}
                                 isExpanded={isExpanded}
@@ -2592,6 +2663,7 @@ export default React.memo(ToolPart, (prev, next) => {
     return areRenderRelevantPartsEqual([prev.part], [next.part])
         && prev.isExpanded === next.isExpanded
         && prev.isMobile === next.isMobile
+        && prev.sessionId === next.sessionId
         && prev.alwaysShowActions === next.alwaysShowActions
         && prev.onContentChange === next.onContentChange
         && prev.onShowPopup === next.onShowPopup

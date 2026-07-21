@@ -211,6 +211,33 @@ describe('ui auth client credential seam', () => {
     });
     expect(nativeExtensionCalled).toBe(true);
 
+    const artifactDocumentReq = {
+      method: 'GET',
+      path: `/api/interactive-ui/artifacts/${'a'.repeat(64)}/document`,
+      url: `/api/interactive-ui/artifacts/${'a'.repeat(64)}/document?oc_url_token=${encodeURIComponent(urlToken)}`,
+      headers: {},
+    };
+    const artifactDocumentRes = createResponse();
+    let artifactDocumentCalled = false;
+    await auth.requireAuth(artifactDocumentReq, artifactDocumentRes, () => {
+      artifactDocumentCalled = true;
+    });
+    expect(artifactDocumentCalled).toBe(true);
+
+    const artifactMetadataReq = {
+      method: 'GET',
+      path: `/api/interactive-ui/artifacts/${'a'.repeat(64)}/metadata`,
+      url: `/api/interactive-ui/artifacts/${'a'.repeat(64)}/metadata?oc_url_token=${encodeURIComponent(urlToken)}`,
+      headers: {},
+    };
+    const artifactMetadataRes = createResponse();
+    let artifactMetadataCalled = false;
+    await auth.requireAuth(artifactMetadataReq, artifactMetadataRes, () => {
+      artifactMetadataCalled = true;
+    });
+    expect(artifactMetadataCalled).toBe(false);
+    expect(artifactMetadataRes.statusCode).toBe(401);
+
     const mountedServeReq = {
       method: 'GET',
       baseUrl: '/api',

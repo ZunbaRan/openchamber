@@ -4,6 +4,20 @@
   "name": "OpenChamber Demo Sales",
   "version": "1.0.0",
   "publisher": "OpenChamber",
+  "agentRouting": {
+    "domain": "sales",
+    "intents": [
+      "sales.summary",
+      "sales.dashboard",
+      "sales.order.view",
+      "sales.order.approve"
+    ],
+    "examples": {
+      "zh-CN": ["查看销售概览", "打开销售看板", "检查异常订单"],
+      "en": ["show the sales summary", "open the sales dashboard", "review anomalous orders"]
+    },
+    "dataAuthority": "connected-business-system"
+  },
   "connectors": [
     {
       "id": "sales-api",
@@ -21,6 +35,11 @@
       "runtime": "declarative",
       "entry": "ui/declarative/sales-summary.view.json",
       "tools": ["sales_get_summary"],
+      "routing": {
+        "intents": ["sales.summary", "sales.order.view", "sales.order.approve"],
+        "priority": 85,
+        "operation": "mixed"
+      },
       "displayModes": ["inline", "workspace"]
     },
     {
@@ -29,6 +48,11 @@
       "entry": "dist/ui.mjs",
       "export": "extension",
       "tools": ["sales_get_dashboard"],
+      "routing": {
+        "intents": ["sales.dashboard", "sales.order.view", "sales.order.approve"],
+        "priority": 80,
+        "operation": "mixed"
+      },
       "displayModes": ["inline", "workspace", "fullscreen"]
     }
   ],
