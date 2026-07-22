@@ -7,7 +7,7 @@ const scalar = tool.schema.union([
 ]);
 
 const widget = tool.schema.object({
-  type: tool.schema.string().describe('组件类型：text、code-block、callout、metric、metric-grid、progress、status、flow、chart、table、comparison、list、timeline、activity-feed、tree、diff-summary、sparkline、git-graph 或 divider'),
+  type: tool.schema.string().describe('组件类型：text、code-block、callout、metric、metric-grid、progress、status、flow、chart、table、comparison、list、timeline、activity-feed、tree、diff-summary、sparkline、gauge、heatmap、kanban、git-graph 或 divider'),
   title: tool.schema.string().optional().describe('组件标题；chart、table、list、callout 可用'),
   label: tool.schema.string().optional().describe('metric、progress、status 的短标签'),
   value: scalar.optional().describe('metric/status 的值，或 progress 的 0 到 1 数字'),
@@ -57,6 +57,28 @@ const widget = tool.schema.object({
     values: tool.schema.array(tool.schema.number()).max(5),
   })).max(30).optional().describe('chart 数据点；values 顺序必须与 chartSeries 一致'),
   sparklineValues: tool.schema.array(tool.schema.number()).max(60).optional().describe('sparkline 的数值序列'),
+  minimum: tool.schema.number().optional().describe('gauge 的最小值，默认 0'),
+  maximum: tool.schema.number().optional().describe('gauge 的最大值，默认 100'),
+  unit: tool.schema.string().optional().describe('gauge 的单位，例如 %、ms、GB'),
+  heatmapCells: tool.schema.array(tool.schema.object({
+    row: tool.schema.string(),
+    column: tool.schema.string(),
+    value: tool.schema.number(),
+    label: tool.schema.string().optional(),
+  })).max(60).optional().describe('heatmap 单元格；row/column 是两轴分类，value 决定色阶'),
+  kanbanColumns: tool.schema.array(tool.schema.object({
+    id: tool.schema.string().describe('ASCII 列标识，例如 todo、doing、done'),
+    title: tool.schema.string(),
+    tone: tool.schema.string().optional(),
+  })).max(6).optional().describe('kanban 的列，按这里的顺序显示'),
+  kanbanCards: tool.schema.array(tool.schema.object({
+    id: tool.schema.string().optional(),
+    column: tool.schema.string().describe('必须对应 kanbanColumns.id'),
+    title: tool.schema.string(),
+    description: tool.schema.string().optional(),
+    badge: tool.schema.string().optional(),
+    tone: tool.schema.string().optional(),
+  })).max(40).optional().describe('kanban 的只读卡片'),
   commits: tool.schema.array(tool.schema.object({
     id: tool.schema.string(),
     message: tool.schema.string(),
@@ -116,6 +138,12 @@ type WidgetInput = {
   chartSeries?: Array<{ label: string }>;
   chartPoints?: Array<{ label: string; values: number[] }>;
   sparklineValues?: number[];
+  minimum?: number;
+  maximum?: number;
+  unit?: string;
+  heatmapCells?: Array<{ row: string; column: string; value: number; label?: string }>;
+  kanbanColumns?: Array<{ id: string; title: string; tone?: string }>;
+  kanbanCards?: Array<{ id?: string; column: string; title: string; description?: string; badge?: string; tone?: string }>;
   commits?: Array<{ id: string; message: string; branch?: string; parents?: string[]; author?: string; timestamp?: string }>;
   tableColumns?: Array<{ key: string; label: string; format?: string; render?: string; align?: string }>;
   tableRows?: Array<{ cells: Array<{ key: string; value: Scalar }> }>;
@@ -219,6 +247,28 @@ const toNode = (rawInput: unknown): Record<string, unknown> | null => {
     return { type, title: input.title, items: asArray(input.items).slice(0, 30) };
   }
   if (type === 'sparkline') return { type: 'sparkline', label: input.label, value: input.value, values: asArray(input.sparklineValues).filter((value) => typeof value === 'number' && Number.isFinite(value)).slice(0, 60) };
+  if (type === 'gauge') {
+    return {
+      type: 'gauge',
+      title: input.title,
+      label: input.label,
+      value: typeof input.value === 'number' ? input.value : Number(input.value) || 0,
+      minimum: input.minimum ?? 0,
+      maximum: input.maximum ?? 100,
+      unit: input.unit,
+      detail: input.detail,
+      tone: input.tone,
+    };
+  }
+  if (type === 'heatmap') return { type: 'heatmap', title: input.title, cells: asArray(input.heatmapCells).slice(0, 60) };
+  if (type === 'kanban') {
+    return {
+      type: 'kanban',
+      title: input.title,
+      columns: asArray(input.kanbanColumns).slice(0, 6),
+      cards: asArray(input.kanbanCards).slice(0, 40),
+    };
+  }
   if (type === 'git-graph') return { type: 'git-graph', title: input.title, commits: asArray(input.commits).slice(0, 40) };
   if (type === 'chart') {
     const series = asArray<unknown>(input.chartSeries).slice(0, 5).flatMap((rawItem, index) => {

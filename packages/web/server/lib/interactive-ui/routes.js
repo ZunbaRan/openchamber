@@ -55,7 +55,7 @@ const brokerContentSecurityPolicy = () => [
 
 const createArtifactBrokerDocument = (artifactDocument) => {
   const dataUrl = `data:text/html;base64,${Buffer.from(artifactDocument, 'utf8').toString('base64')}`;
-  return `<!doctype html><html><head><meta charset="utf-8"><style>html,body{margin:0;width:100%;height:100%;overflow:hidden;background:transparent}iframe{display:block;width:100%;height:100%;border:0;background:transparent}</style></head><body data-ocix-artifact-broker><script>(()=>{"use strict";const frame=document.createElement("iframe"),pending=[];let channel="",loaded=false,loadCount=0,navigationBlocked=false;const size=value=>{try{return new TextEncoder().encode(JSON.stringify(value)).byteLength}catch{return Infinity}};const record=value=>value&&typeof value==="object"&&!Array.isArray(value);const keys=value=>Object.keys(value).every(key=>["source","direction","bridgeVersion","channelId","sequence","type","payload"].includes(key));const validChannel=value=>typeof value==="string"&&value.length>=16&&value.length<=128;const hostMessage=value=>record(value)&&size(value)<=16384&&keys(value)&&value.source==="openchamber-host"&&value.direction==="host-to-artifact"&&value.bridgeVersion===1&&value.type==="host.init"&&validChannel(value.channelId);const artifactMessage=value=>record(value)&&size(value)<=8192&&keys(value)&&value.source==="openchamber-artifact"&&value.direction==="artifact-to-host"&&value.bridgeVersion===1&&value.channelId===channel;const reportNavigation=()=>{navigationBlocked=true;if(!channel)return;parent.postMessage({source:"openchamber-artifact-broker",direction:"broker-to-host",bridgeVersion:1,channelId:channel,type:"broker.navigationBlocked",payload:{}},"*")};addEventListener("message",event=>{const value=event.data;if(event.source===parent&&hostMessage(value)){channel=value.channelId;if(navigationBlocked){reportNavigation();return}if(loaded)frame.contentWindow?.postMessage(value,"*");else pending.splice(0,pending.length,value);return}if(event.source===frame.contentWindow&&artifactMessage(value))parent.postMessage(value,"*")});frame.title="Artifact content";frame.setAttribute("sandbox","allow-scripts");frame.src=${JSON.stringify(dataUrl)};frame.addEventListener("load",()=>{loadCount+=1;if(loadCount>1){frame.remove();reportNavigation();return}loaded=true;for(const message of pending.splice(0))frame.contentWindow?.postMessage(message,"*")});document.body.append(frame)})();</script></body></html>`;
+  return `<!doctype html><html><head><meta charset="utf-8"><style>html,body{margin:0;width:100%;height:100%;overflow:hidden;background:transparent}iframe{display:block;width:100%;height:100%;border:0;background:transparent}</style></head><body data-ocix-artifact-broker><script>(()=>{"use strict";const frame=document.createElement("iframe"),pending=[];let channel="",loaded=false,loadCount=0,navigationBlocked=false;const size=value=>{try{return new TextEncoder().encode(JSON.stringify(value)).byteLength}catch{return Infinity}};const record=value=>value&&typeof value==="object"&&!Array.isArray(value);const keys=value=>Object.keys(value).every(key=>["source","direction","bridgeVersion","channelId","sequence","type","payload"].includes(key));const validChannel=value=>typeof value==="string"&&value.length>=16&&value.length<=128;const hostMessage=value=>record(value)&&size(value)<=2200000&&keys(value)&&value.source==="openchamber-host"&&value.direction==="host-to-artifact"&&value.bridgeVersion===1&&["host.init","host.businessResult"].includes(value.type)&&validChannel(value.channelId);const artifactMessage=value=>record(value)&&size(value)<=65536&&keys(value)&&value.source==="openchamber-artifact"&&value.direction==="artifact-to-host"&&value.bridgeVersion===1&&value.channelId===channel;const reportNavigation=()=>{navigationBlocked=true;if(!channel)return;parent.postMessage({source:"openchamber-artifact-broker",direction:"broker-to-host",bridgeVersion:1,channelId:channel,type:"broker.navigationBlocked",payload:{}},"*")};addEventListener("message",event=>{const value=event.data;if(event.source===parent&&hostMessage(value)){if(value.type==="host.init")channel=value.channelId;else if(!channel||value.channelId!==channel)return;if(navigationBlocked){reportNavigation();return}if(loaded)frame.contentWindow?.postMessage(value,"*");else pending.push(value);return}if(event.source===frame.contentWindow&&artifactMessage(value))parent.postMessage(value,"*")});frame.title="Artifact content";frame.setAttribute("sandbox","allow-scripts");frame.src=${JSON.stringify(dataUrl)};frame.addEventListener("load",()=>{loadCount+=1;if(loadCount>1){frame.remove();reportNavigation();return}loaded=true;for(const message of pending.splice(0))frame.contentWindow?.postMessage(message,"*")});document.body.append(frame)})();</script></body></html>`;
 };
 
 const setArtifactDocumentHeaders = (res, scripts) => {
@@ -67,7 +67,18 @@ const setArtifactDocumentHeaders = (res, scripts) => {
   res.setHeader('Permissions-Policy', 'accelerometer=(), autoplay=(), camera=(), clipboard-read=(), clipboard-write=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=()');
 };
 
-export const registerInteractiveUIRoutes = (app, { express, runtime, manager, artifactStore }) => {
+export const registerInteractiveUIRoutes = (app, { express, runtime, manager, artifactStore, uiAuthController = null }) => {
+  // Interactive UI owns both read-only descriptors and privileged mutations
+  // (extension install/trust, connector credentials, and Business Gateway
+  // actions).  Keep the route family behind the same UI auth gate as the rest
+  // of the OpenChamber API.  The URL-token exception remains narrow and is
+  // decided by ui-auth for the exact Native/Artifact document paths.
+  if (typeof uiAuthController?.requireAuth === 'function') {
+    app.use('/api/interactive-ui', (req, res, next) => {
+      Promise.resolve(uiAuthController.requireAuth(req, res, next)).catch((error) => sendError(res, error));
+    });
+  }
+
   app.get('/api/interactive-ui/artifacts/capabilities', async (_req, res) => {
     try {
       res.setHeader('Cache-Control', 'no-store');
@@ -317,6 +328,27 @@ export const registerInteractiveUIRoutes = (app, { express, runtime, manager, ar
       const tool = typeof req.query?.tool === 'string' ? req.query.tool : '';
       res.setHeader('Cache-Control', 'no-store');
       res.json(await runtime.getViewDescriptor(req.params.viewId, tool));
+    } catch (error) {
+      sendError(res, error);
+    }
+  });
+
+  app.get('/api/interactive-ui/installed-artifacts/:artifactId', async (req, res) => {
+    try {
+      const tool = typeof req.query?.tool === 'string' ? req.query.tool : '';
+      res.setHeader('Cache-Control', 'no-store');
+      res.json(await runtime.getInstalledArtifactDescriptor(req.params.artifactId, tool));
+    } catch (error) {
+      sendError(res, error);
+    }
+  });
+
+  app.get('/api/interactive-ui/extensions/:extensionId/artifacts/:artifactId', async (req, res) => {
+    try {
+      const artifact = await runtime.getInstalledArtifactDocument(req.params.extensionId, req.params.artifactId);
+      setArtifactDocumentHeaders(res, true);
+      res.setHeader('ETag', `"${artifact.integrity}"`);
+      res.send(createArtifactBrokerDocument(artifact.source));
     } catch (error) {
       sendError(res, error);
     }

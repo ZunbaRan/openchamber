@@ -112,6 +112,39 @@ describe('OCIX signed package format', () => {
     })).rejects.toMatchObject({ code: 'invalid_agent_routing' });
   });
 
+  it('packages one OCIX with both Interactive UI and HTML Artifact Agent tools', async () => {
+    const directory = await createExtension();
+    const manifestPath = path.join(directory, 'openchamber.extension.json');
+    const manifest = JSON.parse(await fs.readFile(manifestPath, 'utf8'));
+    manifest.artifacts = [{
+      id: 'com.acme.operations.explorer',
+      title: 'Operations Explorer',
+      entry: 'ui/explorer.html',
+      tools: ['operations_explore'],
+      capabilities: { scripts: true, businessActions: [] },
+    }];
+    await fs.writeFile(manifestPath, JSON.stringify(manifest));
+    await fs.writeFile(path.join(directory, 'ui', 'explorer.html'), '<!doctype html><html><body><script>document.body.dataset.ready="true"</script></body></html>');
+    await fs.writeFile(path.join(directory, 'agent-runtime', 'tools', 'operations_explore.ts'), 'export default { description: "Explore operations" };\n');
+    const keys = generatePublisherKeyPair();
+    const packed = await createExtensionPackage({
+      extensionDirectory: directory,
+      privateKey: keys.privateKey,
+      publisherId: 'com.acme.publisher',
+      publisherName: 'Acme',
+      keyId: 'release-2026',
+    });
+    const verified = await verifyExtensionPackage({
+      buffer: packed.buffer,
+      resolveTrustedPublisherKey: async () => keys.publicKey,
+    });
+
+    expect(verified.manifest.views).toHaveLength(1);
+    expect(verified.manifest.artifacts).toHaveLength(1);
+    expect(verified.agentRuntime.tools.map((tool) => tool.name)).toEqual(['operations_explore', 'operations_open']);
+    expect(verified.agentRuntime.unresolvedSurfaceTools).toEqual([]);
+  });
+
   it('rejects a signed index when an archive file is modified', async () => {
     const directory = await createExtension();
     const keys = generatePublisherKeyPair();

@@ -251,13 +251,19 @@ export const inspectPackagedAgentRuntime = (files, manifest = undefined) => {
   tools.sort((left, right) => left.name.localeCompare(right.name));
 
   const packagedToolNames = new Set(tools.map((tool) => tool.name));
-  const boundToolNames = Array.isArray(manifest?.views)
-    ? manifest.views.flatMap((view) => Array.isArray(view?.tools) ? view.tools : []).filter((name) => typeof name === 'string')
-    : [];
+  const boundToolNames = [
+    ...(Array.isArray(manifest?.views) ? manifest.views : []),
+    ...(Array.isArray(manifest?.artifacts) ? manifest.artifacts : []),
+  ].flatMap((surface) => Array.isArray(surface?.tools) ? surface.tools : []).filter((name) => typeof name === 'string');
+  const unresolvedSurfaceTools = Array.from(new Set(
+    boundToolNames.filter((name) => !packagedToolNames.has(name)),
+  )).sort();
   return {
     tools,
     skills,
-    unresolvedViewTools: Array.from(new Set(boundToolNames.filter((name) => !packagedToolNames.has(name)))).sort(),
+    unresolvedSurfaceTools,
+    // Kept for package metadata compatibility with OCIX v1 clients.
+    unresolvedViewTools: unresolvedSurfaceTools,
   };
 };
 

@@ -274,6 +274,149 @@ export const SparklinePrimitive: React.FC<PrimitiveProps> = ({ node, resolveValu
   );
 };
 
+const gaugeColor = (tone: unknown): string => {
+  if (tone === 'success') return 'var(--ocix-success)';
+  if (tone === 'warning') return 'var(--ocix-warning)';
+  if (tone === 'error') return 'var(--ocix-error)';
+  if (tone === 'info') return 'var(--ocix-info)';
+  return 'var(--ocix-chart-1)';
+};
+
+export const GaugePrimitive: React.FC<PrimitiveProps> = ({ node, resolveValue }) => {
+  const minimum = Number(resolveValue(node.minimum));
+  const maximum = Number(resolveValue(node.maximum));
+  const rawValue = Number(resolveValue(node.value));
+  const safeMinimum = Number.isFinite(minimum) ? minimum : 0;
+  const safeMaximum = Number.isFinite(maximum) && maximum > safeMinimum ? maximum : safeMinimum + 100;
+  const value = Number.isFinite(rawValue) ? Math.max(safeMinimum, Math.min(safeMaximum, rawValue)) : safeMinimum;
+  const progress = (value - safeMinimum) / (safeMaximum - safeMinimum);
+  const circumference = 2 * Math.PI * 52;
+  const displayValue = `${displayDeclarativeValue(value)}${node.unit ? ` ${displayDeclarativeValue(resolveValue(node.unit))}` : ''}`;
+  return (
+    <section className={PANEL}>
+      {node.title ? <h3 className={cn('mb-2', TITLE)}>{displayDeclarativeValue(resolveValue(node.title))}</h3> : null}
+      <div className="grid items-center gap-3 sm:grid-cols-[9rem_minmax(0,1fr)]">
+        <svg
+          viewBox="0 0 132 132"
+          className="mx-auto size-32"
+          role="meter"
+          aria-label={displayDeclarativeValue(resolveValue(node.label ?? node.title))}
+          aria-valuemin={safeMinimum}
+          aria-valuemax={safeMaximum}
+          aria-valuenow={value}
+        >
+          <circle cx="66" cy="66" r="52" fill="none" stroke="var(--ocix-surface-muted)" strokeWidth="12" />
+          <circle
+            cx="66"
+            cy="66"
+            r="52"
+            fill="none"
+            stroke={gaugeColor(node.tone)}
+            strokeWidth="12"
+            strokeLinecap="round"
+            strokeDasharray={circumference}
+            strokeDashoffset={circumference * (1 - progress)}
+            transform="rotate(-90 66 66)"
+          />
+          <text x="66" y="62" textAnchor="middle" className="fill-[var(--ocix-foreground)] text-[18px] font-semibold">{displayValue}</text>
+          <text x="66" y="82" textAnchor="middle" className="fill-[var(--ocix-muted-foreground)] text-[10px]">{Math.round(progress * 100)}%</text>
+        </svg>
+        <div className="min-w-0">
+          {node.label ? <div className="typography-body font-semibold text-[var(--ocix-foreground)]">{displayDeclarativeValue(resolveValue(node.label))}</div> : null}
+          {node.detail ? <div className={cn('mt-1 break-words', META)}>{displayDeclarativeValue(resolveValue(node.detail))}</div> : null}
+          <div className={cn('mt-2', META)}>{displayDeclarativeValue(safeMinimum)} – {displayDeclarativeValue(safeMaximum)}</div>
+        </div>
+      </div>
+    </section>
+  );
+};
+
+export const HeatmapPrimitive: React.FC<PrimitiveProps> = ({ node, resolveValue, emptyLabel }) => {
+  const cells: Array<Record<string, unknown> & { row: string; column: string; value: number }> = resolvedRecords(node.cells ?? node.data, resolveValue).flatMap((entry) => {
+    const value = Number(entry.value);
+    return typeof entry.row === 'string' && typeof entry.column === 'string' && Number.isFinite(value)
+      ? [{ ...entry, row: entry.row, column: entry.column, value }]
+      : [];
+  });
+  if (cells.length === 0) return <div className={cn(PANEL, 'text-center', META)}>{emptyLabel}</div>;
+  const rows = Array.from(new Set(cells.map((cell) => cell.row)));
+  const columns = Array.from(new Set(cells.map((cell) => cell.column)));
+  const byCoordinate = new Map(cells.map((cell) => [`${cell.row}\u0000${cell.column}`, cell]));
+  const values = cells.map((cell) => cell.value);
+  const minimum = Math.min(...values);
+  const extent = Math.max(...values) - minimum || 1;
+  return (
+    <section className="min-w-0 overflow-hidden rounded-xl border border-[var(--ocix-border)] bg-[var(--ocix-surface)]">
+      {node.title ? <h3 className={cn('border-b border-[var(--ocix-border)] px-3 py-2', TITLE)}>{displayDeclarativeValue(resolveValue(node.title))}</h3> : null}
+      <div className="overflow-x-auto p-3" tabIndex={0}>
+        <table className="w-full min-w-[28rem] border-separate border-spacing-1">
+          <thead><tr><th className="w-24" />{columns.map((column) => <th key={column} className="px-1 pb-1 text-center typography-micro font-medium text-[var(--ocix-muted-foreground)]">{column}</th>)}</tr></thead>
+          <tbody>{rows.map((row) => (
+            <tr key={row}>
+              <th className="pr-2 text-right typography-micro font-medium text-[var(--ocix-muted-foreground)]">{row}</th>
+              {columns.map((column) => {
+                const cell = byCoordinate.get(`${row}\u0000${column}`);
+                const intensity = cell ? 0.14 + ((cell.value - minimum) / extent) * 0.86 : 0;
+                const label = cell ? displayDeclarativeValue(resolveValue(cell.label ?? cell.value)) : '';
+                return (
+                  <td key={column} className="relative h-9 min-w-12 overflow-hidden rounded-md text-center typography-micro text-[var(--ocix-foreground)]" title={cell ? `${row} · ${column}: ${label}` : undefined}>
+                    {cell ? <span aria-hidden="true" className="absolute inset-0 bg-[var(--ocix-chart-1)]" style={{ opacity: intensity }} /> : null}
+                    <span className="relative">{label}</span>
+                  </td>
+                );
+              })}
+            </tr>
+          ))}</tbody>
+        </table>
+      </div>
+    </section>
+  );
+};
+
+export const KanbanPrimitive: React.FC<PrimitiveProps> = ({ node, resolveValue, emptyLabel }) => {
+  const columns = resolvedRecords(node.columns, resolveValue).filter((column) => typeof column.id === 'string');
+  const cards = resolvedRecords(node.cards ?? node.items, resolveValue);
+  if (columns.length === 0) return <div className={cn(PANEL, 'text-center', META)}>{emptyLabel}</div>;
+  return (
+    <section className={PANEL}>
+      {node.title ? <h3 className={cn('mb-3', TITLE)}>{displayDeclarativeValue(resolveValue(node.title))}</h3> : null}
+      <div className="min-w-0 overflow-x-auto pb-1" tabIndex={0}>
+        <div className="grid min-w-max grid-flow-col auto-cols-[minmax(14rem,18rem)] gap-3">
+          {columns.map((column) => {
+            const columnCards = cards.filter((card) => card.column === column.id);
+            return (
+              <section key={String(column.id)} className="rounded-xl bg-[var(--ocix-surface-muted)] p-2.5">
+                <header className="mb-2 flex items-center justify-between gap-2 px-1">
+                  <div className="flex min-w-0 items-center gap-2">
+                    <span aria-hidden="true" className={cn('size-2 shrink-0 rounded-full', dotClass(column.tone))} />
+                    <h4 className="truncate typography-meta font-semibold text-[var(--ocix-foreground)]">{displayDeclarativeValue(resolveValue(column.title ?? column.label))}</h4>
+                  </div>
+                  <span className="typography-micro text-[var(--ocix-muted-foreground)]">{columnCards.length}</span>
+                </header>
+                <ol className="space-y-2">
+                  {columnCards.map((card, index) => (
+                    <li key={String(card.id ?? `${column.id}:${index}`)} className="rounded-lg border border-[var(--ocix-border)] bg-[var(--ocix-surface)] p-2.5">
+                      <div className="flex items-start gap-2">
+                        <span aria-hidden="true" className={cn('mt-1.5 size-2 shrink-0 rounded-full', dotClass(card.tone))} />
+                        <div className="min-w-0 flex-1">
+                          <div className="break-words typography-meta font-medium text-[var(--ocix-foreground)]">{displayDeclarativeValue(resolveValue(card.title))}</div>
+                          {card.description ? <div className={cn('mt-1 break-words', META)}>{displayDeclarativeValue(resolveValue(card.description))}</div> : null}
+                        </div>
+                        {card.badge ? <span className="max-w-24 shrink-0 truncate rounded-full border border-[var(--ocix-border)] px-2 py-0.5 typography-micro text-[var(--ocix-muted-foreground)]">{displayDeclarativeValue(resolveValue(card.badge))}</span> : null}
+                      </div>
+                    </li>
+                  ))}
+                  {columnCards.length === 0 ? <li className={cn('rounded-lg border border-dashed border-[var(--ocix-border)] px-3 py-5 text-center', META)}>{emptyLabel}</li> : null}
+                </ol>
+              </section>
+            );
+          })}
+        </div>
+      </div>
+    </section>
+  );
+};
+
 type GitCommit = {
   id: string;
   message: string;

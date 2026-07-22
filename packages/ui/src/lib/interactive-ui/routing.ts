@@ -12,7 +12,8 @@ type InteractiveUIRoutingOperation = 'read' | 'write' | 'mixed';
 
 interface InteractiveUIRoutingToolCapability {
   name: string;
-  views: string[];
+  surfaces: string[];
+  forms: Array<'interactive-ui' | 'html-artifact'>;
   intents: string[];
   priority: number;
   operation: InteractiveUIRoutingOperation;
@@ -91,18 +92,24 @@ const normalizeExtensions = (value: unknown): InteractiveUIRoutingExtensionCapab
             : 'read';
           if (!name || !Number.isInteger(rawTool.priority)) return [];
           toolCount += 1;
-          return [{
+          const rawSurfaces: unknown[] = Array.isArray(rawTool.surfaces)
+            ? rawTool.surfaces
+            : Array.isArray(rawTool.views) ? rawTool.views : [];
+          const forms: InteractiveUIRoutingToolCapability['forms'] = Array.isArray(rawTool.forms)
+            ? rawTool.forms.filter((entry): entry is 'interactive-ui' | 'html-artifact' => entry === 'interactive-ui' || entry === 'html-artifact').slice(0, 2)
+            : ['interactive-ui'];
+          const tool: InteractiveUIRoutingToolCapability = {
             name,
-            views: Array.isArray(rawTool.views)
-              ? rawTool.views.filter((entry): entry is string => typeof entry === 'string' && entry.length <= 128).slice(0, 16)
-              : [],
+            surfaces: rawSurfaces.filter((entry): entry is string => typeof entry === 'string' && entry.length <= 128).slice(0, 16),
+            forms,
             intents: Array.isArray(rawTool.intents)
               ? rawTool.intents.filter((entry): entry is string => typeof entry === 'string' && entry.length <= 96).slice(0, 16)
               : [],
             priority: Math.max(0, Math.min(100, rawTool.priority as number)),
             operation,
             dataAuthority: stringValue(rawTool.dataAuthority, 64),
-          }];
+          };
+          return [tool];
         })
       : [];
     if (tools.length === 0) return [];

@@ -1399,13 +1399,11 @@ Extension Manager：
 1. 读取 manifest。
 2. 显示发布者、版本、Native code 警告和权限。
 3. 验证签名和 hash。
-4. 解包到 OpenChamber extension storage。
-5. 生成 OpenCode extension runtime 目录。
-6. 注册 MCP connector。
-7. 注册 Skill。
-8. 索引 View manifest。
-9. 必要时重启受管 OpenCode。
-10. Native bundle 仍保持 lazy，直到第一次触发。
+4. 解包到 OpenChamber extension storage，并保存签名文件索引。
+5. 将已启用扩展的 Agent Tools/Skills 同步到共享 OpenCode 全局目录。
+6. 索引 View/Artifact manifest。
+7. 必要时 reload 受管 OpenCode。
+8. Native bundle 仍保持 lazy，直到第一次触发。
 
 ---
 
@@ -1428,28 +1426,19 @@ OpenCode 当前支持：
 
 这些能力足够完成 OCIX v1 的 Agent 侧加载。
 
-### 13.2 合成配置目录
+### 13.2 共享全局 Agent Runtime
 
-OpenChamber 为已启用扩展生成：
-
-~~~text
-<OpenChamber App Data>/
-└── extension-runtime/
-    ├── skills/
-    │   └── acme-sales/
-    ├── tools/
-    │   └── openchamber-ui.ts
-    ├── plugins/
-    ├── package.json
-    └── generated-opencode.json
-~~~
-
-启动受管 OpenCode 时注入：
+OpenChamber 不为每个扩展生成独立 `OPENCODE_CONFIG_DIR`。所有已启用 OCIX 共享 OpenCode 的全局发现目录：
 
 ~~~text
-OPENCODE_CONFIG_DIR=<extension-runtime>
-OPENCODE_CONFIG_CONTENT=<generated-inline-config>
+~/.config/opencode/
+├── skills/
+│   └── acme-sales/
+└── tools/
+    └── openchamber-ui.ts
 ~~~
+
+实际目录遵循 OpenCode 的 `OPENCODE_CONFIG_DIR`；若用户设置了该变量，OpenChamber 会复用同一目录，而不是覆盖它。扩展管理器记录每个文件的 owner/version/hash，多个扩展并存时拒绝覆盖用户文件或其他扩展文件。
 
 原则：
 
@@ -1457,11 +1446,11 @@ OPENCODE_CONFIG_CONTENT=<generated-inline-config>
 - 不覆盖用户全局配置。
 - 用户显式禁用的扩展保持禁用。
 - 扩展 namespace 冲突时停止加载并报错。
-- managed enterprise policy 可以覆盖用户设置。
+- 远程 OpenCode Server 不会被本机自动写入；远端管理员仍需通过其部署渠道安装 Agent Runtime。
 
 ### 13.3 MCP 动态注册
 
-只新增 MCP connector 时，可以在 OpenCode ready 后调用动态 MCP add API，不一定重启。
+MCP 仍可作为无法打包的独立连接器，但不是 OCIX v1 的默认加载方式；OCIX 的本地 Agent 半边优先使用全局 Custom Tools + Skills。
 
 涉及以下内容时通常需要重启或 reload：
 

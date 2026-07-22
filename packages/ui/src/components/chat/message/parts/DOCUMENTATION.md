@@ -53,7 +53,7 @@ Use this doc when you ask an agent to change tool/header/description behavior.
 
 - `read` and `skill` are **static navigation tools** and render via `StaticToolRow`.
 - Every other tool, including search/fetch, OpenCode built-ins, custom tools, plugins, and MCP tools, is **expandable** and renders through `ToolPart`.
-- A completed Tool whose output exactly parses as an Interactive UI or HTML Artifact Result remains expandable but is promoted out of the collapsible Activity group. It is primary answer content, not background activity. Pending, malformed, failed, and ordinary Tool results stay in their normal Activity position.
+- A completed Tool whose output exactly parses as an Interactive UI, Agent Generated HTML Artifact, or installed HTML Artifact Result remains expandable but is promoted out of the collapsible Activity group. It is primary answer content, not background activity. Pending, malformed, failed, and ordinary Tool results stay in their normal Activity position.
 - `MessageBody` keeps a concise post-View conclusion visible. A long or list-shaped recap after a completed rich result is collapsed under the localized **Agent notes** disclosure, including when OpenCode emits the Tool and final text as separate assistant messages in the same turn. The original text remains available for expansion, export, copy, and audit.
 - `ToolPart` defers expanded content after a user toggle, preventing large tool input/output payloads from mounting during the initial chat render.
 - Thinking/Justification duration is hidden in `sorted` mode (handled in `ReasoningPart.tsx` + `JustificationBlock.tsx`).

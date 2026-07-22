@@ -1,17 +1,17 @@
-# OpenChamber Installed Declarative / Trusted Native 开发手册
+# OpenChamber OCIX：Interactive UI + HTML Artifact 开发手册
 
 > 规范：OCIX v1 Managed Distribution Preview<br>
-> 更新日期：2026-07-20<br>
+> 更新日期：2026-07-21<br>
 > 配套 Agent skill：`.agents/skills/build-openchamber-interactive-extension/`<br>
 > 架构背景：[Interactive UI 扩展架构](./INTERACTIVE_UI_EXTENSION_ARCHITECTURE.md)
 
 ## 1. 当前交付状态
 
-Installed Declarative / Trusted Native 已经达到“企业开发者预览 v1”：一个扩展可以在不修改 OpenChamber 功能源码的情况下被发现、绑定 Agent tool、内联显示、查询真实 HTTP API，并通过服务端确认挑战执行写操作。
+OCIX 已经支持一个签名扩展同时携带 Third-party Interactive UI 与 Third-party HTML Artifact：两者都能在正常对话 ToolPart 内显示、通过同一 Business Gateway 查询真实 HTTP API，并通过服务端确认挑战执行写操作。HTML Artifact 获得的是受限结构化 Bridge，不是 Token、URL 或浏览器直连权限。
 
 本次开发工具补齐了：
 
-- Declarative + Trusted Native 双 runtime starter。
+- Declarative + Trusted Native + Sandboxed HTML Artifact 混合 starter。
 - OpenCode Custom Tool 和 Agent Skill starter。
 - `create` 脚手架命令，拒绝覆盖已有目录。
 - `validate` 命令，复用真实 server runtime 并增加字段级 Declarative 检查。
@@ -25,22 +25,25 @@ Installed Declarative / Trusted Native 已经达到“企业开发者预览 v1�
 
 这已经是一条可用于企业私有分发、内测渠道和静态公共目录的完整技术链，但不等于 OpenChamber 官方已经运营一个公共市场。公网域名/CDN、扩展审核组织、离线根密钥仪式、签名密钥吊销/透明日志、恶意软件响应、Native ABI 兼容窗口、VS Code Gateway 和远程 OpenCode 双端协商仍属于部署方或后续平台治理。业务 Key 的权限、RBAC/ABAC、撤销和审计由接入的第三方系统负责，不是 OpenChamber 要复制的一套多用户权限系统。
 
-## 2. 什么时候选择哪种 runtime
+## 2. 用 2×2 模型选择能力
 
-| 需求 | Installed Declarative | Trusted Native |
-|---|---:|---:|
-| 指标、状态、键值、列表、流程 | 首选 | 可以 |
-| 标准 bar/line/area/donut 图表 | 首选 | 可以 |
-| 时间线、活动、对比、tabs/accordion、code、sparkline、标准 Git graph/tree/diff | 首选 | 可以 |
-| 标准表格和确认式行操作 | 首选 | 可以 |
-| 需要平台自动统一布局和主题 | 首选 | 需要遵循 Host 样式 |
-| 多步骤表单、复杂本地状态 | 受限 | 首选 |
-| 现有 React 业务模块拆分 | 不适合直接搬运 | 首选 |
-| 地图、画布、拖拽、复杂编辑器 | 当前不适合 | 首选 |
-| 公共不可信第三方代码 | 不执行代码，可用 | 不允许默认信任 |
-| 模型一次性生成任意视觉 | 先用 Agent Generated 子集 | DSL 确有缺口时使用独立 HTML Artifact，不是 Native/OCIX |
+后续统一按两个维度称呼：形式是 Interactive UI / HTML Artifact；生成角色是 Agent Generated / Third-party Extension。
 
-建议从 Declarative 开始。只有当标准 primitive 无法表达交互时再使用 Native。一个扩展可以同时提供 overview Declarative View 和 workspace Native View。
+| 生成角色 / 形式 | Interactive UI | HTML Artifact |
+|---|---|---|
+| Agent Generated | 模型组合标准组件；无业务 API | 模型生成临时 HTML/SVG/受限 JS；无业务 API |
+| Third-party Extension | Installed Declarative / Trusted Native；可走 Gateway | 签名 `.html`；sandbox 内运行；可走声明式 Business Bridge |
+
+| 需求 | Declarative | Trusted Native | Third-party HTML Artifact |
+|---|---:|---:|---:|
+| 指标、图表、表格、状态、流程 | 首选 | 可以 | 不优先 |
+| 平台自动统一布局和主题 | 首选 | 遵循 Host UI Kit | 遵循 OCIX tokens |
+| 多步骤表单、复杂 React 状态 | 受限 | 首选 | 可以但不共享 React |
+| 地图、自由 SVG/Canvas、拖拽、模拟器 | 不适合 | 可以 | 首选 |
+| 真实 API 查询与确认式写入 | Gateway | Gateway | Business Bridge → Gateway |
+| 执行位置 | Host renderer | Host 同页受信代码 | 双层 iframe sandbox |
+
+建议从 Declarative 开始。需要深度 Host 集成和 React 复用时使用 Native；需要自由 HTML/SVG/Canvas 表现且可以接受 iframe 边界时使用 Third-party HTML Artifact。一个 `.ocix` 可以同时提供三种 surface。
 
 ## 3. 五分钟创建扩展
 
@@ -60,14 +63,17 @@ node scripts/interactive-ui-extension.mjs create \
 acme-operations/
 ├── openchamber.extension.json
 ├── ui/
-│   └── declarative/
-│       └── overview.view.json
+│   ├── declarative/
+│   │   └── overview.view.json
+│   └── artifacts/
+│       └── explorer.html
 ├── dist/
 │   └── ui.mjs
 └── agent-runtime/
     ├── tools/
     │   ├── operations_open_overview.ts
-    │   └── operations_open_workspace.ts
+    │   ├── operations_open_workspace.ts
+    │   └── operations_open_explorer.ts
     └── skills/
         └── operations-interactive-ui/
             └── SKILL.md
@@ -84,7 +90,7 @@ node scripts/interactive-ui-extension.mjs validate \
 
 - manifest ID、版本、重复项、connector、origin permission 和 action。
 - entry 必须位于扩展目录内，类型和大小受限。
-- View ID、runtime、tool binding、Declarative schema 与 Native asset。
+- View/Artifact ID、runtime、tool binding、Declarative schema、Native asset 与 HTML 安全能力。
 - `agent-runtime/tools` 的单文件默认导出、保留名称、重复名称，以及 `agent-runtime/skills` 的目录和 frontmatter。
 - Declarative primitive、binding path、action 引用、深度和节点数。
 - Native 开发信任声明和可静态识别的 activation contract。
@@ -165,6 +171,7 @@ Content-Type: application/json
 | `agentRouting` | 可选的受约束 Agent 路由元数据：业务域、意图、示例和数据权威性 |
 | `connectors` | 服务端 HTTP(S) 连接定义 |
 | `views` | Declarative/Native entry 与 tool binding |
+| `artifacts` | 已安装 HTML entry、tool binding、显示模式与 Business action 子集 |
 | `actions` | Gateway allowlist |
 | `permissions.network` | connector origin allowlist |
 | `trust` | runtime 类型说明；生产授权来自 `.ocix` 包签名和 Host 信任库，不依赖该字段自报 |
@@ -208,8 +215,8 @@ Content-Type: application/json
 
 - `domain` 和 `intents` 是短标识符，不是自由文本提示词；intent 必须位于 domain namespace 中。
 - `dataAuthority` 只能是 `generated`、`user-provided` 或 `connected-business-system`。企业扩展通常使用最后一种。
-- 多 View 扩展必须为每个 View 声明 `routing`，消除 overview/workspace 歧义；`priority` 为 0–100，`operation` 为 `read`、`write` 或 `mixed`。
-- `views[].tools` 必须至少绑定一个小写下划线 Tool 名称；打包的 Tool 文件名必须与它完全相同。
+- 多 surface 扩展必须为每个 View/Artifact 声明 `routing`，消除 overview/workspace/explorer 歧义；`priority` 为 0–100，`operation` 为 `read`、`write` 或 `mixed`。
+- `views[].tools` 与 `artifacts[].tools` 必须至少绑定一个小写下划线 Tool 名称；打包的 Tool 文件名必须与它完全相同。
 - `examples` 只用于开发和验收，不会拼接进系统提示词。系统上下文只包含经过校验的 ID、intent、operation、dataAuthority 和脱敏连接状态。
 - Tool description 本身仍须独立说明业务域、真实数据来源和与通用 `interactive_ui` 的优先级，因为没有 routing 字段的旧 OCIX 仍然兼容运行。
 - 业务 Connector 未配置或过期时仍应选择业务 Tool，由它返回配置要求；不得退回通用 Tool 伪造企业数据。
@@ -301,6 +308,28 @@ OpenChamber Web 在发送用户消息前调用 `GET /api/interactive-ui/capabili
 - Native `entry` 只能是本地 `.mjs`/`.js`；不能从 manifest dynamic import 任意互联网 URL。
 - 当前对话 Host 实际传入 `display.mode: inline`。workspace/fullscreen 只是 descriptor 能力声明，容器尚未交付。
 
+### 5.5 HTML Artifact
+
+```json
+{
+  "id": "com.acme.operations.explorer",
+  "title": "Operations Explorer",
+  "entry": "ui/artifacts/explorer.html",
+  "tools": ["operations_open_explorer"],
+  "displayModes": ["inline", "workspace", "fullscreen"],
+  "inlineHeight": 520,
+  "capabilities": {
+    "scripts": true,
+    "businessActions": [
+      "com.acme.operations.overview.query",
+      "com.acme.operations.item.approve"
+    ]
+  }
+}
+```
+
+HTML 必须自包含且不超过 2 MiB。禁止远程资源、`fetch`/XHR/WebSocket/Worker、iframe/form/object、动态代码和浏览器存储。业务代码只能调用 `window.openchamber.business.query/execute`；Host 会复核 Artifact、Tool、extension、action allowlist 和确认策略，并在服务端注入 Key。
+
 ## 6. Agent 半边：Tool、MCP 与 Skill
 
 安装 UI 不会自动让模型知道何时打开它。Agent runtime 必须提供一个 tool，并在完成结果里返回严格 Envelope。
@@ -314,6 +343,19 @@ OpenChamber Web 在发送用户消息前调用 `GET /api/interactive-ui/capabili
   "summary": "Acme Operations workspace opened",
   "context": { "scope": "default" },
   "updatedAt": "2026-07-18T10:30:00Z"
+}
+```
+
+HTML Artifact Tool 则返回引用，不返回 HTML：
+
+```json
+{
+  "$schema": "openchamber://installed-html-artifact-result/v1",
+  "schemaVersion": 1,
+  "artifact": "com.acme.operations.explorer",
+  "mode": "live",
+  "summary": "Operations explorer opened",
+  "context": { "scope": "default" }
 }
 ```
 
@@ -339,7 +381,7 @@ Skill 只告诉 Agent：什么用户意图对应 overview/workspace、何时询�
 | 指标 | `metric-grid`, `metric`, `progress`, `status`, `badge`, `key-value` |
 | 内容 | `text`, `markdown`, `list`, `callout`, `flow` |
 | 数据 | `data-table`, `chart` |
-| 进阶数据/历史 | `timeline`, `activity-feed`, `comparison`, `sparkline`, `git-graph`, `tree`, `diff-summary` |
+| 进阶数据/历史 | `timeline`, `activity-feed`, `comparison`, `sparkline`, `gauge`, `heatmap`, `kanban`, `git-graph`, `tree`, `diff-summary` |
 | 进阶组织 | `tabs`, `accordion`, `code-block`, `divider` |
 | 受控入口 | `generated-layout`，只应由 built-in generated View 使用 |
 
@@ -377,7 +419,7 @@ View mount 后，Host 并行执行 queries。结果进入 `query.<name>`。失�
 
 ### 7.4 确认式行操作
 
-`data-table.rowActions` 可以从 `$row` 组成 input，并通过 `when` 控制按钮。`host.business.execute` 首次调用若收到 `confirmation_required`，会向用户显示确认；确认后以 `confirmed: true` 重试。成功后 Declarative View 自动重新执行 queries，避免页面保留旧数据。
+`data-table.rowActions` 可以从 `$row` 组成 input，并通过 `when` 控制按钮。`host.business.execute` 首次调用若收到 `confirmation_required`，会向用户显示确认；确认后仅使用服务端返回的一次性 challenge token 重试，不能用客户端布尔值绕过确认。成功后 Declarative View 自动重新执行 queries，避免页面保留旧数据。
 
 如果业务 action 还需要更复杂的表单、批量选择或多阶段状态，使用 Trusted Native。
 
@@ -560,6 +602,8 @@ node scripts/interactive-ui-extension.mjs catalog ./entries.json \
 
 将 `catalog.json` 和 `.ocix` 上传到 HTTPS CDN/对象存储，然后在 Extension Manager 只添加 catalog URL，并在确认弹窗中核对 marketplace fingerprint。loopback 开发允许 HTTP，非本机目录与包只允许 HTTPS 且 URL 不能嵌入 credential。
 
+Catalog 浏览器会把与 active version 相同的条目标为“已安装”，更高的 semantic version 标为“更新”。每个已安装扩展的“扩展诊断”会显示安装来源、受管 Tool/Skill 名称、签名包 SHA-256 与未解析 Tool 绑定；发布前应确认未解析列表为空。
+
 这使私有市场、合作伙伴目录和任何人可访问的公共静态市场都具备相同的技术能力。OpenChamber 仓库没有伪造一个“已经运营”的官方市场：上架审核、账号/付费、举报、恶意包下架、吊销列表、透明日志、CDN 和 SLA 是公共市场服务本身的运营面。
 
 ### 9.5 外部 OpenCode server
@@ -619,6 +663,23 @@ OpenCode Server
 
 确认是防误操作，不是业务授权。企业 API 必须自己判断当前主体是否有权写入。
 
+### 10.3 Third-party HTML Artifact
+
+```text
+Agent Tool 返回 installed-html-artifact-result/v1
+  → parser 只接受 artifact ID/context，不接受 inline HTML/URL/token
+  → GET installed-artifacts/<id>?tool=<originating-tool>
+  → server 复核签名安装、Tool binding 和 HTML entry
+  → Host 加载 authenticated broker iframe
+  → broker 创建 opaque-origin sandbox="allow-scripts" iframe
+  → Artifact 调 window.openchamber.business.query/execute
+  → Host 将 extensionId/artifactId/action/input 发送给既有 Gateway
+  → Gateway 复核 Artifact action 子集并服务端注入 Key
+  → 结构化结果通过 channel-bound host.businessResult 返回 iframe
+```
+
+Agent Generated HTML 没有这条 Business Bridge；模型输出不能通过声明字段自行升级为 Third-party Extension。
+
 ## 11. 错误与回退
 
 | 失败 | 用户结果 |
@@ -669,6 +730,8 @@ bun test \
 5. 执行 write，确认上游在用户确认前没有收到请求。
 6. 确认 revision 更新且页面刷新。
 7. 故意破坏 View ID 或关闭 API，确认 fallback 和错误可见。
+8. 对混合包同时触发 Interactive UI 与 HTML Artifact Tool；确认 Artifact query 使用真实数据、write 弹出确认、未声明 action 被拒绝。
+9. 默认使用 Qwen3.7 Plus 跑固定路由语料；OpenAI 或其他 Provider 只作为额外对照，不是普通本地完成的阻断项。
 
 仓库示例可运行：
 
@@ -716,7 +779,8 @@ skill 会要求 Agent 先划分 query/write、选择 runtime、使用脚手架�
 - Native 没有完整 hot unload 和 ABI 兼容协商。
 - Installed Native 的 workspace/fullscreen 产品容器仍未统一；HTML Artifact 已支持同一 iframe 的 inline/workspace/fullscreen。
 - VS Code 尚无 Interactive UI Gateway，保持明确 unsupported。
-- HTML Artifact Runtime v1 已实现独立 schema、Tool、内容寻址重放、sandbox/CSP、主题/resize/follow-up Bridge 和展开模式；scripts 生产默认关闭，且 Artifact 永远不能获得 Connector/Token/Tool/Gateway/网络权限。VS Code 与 active E2EE relay 仍明确 unsupported。
+- Agent Generated HTML Artifact 已实现独立 schema、内容寻址重放、sandbox/CSP、主题/resize/follow-up Bridge 和展开模式；其 scripts 仍受 runtime gate 且永远没有 Business Gateway。
+- Third-party HTML Artifact 已作为签名 OCIX surface 实现，拥有单独引用 schema、Tool binding、sandbox、action 子集与 Business Bridge。它永远不能获得 Connector URL、Token、任意网络、Tool 或 MCP 权限。VS Code 与 active E2EE relay 仍明确 unsupported。
 - MCP Apps 仍在 Roadmap。
 
 这些限制不影响在受控企业部署中开发和验证真实模块，但上线到公共生态前必须完成治理阶段。

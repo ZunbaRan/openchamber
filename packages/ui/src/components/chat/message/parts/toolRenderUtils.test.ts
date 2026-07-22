@@ -73,11 +73,24 @@ describe('tool rendering classification', () => {
                 }),
             },
         };
+        const installedArtifactPart = {
+            state: {
+                status: 'completed',
+                output: JSON.stringify({
+                    $schema: 'openchamber://installed-html-artifact-result/v1',
+                    schemaVersion: 1,
+                    artifact: 'com.demo.crm.pipeline',
+                    mode: 'live',
+                }),
+            },
+        };
 
         expect(hasRichToolResult(interactivePart)).toBe(true);
         expect(isStandaloneTool('crm_open_overview', interactivePart)).toBe(true);
         expect(hasRichToolResult(artifactPart)).toBe(true);
         expect(isStandaloneTool('html_artifact', artifactPart)).toBe(true);
+        expect(hasRichToolResult(installedArtifactPart)).toBe(true);
+        expect(isStandaloneTool('crm_open_pipeline', installedArtifactPart)).toBe(true);
         expect(isStandaloneTool('task')).toBe(true);
     });
 

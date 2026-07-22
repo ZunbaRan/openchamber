@@ -10,8 +10,18 @@ import { useOptionalThemeSystem } from '@/contexts/useThemeSystem';
 import { copyTextToClipboard } from '@/lib/clipboard';
 import { openExternalUrl } from '@/lib/url';
 import { getRuntimeUrlResolver } from '@/lib/runtime-url';
-import { materializeHTMLArtifact, type HTMLArtifactMaterialization } from '@/lib/interactive-ui/client';
+import {
+  getInstalledHTMLArtifactDescriptor,
+  InteractiveUIRequestError,
+  invokeInteractiveAction,
+  materializeHTMLArtifact,
+} from '@/lib/interactive-ui/client';
 import type { HTMLArtifactDisplayMode, HTMLArtifactResultEnvelope } from '@/lib/interactive-ui/artifactResult';
+import {
+  INSTALLED_HTML_ARTIFACT_RESULT_SCHEMA,
+  type InstalledHTMLArtifactResultEnvelope,
+} from '@/lib/interactive-ui/installedArtifactResult';
+import type { InteractiveToolContext } from '@/lib/interactive-ui/types';
 import {
   canRetryHTMLArtifactFailure,
   classifyHTMLArtifactError,
@@ -19,6 +29,7 @@ import {
 } from '@/lib/interactive-ui/artifactState';
 import {
   createHTMLArtifactBridgeRateLimiter,
+  createHTMLArtifactBusinessResultMessage,
   createHTMLArtifactHostInitMessage,
   isHTMLArtifactBrokerNavigationMessage,
   parseHTMLArtifactBridgeMessage,
@@ -30,11 +41,27 @@ import { recordRoutingArtifactObservation } from '@/lib/interactive-ui/routingIn
 import { HTMLArtifactStateNotice } from './HTMLArtifactStateNotice';
 
 interface HTMLArtifactViewProps {
-  envelope: HTMLArtifactResultEnvelope;
+  envelope: HTMLArtifactResultEnvelope | InstalledHTMLArtifactResultEnvelope;
   fallback: React.ReactNode;
   sessionId?: string;
   toolPartId: string;
+  tool?: Pick<InteractiveToolContext, 'id' | 'name'>;
 }
+
+interface ResolvedHTMLArtifact {
+  scripts: boolean;
+  inlineHeight: number;
+  allowExpand: boolean;
+  displayModes: HTMLArtifactDisplayMode[];
+  documentPath: string;
+  title: string;
+  extensionId?: string;
+  artifactId?: string;
+}
+
+const ARTIFACT_HEARTBEAT_INTERVAL_MS = 1_000;
+const ARTIFACT_HEARTBEAT_TIMEOUT_MS = 6_000;
+const ARTIFACT_EXECUTION_LEASE_MS = 15 * 60_000;
 
 const OCIX_ARTIFACT_TOKENS = [
   '--ocix-surface',
@@ -91,7 +118,7 @@ const hasRecentUserActivation = (): boolean => (
   && (navigator.userActivation?.isActive ?? false)
 );
 
-export const HTMLArtifactView: React.FC<HTMLArtifactViewProps> = ({ envelope, fallback, sessionId, toolPartId }) => {
+export const HTMLArtifactView: React.FC<HTMLArtifactViewProps> = ({ envelope, fallback, sessionId, toolPartId, tool }) => {
   const { t, locale } = useI18n();
   const runtime = React.useContext(RuntimeAPIContext);
   const themeSystem = useOptionalThemeSystem();
@@ -100,15 +127,20 @@ export const HTMLArtifactView: React.FC<HTMLArtifactViewProps> = ({ envelope, fa
   const hostRef = React.useRef<HTMLDialogElement>(null);
   const iframeRef = React.useRef<HTMLIFrameElement>(null);
   const lastSequenceRef = React.useRef(0);
+  const lastHeartbeatRef = React.useRef(0);
+  const executionLeaseRef = React.useRef({ id: createChannelId(), expiresAt: 0 });
   const loadedOnceRef = React.useRef(false);
   const [channelId] = React.useState(createChannelId);
   const [bridgeRateLimiter] = React.useState(createHTMLArtifactBridgeRateLimiter);
-  const [materialization, setMaterialization] = React.useState<HTMLArtifactMaterialization | null>(null);
+  const businessRequestsRef = React.useRef(new Set<string>());
+  const installed = envelope.$schema === INSTALLED_HTML_ARTIFACT_RESULT_SCHEMA;
+  const generatedEnvelope = installed ? null : envelope;
+  const [materialization, setMaterialization] = React.useState<ResolvedHTMLArtifact | null>(null);
   const [failure, setFailure] = React.useState<HTMLArtifactFailureState | null>(null);
   const [ready, setReady] = React.useState(false);
   const [attempt, setAttempt] = React.useState(0);
-  const [mode, setMode] = React.useState<HTMLArtifactDisplayMode>(envelope.display.preferred);
-  const [height, setHeight] = React.useState(envelope.display.inlineHeight);
+  const [mode, setMode] = React.useState<HTMLArtifactDisplayMode>(installed ? 'inline' : envelope.display.preferred);
+  const [height, setHeight] = React.useState(installed ? 420 : envelope.display.inlineHeight);
 
   React.useEffect(() => {
     let active = true;
@@ -116,7 +148,13 @@ export const HTMLArtifactView: React.FC<HTMLArtifactViewProps> = ({ envelope, fa
     setFailure(null);
     setReady(false);
     lastSequenceRef.current = 0;
+    lastHeartbeatRef.current = Date.now();
+    executionLeaseRef.current = {
+      id: createChannelId(),
+      expiresAt: Date.now() + ARTIFACT_EXECUTION_LEASE_MS,
+    };
     bridgeRateLimiter.reset();
+    businessRequestsRef.current.clear();
     loadedOnceRef.current = false;
     recordRoutingArtifactObservation({ sessionId, toolPartId, status: 'materializing' });
     if (runtime?.runtime.isVSCode || isRelayModeActive()) {
@@ -124,13 +162,35 @@ export const HTMLArtifactView: React.FC<HTMLArtifactViewProps> = ({ envelope, fa
       recordRoutingArtifactObservation({ sessionId, toolPartId, status: 'failed' });
       return () => { active = false; };
     }
-    if (envelope.capabilities.scripts && mobileSurface) {
+    if (!installed && envelope.capabilities.scripts && mobileSurface) {
       setFailure('scripts-disabled');
       recordRoutingArtifactObservation({ sessionId, toolPartId, status: 'failed' });
       return () => { active = false; };
     }
-    void materializeHTMLArtifact(envelope, sessionId).then((result) => {
+    const resolveArtifact = installed
+      ? (tool
+        ? getInstalledHTMLArtifactDescriptor(envelope.artifact, tool.name).then((descriptor): ResolvedHTMLArtifact => ({
+          scripts: true,
+          inlineHeight: descriptor.artifact.inlineHeight,
+          allowExpand: descriptor.artifact.displayModes.length > 1,
+          displayModes: descriptor.artifact.displayModes,
+          documentPath: descriptor.documentPath,
+          title: descriptor.artifact.title,
+          extensionId: descriptor.extension.id,
+          artifactId: descriptor.artifact.id,
+        }))
+        : Promise.reject(new Error('Installed HTML Artifact requires its originating tool context')))
+      : materializeHTMLArtifact(envelope, sessionId).then((result): ResolvedHTMLArtifact => ({
+        scripts: result.scripts,
+        inlineHeight: result.inlineHeight,
+        allowExpand: envelope.display.allowExpand,
+        displayModes: envelope.display.allowExpand ? ['inline', 'workspace', 'fullscreen'] : [envelope.display.preferred],
+        documentPath: result.documentPath,
+        title: envelope.title,
+      }));
+    void resolveArtifact.then((result) => {
       if (active) {
+        lastHeartbeatRef.current = Date.now();
         setMaterialization(result);
         setHeight(result.inlineHeight);
       }
@@ -141,7 +201,7 @@ export const HTMLArtifactView: React.FC<HTMLArtifactViewProps> = ({ envelope, fa
       }
     });
     return () => { active = false; };
-  }, [attempt, bridgeRateLimiter, envelope, mobileSurface, runtime?.runtime.isVSCode, sessionId, t, toolPartId]);
+  }, [attempt, bridgeRateLimiter, envelope, installed, mobileSurface, runtime?.runtime.isVSCode, sessionId, tool, toolPartId]);
 
   const documentUrl = React.useMemo(() => materialization
     ? getRuntimeUrlResolver().authenticatedAsset(materialization.documentPath)
@@ -163,8 +223,14 @@ export const HTMLArtifactView: React.FC<HTMLArtifactViewProps> = ({ envelope, fa
         width: Math.max(0, Math.round(iframeRef.current?.clientWidth ?? 0)),
         height: Math.max(0, Math.round(iframeRef.current?.clientHeight ?? 0)),
       },
+      executionLease: {
+        id: executionLeaseRef.current.id,
+        expiresAt: executionLeaseRef.current.expiresAt,
+        heartbeatIntervalMs: ARTIFACT_HEARTBEAT_INTERVAL_MS,
+      },
+      ...(installed && envelope.context !== undefined ? { context: envelope.context } : {}),
     }), '*');
-  }, [channelId, locale, mode, themeVariant]);
+  }, [channelId, envelope, installed, locale, mode, themeVariant]);
 
   React.useEffect(() => {
     if (!materialization?.scripts) return;
@@ -180,12 +246,19 @@ export const HTMLArtifactView: React.FC<HTMLArtifactViewProps> = ({ envelope, fa
         return;
       }
 
-      const message = parseHTMLArtifactBridgeMessage(event.data, channelId, lastSequenceRef.current);
+      const message = parseHTMLArtifactBridgeMessage(event.data, channelId, lastSequenceRef.current, {
+        allowBusiness: installed,
+      });
       if (!message) return;
       lastSequenceRef.current = message.sequence;
       if (message.type === 'artifact.ready') {
+        lastHeartbeatRef.current = now;
         setReady(true);
         recordRoutingArtifactObservation({ sessionId, toolPartId, status: 'rendered' });
+        return;
+      }
+      if (message.type === 'artifact.heartbeat') {
+        if (message.payload.leaseId === executionLeaseRef.current.id) lastHeartbeatRef.current = now;
         return;
       }
       if (message.type === 'artifact.resize') {
@@ -193,9 +266,72 @@ export const HTMLArtifactView: React.FC<HTMLArtifactViewProps> = ({ envelope, fa
         setHeight(Math.max(120, Math.min(900, message.payload.height)));
         return;
       }
-      if (message.type === 'artifact.requestExpand' && envelope.display.allowExpand) {
+      if (message.type === 'artifact.requestExpand' && materialization.allowExpand) {
         if (!hasRecentUserActivation()) return;
+        if (!materialization.displayModes.includes(message.payload.mode)) return;
         setMode(message.payload.mode);
+        return;
+      }
+      if (message.type === 'artifact.businessRequest') {
+        const target = iframeRef.current?.contentWindow;
+        const respond = (result: Parameters<typeof createHTMLArtifactBusinessResultMessage>[0]) => {
+          target?.postMessage(createHTMLArtifactBusinessResultMessage(result), '*');
+        };
+        if (!installed || !tool || !materialization.extensionId || !materialization.artifactId) {
+          respond({
+            channelId,
+            requestId: message.payload.requestId,
+            ok: false,
+            error: 'Business API is unavailable for this Artifact',
+            code: 'business_api_unavailable',
+          });
+          return;
+        }
+        if (businessRequestsRef.current.has(message.payload.requestId) || businessRequestsRef.current.size >= 4) {
+          respond({
+            channelId,
+            requestId: message.payload.requestId,
+            ok: false,
+            error: 'Too many business requests',
+            code: 'business_request_limited',
+          });
+          return;
+        }
+        businessRequestsRef.current.add(message.payload.requestId);
+        const invoke = (confirmationToken?: string) => invokeInteractiveAction({
+          extensionId: materialization.extensionId!,
+          artifactId: materialization.artifactId!,
+          instanceId: channelId,
+          action: message.payload.action,
+          input: message.payload.input,
+          tool,
+          ...(confirmationToken ? { confirmationToken } : {}),
+        });
+        void invoke().catch(async (requestError) => {
+          if (message.payload.intent !== 'execute'
+            || !(requestError instanceof InteractiveUIRequestError)
+            || !requestError.payload.confirmationRequired) throw requestError;
+          const confirmation = requestError.payload.confirmation ?? {};
+          const text = [confirmation.title, confirmation.description].filter(Boolean).join('\n\n');
+          if (typeof window.confirm !== 'function' || !window.confirm(text)) {
+            throw new Error(requestError.payload.error || 'Action cancelled');
+          }
+          if (!requestError.payload.confirmationToken) throw new Error(requestError.payload.error || 'Action cancelled');
+          return invoke(requestError.payload.confirmationToken);
+        }).then((data) => {
+          respond({ channelId, requestId: message.payload.requestId, ok: true, data });
+        }).catch((requestError) => {
+          const payload = requestError instanceof InteractiveUIRequestError ? requestError.payload : {};
+          respond({
+            channelId,
+            requestId: message.payload.requestId,
+            ok: false,
+            error: payload.error || (requestError instanceof Error ? requestError.message : 'Business request failed'),
+            ...(payload.code ? { code: payload.code } : {}),
+          });
+        }).finally(() => {
+          businessRequestsRef.current.delete(message.payload.requestId);
+        });
         return;
       }
       if (message.type === 'artifact.proposeFollowUp') {
@@ -223,7 +359,21 @@ export const HTMLArtifactView: React.FC<HTMLArtifactViewProps> = ({ envelope, fa
     };
     window.addEventListener('message', onMessage);
     return () => window.removeEventListener('message', onMessage);
-  }, [bridgeRateLimiter, channelId, envelope.display.allowExpand, materialization?.scripts, sessionId, t, toolPartId]);
+  }, [bridgeRateLimiter, channelId, installed, materialization, sessionId, t, tool, toolPartId]);
+
+  React.useEffect(() => {
+    if (!materialization?.scripts || failure) return;
+    const checkExecution = () => {
+      const now = Date.now();
+      if (now <= executionLeaseRef.current.expiresAt && now - lastHeartbeatRef.current <= ARTIFACT_HEARTBEAT_TIMEOUT_MS) return;
+      setReady(false);
+      setFailure('timed-out');
+      businessRequestsRef.current.clear();
+      recordRoutingArtifactObservation({ sessionId, toolPartId, status: 'failed' });
+    };
+    const timer = window.setInterval(checkExecution, ARTIFACT_HEARTBEAT_INTERVAL_MS);
+    return () => window.clearInterval(timer);
+  }, [failure, materialization?.scripts, sessionId, toolPartId]);
 
   React.useEffect(() => {
     if (materialization?.scripts && ready) sendHostInit();
@@ -252,7 +402,8 @@ export const HTMLArtifactView: React.FC<HTMLArtifactViewProps> = ({ envelope, fa
       data-ocix-artifact-host
       data-ocix-artifact-mode={mode}
       data-ocix-artifact-state={state}
-      data-ocix-artifact-scripts={String(envelope.capabilities.scripts)}
+      data-ocix-artifact-scripts={String(materialization?.scripts ?? generatedEnvelope?.capabilities.scripts ?? true)}
+      data-ocix-artifact-source={installed ? 'third-party-extension' : 'agent-generated'}
       onCancel={(event) => {
         event.preventDefault();
         setMode('inline');
@@ -266,11 +417,15 @@ export const HTMLArtifactView: React.FC<HTMLArtifactViewProps> = ({ envelope, fa
       <div className="flex min-h-12 items-start justify-between gap-3 border-b border-[var(--ocix-border)] px-3 py-2.5">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
-            <h3 className="typography-ui-label font-semibold text-[var(--ocix-foreground)]">{envelope.title}</h3>
+            <h3 className="typography-ui-label font-semibold text-[var(--ocix-foreground)]">
+              {materialization?.title ?? (installed ? envelope.artifact : envelope.title)}
+            </h3>
             <span className="rounded-full border border-[var(--ocix-border)] bg-[var(--ocix-surface-muted)] px-2 py-0.5 typography-micro text-[var(--ocix-muted-foreground)]">
-              {envelope.capabilities.scripts
-                ? `${t('interactiveUI.artifact.interactive')} · ${t('interactiveUI.artifact.experimental')}`
-                : t('interactiveUI.artifact.static')}
+              {installed
+                ? t('interactiveUI.artifact.interactive')
+                : envelope.capabilities.scripts
+                  ? `${t('interactiveUI.artifact.interactive')} · ${t('interactiveUI.artifact.experimental')}`
+                  : t('interactiveUI.artifact.static')}
             </span>
           </div>
           {envelope.summary ? (
@@ -279,8 +434,25 @@ export const HTMLArtifactView: React.FC<HTMLArtifactViewProps> = ({ envelope, fa
             </p>
           ) : null}
         </div>
-        {envelope.display.allowExpand && materialization ? (
+        {(materialization?.scripts && !failure) || materialization?.allowExpand ? (
           <div className="flex shrink-0 items-center gap-1">
+            {materialization?.scripts && !failure ? (
+              <Button
+                size="xs"
+                variant="ghost"
+                onClick={() => {
+                  setReady(false);
+                  setFailure('stopped');
+                  businessRequestsRef.current.clear();
+                  recordRoutingArtifactObservation({ sessionId, toolPartId, status: 'failed' });
+                }}
+                aria-label={t('interactiveUI.artifact.stop')}
+                data-ocix-artifact-action="stop"
+              >
+                <Icon name="close-circle" />
+              </Button>
+            ) : null}
+            {materialization?.allowExpand ? <>
             {mode !== 'fullscreen' ? (
               <Button
                 size="xs"
@@ -316,6 +488,7 @@ export const HTMLArtifactView: React.FC<HTMLArtifactViewProps> = ({ envelope, fa
                 <Icon name="expand-up-down" />
               </Button>
             )}
+            </> : null}
           </div>
         ) : null}
       </div>
@@ -351,7 +524,7 @@ export const HTMLArtifactView: React.FC<HTMLArtifactViewProps> = ({ envelope, fa
             {!ready ? <Skeleton className="absolute inset-3 z-10" /> : null}
             <iframe
               ref={iframeRef}
-              title={envelope.title}
+              title={materialization.title}
               src={documentUrl}
               sandbox={materialization.scripts ? 'allow-scripts' : ''}
               referrerPolicy="no-referrer"

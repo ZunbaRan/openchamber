@@ -108,6 +108,7 @@ export const createFeatureRoutesRuntime = (dependencies) => {
       permissionAutoAcceptRuntime,
       express,
       processLike,
+      uiAuthController,
     } = routeDependencies;
 
     const configuredInteractiveUIRoots = typeof processLike.env.OPENCHAMBER_INTERACTIVE_UI_EXTENSIONS_DIR === 'string'
@@ -126,7 +127,10 @@ export const createFeatureRoutesRuntime = (dependencies) => {
     const builtInInteractiveUIRuntime = createBuiltInInteractiveUIRuntime({ pathImpl: path });
     const interactiveUIExtensionManager = createInteractiveUIExtensionManager({
       dataDirectory: openchamberDataDir,
-      opencodeConfigDirectory: testOpenCodeConfigDirectory ?? path.join(os.homedir(), '.config', 'opencode'),
+      opencodeConfigDirectory: testOpenCodeConfigDirectory
+        ?? (typeof processLike.env.OPENCODE_CONFIG_DIR === 'string' && processLike.env.OPENCODE_CONFIG_DIR.trim()
+          ? path.resolve(processLike.env.OPENCODE_CONFIG_DIR.trim())
+          : path.join(os.homedir(), '.config', 'opencode')),
       fsImpl: fsPromises,
       pathImpl: path,
       cryptoImpl: crypto,
@@ -158,6 +162,7 @@ export const createFeatureRoutesRuntime = (dependencies) => {
       express,
       manager: interactiveUIExtensionManager,
       artifactStore: htmlArtifactStore,
+      uiAuthController,
       runtime: createInteractiveUIRuntime({
         fsPromises,
         path,

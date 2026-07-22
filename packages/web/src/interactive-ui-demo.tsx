@@ -9,6 +9,7 @@ import { HTMLArtifactView } from '@openchamber/ui/components/interactive-ui/HTML
 import { I18nProvider, initializeLocale, useI18nStore } from '@openchamber/ui/lib/i18n';
 import type { RuntimeAPIs } from '@openchamber/ui/lib/api/types';
 import type { HTMLArtifactResultEnvelope } from '@openchamber/ui/lib/interactive-ui/artifactResult';
+import type { InstalledHTMLArtifactResultEnvelope } from '@openchamber/ui/lib/interactive-ui/installedArtifactResult';
 import type { InteractiveResultEnvelope } from '@openchamber/ui/lib/interactive-ui/types';
 import {
   learningRateSimulatorArtifact,
@@ -35,6 +36,7 @@ const runtime = requestedRuntime === 'generated'
   || requestedRuntime === 'crm'
   || requestedRuntime === 'artifact-static'
   || requestedRuntime === 'artifact-interactive'
+  || requestedRuntime === 'artifact-installed'
   || requestedRuntime === 'artifact-blocked'
   || requestedRuntime === 'artifact-crashed'
   ? requestedRuntime
@@ -47,9 +49,10 @@ const isDeclarative = runtime === 'declarative';
 const isCrm = runtime === 'crm';
 const isStaticArtifact = runtime === 'artifact-static';
 const isInteractiveArtifact = runtime === 'artifact-interactive';
+const isInstalledArtifact = runtime === 'artifact-installed';
 const isBlockedArtifact = runtime === 'artifact-blocked';
 const isCrashedArtifact = runtime === 'artifact-crashed';
-const isArtifact = isStaticArtifact || isInteractiveArtifact || isBlockedArtifact || isCrashedArtifact;
+const isArtifact = isStaticArtifact || isInteractiveArtifact || isInstalledArtifact || isBlockedArtifact || isCrashedArtifact;
 const fixedUpdatedAt = '2026-07-21T09:30:00.000Z';
 const installedEnvelope: InteractiveResultEnvelope = {
   $schema: 'openchamber://interactive-result/v1',
@@ -106,16 +109,32 @@ const artifactEnvelope = isStaticArtifact
       ? crashedArtifactEnvelope
       : learningRateSimulatorArtifact;
 const artifactOutput = JSON.stringify(artifactEnvelope, null, 2);
+const installedArtifactEnvelope: InstalledHTMLArtifactResultEnvelope = {
+  $schema: 'openchamber://installed-html-artifact-result/v1',
+  schemaVersion: 1,
+  artifact: params.get('artifact') || 'com.demo.simple.crm.explorer',
+  mode: 'live',
+  summary: 'Simple CRM explorer opened',
+  context: { scope: 'packaged-acceptance' },
+  updatedAt: fixedUpdatedAt,
+};
+const installedArtifactOutput = JSON.stringify(installedArtifactEnvelope, null, 2);
 
 // This file is a standalone Vite entry rather than a reusable component module.
 // eslint-disable-next-line react-refresh/only-export-components
 const DemoContent = () => {
   if (isArtifact) {
+    const artifactViewEnvelope = isInstalledArtifact ? installedArtifactEnvelope : artifactEnvelope;
+    const artifactViewOutput = isInstalledArtifact ? installedArtifactOutput : artifactOutput;
     return (
       <HTMLArtifactView
-        envelope={artifactEnvelope}
+        envelope={artifactViewEnvelope}
         toolPartId={`interactive-ui-demo-${runtime}`}
-        fallback={<pre className="overflow-auto whitespace-pre-wrap typography-code text-muted-foreground">{artifactOutput}</pre>}
+        tool={isInstalledArtifact ? {
+          id: 'interactive-ui-demo-installed-artifact-tool',
+          name: params.get('tool') || 'simple_crm_open_explorer',
+        } : undefined}
+        fallback={<pre className="overflow-auto whitespace-pre-wrap typography-code text-muted-foreground">{artifactViewOutput}</pre>}
       />
     );
   }

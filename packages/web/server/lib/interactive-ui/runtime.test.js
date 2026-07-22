@@ -7,6 +7,8 @@ import { createInteractiveUIConnectionStore } from './connection-store.js';
 import { createInteractiveUIRuntime } from './runtime.js';
 
 const temporaryDirectories = [];
+const viewTool = { id: 'runtime-test-view-tool', name: 'crm_open' };
+const artifactTool = { id: 'runtime-test-artifact-tool', name: 'crm_open_explorer' };
 
 afterEach(async () => {
   await Promise.all(temporaryDirectories.splice(0).map((directory) => fs.rm(directory, { recursive: true, force: true })));
@@ -20,6 +22,8 @@ const createFixture = async (fetchImpl, {
   actionPermission = 'allow',
   actionPath = '/customers',
   networkPermissions = ['https://crm.example.com'],
+  artifacts = false,
+  views = true,
 } = {}) => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ocix-runtime-auth-'));
   const dataDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'ocix-runtime-auth-data-'));
@@ -54,13 +58,25 @@ const createFixture = async (fetchImpl, {
           },
       test: { method: 'GET', path: '/health' },
     }],
-    views: [{
+    views: views ? [{
       id: 'com.acme.crm.overview',
       runtime: 'declarative',
       entry: 'ui/view.json',
       tools: ['crm_open'],
       ...(routing ? { routing: { intents: ['crm.overview', 'crm.pipeline.view'], priority: 90, operation: 'read' } } : {}),
-    }],
+    }] : [],
+    ...(artifacts ? {
+      artifacts: [{
+        id: 'com.acme.crm.explorer',
+        title: 'CRM Explorer',
+        entry: 'ui/explorer.html',
+        tools: ['crm_open_explorer'],
+        ...(routing ? { routing: { intents: ['crm.pipeline.view'], priority: 92, operation: 'read' } } : {}),
+        displayModes: ['inline', 'workspace'],
+        inlineHeight: 480,
+        capabilities: { scripts: true, businessActions: ['com.acme.crm.query'] },
+      }],
+    } : {}),
     actions: [{
       id: 'com.acme.crm.query',
       connector: 'crm-api',
@@ -77,6 +93,9 @@ const createFixture = async (fetchImpl, {
     id: 'com.acme.crm.overview',
     layout: { type: 'text', value: 'CRM' },
   }));
+  if (artifacts) {
+    await fs.writeFile(path.join(root, 'ui', 'explorer.html'), '<!doctype html><html><body><button>Load</button><script>window.openchamber.business.query("com.acme.crm.query", {})</script></body></html>');
+  }
   const connectionStore = createInteractiveUIConnectionStore({
     dataDirectory,
     fsImpl: fs,
@@ -127,6 +146,7 @@ describe('Interactive UI connector authentication', () => {
     await expect(runtime.invokeAction('com.acme.crm.query', {
       extensionId: 'com.acme.crm',
       viewId: 'com.acme.crm.overview',
+      tool: viewTool,
       input: {},
     })).rejects.toMatchObject({ code: 'connector_unconfigured' });
 
@@ -138,11 +158,76 @@ describe('Interactive UI connector authentication', () => {
     await runtime.invokeAction('com.acme.crm.query', {
       extensionId: 'com.acme.crm',
       viewId: 'com.acme.crm.overview',
+      tool: viewTool,
       input: {},
     });
     expect(upstream).toHaveLength(2);
     expect(upstream[0].init.headers.get('X-API-Key')).toBe('crm-secret');
     expect(upstream[1].init.headers.get('X-API-Key')).toBe('crm-secret');
+  });
+
+  it('loads an installed HTML Artifact and brokers only its declared business actions', async () => {
+    const upstream = [];
+    const { runtime } = await createFixture(async (url, init) => {
+      upstream.push({ url: String(url), init });
+      return new Response(JSON.stringify({ customers: 4 }), { status: 200 });
+    }, { artifacts: true, routing: true });
+
+    const descriptor = await runtime.getInstalledArtifactDescriptor('com.acme.crm.explorer', 'crm_open_explorer');
+    expect(descriptor).toMatchObject({
+      extension: { id: 'com.acme.crm' },
+      artifact: {
+        id: 'com.acme.crm.explorer',
+        inlineHeight: 480,
+        scripts: true,
+        business: true,
+      },
+    });
+    const document = await runtime.getInstalledArtifactDocument('com.acme.crm', 'com.acme.crm.explorer');
+    expect(document.source).toContain('Object.defineProperty(window,"openchamber"');
+    expect(document.source).toContain("connect-src 'none'");
+    expect(document.source).not.toContain('crm-secret');
+
+    await runtime.configureConnection('com.acme.crm', 'crm-api', { accessKey: 'crm-secret' });
+    await expect(runtime.invokeAction('com.acme.crm.query', {
+      extensionId: 'com.acme.crm',
+      artifactId: 'com.acme.crm.explorer',
+      instanceId: 'artifact-instance',
+      tool: artifactTool,
+      input: { stage: 'qualified' },
+    })).resolves.toMatchObject({ data: { customers: 4 } });
+    expect(upstream[0].init.headers.get('X-API-Key')).toBe('crm-secret');
+    await expect(runtime.invokeAction('com.acme.crm.undeclared', {
+      extensionId: 'com.acme.crm',
+      artifactId: 'com.acme.crm.explorer',
+      instanceId: 'artifact-instance',
+      tool: artifactTool,
+      input: {},
+    })).rejects.toMatchObject({ code: 'action_not_allowed' });
+    await expect(runtime.invokeAction('com.acme.crm.query', {
+      extensionId: 'com.acme.crm',
+      artifactId: 'com.acme.crm.explorer',
+      instanceId: 'forged-artifact-instance',
+      tool: viewTool,
+      input: {},
+    })).rejects.toMatchObject({ code: 'tool_artifact_mismatch', status: 403 });
+    expect(upstream).toHaveLength(1);
+  });
+
+  it('accepts an Artifact-only OCIX extension', async () => {
+    const { runtime } = await createFixture(async () => new Response('{}'), {
+      artifacts: true,
+      views: false,
+      routing: true,
+    });
+    const registry = await runtime.listExtensions();
+    expect(registry.errors).toEqual([]);
+    expect(registry.extensions[0].views).toEqual([]);
+    expect(registry.extensions[0].artifacts.map((artifact) => artifact.id)).toEqual(['com.acme.crm.explorer']);
+    expect((await runtime.getRoutingCapabilities()).extensions[0].tools[0]).toMatchObject({
+      name: 'crm_open_explorer',
+      forms: ['html-artifact'],
+    });
   });
 
   it('maps third-party 401 and 403 responses without implementing business permissions', async () => {
@@ -155,6 +240,7 @@ describe('Interactive UI connector authentication', () => {
     await expect(runtime.invokeAction('com.acme.crm.query', {
       extensionId: 'com.acme.crm',
       viewId: 'com.acme.crm.overview',
+      tool: viewTool,
       input: {},
     })).rejects.toMatchObject({
       code: 'connector_forbidden',
@@ -165,6 +251,7 @@ describe('Interactive UI connector authentication', () => {
     await expect(runtime.invokeAction('com.acme.crm.query', {
       extensionId: 'com.acme.crm',
       viewId: 'com.acme.crm.overview',
+      tool: viewTool,
       input: {},
     })).rejects.toMatchObject({
       code: 'upstream_error',
@@ -198,6 +285,7 @@ describe('Interactive UI connector authentication', () => {
     await runtime.invokeAction('com.acme.crm.query', {
       extensionId: 'com.acme.crm',
       viewId: 'com.acme.crm.overview',
+      tool: viewTool,
       input: {},
     });
     expect(JSON.parse(calls[0].init.body)).toMatchObject({
@@ -225,11 +313,13 @@ describe('Interactive UI connector authentication', () => {
     await expect(runtime.invokeAction('com.acme.crm.query', {
       extensionId: 'com.attacker.extension',
       viewId: 'com.acme.crm.overview',
+      tool: viewTool,
       input: {},
     })).rejects.toMatchObject({ code: 'extension_view_mismatch', status: 403 });
     await expect(runtime.invokeAction('com.attacker.delete', {
       extensionId: 'com.acme.crm',
       viewId: 'com.acme.crm.overview',
+      tool: viewTool,
       input: {},
     })).rejects.toMatchObject({ code: 'action_not_allowed', status: 403 });
     expect(upstreamCalls).toBe(0);
@@ -242,17 +332,29 @@ describe('Interactive UI connector authentication', () => {
       return new Response(JSON.stringify({ ok: true }));
     }, { actionRisk: 'write', actionPermission: 'ask' });
     await askRuntime.configureConnection('com.acme.crm', 'crm-api', { accessKey: 'scoped-key' });
-    const actionContext = { extensionId: 'com.acme.crm', viewId: 'com.acme.crm.overview', input: { stage: 'won' } };
+    const actionContext = { extensionId: 'com.acme.crm', viewId: 'com.acme.crm.overview', tool: viewTool, input: { stage: 'won' } };
 
+    let confirmationToken;
     await expect(askRuntime.invokeAction('com.acme.crm.query', actionContext)).rejects.toMatchObject({
       code: 'confirmation_required',
       status: 409,
-      details: { confirmationRequired: true },
+      details: {
+        confirmationRequired: true,
+        confirmationToken: expect.any(String),
+        confirmationExpiresAt: expect.any(Number),
+      },
     });
+    try {
+      await askRuntime.invokeAction('com.acme.crm.query', actionContext);
+    } catch (error) {
+      confirmationToken = error.details.confirmationToken;
+    }
     expect(askCalls).toBe(0);
-    await expect(askRuntime.invokeAction('com.acme.crm.query', { ...actionContext, confirmed: true }))
+    await expect(askRuntime.invokeAction('com.acme.crm.query', { ...actionContext, confirmationToken }))
       .resolves.toMatchObject({ data: { ok: true } });
     expect(askCalls).toBe(1);
+    await expect(askRuntime.invokeAction('com.acme.crm.query', { ...actionContext, confirmationToken }))
+      .rejects.toMatchObject({ code: 'confirmation_required', status: 409 });
 
     let denyCalls = 0;
     const { runtime: denyRuntime } = await createFixture(async () => {
@@ -260,7 +362,7 @@ describe('Interactive UI connector authentication', () => {
       return new Response('{}');
     }, { actionRisk: 'destructive', actionPermission: 'deny' });
     await denyRuntime.configureConnection('com.acme.crm', 'crm-api', { accessKey: 'scoped-key' });
-    await expect(denyRuntime.invokeAction('com.acme.crm.query', { ...actionContext, confirmed: true }))
+    await expect(denyRuntime.invokeAction('com.acme.crm.query', { ...actionContext, confirmationToken: 'not-used' }))
       .rejects.toMatchObject({ code: 'action_denied', status: 403 });
     expect(denyCalls).toBe(0);
   });

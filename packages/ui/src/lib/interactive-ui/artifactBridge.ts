@@ -2,6 +2,7 @@ import type { HTMLArtifactDisplayMode } from './artifactResult';
 
 export const HTML_ARTIFACT_BRIDGE_VERSION = 1 as const;
 const MAX_BRIDGE_MESSAGE_BYTES = 8 * 1024;
+const MAX_BUSINESS_BRIDGE_MESSAGE_BYTES = 64 * 1024;
 const DEFAULT_MESSAGE_LIMIT_PER_SECOND = 30;
 const DEFAULT_RESIZE_LIMIT_PER_SECOND = 10;
 const RATE_LIMIT_WINDOW_MS = 1_000;
@@ -10,11 +11,18 @@ const BROKER_MESSAGE_KEYS = new Set(['source', 'direction', 'bridgeVersion', 'ch
 
 export type HTMLArtifactBridgeMessage =
   | { type: 'artifact.ready'; payload: Record<string, never> }
+  | { type: 'artifact.heartbeat'; payload: { leaseId: string } }
   | { type: 'artifact.resize'; payload: { height: number } }
   | { type: 'artifact.copyText'; payload: { text: string } }
   | { type: 'artifact.openExternal'; payload: { url: string } }
   | { type: 'artifact.proposeFollowUp'; payload: { text: string } }
   | { type: 'artifact.requestExpand'; payload: { mode: HTMLArtifactDisplayMode } }
+  | { type: 'artifact.businessRequest'; payload: {
+    requestId: string;
+    intent: 'query' | 'execute';
+    action: string;
+    input: unknown;
+  } }
   | { type: 'artifact.reportError'; payload: { code: string; message?: string; line?: number; column?: number } };
 
 const isRecord = (value: unknown): value is Record<string, unknown> => (
@@ -67,11 +75,19 @@ export const createHTMLArtifactBridgeRateLimiter = ({
   };
 };
 
-const parsePayload = (type: unknown, payload: unknown): HTMLArtifactBridgeMessage | null => {
+const parsePayload = (
+  type: unknown,
+  payload: unknown,
+  allowBusiness: boolean,
+): HTMLArtifactBridgeMessage | null => {
   if (!isRecord(payload)) return null;
   switch (type) {
     case 'artifact.ready':
       return Object.keys(payload).length === 0 ? { type, payload: {} } : null;
+    case 'artifact.heartbeat':
+      return hasOnlyKeys(payload, ['leaseId']) && boundedString(payload.leaseId, 128)
+        ? { type, payload: { leaseId: payload.leaseId } }
+        : null;
     case 'artifact.resize':
       return hasOnlyKeys(payload, ['height'])
         && Number.isInteger(payload.height)
@@ -103,6 +119,23 @@ const parsePayload = (type: unknown, payload: unknown): HTMLArtifactBridgeMessag
         && (payload.mode === 'inline' || payload.mode === 'workspace' || payload.mode === 'fullscreen')
         ? { type, payload: { mode: payload.mode } }
         : null;
+    case 'artifact.businessRequest':
+      if (!allowBusiness
+        || !hasOnlyKeys(payload, ['requestId', 'intent', 'action', 'input'])
+        || !boundedString(payload.requestId, 128)
+        || (payload.intent !== 'query' && payload.intent !== 'execute')
+        || !boundedString(payload.action, 200)
+        || !/^[a-z0-9]+(?:[._-][a-z0-9]+)+$/i.test(payload.action)
+        || byteLength(payload.input) > 48 * 1024) return null;
+      return {
+        type,
+        payload: {
+          requestId: payload.requestId,
+          intent: payload.intent,
+          action: payload.action,
+          input: payload.input,
+        },
+      };
     case 'artifact.reportError': {
       if (!hasOnlyKeys(payload, ['code', 'message', 'line', 'column']) || !boundedString(payload.code, 64)) return null;
       if (payload.message !== undefined && (typeof payload.message !== 'string' || payload.message.length > 500)) return null;
@@ -127,13 +160,16 @@ export const parseHTMLArtifactBridgeMessage = (
   candidate: unknown,
   channelId: string,
   lastSequence: number,
+  options: { allowBusiness?: boolean } = {},
 ): (HTMLArtifactBridgeMessage & { sequence: number }) | null => {
-  if (!isRecord(candidate) || byteLength(candidate) > MAX_BRIDGE_MESSAGE_BYTES) return null;
+  const allowBusiness = options.allowBusiness === true;
+  const maximumBytes = allowBusiness ? MAX_BUSINESS_BRIDGE_MESSAGE_BYTES : MAX_BRIDGE_MESSAGE_BYTES;
+  if (!isRecord(candidate) || byteLength(candidate) > maximumBytes) return null;
   if (!Object.keys(candidate).every((key) => MESSAGE_KEYS.has(key))) return null;
   if (candidate.source !== 'openchamber-artifact' || candidate.direction !== 'artifact-to-host') return null;
   if (candidate.bridgeVersion !== HTML_ARTIFACT_BRIDGE_VERSION || candidate.channelId !== channelId) return null;
   if (!Number.isSafeInteger(candidate.sequence) || Number(candidate.sequence) <= lastSequence) return null;
-  const message = parsePayload(candidate.type, candidate.payload);
+  const message = parsePayload(candidate.type, candidate.payload, allowBusiness);
   return message ? { ...message, sequence: Number(candidate.sequence) } : null;
 };
 
@@ -162,6 +198,8 @@ export const createHTMLArtifactHostInitMessage = (input: {
   theme: 'light' | 'dark';
   tokens: Record<string, string>;
   viewport: { width: number; height: number };
+  executionLease?: { id: string; expiresAt: number; heartbeatIntervalMs: number };
+  context?: unknown;
 }) => ({
   source: 'openchamber-host' as const,
   direction: 'host-to-artifact' as const,
@@ -177,5 +215,31 @@ export const createHTMLArtifactHostInitMessage = (input: {
     theme: input.theme,
     tokens: input.tokens,
     viewport: input.viewport,
+    ...(input.executionLease ? { executionLease: input.executionLease } : {}),
+    ...(input.context !== undefined ? { context: input.context } : {}),
+  },
+});
+
+export const createHTMLArtifactBusinessResultMessage = (input: {
+  channelId: string;
+  requestId: string;
+  ok: boolean;
+  data?: unknown;
+  error?: string;
+  code?: string;
+}) => ({
+  source: 'openchamber-host' as const,
+  direction: 'host-to-artifact' as const,
+  bridgeVersion: HTML_ARTIFACT_BRIDGE_VERSION,
+  channelId: input.channelId,
+  sequence: 1,
+  type: 'host.businessResult' as const,
+  payload: {
+    requestId: input.requestId,
+    ok: input.ok,
+    ...(input.ok ? { data: input.data } : {
+      error: input.error || 'Business request failed',
+      ...(input.code ? { code: input.code } : {}),
+    }),
   },
 });

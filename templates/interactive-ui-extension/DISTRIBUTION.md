@@ -37,7 +37,7 @@ node scripts/interactive-ui-extension.mjs verify /absolute/dist/__EXTENSION_ID__
   --publisher-id com.example.publisher --key-id release-2026
 ```
 
-In OpenChamber, open **Settings → Interactive UI Extensions** and choose the `.ocix` file. OpenChamber verifies the embedded publisher key and signed contents, then shows the publisher fingerprint, packaged Agent Tools/Skills, Agent routing domain/intents/data authority, network permissions, and Native-code status. Compare the fingerprint through an independent channel and confirm **Trust and install**.
+In OpenChamber, open **Settings → Interactive UI Extensions** and choose the `.ocix` file. OpenChamber verifies the embedded publisher key and signed contents, then shows the publisher fingerprint, packaged Agent Tools/Skills, Interactive UI/HTML Artifact counts, Agent routing domain/intents/data authority, network permissions, sandboxed-HTML status, and Native-code status. Compare the fingerprint through an independent channel and confirm **Trust and install**.
 
 After installation, configure **Business connections** on the same page. The starter uses managed `api-key` authentication: create a least-privilege key in the third-party system and save it there. OpenChamber stores the key only on its server, injects it into declared Gateway requests, and never returns it to extension UI or Agent output. A provider that supports one-time setup-code exchange can instead declare `issued-key`; see `docs/OCIX_CONNECTOR_AUTHENTICATION_V1.md`.
 
@@ -47,9 +47,9 @@ Keep `publisher.private.pem` offline. Never copy it, `.env`, API tokens, or busi
 
 Installing `.ocix` on the machine running OpenChamber installs both halves:
 
-- UI, manifest, and Business Gateway declarations remain in the OpenChamber managed version store.
+- Interactive UI, sandboxed HTML Artifact, manifest, and Business Gateway declarations remain in the OpenChamber managed version store.
 - Tool files are managed in `~/.config/opencode/tools`; Skills are managed in `~/.config/opencode/skills`.
 - Enable, disable, update, rollback, and uninstall synchronize those files and refresh managed OpenCode.
-- The enabled manifest contributes its bounded Agent routing metadata to OpenChamber's per-prompt capability context. Keep the business Tool descriptions, `agentRouting`, and `views[].routing` aligned; never use generic `interactive_ui` as a fake-data fallback for this connected module.
+- The enabled manifest contributes its bounded Agent routing metadata to OpenChamber's per-prompt capability context. Keep the business Tool descriptions, `agentRouting`, `views[].routing`, and `artifacts[].routing` aligned; never use generic `interactive_ui` or `html_artifact` as a fake-data fallback for this connected module.
 
 Do not set a per-extension `OPENCODE_CONFIG_DIR`, and do not manually copy Agent files after a managed install. Tool and Skill names must be globally unique; OpenChamber refuses to overwrite user-owned or another extension's files. If OpenChamber connects to an external OpenCode server on another machine, its Agent Runtime still must be deployed through that server's administration channel.

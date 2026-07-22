@@ -1,11 +1,16 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
+import {
+  HYBRID_CRM_FIXTURE,
+  createHybridCrmPackage,
+  startHybridCrmApi,
+} from './lib/interactive-ui-hybrid-crm-fixture.mjs';
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const workspaceRoot = path.dirname(projectRoot);
 const corpusPath = path.join(projectRoot, 'examples', 'interactive-ui', 'unified-acceptance-corpus.json');
 const outputDirectory = path.join(projectRoot, '.tmp', 'interactive-ui-model-routing');
 const reportPath = path.join(outputDirectory, 'report.json');
@@ -16,17 +21,15 @@ const nonArtifactCaseTimeoutMs = Number(process.env.OPENCHAMBER_ACCEPTANCE_NON_A
 const maxCaseAttempts = Number(process.env.OPENCHAMBER_ACCEPTANCE_CASE_ATTEMPTS || 2);
 const crmPackagePath = process.env.OPENCHAMBER_ACCEPTANCE_CRM_PACKAGE
   ? path.resolve(process.env.OPENCHAMBER_ACCEPTANCE_CRM_PACKAGE)
-  : path.join(workspaceRoot, 'extension', 'dist', 'com.demo.simple.crm-1.2.0.ocix');
+  : null;
 const requestedCaseIds = new Set((process.env.OPENCHAMBER_ACCEPTANCE_CASE_IDS || '').split(',').map((value) => value.trim()).filter(Boolean));
-const relevantTools = new Set(['interactive_ui', 'html_artifact', 'simple_crm_open_overview', 'simple_crm_open_workspace']);
-const requiredBusinessTools = ['simple_crm_open_overview', 'simple_crm_open_workspace'];
+const relevantTools = new Set(['interactive_ui', 'html_artifact', ...HYBRID_CRM_FIXTURE.toolNames]);
+const requiredBusinessTools = HYBRID_CRM_FIXTURE.toolNames;
 const crmExtensionId = 'com.demo.simple.crm';
 const disabledFixtureTools = ['crm_open_dashboard', 'sales_get_summary', 'sales_get_dashboard'];
 
 const defaultModels = [
-  { providerID: 'openai', modelID: 'gpt-5.4', family: 'openai', required: true },
   { providerID: 'alibaba-coding-plan-cn', modelID: 'qwen3.7-plus', family: 'non-openai', required: true },
-  { providerID: 'opencode', modelID: 'big-pickle', family: 'non-openai', required: true },
 ];
 
 const configuredModels = (process.env.OPENCHAMBER_ACCEPTANCE_MODELS || '')
@@ -116,7 +119,7 @@ const waitForBusinessTools = async (expected, timeoutMs = 120_000) => {
   throw new Error(`Simple CRM Agent Runtime did not become ${expected ? 'available' : 'unavailable'} within ${timeoutMs}ms`);
 };
 
-const ensureBusinessTools = async () => {
+const ensureBusinessTools = async (packageBuffer) => {
   const initialTools = await request(`/api/experimental/tool/ids?directory=${encodeURIComponent(projectRoot)}`);
   if (requiredBusinessTools.every((tool) => Array.isArray(initialTools) && initialTools.includes(tool))) {
     return { mode: 'existing', installedByTest: false };
@@ -127,7 +130,6 @@ const ensureBusinessTools = async () => {
     throw new Error('Simple CRM is installed but its Agent Runtime is unavailable; the routing test will not mutate an existing installation');
   }
 
-  const packageBuffer = await fs.readFile(crmPackagePath);
   const packageBase64 = packageBuffer.toString('base64');
   const inspection = await request('/api/interactive-ui/manager/packages/inspect', {
     method: 'POST',
@@ -218,7 +220,8 @@ const evaluateCase = async (model, testCase, routingSystem) => {
         return false;
       }
       return part.state.output.includes('"$schema":"openchamber://interactive-result/v1"')
-        || part.state.output.includes('"$schema":"openchamber://html-artifact-result/v1"');
+        || part.state.output.includes('"$schema":"openchamber://html-artifact-result/v1"')
+        || part.state.output.includes('"$schema":"openchamber://installed-html-artifact-result/v1"');
     });
     const routeTools = primaryToolParts.map((part) => part.tool);
     const actualTool = routeTools[0] ?? null;
@@ -344,14 +347,33 @@ const summarize = (cases) => {
 await fs.rm(outputDirectory, { recursive: true, force: true });
 await fs.mkdir(outputDirectory, { recursive: true });
 
+let crmPackageBuffer;
+if (crmPackagePath) {
+  crmPackageBuffer = await fs.readFile(crmPackagePath);
+} else {
+  const fixtureRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'openchamber-routing-hybrid-'));
+  let fixtureApi;
+  try {
+    fixtureApi = await startHybridCrmApi();
+    crmPackageBuffer = (await createHybridCrmPackage({
+      temporaryRoot: fixtureRoot,
+      crmApiUrl: fixtureApi.url,
+      version: '1.3.0-routing.1',
+    })).buffer;
+  } finally {
+    await fixtureApi?.close().catch(() => null);
+    await fs.rm(fixtureRoot, { recursive: true, force: true });
+  }
+}
+
 const corpus = JSON.parse(await fs.readFile(corpusPath, 'utf8'));
 assert.equal(corpus.$schema, 'openchamber://interactive-ui-unified-acceptance-corpus/v1');
 const cases = corpus.cases.filter((testCase) => requestedCaseIds.size === 0 || requestedCaseIds.has(testCase.id));
 assert(cases.length > 0, 'No acceptance cases were selected');
-if (requestedCaseIds.size === 0) assert.equal(cases.length, 16);
+if (requestedCaseIds.size === 0) assert.equal(cases.length, 17);
 
 await waitForOpenCodeReady();
-const businessRuntime = await ensureBusinessTools();
+const businessRuntime = await ensureBusinessTools(crmPackageBuffer);
 const [providerConfig, routing] = await Promise.all([
   request('/api/config/providers'),
   request('/api/interactive-ui/capabilities'),

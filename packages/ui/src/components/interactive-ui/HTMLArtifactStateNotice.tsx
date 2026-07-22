@@ -5,7 +5,7 @@ import { useI18n } from '@/lib/i18n';
 import type { HTMLArtifactFailureState } from '@/lib/interactive-ui/artifactState';
 import { NativeNotice } from './NativeUIKit';
 
-const warningStates = new Set<HTMLArtifactFailureState>(['unsupported', 'scripts-disabled', 'corrupt']);
+const warningStates = new Set<HTMLArtifactFailureState>(['unsupported', 'scripts-disabled', 'stopped', 'timed-out', 'corrupt']);
 
 export const HTMLArtifactStateNotice: React.FC<{
   state: HTMLArtifactFailureState;

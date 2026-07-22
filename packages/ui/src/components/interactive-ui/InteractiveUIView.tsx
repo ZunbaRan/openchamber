@@ -137,14 +137,14 @@ export const InteractiveUIView: React.FC<InteractiveUIViewProps> = ({ envelope, 
 
   const host = React.useMemo<InteractiveViewHost | null>(() => {
     if (!descriptor) return null;
-    const invoke = <TOutput,>(action: string, input: unknown, confirmed = false) => invokeInteractiveAction<TOutput>({
+    const invoke = <TOutput,>(action: string, input: unknown, confirmationToken?: string) => invokeInteractiveAction<TOutput>({
       extensionId: descriptor.extension.id,
       viewId: descriptor.view.id,
       instanceId,
       action,
       input,
       tool: { id: tool.id, name: tool.name },
-      ...(confirmed ? { confirmed: true } : {}),
+      ...(confirmationToken ? { confirmationToken } : {}),
     });
     return {
       apiVersion: 1,
@@ -157,7 +157,8 @@ export const InteractiveUIView: React.FC<InteractiveUIViewProps> = ({ envelope, 
             if (!(actionError instanceof InteractiveUIRequestError) || !actionError.payload.confirmationRequired) throw actionError;
             const confirmed = await confirmInBrowser(actionError.payload.confirmation ?? {});
             if (!confirmed) throw new Error(actionError.payload.error || 'Action cancelled');
-            return invoke<TOutput>(action, input, true);
+            if (!actionError.payload.confirmationToken) throw new Error(actionError.payload.error || 'Action cancelled');
+            return invoke<TOutput>(action, input, actionError.payload.confirmationToken);
           }
         },
       },

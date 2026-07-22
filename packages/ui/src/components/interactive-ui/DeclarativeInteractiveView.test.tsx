@@ -179,6 +179,14 @@ describe('DeclarativeInteractiveView', () => {
               ],
             },
             { type: 'diff-summary', title: '变更', items: [{ path: 'src/view.tsx', additions: 8, deletions: 2 }] },
+            { type: 'gauge', title: '发布质量', label: '通过率', value: 92, minimum: 0, maximum: 100, unit: '%', tone: 'success' },
+            { type: 'heatmap', title: '请求热力', cells: [{ row: '周一', column: '09:00', value: 18, label: '18' }] },
+            {
+              type: 'kanban',
+              title: '交付看板',
+              columns: [{ id: 'todo', title: '待办' }, { id: 'done', title: '完成', tone: 'success' }],
+              cards: [{ id: 'task_1', column: 'todo', title: '完善 Gallery', badge: 'P1' }, { id: 'task_2', column: 'done', title: '接入会话流', tone: 'success' }],
+            },
             { type: 'tabs', items: [{ label: '摘要', children: [{ type: 'text', value: '已完成' }] }, { label: '风险', children: [{ type: 'text', value: '无阻断' }] }] },
             { type: 'accordion', items: [
               { label: '详细信息', children: [{ type: 'text', value: '可访问区域' }] },
@@ -213,6 +221,11 @@ describe('DeclarativeInteractiveView', () => {
     expect(html).toContain('src/view.tsx');
     expect(html).toContain('+8');
     expect(html).toContain('−2');
+    expect(html).toContain('role="meter"');
+    expect(html).toContain('请求热力');
+    expect(html).toContain('09:00');
+    expect(html).toContain('交付看板');
+    expect(html).toContain('完善 Gallery');
     expect(html).toContain('aria-controls=');
     expect(html.match(/role="tabpanel"/g)).toHaveLength(2);
     expect(html.match(/role="region"/g)).toHaveLength(2);

@@ -3,7 +3,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { createHTMLArtifactStore, HTMLArtifactError } from './artifact-store.js';
+import { createHTMLArtifactStore, createInstalledHTMLArtifactDocument, HTMLArtifactError } from './artifact-store.js';
 
 const temporaryDirectories = [];
 const createStore = async (environment = {}) => {
@@ -27,6 +27,21 @@ afterEach(async () => {
 });
 
 describe('HTML Artifact store', () => {
+  test('exposes the Business Bridge only to installed HTML Artifacts', async () => {
+    const installed = createInstalledHTMLArtifactDocument('<!doctype html><html><body><script>document.body.dataset.ready="true"</script></body></html>');
+    expect(installed).toContain('Object.defineProperty(window,"openchamber"');
+    expect(installed).toContain('artifact.businessRequest');
+    expect(installed).toContain("connect-src 'none'");
+
+    const store = await createStore({ OPENCHAMBER_HTML_ARTIFACTS_SCRIPTS: 'true' });
+    const generated = await store.materialize(envelope({
+      html: '<!doctype html><html><body><script>document.body.dataset.ready="true"</script></body></html>',
+      capabilities: { scripts: true },
+    }));
+    const generatedDocument = await store.getDocument(generated.artifactId);
+    expect(generatedDocument.html).not.toContain('Object.defineProperty(window,"openchamber"');
+  });
+
   test('materializes immutable content, deduplicates it, and reads it back', async () => {
     const store = await createStore();
     const first = await store.materialize(envelope());
@@ -130,6 +145,7 @@ describe('HTML Artifact store', () => {
     });
     const document = await store.getDocument(result.artifactId);
     expect(document.html).toContain('openchamberArtifact');
+    expect(document.html).toContain('artifact.heartbeat');
     expect(document.html).toContain('artifact.resize');
   });
 

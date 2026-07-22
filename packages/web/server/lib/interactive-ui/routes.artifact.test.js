@@ -18,14 +18,15 @@ const envelope = (scripts = false) => ({
   display: { preferred: 'inline', allowExpand: true, inlineHeight: 360 },
 });
 
-const createApp = async (environment = {}) => {
+const createApp = async (environment = {}, runtime = {}, uiAuthController = null) => {
   const dataDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'openchamber-artifact-routes-'));
   temporaryDirectories.push(dataDirectory);
   const app = express();
   registerInteractiveUIRoutes(app, {
     express,
-    runtime: {},
+    runtime,
     manager: {},
+    uiAuthController,
     artifactStore: createHTMLArtifactStore({
       dataDirectory,
       fsImpl: fs,
@@ -55,6 +56,31 @@ afterEach(async () => {
 });
 
 describe('HTML Artifact routes', () => {
+  test('authenticates every Interactive UI route before dispatch', async () => {
+    const calls = [];
+    const app = await createApp({}, {
+      getCapabilities: () => ({ scriptsMode: 'unsupported' }),
+    }, {
+      requireAuth(req, res, next) {
+        calls.push(`${req.method} ${req.originalUrl}`);
+        if (req.headers.authorization !== 'Bearer test-client') {
+          res.status(401).json({ locked: true });
+          return;
+        }
+        next();
+      },
+    });
+
+    await request(app).get('/api/interactive-ui/artifacts/capabilities').expect(401);
+    await request(app).get('/api/interactive-ui/artifacts/capabilities').set('Authorization', 'Bearer test-client').expect(200);
+    await request(app).post('/api/interactive-ui/artifacts/materialize').set('Authorization', 'Bearer test-client').send(envelope()).expect(201);
+    expect(calls).toEqual([
+      'GET /api/interactive-ui/artifacts/capabilities',
+      'GET /api/interactive-ui/artifacts/capabilities',
+      'POST /api/interactive-ui/artifacts/materialize',
+    ]);
+  });
+
   test('materializes a static document with a non-script CSP', async () => {
     const app = await createApp();
     const materialized = await request(app)
@@ -94,7 +120,35 @@ describe('HTML Artifact routes', () => {
     expect(encodedArtifact).toBeTruthy();
     const innerDocument = Buffer.from(encodedArtifact, 'base64').toString('utf8');
     expect(innerDocument).toContain('openchamberArtifact');
+    expect(innerDocument).toContain('artifact.heartbeat');
     expect(innerDocument).toContain("frame-src 'none'");
+  });
+
+  test('serves installed third-party Artifacts through the brokered Business Bridge', async () => {
+    const runtime = {
+      async getInstalledArtifactDescriptor(artifactId, tool) {
+        return { artifact: { id: artifactId }, tool, documentPath: '/api/interactive-ui/extensions/com.acme.crm/artifacts/com.acme.crm.explorer' };
+      },
+      async getInstalledArtifactDocument() {
+        return {
+          source: '<!doctype html><html><body><script>window.openchamber.business.query("com.acme.crm.query", {})</script></body></html>',
+          integrity: 'sha256-fixture',
+        };
+      },
+    };
+    const app = await createApp({}, runtime);
+    const descriptor = await request(app)
+      .get('/api/interactive-ui/installed-artifacts/com.acme.crm.explorer?tool=crm_open_explorer')
+      .expect(200);
+    expect(descriptor.body.tool).toBe('crm_open_explorer');
+
+    const document = await request(app)
+      .get('/api/interactive-ui/extensions/com.acme.crm/artifacts/com.acme.crm.explorer')
+      .expect(200);
+    expect(document.headers['content-security-policy']).toContain('sandbox allow-scripts');
+    expect(document.headers.etag).toBe('"sha256-fixture"');
+    expect(document.text).toContain('data-ocix-artifact-broker');
+    expect(document.text).toContain('host.businessResult');
   });
 
   test('returns an explicit capability error instead of silently stripping scripts', async () => {

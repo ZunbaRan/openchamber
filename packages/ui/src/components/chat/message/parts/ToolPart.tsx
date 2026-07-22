@@ -58,6 +58,7 @@ import { isEmbeddedSessionChat } from '@/components/layout/contextPanelEmbeddedC
 import { parseInteractiveResultEnvelope } from '@/lib/interactive-ui/result';
 import { InteractiveUIView } from '@/components/interactive-ui/InteractiveUIView';
 import { parseHTMLArtifactResultEnvelope } from '@/lib/interactive-ui/artifactResult';
+import { parseInstalledHTMLArtifactResultEnvelope } from '@/lib/interactive-ui/installedArtifactResult';
 import { recordRoutingToolObservation } from '@/lib/interactive-ui/routingInspector';
 import { shouldHideToolInputPreview } from './toolRenderUtils';
 
@@ -1534,6 +1535,14 @@ const ToolExpandedContent: React.FC<ToolExpandedContentProps> = React.memo(({
         () => parseHTMLArtifactResultEnvelope(outputString),
         [outputString],
     );
+    const installedArtifactEnvelope = React.useMemo(
+        () => parseInstalledHTMLArtifactResultEnvelope(outputString),
+        [outputString],
+    );
+    const artifactToolContext = React.useMemo(
+        () => ({ id: part.id, name: part.tool }),
+        [part.id, part.tool],
+    );
 
     const fileDiff = isRecord(metadata?.filediff) ? metadata.filediff : undefined;
     const diffContent = getPatchText((metadata as { patch?: unknown } | undefined)?.patch)
@@ -1546,7 +1555,7 @@ const ToolExpandedContent: React.FC<ToolExpandedContentProps> = React.memo(({
         [currentDirectory, diffContent, metadata]
     );
     const hasVisualDiffEntry = diffEntries.some((entry) => entry.renderMode === 'diff');
-    const hideToolInputPreview = Boolean(interactiveEnvelope || htmlArtifactEnvelope)
+    const hideToolInputPreview = Boolean(interactiveEnvelope || htmlArtifactEnvelope || installedArtifactEnvelope)
         || shouldHideToolInputPreview(part.tool);
     const diagnosticSection = React.useMemo(
         () => getToolDiagnosticSection(part.tool, input, metadata, currentDirectory),
@@ -1610,7 +1619,8 @@ const ToolExpandedContent: React.FC<ToolExpandedContentProps> = React.memo(({
     );
 
     const renderResultContent = () => {
-        if (state.status === 'completed' && htmlArtifactEnvelope) {
+        const artifactEnvelope = htmlArtifactEnvelope ?? installedArtifactEnvelope;
+        if (state.status === 'completed' && artifactEnvelope) {
             const fallback = renderScrollableBlock(
                 <ToolScrollableTextOutput
                     output={outputString}
@@ -1629,10 +1639,11 @@ const ToolExpandedContent: React.FC<ToolExpandedContentProps> = React.memo(({
             return (
                 <React.Suspense fallback={loadingFallback}>
                     <HTMLArtifactView
-                        envelope={htmlArtifactEnvelope}
+                        envelope={artifactEnvelope}
                         fallback={fallback}
                         sessionId={sessionId}
                         toolPartId={part.id}
+                        tool={artifactToolContext}
                     />
                 </React.Suspense>
             );
@@ -2179,15 +2190,21 @@ const ToolPartContent: React.FC<ToolPartProps> = ({
             : null,
         [isError, isFinalized, taskOutputString],
     );
-    const hasRichResult = Boolean(interactiveResult || htmlArtifactResult);
+    const installedArtifactResult = React.useMemo(
+        () => isFinalized && !isError && taskOutputString
+            ? parseInstalledHTMLArtifactResultEnvelope(taskOutputString)
+            : null,
+        [isError, isFinalized, taskOutputString],
+    );
+    const hasRichResult = Boolean(interactiveResult || htmlArtifactResult || installedArtifactResult);
     const autoExpandedInteractivePartRef = React.useRef<string | null>(null);
 
     React.useEffect(() => {
-        if ((!interactiveResult && !htmlArtifactResult) || isTaskTool || isExpanded) return;
+        if ((!interactiveResult && !htmlArtifactResult && !installedArtifactResult) || isTaskTool || isExpanded) return;
         if (autoExpandedInteractivePartRef.current === part.id) return;
         autoExpandedInteractivePartRef.current = part.id;
         onToggle(part.id);
-    }, [htmlArtifactResult, interactiveResult, isExpanded, isTaskTool, onToggle, part.id]);
+    }, [htmlArtifactResult, installedArtifactResult, interactiveResult, isExpanded, isTaskTool, onToggle, part.id]);
 
     const parsedTaskMetadata = React.useMemo(() => {
         return parseTaskMetadataBlock(taskOutputString);
@@ -2315,7 +2332,7 @@ const ToolPartContent: React.FC<ToolPartProps> = ({
     const description = getToolDescription(normalizedPart, state, currentDirectory);
     const displayName = interactiveResult
         ? 'Interactive UI'
-        : htmlArtifactResult
+        : htmlArtifactResult || installedArtifactResult
             ? 'HTML Artifact'
             : getToolMetadata(normalizedPartTool || part.tool).displayName;
     

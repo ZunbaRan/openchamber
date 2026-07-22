@@ -26,7 +26,10 @@ import {
   CodeBlockPrimitive,
   ComparisonPrimitive,
   DiffSummaryPrimitive,
+  GaugePrimitive,
   GitGraphPrimitive,
+  HeatmapPrimitive,
+  KanbanPrimitive,
   SparklinePrimitive,
   TabsPrimitive,
   TimelinePrimitive,
@@ -664,6 +667,9 @@ const DeclarativeNode: React.FC<{
   if (node.type === 'accordion') return <AccordionPrimitive node={node} resolveValue={resolved} emptyLabel={emptyLabel} renderChildren={renderChildren} />;
   if (node.type === 'code-block') return <CodeBlockPrimitive node={node} resolveValue={resolved} emptyLabel={emptyLabel} />;
   if (node.type === 'sparkline') return <SparklinePrimitive node={node} resolveValue={resolved} emptyLabel={emptyLabel} />;
+  if (node.type === 'gauge') return <GaugePrimitive node={node} resolveValue={resolved} emptyLabel={emptyLabel} />;
+  if (node.type === 'heatmap') return <HeatmapPrimitive node={node} resolveValue={resolved} emptyLabel={emptyLabel} />;
+  if (node.type === 'kanban') return <KanbanPrimitive node={node} resolveValue={resolved} emptyLabel={emptyLabel} />;
   if (node.type === 'git-graph') return <GitGraphPrimitive node={node} resolveValue={resolved} emptyLabel={emptyLabel} />;
   if (node.type === 'tree') return <TreePrimitive node={node} resolveValue={resolved} emptyLabel={emptyLabel} />;
   if (node.type === 'diff-summary') return <DiffSummaryPrimitive node={node} resolveValue={resolved} emptyLabel={emptyLabel} />;

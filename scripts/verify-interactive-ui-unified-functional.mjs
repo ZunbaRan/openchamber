@@ -22,9 +22,12 @@ const extensionId = 'com.demo.simple.crm';
 const connectorId = 'crm-api';
 const overviewViewId = 'com.demo.simple.crm.overview';
 const workspaceViewId = 'com.demo.simple.crm.workspace';
+const explorerArtifactId = 'com.demo.simple.crm.explorer';
 const queryActionId = 'com.demo.simple.crm.dashboard.query';
 const writeActionId = 'com.demo.simple.crm.opportunity.advance';
 const crmToolNames = ['simple_crm_open_overview', 'simple_crm_open_workspace'];
+const explorerToolName = 'simple_crm_open_explorer';
+const acceptanceToolNames = [...crmToolNames, explorerToolName];
 const crmSkillName = 'simple-crm-interactive-ui';
 const builtInToolNames = ['interactive_ui', 'html_artifact'];
 const forbiddenUpstreamMessages = [
@@ -181,7 +184,42 @@ try {
   acceptanceManifest.version = '1.3.0';
   acceptanceManifest.connectors[0].baseUrl = crmApi.url;
   acceptanceManifest.permissions.network = [crmApi.url];
+  acceptanceManifest.agentRouting.intents.push('crm.explorer');
+  acceptanceManifest.agentRouting.examples['zh-CN'].push('打开 CRM 可视化探索器');
+  acceptanceManifest.agentRouting.examples.en.push('open the CRM visual explorer');
+  acceptanceManifest.artifacts = [{
+    id: explorerArtifactId,
+    title: 'Simple CRM Explorer',
+    entry: 'ui/artifacts/explorer.html',
+    tools: [explorerToolName],
+    routing: { intents: ['crm.explorer'], priority: 92, operation: 'mixed' },
+    displayModes: ['inline', 'workspace', 'fullscreen'],
+    inlineHeight: 520,
+    capabilities: { scripts: true, businessActions: [queryActionId, writeActionId] },
+  }];
   await fs.writeFile(acceptanceManifestPath, `${JSON.stringify(acceptanceManifest, null, 2)}\n`, 'utf8');
+  await fs.mkdir(path.join(acceptanceExtensionDirectory, 'ui', 'artifacts'), { recursive: true });
+  await fs.writeFile(path.join(acceptanceExtensionDirectory, 'ui', 'artifacts', 'explorer.html'), `<!doctype html><html><body>
+    <h1>Simple CRM Explorer</h1><div id="status">Waiting for Host</div><div id="customers"></div>
+    <script>
+      addEventListener('openchamber:host-init', async (event) => {
+        const dashboard = await window.openchamber.business.query('${queryActionId}', { scope: event.detail.context?.scope || 'default' });
+        document.getElementById('customers').textContent = String(dashboard.customerCount);
+        document.getElementById('status').textContent = 'Connected';
+      }, { once: true });
+    </script>
+  </body></html>`, 'utf8');
+  await fs.writeFile(path.join(acceptanceExtensionDirectory, 'agent-runtime', 'tools', `${explorerToolName}.ts`), `import { tool } from '@opencode-ai/plugin';
+export default tool({
+  description: 'Open the installed Simple CRM HTML Artifact explorer for authoritative customer and pipeline exploration through the Business Gateway. Prefer this Tool for explicit CRM explorer or custom canvas requests; do not call generic html_artifact for the same business data.',
+  args: { scope: tool.schema.string().optional() },
+  async execute(args) {
+    return JSON.stringify({ $schema: 'openchamber://installed-html-artifact-result/v1', schemaVersion: 1,
+      artifact: '${explorerArtifactId}', mode: 'live', summary: 'Simple CRM explorer opened',
+      context: { scope: args.scope || 'default' }, updatedAt: new Date().toISOString() });
+  },
+});
+`, 'utf8');
   const acceptancePackage = await createExtensionPackage({
     extensionDirectory: acceptanceExtensionDirectory,
     privateKey: await fs.readFile(crmPublisherPrivateKeyPath, 'utf8'),
@@ -263,7 +301,7 @@ try {
     previous: await fs.readFile(crmPackagePaths.previous),
     current: await fs.readFile(crmPackagePaths.current),
   };
-  const inspectPackage = async (buffer, expectedVersion) => {
+  const inspectPackage = async (buffer, expectedVersion, expectedTools = crmToolNames) => {
     const inspection = expectStatus(await request('/api/interactive-ui/manager/packages/inspect', {
       method: 'POST',
       body: { packageBase64: buffer.toString('base64') },
@@ -271,7 +309,7 @@ try {
     assert.equal(inspection.extension.id, extensionId);
     assert.equal(inspection.extension.version, expectedVersion);
     assert.equal(typeof inspection.publisher.fingerprint, 'string');
-    assert.deepEqual(inspection.agentRuntime.tools.map((tool) => tool.name).sort(), [...crmToolNames].sort());
+    assert.deepEqual(inspection.agentRuntime.tools.map((tool) => tool.name).sort(), [...expectedTools].sort());
     assert(inspection.agentRuntime.skills.some((skill) => skill.name === crmSkillName));
     return inspection;
   };
@@ -295,11 +333,15 @@ try {
   assert.equal(currentInstall.extension.activeVersion, '1.2.0');
   await waitForAgentRuntime(true);
 
-  const acceptanceInspection = await inspectPackage(acceptancePackage.buffer, '1.3.0');
+  const acceptanceInspection = await inspectPackage(acceptancePackage.buffer, '1.3.0', acceptanceToolNames);
   assert.equal(acceptanceInspection.publisher.trusted, true);
+  assert.equal(acceptanceInspection.permissions.sandboxedArtifacts, true);
+  assert.deepEqual(acceptanceInspection.agentRouting.artifacts.map((artifact) => artifact.id), [explorerArtifactId]);
   const acceptanceInstall = await installPackage(acceptancePackage.buffer);
   assert.equal(acceptanceInstall.extension.activeVersion, '1.3.0');
-  const installedAgentRuntime = await waitForAgentRuntime(true);
+  await waitForAgentRuntime(true);
+  await waitFor(async () => (await readAgentRuntime()).tools.includes(explorerToolName), 'Simple CRM Explorer Tool discovery');
+  const installedAgentRuntime = await readAgentRuntime();
 
   const managerAfterUpgrade = expectStatus(await request('/api/interactive-ui/manager'), 200, 'manager after upgrade');
   const managedCrm = managerAfterUpgrade.extensions.find((extension) => extension.id === extensionId);
@@ -312,12 +354,14 @@ try {
   assert(registeredCrm);
   assert.equal(registeredCrm.version, '1.3.0');
   assert.deepEqual(registeredCrm.views.map((view) => view.runtime).sort(), ['declarative', 'native']);
+  assert.deepEqual(registeredCrm.artifacts.map((artifact) => artifact.id), [explorerArtifactId]);
 
   const capabilitiesBeforeConnection = expectStatus(await request('/api/interactive-ui/capabilities'), 200, 'routing capabilities before connection');
   const crmCapabilityBeforeConnection = capabilitiesBeforeConnection.extensions.find((extension) => extension.id === extensionId);
   assert(crmCapabilityBeforeConnection);
   assert.equal(crmCapabilityBeforeConnection.connection.status, 'unconfigured');
-  assert.deepEqual(crmCapabilityBeforeConnection.tools.map((tool) => tool.name).sort(), [...crmToolNames].sort());
+  assert.deepEqual(crmCapabilityBeforeConnection.tools.map((tool) => tool.name).sort(), [...acceptanceToolNames].sort());
+  assert.deepEqual(crmCapabilityBeforeConnection.tools.find((tool) => tool.name === explorerToolName)?.forms, ['html-artifact']);
   assert.equal(JSON.stringify(capabilitiesBeforeConnection).includes('127.0.0.1'), false);
 
   const overviewDescriptor = expectStatus(await request(`/api/interactive-ui/views/${overviewViewId}?tool=simple_crm_open_overview`), 200, 'CRM overview view');
@@ -333,6 +377,15 @@ try {
   const nativeBundle = await nativeBundleResponse.text();
   assert.match(nativeBundle, /com\.demo\.simple\.crm\.workspace/);
   assertNoSecretMaterial(nativeBundle, 'native bundle', secretValues);
+  const explorerDescriptor = expectStatus(await request(`/api/interactive-ui/installed-artifacts/${explorerArtifactId}?tool=${explorerToolName}`), 200, 'CRM explorer Artifact');
+  assert.equal(explorerDescriptor.artifact.id, explorerArtifactId);
+  assert.equal(explorerDescriptor.artifact.business, true);
+  const explorerDocumentResponse = await fetch(`${baseUrl}${explorerDescriptor.documentPath}`);
+  assert.equal(explorerDocumentResponse.status, 200);
+  const explorerDocument = await explorerDocumentResponse.text();
+  assert.match(explorerDocument, /data-ocix-artifact-broker/);
+  assert.match(explorerDocument, /host\.businessResult/);
+  assertNoSecretMaterial(explorerDocument, 'installed Artifact document', secretValues);
 
   const overviewActionContext = {
     extensionId,
@@ -346,6 +399,12 @@ try {
     instanceId: 'unified-functional-workspace',
     tool: { id: 'unified-functional-workspace-tool', name: 'simple_crm_open_workspace' },
   };
+  const explorerActionContext = {
+    extensionId,
+    artifactId: explorerArtifactId,
+    instanceId: 'unified-functional-explorer',
+    tool: { id: 'unified-functional-explorer-tool', name: explorerToolName },
+  };
   const queryDashboard = () => request(`/api/interactive-ui/actions/${queryActionId}`, {
     method: 'POST',
     body: { ...overviewActionContext, input: { scope: 'default' } },
@@ -353,6 +412,14 @@ try {
   const advanceOpportunity = (input, confirmed) => request(`/api/interactive-ui/actions/${writeActionId}`, {
     method: 'POST',
     body: { ...workspaceActionContext, input, ...(confirmed === undefined ? {} : { confirmed }) },
+  });
+  const queryDashboardFromArtifact = () => request(`/api/interactive-ui/actions/${queryActionId}`, {
+    method: 'POST',
+    body: { ...explorerActionContext, input: { scope: 'default' } },
+  });
+  const advanceOpportunityFromArtifact = (input, confirmed) => request(`/api/interactive-ui/actions/${writeActionId}`, {
+    method: 'POST',
+    body: { ...explorerActionContext, input, ...(confirmed === undefined ? {} : { confirmed }) },
   });
 
   const unconfiguredQuery = await queryDashboard();
@@ -377,6 +444,8 @@ try {
   assert.equal(initialDashboard.customers.length, 4);
   assert.equal(initialDashboard.opportunities.length, 4);
   assert(initialDashboard.pipelineValue > 0);
+  const artifactDashboard = expectStatus(await queryDashboardFromArtifact(), 200, 'query live CRM data from installed Artifact').data;
+  assert.equal(artifactDashboard.customerCount, 4);
   const initialOpportunity = findOpportunity(initialDashboard, 'OP-2001');
   assert.equal(initialOpportunity.stage, 'proposal');
   assert.equal(initialOpportunity.revision, 4);
@@ -399,6 +468,16 @@ try {
     { stage: findOpportunity(afterWrite, 'OP-2001').stage, revision: findOpportunity(afterWrite, 'OP-2001').revision },
     { stage: 'negotiation', revision: 5 },
   );
+
+  const artifactConfirmation = await advanceOpportunityFromArtifact({ opportunityId: 'OP-2004', revision: 1 }, false);
+  assert.equal(artifactConfirmation.status, 409);
+  assert.equal(artifactConfirmation.payload.code, 'confirmation_required');
+  const artifactAdvanced = expectStatus(
+    await advanceOpportunityFromArtifact({ opportunityId: 'OP-2004', revision: 1 }, true),
+    200,
+    'confirmed CRM write from installed Artifact',
+  ).data.opportunity;
+  assert.equal(artifactAdvanced.revision, 2);
 
   expectStatus(await configureConnection(DEMO_KEYS.readonly), 200, 'configure readonly CRM key');
   expectStatus(await request(`/api/interactive-ui/connections/${extensionId}/${connectorId}/test`, {
@@ -437,11 +516,15 @@ try {
   }), 200, 'disable CRM extension');
   assert.equal(disabled.enabled, false);
   await waitForAgentRuntime(false);
+  await waitFor(async () => !(await readAgentRuntime()).tools.includes(explorerToolName), 'Simple CRM Explorer Tool removal');
   const disabledCapabilities = expectStatus(await request('/api/interactive-ui/capabilities'), 200, 'capabilities after disable');
   assert.equal(disabledCapabilities.extensions.some((extension) => extension.id === extensionId), false);
   const disabledView = await request(`/api/interactive-ui/views/${overviewViewId}?tool=simple_crm_open_overview`);
   assert.equal(disabledView.status, 404);
   assert.equal(disabledView.payload.code, 'view_not_found');
+  const disabledArtifact = await request(`/api/interactive-ui/installed-artifacts/${explorerArtifactId}?tool=${explorerToolName}`);
+  assert.equal(disabledArtifact.status, 404);
+  assert.equal(disabledArtifact.payload.code, 'artifact_not_found');
 
   const enabled = expectStatus(await request(`/api/interactive-ui/manager/extensions/${extensionId}`, {
     method: 'PATCH',
@@ -450,6 +533,7 @@ try {
   }), 200, 'enable CRM extension');
   assert.equal(enabled.enabled, true);
   await waitForAgentRuntime(true);
+  await waitFor(async () => (await readAgentRuntime()).tools.includes(explorerToolName), 'Simple CRM Explorer Tool restoration');
   const afterEnable = expectStatus(await queryDashboard(), 200, 'query after re-enable').data;
   assert.equal(afterEnable.customerCount, 4);
 
@@ -459,16 +543,22 @@ try {
   }), 200, 'rollback CRM extension');
   assert.equal(rolledBack.activeVersion, '1.2.0');
   await waitForAgentRuntime(true);
+  await waitFor(async () => !(await readAgentRuntime()).tools.includes(explorerToolName), 'Simple CRM Explorer Tool removal after rollback');
   const registryAfterRollback = expectStatus(await request('/api/interactive-ui/extensions'), 200, 'registry after rollback');
   assert.equal(registryAfterRollback.extensions.find((extension) => extension.id === extensionId)?.version, '1.2.0');
+  assert.equal(registryAfterRollback.extensions.find((extension) => extension.id === extensionId)?.artifacts.length, 0);
   const capabilitiesAfterRollback = expectStatus(await request('/api/interactive-ui/capabilities'), 200, 'capabilities after rollback');
   assert.equal(capabilitiesAfterRollback.extensions.some((extension) => extension.id === extensionId), true);
+  const rolledBackArtifact = await request(`/api/interactive-ui/installed-artifacts/${explorerArtifactId}?tool=${explorerToolName}`);
+  assert.equal(rolledBackArtifact.status, 404);
+  assert.equal(rolledBackArtifact.payload.code, 'artifact_not_found');
   const restoredAcceptance = expectStatus(await request(`/api/interactive-ui/manager/extensions/${extensionId}/rollback`, {
     method: 'POST',
     timeoutMs: 60_000,
   }), 200, 'restore dynamic-port CRM acceptance version');
   assert.equal(restoredAcceptance.activeVersion, '1.3.0');
   await waitForAgentRuntime(true);
+  await waitFor(async () => (await readAgentRuntime()).tools.includes(explorerToolName), 'Simple CRM Explorer Tool return after version restore');
   const afterRollback = expectStatus(await queryDashboard(), 200, 'query after rollback').data;
   assert.equal(afterRollback.customerCount, 4);
 
@@ -485,6 +575,7 @@ try {
   assert.equal(uninstalled.removed, true);
   assert.equal(uninstalled.credentials.removed, 1);
   await waitForAgentRuntime(false);
+  await waitFor(async () => !(await readAgentRuntime()).tools.includes(explorerToolName), 'Simple CRM Explorer Tool removal after uninstall');
   const managerAfterUninstall = expectStatus(await request('/api/interactive-ui/manager'), 200, 'manager after uninstall');
   assert.equal(managerAfterUninstall.extensions.some((extension) => extension.id === extensionId), false);
   const connectionsAfterUninstall = expectStatus(await request('/api/interactive-ui/connections'), 200, 'connections after uninstall');
@@ -492,7 +583,9 @@ try {
 
   const reinstalled = await installPackage(acceptancePackage.buffer);
   assert.equal(reinstalled.extension.activeVersion, '1.3.0');
-  const finalAgentRuntime = await waitForAgentRuntime(true);
+  await waitForAgentRuntime(true);
+  await waitFor(async () => (await readAgentRuntime()).tools.includes(explorerToolName), 'Simple CRM Explorer Tool reinstall');
+  const finalAgentRuntime = await readAgentRuntime();
   const finalConnections = expectStatus(await request('/api/interactive-ui/connections'), 200, 'connections after reinstall');
   const finalCrmConnection = finalConnections.connections.find((connection) => connection.extension.id === extensionId);
   assert(finalCrmConnection);
@@ -503,14 +596,14 @@ try {
 
   const corpus = JSON.parse(await fs.readFile(corpusPath, 'utf8'));
   assert.equal(corpus.$schema, 'openchamber://interactive-ui-unified-acceptance-corpus/v1');
-  assert.equal(corpus.cases.length, 16);
+  assert.equal(corpus.cases.length, 17);
   const corpusCounts = Object.fromEntries(['generated', 'business', 'artifact', 'negative'].map((category) => [
     category,
     corpus.cases.filter((testCase) => testCase.category === category).length,
   ]));
-  assert.deepEqual(corpusCounts, { generated: 6, business: 4, artifact: 3, negative: 3 });
+  assert.deepEqual(corpusCounts, { generated: 6, business: 5, artifact: 3, negative: 3 });
   assert.equal(corpus.cases.filter((testCase) => testCase.category === 'business' || testCase.id === 'negative-artifact-crm-direct')
-    .every((testCase) => crmToolNames.includes(testCase.expectedTool)), true);
+    .every((testCase) => acceptanceToolNames.includes(testCase.expectedTool)), true);
 
   const report = {
     ok: true,
@@ -524,7 +617,7 @@ try {
       bundledExecutable: true,
       builtInTools: builtInToolNames,
       builtInSkill: 'interactive-ui-visualization',
-      installedTools: crmToolNames,
+      installedTools: acceptanceToolNames,
       installedSkill: crmSkillName,
       restartReconciliation: 'passed',
     },
@@ -532,6 +625,7 @@ try {
       declarative: 'ready',
       native: 'ready',
       nativeBundle: 'ready',
+      htmlArtifact: 'ready',
     },
     businessGateway: {
       customers: initialDashboard.customerCount,
@@ -541,6 +635,8 @@ try {
       cancellationPreservedData: true,
       confirmedWrite: 'passed',
       writeRefresh: 'passed',
+      artifactQuery: 'passed',
+      artifactConfirmedWrite: 'passed',
       unauthorized: 'mapped-and-redacted',
       forbidden: 'mapped-and-redacted',
       revisionConflict: 'mapped-and-redacted',

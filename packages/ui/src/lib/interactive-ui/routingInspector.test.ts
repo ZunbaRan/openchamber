@@ -29,7 +29,8 @@ const context: InteractiveUIRoutingContext = {
     connection: { required: true, configured: true, expired: false, status: 'configured' },
     tools: [{
       name: 'crm_open_overview',
-      views: ['com.acme.crm.overview'],
+      surfaces: ['com.acme.crm.overview'],
+      forms: ['interactive-ui'],
       intents: ['crm.overview'],
       priority: 90,
       operation: 'read',

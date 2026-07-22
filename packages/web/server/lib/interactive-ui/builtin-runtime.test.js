@@ -6,7 +6,7 @@ import { createBuiltInInteractiveUIRuntime } from './builtin-runtime.js';
 import { createInteractiveUIRuntime } from './runtime.js';
 
 describe('production built-in Interactive UI runtime', () => {
-  it('ships a valid Generated View, two Agent Tools, and the routing Skill', async () => {
+  it('ships valid Generated and Gallery Views, three Agent Tools, and the routing Skill', async () => {
     const builtIn = createBuiltInInteractiveUIRuntime();
     const runtime = createInteractiveUIRuntime({
       fsPromises: fs,
@@ -24,6 +24,7 @@ describe('production built-in Interactive UI runtime', () => {
       version: builtIn.version,
     });
     expect(listed.extensions[0].views.map((view) => view.id)).toEqual([
+      'com.openchamber.builtin.interactive-ui.gallery',
       'com.openchamber.builtin.interactive-ui.process-flow',
       'com.openchamber.builtin.interactive-ui.generated',
     ]);
@@ -33,6 +34,11 @@ describe('production built-in Interactive UI runtime', () => {
       'interactive_ui',
     );
     expect(generated.declarative.layout).toMatchObject({ type: 'generated-layout' });
+    const gallery = await runtime.getViewDescriptor(
+      'com.openchamber.builtin.interactive-ui.gallery',
+      'interactive_ui_gallery',
+    );
+    expect(gallery.declarative.layout).toMatchObject({ type: 'generated-layout' });
     for (const tool of builtIn.agentRuntime.tools) {
       await expect(fs.stat(path.join(builtIn.rootDirectory, ...tool.entry.split('/')))).resolves.toMatchObject({});
     }

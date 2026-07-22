@@ -18,6 +18,8 @@ describe('HTMLArtifactStateNotice', () => {
   test('only retries recoverable failures', () => {
     expect(canRetryHTMLArtifactFailure('corrupt')).toBe(true);
     expect(canRetryHTMLArtifactFailure('crashed')).toBe(true);
+    expect(canRetryHTMLArtifactFailure('stopped')).toBe(true);
+    expect(canRetryHTMLArtifactFailure('timed-out')).toBe(true);
     expect(canRetryHTMLArtifactFailure('error')).toBe(true);
     expect(canRetryHTMLArtifactFailure('blocked')).toBe(false);
     expect(canRetryHTMLArtifactFailure('scripts-disabled')).toBe(false);

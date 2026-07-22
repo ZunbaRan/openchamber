@@ -1538,6 +1538,7 @@ async function main(options = {}) {
     permissionAutoAcceptRuntime,
     express,
     processLike: process,
+    uiAuthController,
   });
 
   const previewProxyRuntime = createPreviewProxyRuntime({

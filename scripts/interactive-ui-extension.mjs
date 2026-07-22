@@ -28,10 +28,10 @@ const SUPPORTED_NODE_TYPES = new Set([
   'text', 'markdown', 'progress', 'status', 'badge', 'key-value', 'flow', 'chart',
   'list', 'callout', 'data-table', 'divider', 'timeline', 'activity-feed',
   'comparison', 'tabs', 'accordion', 'code-block', 'sparkline', 'git-graph',
-  'tree', 'diff-summary',
+  'tree', 'diff-summary', 'gauge', 'heatmap', 'kanban',
 ]);
 const BANNED_DECLARATIVE_KEYS = new Set(['dangerouslySetInnerHTML', 'html', 'script', 'srcDoc', 'srcdoc']);
-const REPOSITORY_PROVIDED_TOOL_NAMES = new Set(['html_artifact', 'interactive_ui', 'crm_open_dashboard']);
+const REPOSITORY_PROVIDED_TOOL_NAMES = new Set(['html_artifact', 'interactive_ui', 'interactive_ui_gallery', 'crm_open_dashboard']);
 
 const isRecord = (value) => typeof value === 'object' && value !== null && !Array.isArray(value);
 
@@ -213,6 +213,13 @@ const validateDeclarativeDefinition = (definition, declaredActions) => {
           errors.push(`${location}.variant: chart supports bar, line, area, or donut`);
         }
       }
+      if (value.type === 'heatmap' && !Array.isArray(value.cells) && !Array.isArray(value.data)) {
+        errors.push(`${location}.cells: heatmap requires a cells or data array`);
+      }
+      if (value.type === 'kanban') {
+        if (!Array.isArray(value.columns)) errors.push(`${location}.columns: kanban requires a columns array`);
+        if (!Array.isArray(value.cards)) errors.push(`${location}.cards: kanban requires a cards array`);
+      }
     }
     if ('$path' in value) validateBindingPath(value.$path, `${location}.$path`, errors, DECLARATIVE_BINDING_ROOTS);
     if ('$row' in value) validateBindingPath(value.$row, `${location}.$row`, errors);
@@ -243,7 +250,7 @@ export const validateExtension = async (extensionDirectory) => {
   const { directory, manifestPath, raw } = await readManifest(extensionDirectory);
   const errors = [];
   const warnings = [];
-  let agentRuntime = { tools: [], skills: [], unresolvedViewTools: [] };
+  let agentRuntime = { tools: [], skills: [], unresolvedSurfaceTools: [], unresolvedViewTools: [] };
 
   if (raw.$schema !== 'openchamber://extension/v1') errors.push(`${manifestPath}: $schema must be openchamber://extension/v1`);
   if (typeof raw.version !== 'string' || !/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(raw.version)) {
@@ -253,9 +260,10 @@ export const validateExtension = async (extensionDirectory) => {
     const agentRuntimeFiles = await collectAgentRuntimeFiles(directory, 'agent-runtime/tools');
     await collectAgentRuntimeFiles(directory, 'agent-runtime/skills', agentRuntimeFiles);
     agentRuntime = inspectPackagedAgentRuntime(agentRuntimeFiles, raw);
-    const externallyProvidedTools = agentRuntime.unresolvedViewTools.filter((name) => !REPOSITORY_PROVIDED_TOOL_NAMES.has(name));
+    const externallyProvidedTools = (agentRuntime.unresolvedSurfaceTools ?? agentRuntime.unresolvedViewTools)
+      .filter((name) => !REPOSITORY_PROVIDED_TOOL_NAMES.has(name));
     if (externallyProvidedTools.length > 0) {
-      warnings.push(`View tools are not packaged in agent-runtime/tools and must be supplied by a separately governed MCP server: ${externallyProvidedTools.join(', ')}`);
+      warnings.push(`Surface tools are not packaged in agent-runtime/tools and must be supplied by a separately governed MCP server: ${externallyProvidedTools.join(', ')}`);
     }
   } catch (error) {
     errors.push(error instanceof Error ? error.message : String(error));
@@ -281,6 +289,7 @@ export const validateExtension = async (extensionDirectory) => {
 
   const nativeViews = [];
   const declarativeViews = [];
+  const htmlArtifacts = [];
   if (extension) {
     const declaredActions = new Set(extension.actions.map((action) => action.id));
     for (const view of extension.views) {
@@ -303,6 +312,21 @@ export const validateExtension = async (extensionDirectory) => {
         errors.push(`${view.id}: ${error instanceof Error ? error.message : String(error)}`);
       }
     }
+    for (const artifact of extension.artifacts) {
+      if (artifact.tools.length === 0) warnings.push(`${artifact.id}: no Agent tool is bound to this HTML Artifact`);
+      const toolName = artifact.tools[0] ?? '';
+      try {
+        const descriptor = await runtime.getInstalledArtifactDescriptor(artifact.id, toolName);
+        const document = await runtime.getInstalledArtifactDocument(extension.id, artifact.id);
+        if (descriptor.artifact.id !== artifact.id || !document.source.includes('window,"openchamber"')) {
+          errors.push(`${artifact.id}: installed HTML Artifact Business Bridge was not materialized`);
+        } else {
+          htmlArtifacts.push(artifact.id);
+        }
+      } catch (error) {
+        errors.push(`${artifact.id}: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
     if (nativeViews.length > 0) {
       if (!isRecord(raw.trust) || raw.trust.mode !== 'native-code') {
         errors.push(`${manifestPath}: Native views require trust.mode = native-code`);
@@ -322,6 +346,7 @@ export const validateExtension = async (extensionDirectory) => {
     version: extension.version,
     declarativeViews,
     nativeViews,
+    htmlArtifacts,
     actions: extension.actions.map((action) => action.id),
     agentRuntime,
     warnings,
@@ -452,9 +477,9 @@ const parseCommandLine = (argv) => {
   return { command, positional, options };
 };
 
-const usage = `OpenChamber Interactive UI extension CLI
+const usage = `OpenChamber OCIX extension CLI
 
-Create a Declarative + Trusted Native starter:
+Create a mixed Interactive UI + HTML Artifact starter:
   node scripts/interactive-ui-extension.mjs create <target> --id com.acme.operations --name "Acme Operations" [--tool-prefix operations]
 
 Validate an extension without making network requests or executing Native code:
@@ -489,7 +514,7 @@ const main = async () => {
     if (!positional) throw new Error('Extension directory is required');
     const result = await validateExtension(positional);
     console.log(`Valid OCIX extension ${result.extensionId}@${result.version}`);
-    console.log(`Declarative views: ${result.declarativeViews.length}; Native views: ${result.nativeViews.length}; actions: ${result.actions.length}`);
+    console.log(`Interactive UI: ${result.declarativeViews.length} Declarative + ${result.nativeViews.length} Trusted Native; HTML Artifacts: ${result.htmlArtifacts.length}; actions: ${result.actions.length}`);
     console.log(`Agent Runtime: ${result.agentRuntime.tools.length} tools; ${result.agentRuntime.skills.length} skills`);
     for (const warning of result.warnings) console.warn(`Warning: ${warning}`);
     return;

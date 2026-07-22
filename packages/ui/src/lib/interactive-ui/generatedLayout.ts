@@ -7,6 +7,9 @@ const MAX_ROWS = 50;
 const MAX_COLUMNS = 8;
 const MAX_SERIES = 5;
 const MAX_GRAPH_ITEMS = 60;
+const MAX_KANBAN_COLUMNS = 6;
+const MAX_KANBAN_CARDS = 40;
+const MAX_HEATMAP_CELLS = 60;
 const MAX_TEXT_LENGTH = 6_000;
 const SAFE_DATA_KEY = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/;
 const SAFE_GRAPH_ID = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,79}$/;
@@ -336,6 +339,78 @@ export const sanitizeGeneratedLayout = (input: unknown): DeclarativeViewNode | n
         ...(sparkValue !== undefined ? { value: sparkValue } : {}),
         values,
       };
+    }
+
+    if (source.type === 'gauge') {
+      const rawValue = typeof source.value === 'number' && Number.isFinite(source.value) ? source.value : 0;
+      const rawMinimum = typeof source.minimum === 'number' && Number.isFinite(source.minimum) ? source.minimum : 0;
+      const rawMaximum = typeof source.maximum === 'number' && Number.isFinite(source.maximum) ? source.maximum : 100;
+      const minimum = Math.min(rawMinimum, rawMaximum - 1);
+      const maximum = Math.max(rawMaximum, minimum + 1);
+      const value = Math.max(minimum, Math.min(maximum, rawValue));
+      const detail = sanitizeString(source.detail, 240);
+      const unit = sanitizeString(source.unit, 40);
+      const tone = sanitizeTone(source.tone);
+      return {
+        type: 'gauge',
+        ...(title ? { title } : {}),
+        ...(label ? { label } : {}),
+        value,
+        minimum,
+        maximum,
+        ...(detail ? { detail } : {}),
+        ...(unit ? { unit } : {}),
+        ...(tone ? { tone } : {}),
+      };
+    }
+
+    if (source.type === 'heatmap') {
+      const rawCells = Array.isArray(source.cells) ? source.cells : Array.isArray(source.data) ? source.data : [];
+      const cells = compact(rawCells.slice(0, MAX_HEATMAP_CELLS).map((cell) => {
+        const entry = asRecord(cell);
+        if (!entry) return null;
+        const row = sanitizeString(entry.row, 80);
+        const column = sanitizeString(entry.column, 80);
+        const cellLabel = sanitizeString(entry.label, 120);
+        const value = typeof entry.value === 'number' && Number.isFinite(entry.value) ? entry.value : undefined;
+        if (!row || !column || value === undefined) return null;
+        return { row, column, value, ...(cellLabel ? { label: cellLabel } : {}) };
+      }));
+      return { type: 'heatmap', ...(title ? { title } : {}), cells };
+    }
+
+    if (source.type === 'kanban') {
+      const columns = Array.isArray(source.columns)
+        ? compact(source.columns.slice(0, MAX_KANBAN_COLUMNS).map((column) => {
+          const entry = asRecord(column);
+          if (!entry || !isSafeDataKey(entry.id)) return null;
+          const columnTitle = sanitizeString(entry.title ?? entry.label, 120);
+          const tone = sanitizeTone(entry.tone);
+          return columnTitle ? { id: entry.id, title: columnTitle, ...(tone ? { tone } : {}) } : null;
+        }))
+        : [];
+      const columnIds = new Set(columns.map((column) => column.id));
+      const cards = Array.isArray(source.cards)
+        ? compact(source.cards.slice(0, MAX_KANBAN_CARDS).map((card) => {
+          const entry = asRecord(card);
+          if (!entry || !isSafeDataKey(entry.column) || !columnIds.has(entry.column)) return null;
+          const cardTitle = sanitizeString(entry.title, 160);
+          if (!cardTitle) return null;
+          const id = isSafeDataKey(entry.id) ? entry.id : undefined;
+          const description = sanitizeString(entry.description, 500);
+          const badge = sanitizeString(entry.badge, 80);
+          const tone = sanitizeTone(entry.tone);
+          return {
+            ...(id ? { id } : {}),
+            column: entry.column,
+            title: cardTitle,
+            ...(description ? { description } : {}),
+            ...(badge ? { badge } : {}),
+            ...(tone ? { tone } : {}),
+          };
+        }))
+        : [];
+      return { type: 'kanban', ...(title ? { title } : {}), columns, cards };
     }
 
     if (source.type === 'git-graph') {

@@ -302,6 +302,7 @@ const isUrlAuthReadableHttpPath = (pathname) => {
     || pathname.startsWith('/api/fs/serve/')
     || pathname.startsWith('/api/preview/proxy/')
     || /^\/api\/interactive-ui\/extensions\/[^/]+\/native\/[^/]+$/.test(pathname)
+    || /^\/api\/interactive-ui\/extensions\/[^/]+\/artifacts\/[^/]+$/.test(pathname)
     || /^\/api\/interactive-ui\/artifacts\/[a-f0-9]{64}\/document$/.test(pathname)
     || /^\/api\/projects\/[^/]+\/icon$/.test(pathname);
 };

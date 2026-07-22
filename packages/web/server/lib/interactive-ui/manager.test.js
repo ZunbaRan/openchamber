@@ -25,6 +25,7 @@ const createPackage = async ({
   extensionName = 'Acme Operations',
   toolName = 'operations_open',
   skillName = 'acme-operations',
+  htmlArtifact = false,
 } = {}) => {
   const domain = extensionId.split(/[._-]/).at(-1);
   const directory = await createTemporaryDirectory('ocix-manager-extension-');
@@ -38,7 +39,7 @@ const createPackage = async ({
     version,
     agentRouting: {
       domain,
-      intents: [`${domain}.overview`],
+      intents: [`${domain}.overview`, ...(htmlArtifact ? [`${domain}.explorer`] : [])],
       examples: { en: [`Open ${extensionName}`] },
       dataAuthority: 'user-provided',
     },
@@ -51,6 +52,16 @@ const createPackage = async ({
       routing: { intents: [`${domain}.overview`], priority: 80, operation: 'read' },
       displayModes: ['inline', 'workspace'],
     }],
+    ...(htmlArtifact ? {
+      artifacts: [{
+        id: `${extensionId}.explorer`,
+        title: `${extensionName} Explorer`,
+        entry: 'ui/explorer.html',
+        tools: [`${toolName}_explore`],
+        routing: { intents: [`${domain}.explorer`], priority: 82, operation: 'read' },
+        capabilities: { scripts: true, businessActions: [] },
+      }],
+    } : {}),
     actions: [],
     permissions: { network: [] },
     trust: { mode: 'declarative', signature: 'production' },
@@ -60,6 +71,10 @@ const createPackage = async ({
     id: `${extensionId}.overview`,
     layout: { type: 'text', value: `Version ${version}` },
   }));
+  if (htmlArtifact) {
+    await fs.writeFile(path.join(directory, 'ui', 'explorer.html'), '<!doctype html><html><body><script>document.body.dataset.ready="true"</script></body></html>');
+    await fs.writeFile(path.join(directory, 'agent-runtime', 'tools', `${toolName}_explore.ts`), `export default { description: "Explore ${extensionName}" };\n`);
+  }
   await fs.writeFile(path.join(directory, 'agent-runtime', 'tools', `${toolName}.ts`), `export default { description: ${JSON.stringify(`Open ${extensionName}`)}, execute: async () => ({ version: ${JSON.stringify(version)} }) };\n`);
   await fs.writeFile(path.join(directory, 'agent-runtime', 'skills', skillName, 'SKILL.md'), `---\nname: ${skillName}\ndescription: Open ${extensionName} views.\n---\n\nUse ${toolName}.\n`);
   return createExtensionPackage({
@@ -106,6 +121,9 @@ describe('Interactive UI extension manager', () => {
     expect(installedInteractiveUITool).toContain('interactive_ui requires at least one supported widget');
     expect(installedInteractiveUITool).toContain('normalizeTableCellValue');
     expect(installedInteractiveUITool).toContain('只补一句');
+    const installedInteractiveUIGalleryTool = await fs.readFile(path.join(opencodeConfigDirectory, 'tools', 'interactive_ui_gallery.ts'), 'utf8');
+    expect(installedInteractiveUIGalleryTool).toContain('com.openchamber.builtin.interactive-ui.gallery');
+    expect(installedInteractiveUIGalleryTool).toContain("type: 'heatmap'");
     const installedHTMLArtifactTool = await fs.readFile(path.join(opencodeConfigDirectory, 'tools', 'html_artifact.ts'), 'utf8');
     expect(installedHTMLArtifactTool).toContain('openchamber://html-artifact-result/v1');
     expect(installedHTMLArtifactTool).toContain('禁止硬编码白色画布');
@@ -116,7 +134,7 @@ describe('Interactive UI extension manager', () => {
     expect(await manager.list()).toMatchObject({
       builtInRuntime: {
         id: 'com.openchamber.builtin.interactive-ui',
-        version: '1.0.0',
+        version: '1.1.0',
         status: 'ready',
       },
       extensions: [],
@@ -232,6 +250,24 @@ describe('Interactive UI extension manager', () => {
     expect((await fs.readdir(path.join(opencodeConfigDirectory, 'skills'))).sort()).toEqual(['acme-finance', 'acme-operations']);
   });
 
+  it('reviews and installs a mixed Interactive UI plus HTML Artifact package', async () => {
+    const dataDirectory = await createTemporaryDirectory('ocix-manager-hybrid-data-');
+    const opencodeConfigDirectory = await createTemporaryDirectory('ocix-manager-hybrid-config-');
+    const keys = generatePublisherKeyPair();
+    const hybrid = await createPackage({ version: '1.0.0', keys, htmlArtifact: true });
+    const manager = createInteractiveUIExtensionManager({ dataDirectory, opencodeConfigDirectory });
+    const inspection = await manager.inspectPackage(hybrid.buffer);
+
+    expect(inspection.permissions).toMatchObject({ nativeCode: false, sandboxedArtifacts: true });
+    expect(inspection.agentRouting.views).toHaveLength(1);
+    expect(inspection.agentRouting.artifacts).toEqual([expect.objectContaining({ id: 'com.acme.operations.explorer' })]);
+    await expect(manager.installPackage(hybrid.buffer, {
+      confirmedPublisherFingerprint: inspection.publisher.fingerprint,
+    })).resolves.toMatchObject({ installed: true });
+    expect(await fs.readFile(path.join(opencodeConfigDirectory, 'tools', 'operations_open_explore.ts'), 'utf8'))
+      .toContain('Explore Acme Operations');
+  });
+
   it('refuses to overwrite an unmanaged global OpenCode Tool', async () => {
     const dataDirectory = await createTemporaryDirectory('ocix-manager-conflict-');
     const opencodeConfigDirectory = await createTemporaryDirectory('ocix-opencode-conflict-');
@@ -278,6 +314,25 @@ describe('Interactive UI extension manager', () => {
     await expect(manager.setEnabled('com.acme.operations', false)).rejects.toMatchObject({ code: 'agent_runtime_modified' });
     expect(await fs.readFile(toolPath, 'utf8')).toContain('locally modified');
     expect((await manager.list()).extensions[0].enabled).toBe(true);
+  });
+
+  it('fails closed when an installed UI asset is modified after signature verification', async () => {
+    const dataDirectory = await createTemporaryDirectory('ocix-manager-integrity-data-');
+    const opencodeConfigDirectory = await createTemporaryDirectory('ocix-opencode-integrity-');
+    const keys = generatePublisherKeyPair();
+    const extensionPackage = await createPackage({ version: '1.0.0', keys });
+    const manager = createInteractiveUIExtensionManager({ dataDirectory, opencodeConfigDirectory });
+    const inspection = await manager.inspectPackage(extensionPackage.buffer);
+    await manager.installPackage(extensionPackage.buffer, { confirmedPublisherFingerprint: inspection.publisher.fingerprint });
+
+    await fs.appendFile(path.join(dataDirectory, 'extensions', 'com.acme.operations', '1.0.0', 'ui', 'view.json'), '\n');
+    await expect(manager.getEnabledExtensionRoots()).rejects.toMatchObject({
+      code: 'extension_integrity_failed',
+      status: 409,
+    });
+    await expect(manager.installPackage(extensionPackage.buffer, {
+      confirmedPublisherFingerprint: inspection.publisher.fingerprint,
+    })).rejects.toMatchObject({ code: 'extension_integrity_failed' });
   });
 
   it('does not leave extracted code behind when the persistent state commit fails', async () => {

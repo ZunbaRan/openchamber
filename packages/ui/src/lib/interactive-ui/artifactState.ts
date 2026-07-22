@@ -5,6 +5,8 @@ export type HTMLArtifactFailureState =
   | 'scripts-disabled'
   | 'blocked'
   | 'crashed'
+  | 'stopped'
+  | 'timed-out'
   | 'corrupt'
   | 'error';
 
@@ -37,5 +39,5 @@ export const classifyHTMLArtifactError = (error: unknown): HTMLArtifactFailureSt
 };
 
 export const canRetryHTMLArtifactFailure = (state: HTMLArtifactFailureState): boolean => (
-  state === 'crashed' || state === 'corrupt' || state === 'error'
+  state === 'crashed' || state === 'stopped' || state === 'timed-out' || state === 'corrupt' || state === 'error'
 );

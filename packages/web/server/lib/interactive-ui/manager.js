@@ -20,6 +20,7 @@ const FETCH_TIMEOUT_MS = 15_000;
 const ID_PATTERN = /^[a-z0-9]+(?:[._-][a-z0-9]+)+$/i;
 const KEY_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 const SEMVER_PATTERN = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
+const SHA256_PATTERN = /^sha256-[A-Za-z0-9+/]{43}=$/;
 const BLOCKED_KEY_IDS = new Set(['__proto__', 'prototype', 'constructor']);
 
 class InteractiveUIExtensionManagerError extends Error {
@@ -154,7 +155,20 @@ const sanitizeMarketplaces = (marketplaces) => ({
   marketplaces: Object.values(marketplaces.marketplaces ?? {}).map(({ publicKey: _publicKey, ...marketplace }) => marketplace),
 });
 
-const sanitizeExtensions = (state) => Object.values(state.extensions ?? {}).map((extension) => clone(extension));
+const sanitizeExtensions = (state) => Object.values(state.extensions ?? {}).map((extension) => {
+  const result = clone(extension);
+  for (const version of Object.values(result.versions ?? {})) {
+    if (isRecord(version)) delete version.fileHashes;
+  }
+  return result;
+});
+
+const normalizeStoredFilePath = (value) => {
+  if (typeof value !== 'string' || !value || value.includes('\\') || value.includes('\0')) return null;
+  const normalized = nodePath.posix.normalize(value);
+  if (normalized !== value || normalized.startsWith('/') || normalized === '..' || normalized.startsWith('../')) return null;
+  return normalized;
+};
 
 const summarizeAgentRouting = (manifest) => isRecord(manifest?.agentRouting)
   ? {
@@ -169,6 +183,17 @@ const summarizeAgentRouting = (manifest) => isRecord(manifest?.agentRouting)
               intents: clone(view.routing.intents ?? []),
               priority: view.routing.priority ?? 50,
               operation: view.routing.operation ?? 'read',
+            }
+          : null,
+      })),
+      artifacts: (Array.isArray(manifest.artifacts) ? manifest.artifacts : []).map((artifact) => ({
+        id: artifact.id,
+        tools: clone(artifact.tools ?? []),
+        routing: isRecord(artifact.routing)
+          ? {
+              intents: clone(artifact.routing.intents ?? []),
+              priority: artifact.routing.priority ?? 50,
+              operation: artifact.routing.operation ?? 'read',
             }
           : null,
       })),
@@ -193,6 +218,7 @@ const summarizeVerifiedPackage = (verified) => ({
       ? verified.manifest.permissions.network.filter((value) => typeof value === 'string')
       : [],
     nativeCode: verified.manifest.trust?.mode === 'native-code',
+    sandboxedArtifacts: Array.isArray(verified.manifest.artifacts) && verified.manifest.artifacts.length > 0,
   },
   agentRouting: summarizeAgentRouting(verified.manifest),
   agentRuntime: clone(verified.agentRuntime),
@@ -255,6 +281,10 @@ export const createInteractiveUIExtensionManager = ({
         if (!SEMVER_PATTERN.test(version) || !isRecord(metadata) || metadata.version !== version) {
           throw new InteractiveUIExtensionManagerError('Extension manager state is invalid', 'manager_data_corrupt', 500);
         }
+        if (metadata.fileHashes !== undefined && (!isRecord(metadata.fileHashes)
+          || Object.entries(metadata.fileHashes).some(([filePath, hash]) => !normalizeStoredFilePath(filePath) || !SHA256_PATTERN.test(hash ?? '')))) {
+          throw new InteractiveUIExtensionManagerError('Extension manager state is invalid', 'manager_data_corrupt', 500);
+        }
       }
     }
     return state;
@@ -314,6 +344,76 @@ export const createInteractiveUIExtensionManager = ({
     }
   };
 
+  const fileHashesFromPackageIndex = (packageIndex) => Object.fromEntries(
+    (Array.isArray(packageIndex?.files) ? packageIndex.files : []).map((file) => [file.path, file.sha256]),
+  );
+
+  const collectInstalledFiles = async (directory, current = directory, result = []) => {
+    const entries = await fsImpl.readdir(current, { withFileTypes: true });
+    for (const entry of entries) {
+      const absolute = pathImpl.join(current, entry.name);
+      const stat = await fsImpl.lstat(absolute);
+      if (stat.isSymbolicLink()) {
+        throw new InteractiveUIExtensionManagerError('Installed extension contains a symlink', 'extension_integrity_failed', 409);
+      }
+      if (stat.isDirectory()) {
+        await collectInstalledFiles(directory, absolute, result);
+        continue;
+      }
+      if (!stat.isFile()) {
+        throw new InteractiveUIExtensionManagerError('Installed extension contains an unsupported filesystem entry', 'extension_integrity_failed', 409);
+      }
+      result.push(pathImpl.relative(directory, absolute).split(pathImpl.sep).join('/'));
+    }
+    return result;
+  };
+
+  const verifyInstalledVersionIntegrity = async (extension, metadata, directory) => {
+    if (!isRecord(metadata.fileHashes) || Object.keys(metadata.fileHashes).length === 0) {
+      throw new InteractiveUIExtensionManagerError(
+        `${extension.id}@${metadata.version} has no signed file integrity record; reinstall the extension`,
+        'extension_integrity_unavailable',
+        409,
+      );
+    }
+    const expectedPaths = Object.keys(metadata.fileHashes).sort();
+    let actualPaths;
+    try {
+      actualPaths = (await collectInstalledFiles(directory)).sort();
+    } catch (error) {
+      if (error?.code === 'ENOENT') {
+        throw new InteractiveUIExtensionManagerError(
+          `${extension.id}@${metadata.version} is missing from the managed version store`,
+          'extension_integrity_failed',
+          409,
+        );
+      }
+      throw error;
+    }
+    if (expectedPaths.length !== actualPaths.length || expectedPaths.some((filePath, index) => filePath !== actualPaths[index])) {
+      throw new InteractiveUIExtensionManagerError(
+        `${extension.id}@${metadata.version} has been modified since installation`,
+        'extension_integrity_failed',
+        409,
+      );
+    }
+    for (const relativePath of expectedPaths) {
+      const target = pathImpl.join(directory, ...relativePath.split('/'));
+      const relative = pathImpl.relative(directory, target);
+      if (!relative || relative.startsWith('..') || pathImpl.isAbsolute(relative)) {
+        throw new InteractiveUIExtensionManagerError('Installed extension integrity path is invalid', 'extension_integrity_failed', 409);
+      }
+      const content = await fsImpl.readFile(target);
+      if (packageHash(cryptoImpl, content) !== metadata.fileHashes[relativePath]) {
+        throw new InteractiveUIExtensionManagerError(
+          `${extension.id}@${metadata.version} has been modified since installation`,
+          'extension_integrity_failed',
+          409,
+        );
+      }
+    }
+  };
+
   const validateStagedExtension = async (directory, verified) => {
     const runtime = createInteractiveUIRuntime({
       fsPromises: fsImpl,
@@ -335,9 +435,13 @@ export const createInteractiveUIExtensionManager = ({
       for (const view of listed.extensions[0].views) {
         await runtime.getViewDescriptor(view.id, view.tools[0] ?? '');
       }
+      for (const artifact of listed.extensions[0].artifacts) {
+        await runtime.getInstalledArtifactDescriptor(artifact.id, artifact.tools[0] ?? '');
+        await runtime.getInstalledArtifactDocument(listed.extensions[0].id, artifact.id);
+      }
     } catch (error) {
       throw new InteractiveUIExtensionManagerError(
-        error instanceof Error ? error.message : 'Installed extension view validation failed',
+        error instanceof Error ? error.message : 'Installed extension surface validation failed',
         'extension_validation_failed',
       );
     }
@@ -378,7 +482,13 @@ export const createInteractiveUIExtensionManager = ({
     const existingVersion = nextState.extensions[id]?.versions?.[version];
     if (existingVersion) {
       if (existingVersion.packageHash === verified.packageHash) {
+        await verifyInstalledVersionIntegrity(
+          { id },
+          { version, fileHashes: fileHashesFromPackageIndex(verified.packageIndex) },
+          destination,
+        );
         existingVersion.agentRuntime = clone(verified.agentRuntime);
+        existingVersion.fileHashes = fileHashesFromPackageIndex(verified.packageIndex);
         const openCode = await commitStateWithAgentRuntime(previousState, nextState);
         return { extension: clone(nextState.extensions[id]), installed: false, openCode };
       }
@@ -426,6 +536,7 @@ export const createInteractiveUIExtensionManager = ({
           fingerprint: verified.publisherFingerprint,
         },
         agentRuntime: clone(verified.agentRuntime),
+        fileHashes: fileHashesFromPackageIndex(verified.packageIndex),
       };
       nextState.extensions[id] = next;
       const openCode = await commitStateWithAgentRuntime(previousState, nextState);
@@ -502,8 +613,12 @@ export const createInteractiveUIExtensionManager = ({
       if (!active) continue;
       const directory = pathImpl.join(versionsDirectory, extension.id, extension.activeVersion);
       try {
-        if ((await fsImpl.stat(directory)).isDirectory()) roots.push(directory);
+        if ((await fsImpl.stat(directory)).isDirectory()) {
+          await verifyInstalledVersionIntegrity(extension, active, directory);
+          roots.push(directory);
+        }
       } catch (error) {
+        if (error?.code === 'extension_integrity_failed' || error?.code === 'extension_integrity_unavailable') throw error;
         if (error?.code !== 'ENOENT') logger.warn?.('[InteractiveUI] Failed to inspect managed extension', error);
       }
     }

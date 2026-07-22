@@ -233,11 +233,12 @@ try {
   }));
   assert.equal(confirmation.response.status, 409);
   assert.equal(confirmation.payload.confirmationRequired, true);
+  assert.match(confirmation.payload.confirmationToken, /^oc_confirmation_/);
 
   const approval = await readJson(await fetch(`${gateway}/api/interactive-ui/actions/sales.order.approve`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ ...actionContext, input: approvalInput, confirmed: true }),
+    body: JSON.stringify({ ...actionContext, input: approvalInput, confirmationToken: confirmation.payload.confirmationToken }),
   }));
   assert.equal(approval.response.status, 200);
   assert.equal(approval.payload.data.order.status, 'approved');
@@ -277,6 +278,7 @@ try {
   }));
   assert.equal(crmConfirmation.response.status, 409);
   assert.equal(crmConfirmation.payload.confirmationRequired, true);
+  assert.match(crmConfirmation.payload.confirmationToken, /^oc_confirmation_/);
 
   const crmAdvance = await readJson(await fetch(`${gateway}/api/interactive-ui/actions/crm.opportunity.advance`, {
     method: 'POST',
@@ -284,7 +286,7 @@ try {
     body: JSON.stringify({
       ...crmActionContext,
       input: { opportunityId: firstOpportunity.id, revision: firstOpportunity.revision },
-      confirmed: true,
+      confirmationToken: crmConfirmation.payload.confirmationToken,
     }),
   }));
   assert.equal(crmAdvance.response.status, 200);

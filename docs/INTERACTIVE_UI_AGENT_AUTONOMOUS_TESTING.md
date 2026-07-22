@@ -22,8 +22,8 @@
 |---|---|---|
 | Declarative schema/sanitizer/renderer | 对应单元测试、UI type-check/lint | functional、security、visual、model routing（若改变路由/表达力） |
 | OCIX manifest/manager/Tool/Skill/Gateway | extension 与 server 定向测试 | functional、security、model routing |
-| HTML Artifact parser/store/Bridge/Broker | Artifact 单元测试与 static browser | security；scripts 改动再跑 opt-in browser；visual/performance |
-| Tool description、Skill、system routing | 定向路由测试 | 同一 16 条语料的 model routing |
+| HTML Artifact parser/store/Bridge/Broker | Generated + Installed Artifact 单元测试与 browser | security；Business Bridge 改动增加真实 Gateway query/write；visual/performance |
+| Tool description、Skill、system routing | 定向路由测试 | 同一 17 条语料的 model routing |
 | ToolPart/聊天呈现/样式/响应式 | UI 测试与 type-check/lint | real Host、visual 62 Golden |
 | Electron、自定义协议、bundled Runtime、资源 | Electron 定向测试/build | 重新 package、packaged desktop、performance |
 | 新增/删除/重命名源码或 export/import shape | 所属测试、type-check/lint | `bun run dead-code` 并人工读报告 |
@@ -37,7 +37,7 @@
 
 1. 读取根 `AGENTS.md`、匹配 Skill、最近的 `DOCUMENTATION.md` 和 package README；
 2. 记录本次改动的最高风险、实际消费者和需要支持的 Runtime；
-3. 检查所需 fixture、签名测试包和 Provider 是否可用；不可用项先标记为潜在 external blocker，不降低阈值；
+3. 检查所需 fixture、签名测试包和本次明确要求的 Provider 是否可用；普通开发默认只要求 Qwen3.7 Plus，额外 Provider 不可用不构成阻断；
 4. 使用固定语料 `examples/interactive-ui/unified-acceptance-corpus.json`；除非任务本身是修改协议/语料，不在验收失败后临时改 prompt、acceptable tools、viewport 或阈值；
 5. 明确是否需要重新构建 Web 或 Electron 产物，不能复用来源不明的旧产物。
 
@@ -75,13 +75,23 @@ bun run test:interactive-ui-functional
 
 - 内置 `interactive_ui`、`html_artifact` 和 Skill 被真实 OpenCode 发现；
 - 签名 Simple CRM OCIX 的 Tool/Skill 被发现；
-- Installed Declarative 与 Trusted Native 都能物化；
+- 同一混合包的 Installed Declarative、Trusted Native 与 Third-party HTML Artifact 都能物化；
 - CRM 返回固定非空业务数据；
-- 未确认/取消不写入，确认后 revision 和查询结果更新；
+- Interactive UI 与 HTML Artifact 均通过同一 Gateway 查询；未确认/取消不写入，确认后 revision 和查询结果更新；
 - 401/403/409/upstream unavailable 被稳定分类且脱敏；
 - install、upgrade、disable、enable、rollback、uninstall、清凭据和重装未配置等生命周期成立。
 
 业务测试结果必须分别记录 `Tool selected`、`View rendered`、`Business data loaded`。任何 fallback 或空 shell 都不能让这一批通过。
+
+该功能验收覆盖真实签名、真实 Agent Runtime、Gateway 和业务 API，但不单独证明正常聊天 ToolPart 的浏览器呈现。涉及 ToolPart 或会话路由的发布候选还必须追加真实 OpenChamber 会话浏览器验收。
+
+在已通过 `bun run demo:interactive-ui:start` 启动的本地 Host 上运行：
+
+```bash
+bun run test:interactive-ui-conversation-browser
+```
+
+该验收默认使用 `alibaba-coding-plan-cn/qwen3.7-plus`，临时安装同一签名混合 CRM 包并创建两个真实会话。它分别断言 Third-party HTML Artifact 与 Installed Interactive UI 由正常聊天 `ToolPart` 内联渲染，且跨 OOPIF sandbox 读取到 `Connected` 和非空 CRM 数据。截图与报告写入 `.tmp/interactive-ui-conversation-browser/`；测试结束后必须卸载临时扩展、清除连接与本次新增的 publisher trust，并归档测试会话。
 
 ### Phase D：安全、视觉和模型路由
 
@@ -98,9 +108,9 @@ bun run test:interactive-ui-model-routing
 - 安全测试观察实际网络请求、导航、Bridge 消息、Runtime error 和敏感信息，而不是只看 CSP/sandbox 字符串；
 - 常规视觉测试只比较正式 Golden；不得自动调用 update 命令；
 - Golden 只允许在有意视觉变更、人工逐张复核后通过 `bun run test:interactive-ui-visual:update` 更新；
-- 模型测试对所有 Provider 使用同一 16 条语料和同一阈值；
+- 默认模型门禁使用 Qwen3.7 Plus；显式选择多 Provider 对照时，对所有选定 Provider 使用同一 17 条语料和同一阈值；
 - 临时 OCIX 安装后等待一次成功 Tool inventory，再开始模型用例；卸载后也必须等待成功清单证明 Tool 消失；
-- 不可用模型写入 `unavailableModels` / `externalBlockers`，不能换模型或降阈值冒充完成。
+- 只有本次明确要求的不可用模型才写入 `externalBlockers`；可选对照模型写入 `unavailableModels`，不能换模型或降阈值冒充完成。
 
 可以通过以下环境变量只做诊断性子集，但子集通过不能替代完整发布矩阵：
 
@@ -149,6 +159,8 @@ bun run test:interactive-ui-unified
 .tmp/interactive-ui-packaged-desktop/report.json
 .tmp/interactive-ui-runtime-performance/report.json
 ```
+
+`.tmp/interactive-ui-conversation-browser/report.json` 是 ToolPart 正常对话的追加发布证据，当前聚合器不会自动读取它；涉及聊天渲染的 Agent 必须单独检查其中 `ok`、两类 surface 断言和截图。
 
 组合结果写入 `.tmp/interactive-ui-unified-acceptance/report.json`。
 
@@ -219,7 +231,7 @@ bun run demo:interactive-ui:stop
 组合报告的含义：
 
 - `ok: true`：本机当前可执行的门禁全部通过；
-- `complete: true`：所有要求模型和平台都完成，且没有 external blocker；
+- `complete: true`：Qwen3.7 Plus及本次明确要求的其他模型/平台都完成，且没有 external blocker；
 - `complete: false` 不等于本地失败，必须同时说明缺失 Provider/平台；
 - `releaseCandidate: static-first-tested-runtimes`：只对已验证 Runtime 发布 stable 能力；
 - Scripts Artifact 继续列在 `experimentalDefaultOff`。
@@ -248,7 +260,7 @@ Agent 最终汇报至少包括：
 - Scripts HTML Artifact：`experimental / default-off`；
 - VS Code / active E2EE relay Artifact：`unsupported`；
 - Windows/Linux Desktop、Capacitor：`unverified`；
-- 未连接的必需 Provider：`external blocker`，保持原语料等待补跑。
+- 未连接但被当前任务明确指定为必需的 Provider：`external blocker`，保持原语料等待补跑；未指定的 OpenAI 等对照不阻塞普通开发。
 
 这些标签必须随新证据更新，不能凭静态分析自行升级。
 
@@ -259,4 +271,3 @@ Agent 最终汇报至少包括：
 - [开发踩坑手册](./INTERACTIVE_UI_DEVELOPMENT_PITFALLS.md)
 - [OCIX 与桌面打包踩坑手册](./INTERACTIVE_UI_PACKAGING_PITFALLS.md)
 - [HTML Artifact Runtime ADR](./HTML_ARTIFACT_RUNTIME_ADR.md)
-

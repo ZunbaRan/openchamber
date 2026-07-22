@@ -60,7 +60,7 @@ const displayMetadata = (envelope) => ({
   allowExpand: envelope.display.allowExpand,
 });
 
-const validateHTMLSource = (html, scripts) => {
+export const validateHTMLArtifactSource = (html, scripts) => {
   if (html.includes('\0')) {
     throw new HTMLArtifactError('Artifact HTML contains invalid bytes', 'invalid_artifact_html');
   }
@@ -140,7 +140,7 @@ const validateEnvelope = (value) => {
     || value.display.inlineHeight > 900) {
     throw new HTMLArtifactError('Artifact display values are invalid', 'invalid_artifact_display');
   }
-  validateHTMLSource(value.html, value.capabilities.scripts);
+  validateHTMLArtifactSource(value.html, value.capabilities.scripts);
 
   const normalized = JSON.parse(canonicalizeEnvelope({
     ...value,
@@ -172,7 +172,19 @@ const artifactMissing = () => new HTMLArtifactError('Artifact cache entry was no
   rematerializable: true,
 });
 
-const BRIDGE_BOOTSTRAP = String.raw`<script>(()=>{"use strict";let channel="",sequence=0,observer;const send=(type,payload={})=>{if(!channel)return;parent.postMessage({source:"openchamber-artifact",direction:"artifact-to-host",bridgeVersion:1,channelId:channel,sequence:++sequence,type,payload},"*")};const resize=()=>send("artifact.resize",{height:Math.max(120,Math.min(5000,Math.ceil(document.documentElement.getBoundingClientRect().height)))});addEventListener("message",event=>{const value=event.data;if(event.source!==parent||!value||value.source!=="openchamber-host"||value.direction!=="host-to-artifact"||value.bridgeVersion!==1||value.type!=="host.init"||typeof value.channelId!=="string")return;channel=value.channelId;const payload=value.payload||{};for(const [name,token] of Object.entries(payload.tokens||{})){if(/^--ocix-[a-z0-9-]+$/.test(name)&&typeof token==="string"&&token.length<=160)document.documentElement.style.setProperty(name,token)}document.documentElement.dataset.ocixTheme=payload.theme==="dark"?"dark":"light";document.documentElement.lang=typeof payload.locale==="string"?payload.locale:"";dispatchEvent(new CustomEvent("openchamber:host-init",{detail:payload}));send("artifact.ready",{});resize();if(!observer&&typeof ResizeObserver==="function"){observer=new ResizeObserver(resize);observer.observe(document.documentElement)}});addEventListener("error",event=>send("artifact.reportError",{code:"runtime_error",message:String(event.message||"Artifact error").slice(0,500),line:Number(event.lineno)||0,column:Number(event.colno)||0}));Object.defineProperty(window,"openchamberArtifact",{value:Object.freeze({send}),configurable:false,writable:false})})();</script>`;
+const createBridgeBootstrap = ({ businessEnabled = false } = {}) => {
+  const businessState = businessEnabled
+    ? String.raw`const pending=new Map();const finish=value=>{const payload=value&&value.payload||{},request=pending.get(payload.requestId);if(!request)return;clearTimeout(request.timer);pending.delete(payload.requestId);if(payload.ok)request.resolve(payload.data);else{const error=new Error(typeof payload.error==="string"?payload.error:"Business request failed");if(typeof payload.code==="string")error.code=payload.code;request.reject(error)}};`
+    : '';
+  const businessMessageHandler = businessEnabled
+    ? String.raw`if(value.type==="host.businessResult"&&value.channelId===channel){finish(value);return}`
+    : '';
+  const businessBridge = businessEnabled
+    ? String.raw`const request=(intent,action,input)=>new Promise((resolve,reject)=>{if(!channel){reject(new Error("OpenChamber Host is not ready"));return}if(typeof action!=="string"||!/^[a-z0-9]+(?:[._-][a-z0-9]+)+$/i.test(action)){reject(new Error("Business action is invalid"));return}const requestId=globalThis.crypto&&typeof globalThis.crypto.randomUUID==="function"?globalThis.crypto.randomUUID():Date.now()+"-"+Math.random().toString(36).slice(2),timer=setTimeout(()=>{pending.delete(requestId);reject(new Error("Business request timed out"))},20000);pending.set(requestId,{resolve,reject,timer});send("artifact.businessRequest",{requestId,intent,action,input})});Object.defineProperty(window,"openchamber",{value:Object.freeze({business:Object.freeze({query:(action,input={})=>request("query",action,input),execute:(action,input={})=>request("execute",action,input)})}),configurable:false,writable:false});`
+    : '';
+
+  return String.raw`<script>(()=>{"use strict";${businessState}let channel="",sequence=0,observer,heartbeatTimer;const send=(type,payload={})=>{if(!channel)return;parent.postMessage({source:"openchamber-artifact",direction:"artifact-to-host",bridgeVersion:1,channelId:channel,sequence:++sequence,type,payload},"*")};const resize=()=>send("artifact.resize",{height:Math.max(120,Math.min(5000,Math.ceil(document.documentElement.getBoundingClientRect().height)))});const startHeartbeat=lease=>{if(heartbeatTimer)clearInterval(heartbeatTimer);if(!lease||typeof lease.id!=="string")return;const interval=Math.max(500,Math.min(5000,Number(lease.heartbeatIntervalMs)||1000));send("artifact.heartbeat",{leaseId:lease.id});heartbeatTimer=setInterval(()=>send("artifact.heartbeat",{leaseId:lease.id}),interval)};addEventListener("message",event=>{const value=event.data;if(event.source!==parent||!value||value.source!=="openchamber-host"||value.direction!=="host-to-artifact"||value.bridgeVersion!==1||typeof value.channelId!=="string")return;${businessMessageHandler}if(value.type!=="host.init")return;channel=value.channelId;const payload=value.payload||{};for(const [name,token] of Object.entries(payload.tokens||{})){if(/^--ocix-[a-z0-9-]+$/.test(name)&&typeof token==="string"&&token.length<=160)document.documentElement.style.setProperty(name,token)}document.documentElement.dataset.ocixTheme=payload.theme==="dark"?"dark":"light";document.documentElement.lang=typeof payload.locale==="string"?payload.locale:"";dispatchEvent(new CustomEvent("openchamber:host-init",{detail:payload}));send("artifact.ready",{});startHeartbeat(payload.executionLease);resize();if(!observer&&typeof ResizeObserver==="function"){observer=new ResizeObserver(resize);observer.observe(document.documentElement)}});addEventListener("error",event=>send("artifact.reportError",{code:"runtime_error",message:String(event.message||"Artifact error").slice(0,500),line:Number(event.lineno)||0,column:Number(event.colno)||0}));Object.defineProperty(window,"openchamberArtifact",{value:Object.freeze({send}),configurable:false,writable:false});${businessBridge}})();</script>`;
+};
 
 const ARTIFACT_SECURITY_META = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; connect-src 'none'; worker-src 'none'; frame-src 'none'; object-src 'none'; media-src 'none'; base-uri 'none'; form-action 'none'">`;
 const ARTIFACT_BASE_STYLE = '<style data-openchamber-artifact-base>html,body{margin:0!important;min-width:0;background:transparent!important}html{color-scheme:light dark}body{overflow-wrap:anywhere}</style>';
@@ -199,11 +211,20 @@ const addArtifactHeadContent = (html, content) => {
 const addArtifactSecurityMeta = (html) => addArtifactHeadContent(html, ARTIFACT_SECURITY_META);
 const addArtifactBaseStyle = (html) => addArtifactHeadContent(html, ARTIFACT_BASE_STYLE);
 
-const addBridgeBootstrap = (html) => {
+const addBridgeBootstrap = (html, options) => {
   const closingBody = html.toLowerCase().lastIndexOf('</body>');
+  const bootstrap = createBridgeBootstrap(options);
   return closingBody === -1
-    ? `${html}${BRIDGE_BOOTSTRAP}`
-    : `${html.slice(0, closingBody)}${BRIDGE_BOOTSTRAP}${html.slice(closingBody)}`;
+    ? `${html}${bootstrap}`
+    : `${html.slice(0, closingBody)}${bootstrap}${html.slice(closingBody)}`;
+};
+
+export const createInstalledHTMLArtifactDocument = (html) => {
+  if (typeof html !== 'string' || !html.trim() || Buffer.byteLength(html, 'utf8') > 2 * 1024 * 1024) {
+    throw new HTMLArtifactError('Installed HTML Artifact is missing or too large', 'invalid_installed_artifact_html', 413);
+  }
+  validateHTMLArtifactSource(html, true);
+  return addBridgeBootstrap(addArtifactSecurityMeta(addArtifactBaseStyle(html)), { businessEnabled: true });
 };
 
 export const createHTMLArtifactStore = ({
@@ -358,7 +379,7 @@ export const createHTMLArtifactStore = ({
         const destination = artifactPath(artifactId);
         const themedDocument = addArtifactBaseStyle(envelope.html);
         const document = envelope.capabilities.scripts
-          ? addBridgeBootstrap(addArtifactSecurityMeta(themedDocument))
+          ? addBridgeBootstrap(addArtifactSecurityMeta(themedDocument), { businessEnabled: false })
           : themedDocument;
         let cacheRebuilt = false;
         try {

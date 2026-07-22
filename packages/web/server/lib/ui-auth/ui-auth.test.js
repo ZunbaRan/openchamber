@@ -211,6 +211,19 @@ describe('ui auth client credential seam', () => {
     });
     expect(nativeExtensionCalled).toBe(true);
 
+    const installedArtifactReq = {
+      method: 'GET',
+      path: '/api/interactive-ui/extensions/com.acme.sales/artifacts/com.acme.sales.explorer',
+      url: `/api/interactive-ui/extensions/com.acme.sales/artifacts/com.acme.sales.explorer?oc_url_token=${encodeURIComponent(urlToken)}`,
+      headers: {},
+    };
+    const installedArtifactRes = createResponse();
+    let installedArtifactCalled = false;
+    await auth.requireAuth(installedArtifactReq, installedArtifactRes, () => {
+      installedArtifactCalled = true;
+    });
+    expect(installedArtifactCalled).toBe(true);
+
     const artifactDocumentReq = {
       method: 'GET',
       path: `/api/interactive-ui/artifacts/${'a'.repeat(64)}/document`,

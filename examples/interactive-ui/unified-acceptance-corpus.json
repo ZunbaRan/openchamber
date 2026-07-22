@@ -87,6 +87,14 @@
       "expectedFollowUp": "confirmed-write"
     },
     {
+      "id": "crm-zh-artifact-explorer",
+      "locale": "zh-CN",
+      "category": "business",
+      "prompt": "打开已安装的 CRM 可视化探索器，用真实客户和商机数据做自由探索，不要让模型编造数据",
+      "expectedPath": "third-party-html-artifact",
+      "expectedTool": "simple_crm_open_explorer"
+    },
+    {
       "id": "artifact-zh-static-svg",
       "locale": "zh-CN",
       "category": "artifact",

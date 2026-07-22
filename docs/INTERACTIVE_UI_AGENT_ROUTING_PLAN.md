@@ -2,7 +2,7 @@
 
 ## 0. 实施状态（2026-07-20）
 
-本计划的 Phase 1–3 平台实现已落地，Phase 0 的固定用例集和脱敏结果日志已落地。两个已连接的非 OpenAI Provider 已完成真实对话验收；OpenAI Provider 对照组仍需在配置好 Provider 的运行环境中执行。Phase 4 暂不实施，等完整真实命中率决定。
+本计划的 Phase 1–3 平台实现已落地，Phase 0 的固定用例集和脱敏结果日志已落地。Qwen3.7 Plus 是默认平价模型门禁；其他 Provider 作为可选对照，不再因 OpenAI 未配置而把普通开发验收标记为未完成。Phase 4 暂不实施，等真实命中率决定。
 
 已完成：
 
@@ -25,7 +25,7 @@
 
 尚待运行环境验收：
 
-- 使用至少一个 OpenAI 模型和一个非 OpenAI 模型跑完整语料，计算业务 Tool / 通用 Tool 命中率。
+- 默认使用 Qwen3.7 Plus 跑完整语料，计算业务 Tool / 通用 Tool 命中率；需要跨 Provider 发布比较时再增加 OpenAI 或其他模型。
 - 继续验证 Connector 未配置、业务 API 不可达、恢复、启停、升级、回滚、卸载和确认式写入，并把“View 已渲染”和“真实数据已加载”作为两个独立结果。
 - 只有命中率未达到目标时才进入 Phase 4 的候选预筛选；基础诊断 UI 已由 Routing Inspector 提供。
 
@@ -409,7 +409,7 @@ Installed business UI:
 9. CRM API 不可达时 → 仍选择业务 Tool，View 明确显示上游不可用；该用例的路由验收通过，但业务数据闭环验收失败。
 10. CRM API 恢复后 → 重新查询经 Business Gateway 返回非空真实数据，并把业务数据加载状态与 View 挂载状态分别记录。
 
-测试至少选择一个 OpenAI 模型和一个非 OpenAI 模型，避免路由规则只对单一模型有效。
+普通开发测试以 Qwen3.7 Plus 为硬门禁；跨 Provider 发布研究可增加至少一个不同模型，且必须使用相同语料。
 
 ## 12. 验收指标
 
@@ -465,6 +465,6 @@ Installed business UI:
 
 ### P1：跨模型路由基线
 
-- 连接 OpenAI Provider 后，以同一份固定语料补跑 OpenAI 对照组。
-- 汇总 OpenAI 与至少两个非 OpenAI 模型的业务 Tool 命中率、通用 Tool 命中率和误回退率。
+- 如需跨 Provider 报告，以同一份固定语料补跑 OpenAI 或其他对照组。
+- 汇总各已选模型的业务 Tool 命中率、通用 Tool 命中率和误回退率；不要求特定厂商。
 - 只有指标低于第 12 节目标时，才进入 Phase 4 候选预筛选或轻量规则评分。

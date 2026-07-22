@@ -22,7 +22,7 @@ test('validates the bundled generated, Declarative, and Native examples', async 
   }
 });
 
-test('scaffolds and validates a Declarative plus Trusted Native extension', async () => {
+test('scaffolds and validates a mixed Interactive UI plus HTML Artifact extension', async () => {
   const temporaryRoot = await mkdtemp(path.join(os.tmpdir(), 'openchamber-ocix-'));
   const target = path.join(temporaryRoot, 'operations');
   try {
@@ -44,6 +44,12 @@ test('scaffolds and validates a Declarative plus Trusted Native extension', asyn
     const report = await validateExtension(target);
     assert.deepEqual(report.declarativeViews, ['com.acme.operations.overview']);
     assert.deepEqual(report.nativeViews, ['com.acme.operations.workspace']);
+    assert.deepEqual(report.htmlArtifacts, ['com.acme.operations.explorer']);
+    assert.deepEqual(report.agentRuntime.tools.map((tool) => tool.name), [
+      'operations_open_explorer',
+      'operations_open_overview',
+      'operations_open_workspace',
+    ]);
     assert.deepEqual(report.actions, ['com.acme.operations.overview.query', 'com.acme.operations.item.approve']);
     assert.equal(report.warnings.length, 0);
 

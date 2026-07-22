@@ -2,7 +2,7 @@
   "$schema": "openchamber://extension/v1",
   "id": "com.openchamber.builtin.interactive-ui",
   "name": "OpenChamber Interactive UI",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "agentRouting": {
     "domain": "visualization",
     "intents": [
@@ -10,7 +10,8 @@
       "visualization.process",
       "visualization.dashboard",
       "visualization.chart",
-      "visualization.table"
+      "visualization.table",
+      "visualization.gallery"
     ],
     "examples": {
       "zh-CN": ["画一下这个流程", "把这些数据做成图表", "可视化我提供的结果"],
@@ -20,6 +21,18 @@
   },
   "connectors": [],
   "views": [
+    {
+      "id": "com.openchamber.builtin.interactive-ui.gallery",
+      "runtime": "declarative",
+      "entry": "ui/component-gallery.view.json",
+      "tools": ["interactive_ui_gallery"],
+      "routing": {
+        "intents": ["visualization.gallery"],
+        "priority": 1,
+        "operation": "read"
+      },
+      "displayModes": ["inline", "workspace"]
+    },
     {
       "id": "com.openchamber.builtin.interactive-ui.process-flow",
       "runtime": "declarative",

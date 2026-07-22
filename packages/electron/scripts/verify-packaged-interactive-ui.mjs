@@ -5,6 +5,11 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import {
+  HYBRID_CRM_FIXTURE,
+  createHybridCrmPackage,
+  startHybridCrmApi,
+} from '../../../scripts/lib/interactive-ui-hybrid-crm-fixture.mjs';
 
 const electronRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const projectRoot = path.resolve(electronRoot, '../..');
@@ -12,6 +17,22 @@ const outputDirectory = path.join(projectRoot, '.tmp', 'interactive-ui-packaged-
 const reportPath = path.join(outputDirectory, 'report.json');
 
 const delay = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
+
+const requestJson = async (port, pathname, { method = 'GET', body, timeoutMs = 30_000 } = {}) => {
+  const response = await fetch(`http://127.0.0.1:${port}${pathname}`, {
+    method,
+    headers: {
+      Accept: 'application/json',
+      ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
+    },
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    signal: AbortSignal.timeout(timeoutMs),
+  });
+  const text = await response.text();
+  const payload = text.trim() ? JSON.parse(text) : null;
+  if (!response.ok) throw new Error(`${method} ${pathname} failed (${response.status}): ${payload?.code ?? 'unknown'}`);
+  return payload;
+};
 
 const reservePort = async () => {
   const server = net.createServer();
@@ -210,6 +231,25 @@ const waitForBuiltInAgentRuntime = async ({ port, directory }) => {
   throw new Error(`Bundled OpenCode did not discover the built-in Interactive UI runtime (tools=${lastToolIds.length}, skills=${lastSkills.length})`);
 };
 
+const waitForHybridCrmRuntime = async ({ port, directory, processOutput = () => '' }) => {
+  const deadline = Date.now() + 60_000;
+  let lastToolIds = [];
+  let lastError = null;
+  while (Date.now() < deadline) {
+    try {
+      lastToolIds = await requestJson(port, `/api/experimental/tool/ids?directory=${encodeURIComponent(directory)}`, {
+        timeoutMs: 2_000,
+      });
+      if (HYBRID_CRM_FIXTURE.toolNames.every((tool) => lastToolIds.includes(tool))) return lastToolIds;
+    } catch (error) {
+      lastError = error;
+      // The managed bundled OpenCode process restarts after OCIX Agent Runtime reconciliation.
+    }
+    await delay(150);
+  }
+  throw new Error(`Bundled OpenCode did not discover the hybrid CRM runtime (tools=${lastToolIds.length}, lastError=${lastError?.message ?? 'none'})\n${processOutput().slice(-5_000)}`);
+};
+
 if (process.platform !== 'darwin') {
   throw new Error('Packaged Interactive UI acceptance currently supports the macOS .app output only');
 }
@@ -230,6 +270,9 @@ await fs.mkdir(userDataDirectory, { recursive: true });
 await fs.mkdir(openCodeConfigDirectory, { recursive: true });
 await fs.rm(outputDirectory, { recursive: true, force: true });
 await fs.mkdir(outputDirectory, { recursive: true });
+
+let crmApi;
+let hybridCrmPackage;
 
 const debugPort = await reservePort();
 const childEnvironment = {
@@ -263,6 +306,12 @@ let serverPort = 0;
 let failure;
 
 try {
+  crmApi = await startHybridCrmApi();
+  hybridCrmPackage = await createHybridCrmPackage({
+    temporaryRoot,
+    crmApiUrl: crmApi.url,
+    version: '1.3.0-packaged.1',
+  });
   appProcess = spawn(executablePath, [
     `--user-data-dir=${userDataDirectory}`,
     `--remote-debugging-port=${debugPort}`,
@@ -317,6 +366,35 @@ try {
     version: '1.0.0',
     status: 'ready',
   });
+  const packageBase64 = hybridCrmPackage.buffer.toString('base64');
+  const inspection = await requestJson(port, '/api/interactive-ui/manager/packages/inspect', {
+    method: 'POST',
+    body: { packageBase64 },
+    timeoutMs: 60_000,
+  });
+  assert.equal(inspection.extension.id, HYBRID_CRM_FIXTURE.extensionId);
+  assert.equal(inspection.permissions.sandboxedArtifacts, true);
+  const installedPackage = await requestJson(port, '/api/interactive-ui/manager/packages', {
+    method: 'POST',
+    body: {
+      packageBase64,
+      confirmedPublisherFingerprint: inspection.publisher.fingerprint,
+    },
+    timeoutMs: 60_000,
+  });
+  assert.equal(installedPackage.installed, true);
+  const hybridToolIds = await waitForHybridCrmRuntime({
+    port,
+    directory: temporaryRoot,
+    processOutput: () => processOutput,
+  });
+  await requestJson(port, `/api/interactive-ui/connections/${HYBRID_CRM_FIXTURE.extensionId}/${HYBRID_CRM_FIXTURE.connectorId}`, {
+    method: 'PUT',
+    body: { accessKey: crmApi.keys.full },
+  });
+  await requestJson(port, `/api/interactive-ui/connections/${HYBRID_CRM_FIXTURE.extensionId}/${HYBRID_CRM_FIXTURE.connectorId}/test`, {
+    method: 'POST',
+  });
   const extensionsResponse = await fetch(`http://127.0.0.1:${port}/api/interactive-ui/extensions`, {
     headers: { Accept: 'application/json' },
   });
@@ -330,7 +408,7 @@ try {
   await browser.send('Runtime.enable');
   await browser.send('Page.enable');
 
-  const navigate = async (runtime) => {
+  const navigate = async (runtime, additional = {}) => {
     const query = new URLSearchParams({
       runtime,
       theme: 'light',
@@ -338,6 +416,7 @@ try {
       ocPanel: 'session-chat',
       themeMode: 'light',
       themeVariant: 'light',
+      ...additional,
     });
     const reply = await browser.send('Page.navigate', {
       url: `openchamber-ui://app/interactive-ui-demo.html?${query}`,
@@ -429,6 +508,45 @@ try {
     fallbackPresent: true,
     fallbackOpen: false,
   });
+
+  await navigate('artifact-installed', {
+    artifact: HYBRID_CRM_FIXTURE.artifactId,
+    tool: HYBRID_CRM_FIXTURE.explorerToolName,
+  });
+  await waitFor(browser, `document.querySelector('[data-ocix-artifact-source="third-party-extension"][data-ocix-artifact-state="ready"]') !== null`, 'packaged installed Artifact ready');
+  const installedArtifact = await browser.evaluate(`(() => {
+    const host = document.querySelector('[data-ocix-artifact-source="third-party-extension"]');
+    const frame = host?.querySelector('iframe');
+    return {
+      state: host?.getAttribute('data-ocix-artifact-state') || '',
+      source: host?.getAttribute('data-ocix-artifact-source') || '',
+      sandbox: frame?.getAttribute('sandbox') || '',
+      title: frame?.getAttribute('title') || '',
+      iframeCount: host?.querySelectorAll('iframe').length ?? 0,
+    };
+  })()`);
+  assert.deepEqual(installedArtifact, {
+    state: 'ready',
+    source: 'third-party-extension',
+    sandbox: 'allow-scripts',
+    title: 'Simple CRM Explorer',
+    iframeCount: 1,
+  });
+  const installedGatewayQuery = await requestJson(port, `/api/interactive-ui/actions/${HYBRID_CRM_FIXTURE.queryActionId}`, {
+    method: 'POST',
+    body: {
+      extensionId: HYBRID_CRM_FIXTURE.extensionId,
+      artifactId: HYBRID_CRM_FIXTURE.artifactId,
+      instanceId: 'packaged-desktop-acceptance',
+      tool: { id: 'packaged-desktop-tool', name: HYBRID_CRM_FIXTURE.explorerToolName },
+      input: { scope: 'packaged-acceptance' },
+    },
+  });
+  assert.equal(installedGatewayQuery.data.customerCount, 4);
+  await delay(500);
+  const installedScreenshot = await browser.send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: true });
+  const installedScreenshotPath = path.join(outputDirectory, 'installed-artifact-packaged-macos.png');
+  await fs.writeFile(installedScreenshotPath, Buffer.from(installedScreenshot.result.data, 'base64'));
   assert.equal(browser.runtimeErrors.length, 0, browser.runtimeErrors.join('\n'));
 
   browser.socket.close();
@@ -467,8 +585,16 @@ try {
     headers: { Accept: 'application/json' },
   });
   assert.equal(restartedManagerResponse.ok, true);
-  assert.equal((await restartedManagerResponse.json()).builtInRuntime?.status, 'ready');
+  const restartedManager = await restartedManagerResponse.json();
+  assert.equal(restartedManager.builtInRuntime?.status, 'ready');
+  assert.equal(restartedManager.extensions.some((extension) => extension.id === HYBRID_CRM_FIXTURE.extensionId
+    && extension.enabled === true), true);
   await waitForBuiltInAgentRuntime({ port: restartPort, directory: temporaryRoot });
+  await waitForHybridCrmRuntime({
+    port: restartPort,
+    directory: temporaryRoot,
+    processOutput: () => processOutput,
+  });
   browser = await connect(restartTarget);
   await browser.send('Runtime.enable');
   await browser.send('Page.enable');
@@ -479,6 +605,11 @@ try {
     return frame?.src ? new URL(frame.src).pathname : '';
   })()`);
   assert.equal(restartedDocumentPath, initialStatic.documentPath);
+  await navigate('artifact-installed', {
+    artifact: HYBRID_CRM_FIXTURE.artifactId,
+    tool: HYBRID_CRM_FIXTURE.explorerToolName,
+  });
+  await waitFor(browser, `document.querySelector('[data-ocix-artifact-source="third-party-extension"][data-ocix-artifact-state="ready"]') !== null`, 'packaged installed Artifact after app restart');
   assert.equal(browser.runtimeErrors.length, 0, browser.runtimeErrors.join('\n'));
 
   const report = {
@@ -505,8 +636,14 @@ try {
       scriptsFallback: disabled.state,
       cspRevision: capabilities.cspRevision,
       appRestart: 'ready-with-same-content-id',
+      installed: {
+        package: `${HYBRID_CRM_FIXTURE.extensionId}@${inspection.extension.version}`,
+        tools: HYBRID_CRM_FIXTURE.toolNames.filter((toolId) => hybridToolIds.includes(toolId)),
+        gatewayCustomerCount: installedGatewayQuery.data.customerCount,
+        appRestart: 'ready',
+      },
     },
-    screenshot: screenshotPath,
+    screenshots: [screenshotPath, installedScreenshotPath],
     runtimeErrors: browser.runtimeErrors.length,
   };
   await fs.writeFile(reportPath, `${JSON.stringify(report, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
@@ -529,6 +666,7 @@ try {
   if (serverPort > 0) {
     assert.equal(await waitForPortClosed(serverPort), true, 'packaged OpenChamber server must stop with the app');
   }
+  await crmApi?.close().catch(() => null);
   await fs.rm(temporaryRoot, { recursive: true, force: true });
 }
 

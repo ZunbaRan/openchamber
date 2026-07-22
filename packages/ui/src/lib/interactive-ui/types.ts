@@ -43,6 +43,24 @@ export interface InteractiveViewDescriptor {
   };
 }
 
+export interface InstalledHTMLArtifactDescriptor {
+  extension: {
+    id: string;
+    name: string;
+    version: string;
+  };
+  artifact: {
+    id: string;
+    title: string;
+    displayModes: InteractiveDisplayMode[];
+    inlineHeight: number;
+    scripts: true;
+    business: boolean;
+  };
+  documentPath: string;
+  integrity: string;
+}
+
 export interface InteractiveToolContext {
   id: string;
   name: string;
@@ -51,15 +69,19 @@ export interface InteractiveToolContext {
   error?: string;
 }
 
-export interface InteractiveActionRequest {
+interface InteractiveActionRequestBase {
   extensionId: string;
-  viewId: string;
   instanceId: string;
   action: string;
   input: unknown;
   tool?: Pick<InteractiveToolContext, 'id' | 'name'>;
-  confirmed?: boolean;
+  confirmationToken?: string;
 }
+
+export type InteractiveActionRequest = InteractiveActionRequestBase & (
+  | { viewId: string; artifactId?: never }
+  | { artifactId: string; viewId?: never }
+);
 
 export interface InteractiveConfirmation {
   title?: string;
@@ -71,6 +93,8 @@ export interface InteractiveActionErrorPayload {
   code?: string;
   confirmationRequired?: boolean;
   confirmation?: InteractiveConfirmation;
+  confirmationToken?: string;
+  confirmationExpiresAt?: number;
 }
 
 export interface InteractiveBusinessHost {

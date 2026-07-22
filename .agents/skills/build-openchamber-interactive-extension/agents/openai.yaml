@@ -1,4 +1,4 @@
 interface:
   display_name: "Build OpenChamber Interactive Extension"
-  short_description: "Build signed OCIX enterprise UI and Agent runtime"
-  default_prompt: "Use $build-openchamber-interactive-extension to choose Declarative or Trusted Native Host UI Kit, build the business Gateway and Agent runtime, then validate, sign, install, and test the complete OCIX conversation path."
+  short_description: "Build mixed Interactive UI and HTML Artifact OCIX packages"
+  default_prompt: "Use $build-openchamber-interactive-extension to choose Interactive UI, sandboxed HTML Artifact, or both; build the Business Gateway and Agent runtime; then validate, sign, install, and test the complete OCIX conversation path."

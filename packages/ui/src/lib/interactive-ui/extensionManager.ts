@@ -11,16 +11,19 @@ export interface AgentRuntimeSummary {
   tools: Array<{ name: string; entry: string }>;
   skills: Array<{ name: string; entry: string; files: string[] }>;
   unresolvedViewTools: string[];
+  unresolvedSurfaceTools: string[];
 }
 
 export interface PackageInspection {
   extension: { id: string; name: string; version: string };
   publisher: { id: string; name: string; keyId: string; fingerprint: string; trusted: boolean };
-  permissions: { network: string[]; nativeCode: boolean };
+  permissions: { network: string[]; nativeCode: boolean; sandboxedArtifacts: boolean };
   agentRouting: {
     domain: string;
     intents: string[];
     dataAuthority: string;
+    views: Array<{ id: string; tools: string[] }>;
+    artifacts: Array<{ id: string; tools: string[] }>;
   } | null;
   agentRuntime: AgentRuntimeSummary;
 }
@@ -63,6 +66,47 @@ export interface CatalogEntry {
   version: string;
   publisher: { id: string; name: string; keyId: string };
 }
+
+type CatalogInstallState = 'available' | 'installed' | 'update' | 'older';
+
+const compareSemver = (left: string, right: string): number => {
+  const parse = (value: string) => {
+    const [core, prerelease = ''] = value.split('-', 2);
+    return { core: core.split('.').map((part) => Number(part)), prerelease: prerelease.split('.').filter(Boolean) };
+  };
+  const leftVersion = parse(left);
+  const rightVersion = parse(right);
+  for (let index = 0; index < 3; index += 1) {
+    const delta = (leftVersion.core[index] ?? 0) - (rightVersion.core[index] ?? 0);
+    if (delta !== 0) return delta;
+  }
+  if (leftVersion.prerelease.length === 0 || rightVersion.prerelease.length === 0) {
+    if (leftVersion.prerelease.length === rightVersion.prerelease.length) return 0;
+    return leftVersion.prerelease.length === 0 ? 1 : -1;
+  }
+  for (let index = 0; index < Math.max(leftVersion.prerelease.length, rightVersion.prerelease.length); index += 1) {
+    const leftPart = leftVersion.prerelease[index];
+    const rightPart = rightVersion.prerelease[index];
+    if (leftPart === rightPart) continue;
+    if (leftPart === undefined) return -1;
+    if (rightPart === undefined) return 1;
+    const leftNumber = Number(leftPart);
+    const rightNumber = Number(rightPart);
+    const leftNumeric = Number.isSafeInteger(leftNumber) && String(leftNumber) === leftPart;
+    const rightNumeric = Number.isSafeInteger(rightNumber) && String(rightNumber) === rightPart;
+    if (leftNumeric && rightNumeric) return leftNumber - rightNumber;
+    if (leftNumeric !== rightNumeric) return leftNumeric ? -1 : 1;
+    return leftPart.localeCompare(rightPart);
+  }
+  return 0;
+};
+
+export const classifyCatalogInstallState = (catalogVersion: string, installedVersion?: string): CatalogInstallState => {
+  if (!installedVersion) return 'available';
+  const comparison = compareSemver(catalogVersion, installedVersion);
+  if (comparison === 0) return 'installed';
+  return comparison > 0 ? 'update' : 'older';
+};
 
 type ConnectionAuthType = 'none' | 'env-bearer' | 'api-key' | 'issued-key';
 
@@ -125,6 +169,11 @@ const normalizeAgentRuntime = (value: unknown): AgentRuntimeSummary => {
     unresolvedViewTools: Array.isArray(runtime.unresolvedViewTools)
       ? runtime.unresolvedViewTools.filter((name): name is string => typeof name === 'string')
       : [],
+    unresolvedSurfaceTools: Array.isArray(runtime.unresolvedSurfaceTools)
+      ? runtime.unresolvedSurfaceTools.filter((name): name is string => typeof name === 'string')
+      : Array.isArray(runtime.unresolvedViewTools)
+        ? runtime.unresolvedViewTools.filter((name): name is string => typeof name === 'string')
+        : [],
   };
 };
 
@@ -175,6 +224,7 @@ export const normalizePackageInspection = (value: unknown): PackageInspection | 
         ? permissions.network.filter((entry): entry is string => typeof entry === 'string')
         : [],
       nativeCode: permissions.nativeCode === true,
+      sandboxedArtifacts: permissions.sandboxedArtifacts === true,
     },
     agentRouting: routing && typeof routing.domain === 'string' && typeof routing.dataAuthority === 'string'
       ? {
@@ -183,6 +233,22 @@ export const normalizePackageInspection = (value: unknown): PackageInspection | 
             ? routing.intents.filter((intent): intent is string => typeof intent === 'string')
             : [],
           dataAuthority: routing.dataAuthority,
+          views: Array.isArray(routing.views)
+            ? routing.views.flatMap((surface) => isRecord(surface) && typeof surface.id === 'string'
+              ? [{
+                  id: surface.id,
+                  tools: Array.isArray(surface.tools) ? surface.tools.filter((tool): tool is string => typeof tool === 'string') : [],
+                }]
+              : [])
+            : [],
+          artifacts: Array.isArray(routing.artifacts)
+            ? routing.artifacts.flatMap((surface) => isRecord(surface) && typeof surface.id === 'string'
+              ? [{
+                  id: surface.id,
+                  tools: Array.isArray(surface.tools) ? surface.tools.filter((tool): tool is string => typeof tool === 'string') : [],
+                }]
+              : [])
+            : [],
         }
       : null,
     agentRuntime: normalizeAgentRuntime(value.agentRuntime),

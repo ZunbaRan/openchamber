@@ -41,6 +41,10 @@ const normalizedExtension = (manifest) => {
       ...view,
       routing: normalized.viewRouting.get(view.id),
     })),
+    artifacts: (manifest.artifacts ?? []).map((artifact) => ({
+      ...artifact,
+      routing: normalized.artifactRouting.get(artifact.id),
+    })),
   };
 };
 
@@ -69,6 +73,21 @@ describe('Interactive UI Agent routing metadata', () => {
       operation: 'read',
       intents: ['crm.overview', 'crm.pipeline.view'],
     });
+  });
+
+  it('publishes Interactive UI and HTML Artifact forms from one extension', () => {
+    const manifest = routedManifest();
+    manifest.views[0].routing.intents = ['crm.overview'];
+    manifest.artifacts = [{
+      id: 'com.acme.crm.explorer',
+      tools: ['crm_open_explorer'],
+      routing: { intents: ['crm.pipeline.view'], priority: 92, operation: 'mixed' },
+    }];
+    const catalog = buildInteractiveUICapabilityCatalog([normalizedExtension(manifest)]);
+    expect(catalog[0].tools).toEqual([
+      expect.objectContaining({ name: 'crm_open_explorer', forms: ['html-artifact'], surfaces: ['com.acme.crm.explorer'] }),
+      expect.objectContaining({ name: 'crm_open_overview', forms: ['interactive-ui'], surfaces: ['com.acme.crm.overview'] }),
+    ]);
   });
 
   it('never copies developer examples, display names, connector URLs, or secrets into the system prompt', () => {
@@ -109,7 +128,7 @@ describe('Interactive UI Agent routing metadata', () => {
     expect(system).toContain('matching installed business tool');
     expect(system).toContain('even when its connection is unconfigured or expired');
     expect(system).toContain('Never replace it with fabricated business metrics');
-    expect(system).toContain('at most one primary OpenChamber View per assistant turn');
+    expect(system).toContain('at most one primary OpenChamber surface per assistant turn');
     expect(system).toContain('do not call interactive_ui or html_artifact to restate the same data');
     expect(system).toContain('exactly one short conclusion or next-step sentence');
   });
@@ -132,19 +151,20 @@ describe('Interactive UI Agent routing metadata', () => {
     }
   });
 
-  it('freezes the unified 16-case acceptance corpus and its path distribution', async () => {
+  it('freezes the unified 17-case acceptance corpus and its path distribution', async () => {
     const examplesRoot = new URL('../../../../../examples/interactive-ui/', import.meta.url);
     const corpus = JSON.parse(await fs.readFile(new URL('unified-acceptance-corpus.json', examplesRoot), 'utf8'));
     expect(corpus.$schema).toBe('openchamber://interactive-ui-unified-acceptance-corpus/v1');
-    expect(corpus.cases).toHaveLength(16);
-    expect(new Set(corpus.cases.map((testCase) => testCase.id)).size).toBe(16);
+    expect(corpus.cases).toHaveLength(17);
+    expect(new Set(corpus.cases.map((testCase) => testCase.id)).size).toBe(17);
     expect(corpus.cases.filter((testCase) => testCase.category === 'generated')).toHaveLength(6);
-    expect(corpus.cases.filter((testCase) => testCase.category === 'business')).toHaveLength(4);
+    expect(corpus.cases.filter((testCase) => testCase.category === 'business')).toHaveLength(5);
     expect(corpus.cases.filter((testCase) => testCase.category === 'artifact')).toHaveLength(3);
     expect(corpus.cases.filter((testCase) => testCase.category === 'negative')).toHaveLength(3);
     expect(corpus.cases.filter((testCase) => testCase.expectedTool === 'interactive_ui')).toHaveLength(7);
     expect(corpus.cases.filter((testCase) => testCase.expectedTool === 'simple_crm_open_workspace')).toHaveLength(4);
     expect(corpus.cases.filter((testCase) => testCase.expectedTool === 'simple_crm_open_overview')).toHaveLength(1);
+    expect(corpus.cases.filter((testCase) => testCase.expectedTool === 'simple_crm_open_explorer')).toHaveLength(1);
     expect(corpus.cases.filter((testCase) => testCase.expectedTool === 'html_artifact')).toHaveLength(3);
     expect(corpus.cases.filter((testCase) => testCase.expectedTool === null)).toHaveLength(1);
     for (const testCase of corpus.cases) {

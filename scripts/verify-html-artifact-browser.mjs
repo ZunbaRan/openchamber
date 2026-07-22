@@ -7,7 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import express from 'express';
 import { learningRateSimulatorArtifact } from '../examples/interactive-ui/artifact-fixtures.mjs';
-import { createHTMLArtifactStore } from '../packages/web/server/lib/interactive-ui/artifact-store.js';
+import { createHTMLArtifactStore, createInstalledHTMLArtifactDocument } from '../packages/web/server/lib/interactive-ui/artifact-store.js';
 import { registerInteractiveUIRoutes } from '../packages/web/server/lib/interactive-ui/routes.js';
 
 const scriptsProbeEnabled = process.env.OPENCHAMBER_TEST_ARTIFACT_SCRIPTS === 'true';
@@ -210,7 +210,10 @@ try {
   let staticDocumentPath = '';
   let interactiveDocumentPath = '';
   let interactiveArtifactId = '';
+  let installedDocumentPath = '';
   let securityDocumentPaths = [];
+  const installedGatewayCalls = [];
+  let confirmedInstalledWrites = 0;
   const artifactStore = createHTMLArtifactStore({
     dataDirectory,
     fsImpl: fs,
@@ -218,7 +221,58 @@ try {
     cryptoImpl: crypto,
     environment: { OPENCHAMBER_HTML_ARTIFACTS_SCRIPTS: scriptsProbeEnabled ? 'true' : 'false' },
   });
-  registerInteractiveUIRoutes(app, { express, runtime: {}, manager: {}, artifactStore });
+  const installedSource = createInstalledHTMLArtifactDocument(`<!doctype html><html><body>
+    <div id="status">waiting</div>
+    <script>
+      addEventListener('openchamber:host-init', async () => {
+        try {
+          const query = await window.openchamber.business.query('com.acme.browser.query', { scope: 'browser' });
+          window.openchamberArtifact.send('artifact.proposeFollowUp', { text: 'query:' + query.total });
+          const write = await window.openchamber.business.execute('com.acme.browser.approve', { id: 'ITEM-1', revision: 1 });
+          window.openchamberArtifact.send('artifact.proposeFollowUp', { text: 'write:' + write.revision });
+          document.getElementById('status').textContent = 'complete';
+        } catch (error) {
+          window.openchamberArtifact.send('artifact.reportError', { code: error.code || 'bridge_failed', message: error.message });
+        }
+      }, { once: true });
+    </script>
+  </body></html>`);
+  const installedRuntime = {
+    async getInstalledArtifactDescriptor(artifactId, tool) {
+      return {
+        extension: { id: 'com.acme.browser', name: 'Browser fixture', version: '1.0.0' },
+        artifact: { id: artifactId, title: 'Installed browser fixture', scripts: true, business: true, displayModes: ['inline'], inlineHeight: 360 },
+        tool,
+        documentPath: installedDocumentPath,
+        integrity: 'sha256-browser-fixture',
+      };
+    },
+    async getInstalledArtifactDocument(extensionId, artifactId) {
+      assert.equal(extensionId, 'com.acme.browser');
+      assert.equal(artifactId, 'com.acme.browser.explorer');
+      return { source: installedSource, integrity: 'sha256-browser-fixture' };
+    },
+    async invokeAction(actionId, input) {
+      installedGatewayCalls.push({ actionId, input });
+      if (actionId === 'com.acme.browser.query') return { data: { total: 7 }, requestId: 'query-request' };
+      if (actionId !== 'com.acme.browser.approve') {
+        const error = new Error('Action is not allowed');
+        error.status = 403;
+        error.code = 'action_not_allowed';
+        throw error;
+      }
+      if (input.confirmed !== true) {
+        const error = new Error('Confirmation required');
+        error.status = 409;
+        error.code = 'confirmation_required';
+        error.details = { confirmationRequired: true, confirmation: { title: 'Approve fixture?' } };
+        throw error;
+      }
+      confirmedInstalledWrites += 1;
+      return { data: { revision: 2 }, requestId: 'write-request' };
+    },
+  };
+  registerInteractiveUIRoutes(app, { express, runtime: installedRuntime, manager: {}, artifactStore });
   app.all('/artifact-security-target', (req, res) => {
     blockedNetworkRequests.push({ method: req.method, url: req.originalUrl });
     res.status(204).end();
@@ -248,6 +302,53 @@ try {
         addEventListener('message', (event) => {
           if (event.source === frame.contentWindow && event.data?.source === 'openchamber-artifact'
             && event.data.channelId === channelId && event.data.type === 'artifact.ready') window.__artifactReady = true;
+        });
+      </script>
+    </body></html>`);
+  });
+  app.get('/artifact-installed-host', (_req, res) => {
+    res.setHeader('Content-Security-Policy', "default-src 'none'; script-src 'unsafe-inline'; connect-src 'self'; frame-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'");
+    res.type('html').send(`<!doctype html><html><body>
+      <iframe id="artifact" sandbox="allow-scripts" src="${installedDocumentPath}"></iframe>
+      <script>
+        const frame = document.getElementById('artifact');
+        const channelId = 'installed-browser-channel-0001';
+        window.__installedState = { ready: false, query: null, write: null, confirmationRequired: false, errors: [] };
+        const respond = (requestId, payload) => frame.contentWindow.postMessage({
+          source: 'openchamber-host', direction: 'host-to-artifact', bridgeVersion: 1,
+          channelId, sequence: 2, type: 'host.businessResult', payload: { requestId, ...payload }
+        }, '*');
+        const invoke = async (message, confirmed = false) => {
+          const response = await fetch('/api/interactive-ui/actions/' + encodeURIComponent(message.payload.action), {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ extensionId: 'com.acme.browser', artifactId: 'com.acme.browser.explorer',
+              instanceId: channelId, action: message.payload.action, input: message.payload.input,
+              tool: { id: 'tool-part-1', name: 'browser_open_explorer' }, ...(confirmed ? { confirmed: true } : {}) })
+          });
+          const result = await response.json();
+          if (response.ok) return { ok: true, data: result.data };
+          if (message.payload.intent === 'execute' && result.confirmationRequired && !confirmed) {
+            window.__installedState.confirmationRequired = true;
+            return invoke(message, true);
+          }
+          return { ok: false, error: result.error || 'Business request failed', code: result.code };
+        };
+        frame.addEventListener('load', () => frame.contentWindow.postMessage({
+          source: 'openchamber-host', direction: 'host-to-artifact', bridgeVersion: 1,
+          channelId, sequence: 1, type: 'host.init',
+          payload: { mode: 'inline', locale: 'en', timezone: 'UTC', reducedMotion: true,
+            theme: 'light', tokens: {}, context: { scope: 'browser' }, viewport: { width: 800, height: 420 } }
+        }, '*'));
+        addEventListener('message', (event) => {
+          const message = event.data;
+          if (event.source !== frame.contentWindow || message?.channelId !== channelId) return;
+          if (message.type === 'artifact.ready') window.__installedState.ready = true;
+          if (message.type === 'artifact.businessRequest') void invoke(message).then((result) => respond(message.payload.requestId, result));
+          if (message.type === 'artifact.proposeFollowUp') {
+            if (message.payload.text.startsWith('query:')) window.__installedState.query = message.payload.text;
+            if (message.payload.text.startsWith('write:')) window.__installedState.write = message.payload.text;
+          }
+          if (message.type === 'artifact.reportError') window.__installedState.errors.push(message.payload);
         });
       </script>
     </body></html>`);
@@ -286,6 +387,7 @@ try {
   const address = artifactServer.address();
   assert(address && typeof address !== 'string');
   const gateway = `http://127.0.0.1:${address.port}`;
+  installedDocumentPath = '/api/interactive-ui/extensions/com.acme.browser/artifacts/com.acme.browser.explorer';
 
   const staticResponse = await fetch(`${gateway}/api/interactive-ui/artifacts/materialize`, {
     method: 'POST',
@@ -412,6 +514,27 @@ try {
   assert.equal(staticHostState.source, staticDocumentPath);
   assert.deepEqual(blockedNetworkRequests, [], 'Static Artifact CSP must prevent every subresource request');
 
+  await browser.send('Page.navigate', { url: `${gateway}/artifact-installed-host` });
+  let installedState = null;
+  for (let attempt = 0; attempt < 200; attempt += 1) {
+    installedState = await browser.evaluate('window.__installedState ?? null');
+    if (installedState?.query === 'query:7' && installedState?.write === 'write:2') break;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  assert.deepEqual(installedState, {
+    ready: true,
+    query: 'query:7',
+    write: 'write:2',
+    confirmationRequired: true,
+    errors: [],
+  });
+  assert.equal(confirmedInstalledWrites, 1);
+  assert.deepEqual(installedGatewayCalls.map((call) => [call.actionId, call.input.confirmed === true]), [
+    ['com.acme.browser.query', false],
+    ['com.acme.browser.approve', false],
+    ['com.acme.browser.approve', true],
+  ]);
+
   let before = null;
   let after = null;
   let securityResults = null;
@@ -502,6 +625,12 @@ try {
       frameLoaded: staticHostState.frameLoaded,
       sandbox: staticHostState.sandbox,
       navigationRejected: navigationFailure.code,
+    },
+    installed: {
+      query: installedState.query,
+      write: installedState.write,
+      confirmationRequired: installedState.confirmationRequired,
+      confirmedWrites: confirmedInstalledWrites,
     },
     ...(scriptsProbeEnabled ? {
       fixture: 'learningRateSimulatorArtifact',

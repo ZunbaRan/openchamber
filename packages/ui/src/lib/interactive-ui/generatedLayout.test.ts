@@ -88,6 +88,13 @@ describe('sanitizeGeneratedLayout', () => {
           commits: [{ id: 'abc123', message: 'Initial', branch: 'main', parents: [], token: 'secret' }],
         },
         { type: 'sparkline', label: 'Latency', value: '42 ms', values: [40, 44, 42, 'bad'] },
+        { type: 'gauge', label: 'Quality', value: 140, minimum: 0, maximum: 100, unit: '%', tone: 'success', onClick: 'steal()' },
+        { type: 'heatmap', title: 'Load', cells: [{ row: 'Mon', column: '09:00', value: 7, html: '<script />' }] },
+        {
+          type: 'kanban',
+          columns: [{ id: 'todo', title: 'Todo' }, { id: 'constructor', title: 'Blocked' }],
+          cards: [{ id: 'card_1', column: 'todo', title: 'Safe', description: 'Visible', token: 'secret' }, { column: 'missing', title: 'Dropped' }],
+        },
         { type: 'diff-summary', items: [{ path: 'src/app.ts', additions: 3, deletions: 1, content: 'private' }] },
       ],
     });
@@ -99,6 +106,9 @@ describe('sanitizeGeneratedLayout', () => {
         { type: 'tabs', items: [{ label: 'Summary', children: [{ type: 'text', value: 'Safe tab' }] }] },
         { type: 'git-graph', commits: [{ id: 'abc123', message: 'Initial', branch: 'main', parents: [] }] },
         { type: 'sparkline', label: 'Latency', value: '42 ms', values: [40, 44, 42] },
+        { type: 'gauge', label: 'Quality', value: 100, minimum: 0, maximum: 100, unit: '%', tone: 'success' },
+        { type: 'heatmap', title: 'Load', cells: [{ row: 'Mon', column: '09:00', value: 7 }] },
+        { type: 'kanban', columns: [{ id: 'todo', title: 'Todo' }], cards: [{ id: 'card_1', column: 'todo', title: 'Safe', description: 'Visible' }] },
         { type: 'diff-summary', items: [{ path: 'src/app.ts', additions: 3, deletions: 1 }] },
       ],
     });

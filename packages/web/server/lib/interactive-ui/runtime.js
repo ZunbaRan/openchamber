@@ -3,14 +3,18 @@ import {
   normalizeInteractiveUIRouting,
   renderInteractiveUIRoutingSystemPrompt,
 } from './routing.js';
+import { createInstalledHTMLArtifactDocument } from './artifact-store.js';
 
 const MANIFEST_FILE = 'openchamber.extension.json';
 const MAX_MANIFEST_BYTES = 512 * 1024;
 const MAX_VIEW_BYTES = 512 * 1024;
 const MAX_NATIVE_BUNDLE_BYTES = 2 * 1024 * 1024;
+const MAX_INSTALLED_ARTIFACT_BYTES = 2 * 1024 * 1024;
 const MAX_UPSTREAM_BYTES = 2 * 1024 * 1024;
 const ACTION_TIMEOUT_MS = 15_000;
 const CONNECTION_TEST_TIMEOUT_MS = 10_000;
+const CONFIRMATION_TTL_MS = 60_000;
+const MAX_PENDING_CONFIRMATIONS = 1024;
 const EXTENSION_ID_PATTERN = /^[a-z0-9]+(?:[._-][a-z0-9]+)+$/i;
 const ACTION_ID_PATTERN = /^[a-z0-9]+(?:[._-][a-z0-9]+)+$/i;
 const ENV_REFERENCE_PATTERN = /^\$\{([A-Z][A-Z0-9_]*)\}$/;
@@ -37,6 +41,14 @@ export class InteractiveUIRuntimeError extends Error {
 }
 
 const isRecord = (value) => typeof value === 'object' && value !== null && !Array.isArray(value);
+
+const canonicalize = (value) => {
+  if (Array.isArray(value)) return value.map(canonicalize);
+  if (isRecord(value)) {
+    return Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonicalize(value[key])]));
+  }
+  return value;
+};
 
 const readLimitedText = async (fsPromises, filePath, maxBytes) => {
   const stat = await fsPromises.stat(filePath);
@@ -242,6 +254,59 @@ const normalizeView = (view, extensionId, routing) => {
   };
 };
 
+const normalizeInstalledArtifact = (artifact, extensionId, routing, actionIds) => {
+  if (!isRecord(artifact) || typeof artifact.id !== 'string' || !artifact.id.startsWith(`${extensionId}.`)) {
+    throw new InteractiveUIRuntimeError('HTML Artifact IDs must be inside the extension namespace', 400, 'invalid_manifest');
+  }
+  if (typeof artifact.title !== 'string' || !artifact.title.trim() || artifact.title.length > 120) {
+    throw new InteractiveUIRuntimeError(`HTML Artifact ${artifact.id} must declare a short title`, 400, 'invalid_manifest');
+  }
+  if (typeof artifact.entry !== 'string' || !artifact.entry.trim()) {
+    throw new InteractiveUIRuntimeError(`HTML Artifact ${artifact.id} is missing its entry`, 400, 'invalid_manifest');
+  }
+  const capabilities = isRecord(artifact.capabilities) ? artifact.capabilities : {};
+  if (!Object.keys(capabilities).every((key) => key === 'scripts' || key === 'businessActions') || capabilities.scripts !== true) {
+    throw new InteractiveUIRuntimeError(`Installed HTML Artifact ${artifact.id} must enable scripts`, 400, 'invalid_manifest');
+  }
+  if (capabilities.businessActions !== undefined && (!Array.isArray(capabilities.businessActions)
+    || capabilities.businessActions.some((action) => typeof action !== 'string' || !ACTION_ID_PATTERN.test(action)))) {
+    throw new InteractiveUIRuntimeError(`HTML Artifact ${artifact.id} has invalid business actions`, 400, 'invalid_manifest');
+  }
+  const businessActions = Array.isArray(capabilities.businessActions) ? capabilities.businessActions : [];
+  if (new Set(businessActions).size !== businessActions.length) {
+    throw new InteractiveUIRuntimeError(`HTML Artifact ${artifact.id} contains duplicate business actions`, 400, 'invalid_manifest');
+  }
+  for (const action of businessActions) {
+    if (!actionIds.has(action)) {
+      throw new InteractiveUIRuntimeError(`HTML Artifact ${artifact.id} references undeclared action ${action}`, 400, 'invalid_manifest');
+    }
+  }
+  if (artifact.displayModes !== undefined && (!Array.isArray(artifact.displayModes)
+    || artifact.displayModes.some((mode) => !['inline', 'workspace', 'fullscreen'].includes(mode)))) {
+    throw new InteractiveUIRuntimeError(`HTML Artifact ${artifact.id} has invalid display modes`, 400, 'invalid_manifest');
+  }
+  const displayModes = artifact.displayModes ?? ['inline', 'workspace', 'fullscreen'];
+  if (!displayModes.includes('inline') || new Set(displayModes).size !== displayModes.length) {
+    throw new InteractiveUIRuntimeError(`HTML Artifact ${artifact.id} has invalid display modes`, 400, 'invalid_manifest');
+  }
+  const inlineHeight = artifact.inlineHeight === undefined ? 420 : artifact.inlineHeight;
+  if (!Number.isInteger(inlineHeight) || inlineHeight < 120 || inlineHeight > 900) {
+    throw new InteractiveUIRuntimeError(`HTML Artifact ${artifact.id} inlineHeight must be an integer from 120 to 900`, 400, 'invalid_manifest');
+  }
+  return {
+    id: artifact.id,
+    title: artifact.title.trim(),
+    entry: artifact.entry.trim(),
+    tools: Array.isArray(artifact.tools)
+      ? artifact.tools.filter((tool) => typeof tool === 'string' && tool.trim()).map((tool) => tool.trim())
+      : [],
+    routing: routing ?? null,
+    displayModes,
+    inlineHeight,
+    businessActions,
+  };
+};
+
 const normalizeManifest = (raw, directory, environment) => {
   if (!isRecord(raw) || typeof raw.id !== 'string' || !EXTENSION_ID_PATTERN.test(raw.id)) {
     throw new InteractiveUIRuntimeError('Extension manifest has an invalid namespaced id', 400, 'invalid_manifest');
@@ -253,7 +318,6 @@ const normalizeManifest = (raw, directory, environment) => {
   const views = Array.isArray(raw.views)
     ? raw.views.map((view) => normalizeView(view, raw.id, normalizedRouting.viewRouting.get(view?.id)))
     : [];
-  if (views.length === 0) throw new InteractiveUIRuntimeError(`Extension ${raw.id} does not declare any views`, 400, 'invalid_manifest');
   const viewIds = new Set(views.map((view) => view.id));
   if (viewIds.size !== views.length) throw new InteractiveUIRuntimeError(`Extension ${raw.id} has duplicate view IDs`, 409, 'duplicate_view');
 
@@ -265,6 +329,24 @@ const normalizeManifest = (raw, directory, environment) => {
   const actions = Array.isArray(raw.actions) ? raw.actions.map((action) => normalizeAction(action, connectorIds)) : [];
   const actionIds = new Set(actions.map((action) => action.id));
   if (actionIds.size !== actions.length) throw new InteractiveUIRuntimeError(`Extension ${raw.id} has duplicate action IDs`, 409, 'duplicate_action');
+  const artifacts = Array.isArray(raw.artifacts)
+    ? raw.artifacts.map((artifact) => normalizeInstalledArtifact(
+        artifact,
+        raw.id,
+        normalizedRouting.artifactRouting.get(artifact?.id),
+        actionIds,
+      ))
+    : [];
+  const artifactIds = new Set(artifacts.map((artifact) => artifact.id));
+  if (artifactIds.size !== artifacts.length) {
+    throw new InteractiveUIRuntimeError(`Extension ${raw.id} has duplicate HTML Artifact IDs`, 409, 'duplicate_artifact');
+  }
+  if (views.length === 0 && artifacts.length === 0) {
+    throw new InteractiveUIRuntimeError(`Extension ${raw.id} does not declare any Interactive UI views or HTML Artifacts`, 400, 'invalid_manifest');
+  }
+  if (artifacts.some((artifact) => viewIds.has(artifact.id))) {
+    throw new InteractiveUIRuntimeError(`Extension ${raw.id} reuses a surface ID across Interactive UI and HTML Artifact`, 409, 'duplicate_surface');
+  }
 
   return {
     id: raw.id,
@@ -273,6 +355,7 @@ const normalizeManifest = (raw, directory, environment) => {
     directory,
     agentRouting: normalizedRouting.agentRouting,
     views,
+    artifacts,
     connectors,
     actions,
   };
@@ -291,6 +374,51 @@ export const createInteractiveUIRuntime = ({
   if (!fsPromises || !path || !crypto || typeof fetchImpl !== 'function') {
     throw new Error('Interactive UI runtime dependencies are incomplete');
   }
+
+  const pendingConfirmations = new Map();
+  const sweepConfirmations = (now = Date.now()) => {
+    for (const [token, entry] of pendingConfirmations) {
+      if (entry.expiresAt <= now) pendingConfirmations.delete(token);
+    }
+  };
+  const confirmationFingerprint = ({ extensionId, surfaceId, surfaceType, actionId, instanceId, tool, input }) => {
+    const context = canonicalize({
+      extensionId,
+      surfaceId,
+      surfaceType,
+      actionId,
+      instanceId: typeof instanceId === 'string' ? instanceId : '',
+      tool: isRecord(tool)
+        ? {
+            id: typeof tool.id === 'string' ? tool.id : '',
+            name: typeof tool.name === 'string' ? tool.name : '',
+          }
+        : { id: '', name: '' },
+      input: input ?? null,
+    });
+    return crypto.createHash('sha256').update(JSON.stringify(context)).digest('hex');
+  };
+  const issueConfirmation = (fingerprint, confirmation) => {
+    const now = Date.now();
+    sweepConfirmations(now);
+    while (pendingConfirmations.size >= MAX_PENDING_CONFIRMATIONS) {
+      const oldest = pendingConfirmations.keys().next().value;
+      if (oldest === undefined) break;
+      pendingConfirmations.delete(oldest);
+    }
+    const token = `oc_confirmation_${crypto.randomUUID()}`;
+    const expiresAt = now + CONFIRMATION_TTL_MS;
+    pendingConfirmations.set(token, { fingerprint, expiresAt });
+    return { token, expiresAt, confirmation };
+  };
+  const consumeConfirmation = (token, fingerprint) => {
+    if (typeof token !== 'string' || !token) return false;
+    sweepConfirmations();
+    const entry = pendingConfirmations.get(token);
+    if (!entry || entry.fingerprint !== fingerprint) return false;
+    pendingConfirmations.delete(token);
+    return true;
+  };
 
   const discoverManifestPaths = async () => {
     const manifests = [];
@@ -345,13 +473,17 @@ export const createInteractiveUIRuntime = ({
       }
     }
     const ids = new Set();
-    const views = new Set();
+    const surfaces = new Set();
     for (const extension of extensions) {
       if (ids.has(extension.id)) throw new InteractiveUIRuntimeError(`Duplicate extension ID ${extension.id}`, 409, 'duplicate_extension');
       ids.add(extension.id);
       for (const view of extension.views) {
-        if (views.has(view.id)) throw new InteractiveUIRuntimeError(`Duplicate view ID ${view.id}`, 409, 'duplicate_view');
-        views.add(view.id);
+        if (surfaces.has(view.id)) throw new InteractiveUIRuntimeError(`Duplicate surface ID ${view.id}`, 409, 'duplicate_surface');
+        surfaces.add(view.id);
+      }
+      for (const artifact of extension.artifacts) {
+        if (surfaces.has(artifact.id)) throw new InteractiveUIRuntimeError(`Duplicate surface ID ${artifact.id}`, 409, 'duplicate_surface');
+        surfaces.add(artifact.id);
       }
     }
     return { extensions, errors };
@@ -364,6 +496,15 @@ export const createInteractiveUIRuntime = ({
       if (view) return { extension, view };
     }
     throw new InteractiveUIRuntimeError(`Interactive view ${viewId} is not installed`, 404, 'view_not_found');
+  };
+
+  const findInstalledArtifact = async (artifactId) => {
+    const { extensions } = await loadExtensions();
+    for (const extension of extensions) {
+      const artifact = extension.artifacts.find((candidate) => candidate.id === artifactId);
+      if (artifact) return { extension, artifact };
+    }
+    throw new InteractiveUIRuntimeError(`HTML Artifact ${artifactId} is not installed`, 404, 'artifact_not_found');
   };
 
   const findConnector = async (extensionId, connectorId) => {
@@ -541,20 +682,104 @@ export const createInteractiveUIRuntime = ({
     };
   };
 
+  const getInstalledArtifactDescriptor = async (artifactId, toolName = '') => {
+    const { extension, artifact } = await findInstalledArtifact(artifactId);
+    if (artifact.tools.length > 0 && (!toolName || !artifact.tools.includes(toolName))) {
+      throw new InteractiveUIRuntimeError(`Tool ${toolName || '(missing)'} is not bound to HTML Artifact ${artifactId}`, 403, 'tool_artifact_mismatch');
+    }
+    const entryPath = resolveEntryPath(path, extension.directory, artifact.entry, ['.html']);
+    const source = await readLimitedText(fsPromises, entryPath, MAX_INSTALLED_ARTIFACT_BYTES);
+    createInstalledHTMLArtifactDocument(source);
+    logger.info?.('[InteractiveUI] Agent routing outcome', {
+      extensionId: extension.id,
+      artifactId: artifact.id,
+      tool: toolName || null,
+      domain: extension.agentRouting?.domain ?? null,
+      dataAuthority: extension.agentRouting?.dataAuthority ?? null,
+      operation: artifact.routing?.operation ?? null,
+    });
+    return {
+      extension: { id: extension.id, name: extension.name, version: extension.version },
+      artifact: {
+        id: artifact.id,
+        title: artifact.title,
+        scripts: true,
+        displayModes: artifact.displayModes,
+        inlineHeight: artifact.inlineHeight,
+        business: artifact.businessActions.length > 0,
+      },
+      documentPath: `/api/interactive-ui/extensions/${encodeURIComponent(extension.id)}/artifacts/${encodeURIComponent(artifact.id)}`,
+      integrity: `sha256-${crypto.createHash('sha256').update(source).digest('base64')}`,
+    };
+  };
+
+  const getInstalledArtifactDocument = async (extensionId, artifactId) => {
+    const { extension, artifact } = await findInstalledArtifact(artifactId);
+    if (extension.id !== extensionId) {
+      throw new InteractiveUIRuntimeError('Installed HTML Artifact asset was not found', 404, 'asset_not_found');
+    }
+    const entryPath = resolveEntryPath(path, extension.directory, artifact.entry, ['.html']);
+    const source = await readLimitedText(fsPromises, entryPath, MAX_INSTALLED_ARTIFACT_BYTES);
+    const document = createInstalledHTMLArtifactDocument(source);
+    return {
+      source: document,
+      integrity: `sha256-${crypto.createHash('sha256').update(source).digest('base64')}`,
+    };
+  };
+
   const invokeAction = async (actionId, request) => {
-    if (!isRecord(request) || typeof request.extensionId !== 'string' || typeof request.viewId !== 'string') {
+    if (!isRecord(request) || typeof request.extensionId !== 'string') {
       throw new InteractiveUIRuntimeError('Action context is incomplete', 400, 'invalid_request');
     }
-    const { extension, view } = await findView(request.viewId);
-    if (extension.id !== request.extensionId) throw new InteractiveUIRuntimeError('Action extension does not own this view', 403, 'extension_view_mismatch');
+    const usesView = typeof request.viewId === 'string' && request.viewId.length > 0;
+    const usesArtifact = typeof request.artifactId === 'string' && request.artifactId.length > 0;
+    if (usesView === usesArtifact) {
+      throw new InteractiveUIRuntimeError('Action must identify exactly one Interactive UI view or HTML Artifact', 400, 'invalid_request');
+    }
+    const resolved = usesView ? await findView(request.viewId) : await findInstalledArtifact(request.artifactId);
+    const extension = resolved.extension;
+    if (extension.id !== request.extensionId) {
+      throw new InteractiveUIRuntimeError(
+        'Action extension does not own this surface',
+        403,
+        usesView ? 'extension_view_mismatch' : 'extension_artifact_mismatch',
+      );
+    }
+    const surface = usesView ? resolved.view : resolved.artifact;
+    const toolName = isRecord(request.tool) && typeof request.tool.name === 'string' ? request.tool.name : '';
+    if (surface.tools.length > 0 && (!toolName || !surface.tools.includes(toolName))) {
+      throw new InteractiveUIRuntimeError(
+        `Tool ${toolName || '(missing)'} is not bound to ${usesView ? 'view' : 'HTML Artifact'} ${surface.id}`,
+        403,
+        usesView ? 'tool_view_mismatch' : 'tool_artifact_mismatch',
+      );
+    }
     const action = extension.actions.find((candidate) => candidate.id === actionId);
     if (!action) throw new InteractiveUIRuntimeError(`Action ${actionId} is not declared by ${extension.id}`, 403, 'action_not_allowed');
+    if (usesArtifact && !resolved.artifact.businessActions.includes(actionId)) {
+      throw new InteractiveUIRuntimeError(`Action ${actionId} is not allowed for HTML Artifact ${resolved.artifact.id}`, 403, 'artifact_action_not_allowed');
+    }
     if (action.permission === 'deny') throw new InteractiveUIRuntimeError(`Action ${actionId} is disabled by policy`, 403, 'action_denied');
-    if (action.permission === 'ask' && request.confirmed !== true) {
-      throw new InteractiveUIRuntimeError(`Action ${actionId} requires confirmation`, 409, 'confirmation_required', {
-        confirmationRequired: true,
-        confirmation: action.confirmation ?? {},
+    if (action.permission === 'ask') {
+      const confirmation = action.confirmation ?? {};
+      const fingerprint = confirmationFingerprint({
+        extensionId: extension.id,
+        surfaceId: surface.id,
+        surfaceType: usesView ? 'view' : 'artifact',
+        actionId,
+        instanceId: request.instanceId,
+        tool: request.tool,
+        input: request.input,
       });
+      if (!consumeConfirmation(request.confirmationToken, fingerprint)) {
+        const challenge = issueConfirmation(fingerprint, confirmation);
+        throw new InteractiveUIRuntimeError(`Action ${actionId} requires confirmation`, 409, 'confirmation_required', {
+          confirmationRequired: true,
+          confirmation,
+          confirmationToken: challenge.token,
+          confirmationExpiresAt: challenge.expiresAt,
+        });
+      }
     }
     const connector = extension.connectors.find((candidate) => candidate.id === action.connector);
     if (!connector) throw new InteractiveUIRuntimeError('Action connector is unavailable', 503, 'connector_unavailable');
@@ -618,7 +843,7 @@ export const createInteractiveUIRuntime = ({
     logger.info?.('[InteractiveUI] Business action completed', {
       requestId,
       extensionId: extension.id,
-      viewId: view.id,
+      ...(usesView ? { viewId: resolved.view.id } : { artifactId: resolved.artifact.id }),
       action: action.id,
       risk: action.risk,
     });
@@ -646,6 +871,14 @@ export const createInteractiveUIRuntime = ({
           tools: view.tools,
           displayModes: view.displayModes,
           routing: view.routing,
+        })),
+        artifacts: extension.artifacts.map((artifact) => ({
+          id: artifact.id,
+          tools: artifact.tools,
+          displayModes: artifact.displayModes,
+          routing: artifact.routing,
+          scripts: true,
+          business: artifact.businessActions.length > 0,
         })),
         actions: extension.actions.map((action) => ({ id: action.id, risk: action.risk, permission: action.permission })),
       })),
@@ -683,6 +916,8 @@ export const createInteractiveUIRuntime = ({
     testConnection,
     getViewDescriptor,
     getNativeBundle,
+    getInstalledArtifactDescriptor,
+    getInstalledArtifactDocument,
     invokeAction,
   };
 };

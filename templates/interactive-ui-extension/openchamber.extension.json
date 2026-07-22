@@ -10,13 +10,15 @@
       "__TOOL_PREFIX__.overview",
       "__TOOL_PREFIX__.item.view",
       "__TOOL_PREFIX__.item.approve",
-      "__TOOL_PREFIX__.workspace"
+      "__TOOL_PREFIX__.workspace",
+      "__TOOL_PREFIX__.explorer"
     ],
     "examples": {
       "en": [
         "Open the __EXTENSION_NAME__ overview",
         "Show pending __EXTENSION_NAME__ items",
-        "Open the __EXTENSION_NAME__ workspace"
+        "Open the __EXTENSION_NAME__ workspace",
+        "Explore __EXTENSION_NAME__ as an interactive canvas"
       ]
     },
     "dataAuthority": "connected-business-system"
@@ -65,6 +67,28 @@
         "operation": "mixed"
       },
       "displayModes": ["inline", "workspace", "fullscreen"]
+    }
+  ],
+  "artifacts": [
+    {
+      "id": "__EXTENSION_ID__.explorer",
+      "title": "__EXTENSION_NAME__ Explorer",
+      "entry": "ui/artifacts/explorer.html",
+      "tools": ["__TOOL_PREFIX___open_explorer"],
+      "routing": {
+        "intents": ["__TOOL_PREFIX__.explorer"],
+        "priority": 82,
+        "operation": "mixed"
+      },
+      "displayModes": ["inline", "workspace", "fullscreen"],
+      "inlineHeight": 520,
+      "capabilities": {
+        "scripts": true,
+        "businessActions": [
+          "__EXTENSION_ID__.overview.query",
+          "__EXTENSION_ID__.item.approve"
+        ]
+      }
     }
   ],
   "actions": [

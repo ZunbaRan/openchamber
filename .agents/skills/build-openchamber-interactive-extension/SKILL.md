@@ -1,28 +1,29 @@
 ---
 name: build-openchamber-interactive-extension
-description: Build, sign, package, or modify an OpenChamber OCIX enterprise module using Installed Declarative and/or Trusted Native Host UI Kit, a real HTTP Business Gateway, OpenCode Custom Tools or MCP, and an Agent Skill. Use for scaffolding an extension, adapting an enterprise dashboard or workflow, binding real APIs, choosing Declarative versus Native versus non-OCIX HTML Artifact, matching OpenChamber visual and state conventions, producing signed .ocix packages or marketplace catalogs, validating manifests/views/bundles, or testing the complete Agent-to-inline-UI path.
+description: Build, sign, package, or modify an OpenChamber OCIX enterprise module containing Interactive UI, sandboxed HTML Artifacts, or both, with a real HTTP Business Gateway, OpenCode Custom Tools, and an Agent Skill. Use for scaffolding extensions, adapting enterprise dashboards or workflows, binding APIs, choosing Declarative versus Trusted Native versus HTML Artifact, producing signed .ocix packages or marketplace catalogs, validating manifests/surfaces/bundles, or testing the complete Agent-to-inline-UI path.
 ---
 
 # Build OpenChamber Interactive Extension
 
 ## Overview
 
-Produce a repository-compatible enterprise extension without modifying OpenCode or OpenChamber feature source for each module. Treat Agent routing, installed UI, business transport, and trust as separate contracts.
+Produce a repository-compatible enterprise extension without modifying OpenCode or OpenChamber feature source for each module. Use the stable 2×2 vocabulary: form is **Interactive UI** or **HTML Artifact**; source is **Agent Generated** or **Third-party Extension**. Treat Agent routing, installed surfaces, business transport, sandboxing, and package trust as separate contracts.
 
 ## Required reference
 
-Read [references/contracts.md](references/contracts.md) before editing an extension. Read [references/distribution.md](references/distribution.md) for signing, package installation, updates, rollback, publisher trust, or marketplace work. Read `docs/OCIX_CONNECTOR_AUTHENTICATION_V1.md` when the extension connects to a real authenticated API. Read `docs/INTERACTIVE_UI_EXTENSION_DEVELOPER_GUIDE.md` when the request includes architecture, installation, deployment, or a real external OpenCode server.
+Read [references/contracts.md](references/contracts.md) before editing an extension. Read [references/html-artifacts.md](references/html-artifacts.md) whenever `artifacts[]` or custom HTML/SVG/Canvas is involved. Read [references/distribution.md](references/distribution.md) for signing, package installation, updates, rollback, publisher trust, or marketplace work. Read `docs/OCIX_CONNECTOR_AUTHENTICATION_V1.md` when the extension connects to a real authenticated API. Read `docs/INTERACTIVE_UI_EXTENSION_DEVELOPER_GUIDE.md` when the request includes architecture, installation, deployment, or a real external OpenCode server.
 
 When changing OpenChamber source rather than only an extension package, also load the repository skills triggered by `AGENTS.md`, especially `openchamber-change-discipline`, `theme-system`, `locale-ui-patterns`, and `ui-api-decoupling`.
 
 ## Workflow
 
 1. Inventory the business module: namespaced routing domain, bounded read/write intents, short bilingual trigger examples, data authority, read models, writes, destructive operations, auth owner, revision field, empty/error states, and target runtimes.
-2. Choose the UI runtime:
-   - Use Declarative for layout, metrics, charts/tables, status, lists, flow, timeline, activity feed, comparison, tabs/accordion, code, sparkline, standard Git graph/tree/diff summary, and simple confirmed row actions.
+2. Choose the form inside the 2×2 model:
+   - Use Declarative for layout, metrics, charts/tables, status, lists, flow, timeline, activity feed, comparison, tabs/accordion, code, sparkline, gauge, heatmap, read-only kanban, standard Git graph/tree/diff summary, and simple confirmed row actions.
    - Use Trusted Native for durable enterprise UI that needs custom state, complex coordinated interaction, dialogs/forms, bespoke composition, or an existing React module. Use only Host React, Host UI Kit, semantic tokens, and Gateway methods.
-   - A single extension may ship both; start Declarative when either can satisfy the task.
-   - Do not package model-generated HTML as a business View. `html_artifact` is a separate untrusted, no-credential conversation runtime for one-off custom graphics/simulators; it is not an OCIX substitute.
+   - Use a Third-party HTML Artifact for signed, durable custom SVG/Canvas, simulation, drag/drop, or explorer experiences that need more expression than the Host UI Kit. It stays sandboxed and calls only declared Gateway actions through `window.openchamber.business`.
+   - A single `.ocix` may ship `views[]`, `artifacts[]`, or both; start with Declarative when it can satisfy the task.
+   - Agent Generated HTML Artifact remains a separate one-off result with no Connector, Gateway, credential, or network access. Never confuse its authority with an installed Artifact.
 3. Scaffold a new package:
 
 ```bash
@@ -32,10 +33,10 @@ node scripts/interactive-ui-extension.mjs create /absolute/new/path \
   --tool-prefix operations
 ```
 
-4. Replace the starter `agentRouting` domain/intents/examples and every `views[].routing` block. Use `connected-business-system` for authoritative enterprise data, assign `read`/`write`/`mixed` honestly, and give the more specific business View a higher bounded priority. Do not put instructions, API URLs, credentials, or business values in routing metadata.
+4. Replace the starter `agentRouting` domain/intents/examples and every `views[].routing` / `artifacts[].routing` block. Use `connected-business-system` for authoritative enterprise data, assign `read`/`write`/`mixed` honestly, and give the more specific business surface a higher bounded priority. Do not put instructions, API URLs, credentials, or business values in routing metadata.
 5. Replace the starter API paths and data shape. Choose `api-key` for a key copied from the third-party system or `issued-key` for a server-to-server one-time setup-code exchange. Keep credentials server-side and route Native/Declarative calls through declared Gateway actions. Do not recreate the third party's RBAC/ABAC in OpenChamber.
-6. Implement the Agent half under `agent-runtime/`. Put one default-export OpenCode Custom Tool in `agent-runtime/tools/<tool_name>.ts`; its file name is the tool name. Its description must say that the Tool reads the connected business system, takes priority over generic `interactive_ui` for its domain, and should still be called to report missing connection setup. Put each routing Skill at `agent-runtime/skills/<skill-name>/SKILL.md` with matching `name` and a useful `description`. A Tool returns the strict Envelope; a Skill says when to call it and is never the API transport. Use separately governed MCP only when the capability truly lives outside the package.
-7. Match the host: wrap the View in the host-provided OCIX scope, use semantic fields/tokens and `activationHost.ui` controls, responsive layouts, loading/ready/empty/unconfigured/error states, and the host locale. The v1 Host UI Kit includes Button, Card, Badge, Notice, Skeleton, Separator, Progress, Table, Tabs, Input, Textarea, and EmptyState families. Use `Notice` for unavailable, unauthorized, forbidden, stale, and error feedback instead of rebuilding alert chrome. Do not bundle React or a duplicate component library in Native output. Do not hard-code a parallel palette or inject global CSS.
+6. Implement the Agent half under `agent-runtime/`. Put one default-export OpenCode Custom Tool in `agent-runtime/tools/<tool_name>.ts`; its file name is the tool name. Interactive UI Tools return `openchamber://interactive-result/v1`; installed Artifact Tools return `openchamber://installed-html-artifact-result/v1` and only reference an installed Artifact ID—never inline HTML, URLs, or credentials. Tool descriptions must state the authoritative business source, priority over generic visualization, and missing-connection behavior. Put each routing Skill at `agent-runtime/skills/<skill-name>/SKILL.md` with matching `name` and a useful `description`. A Skill improves selection and is never the API transport.
+7. Match the host. Declarative/Native use semantic fields, OCIX tokens, the Host UI Kit, responsive layouts, and explicit loading/ready/empty/unconfigured/error states. Installed HTML uses a self-contained `.html`, OCIX CSS variables, accessible DOM, and `window.openchamber.business.query/execute`; it must not use `fetch`, XHR, remote assets, storage, popup authentication, or parent DOM. Do not bundle React or a duplicate component library in Native output. Do not hard-code a parallel palette or inject global CSS.
 8. Validate before launching:
 
 ```bash
@@ -46,9 +47,9 @@ node scripts/interactive-ui-extension.mjs validate /absolute/path/to/extension
 10. Configure the installed Connector under **Business connections**. Test an accepted key, an invalid key (`401`), an insufficient-scope key (`403`), replacement/rotation, disconnect, and uninstall cleanup. The UI and Agent must never receive the raw Key.
 11. OpenChamber keeps package sources in its version store, copies managed Tools to `~/.config/opencode/tools`, copies managed Skills to `~/.config/opencode/skills`, and refreshes managed OpenCode. Tool/Skill names must be globally unique; never overwrite an unmanaged file to resolve a collision. Keep each Tool file self-contained except for dependencies available to normal global OpenCode Tools. `OPENCHAMBER_INTERACTIVE_UI_EXTENSIONS_DIR` remains a UI-only local renderer bypass, not a complete conversation install.
 12. For an external OpenCode server, `.ocix` installation can manage only the machine running OpenChamber. Deploy the Agent Runtime to that remote server through its own administration channel and report that limitation explicitly. The routing Catalog is still sent through the OpenCode prompt API, but it explicitly forbids calling a catalog Tool that is absent from the remote Tool set.
-13. For catalog distribution, generate a signed static marketplace catalog, add only its URL in Extension Manager, review its embedded identity/key fingerprint, and test catalog-hash plus package-signature failure paths.
+13. For catalog distribution, generate a signed static marketplace catalog, add only its URL in Extension Manager, review its embedded identity/key fingerprint, and test catalog-hash plus package-signature failure paths. Browse the catalog after installation: an exact version must show Installed, a greater semantic version must show Update, and Extension diagnostics must list the managed Tools, Skills, install source, package hash, and any unresolved Tool bindings.
 14. Test in the normal conversation flow: natural-language trigger, explicit tool-name fallback, inline render, query, confirmation, write, refresh, connector-unconfigured behavior, disable/enable, update/rollback, and ordinary Tool UI fallback. Verify that the business Tool beats generic `interactive_ui`, while ad-hoc non-business visualization still selects `interactive_ui`.
-15. When validating platform routing, add one task that standard Declarative can express and one that genuinely needs an Artifact. The first must stay on `interactive_ui`; the second may use `html_artifact`. Neither may use an Artifact to call a Connector or business API.
+15. When validating platform routing, cover all applicable 2×2 cells: Agent Generated Interactive UI, Agent Generated HTML Artifact, Third-party Interactive UI, and Third-party HTML Artifact. Agent Generated HTML must never call an API; Third-party HTML must prove a real query and a confirmation-gated write through the Business Bridge. Qwen3.7 Plus is the default model baseline; additional providers are comparison coverage, not a requirement for ordinary local completion.
 
 ## Security and product boundaries
 
@@ -59,14 +60,15 @@ node scripts/interactive-ui-extension.mjs validate /absolute/path/to/extension
 - Never let a Native component call arbitrary URLs. The server validates connector origin, action allowlist, confirmation policy, timeout, response size, and credentials.
 - Third-party systems issue Keys and enforce their scope, revocation, RBAC/ABAC, and business rules. OpenChamber owns extension trust, network/action allowlists, confirmation, server-side storage/injection, and error forwarding; do not merge these two authorization layers.
 - Treat Native as same-page code authorized by an administrator or a pinned signed marketplace. A valid signature proves origin and integrity, not code safety.
-- Do not use HTML Artifact for an enterprise module that needs business credentials; that runtime is for untrusted model-generated presentation code and has a narrow bridge.
+- Never give Artifact JavaScript a credential or raw connector URL. A Third-party HTML Artifact may access business data only through its signed manifest action allowlist and the Host Business Bridge; an Agent Generated Artifact never receives that bridge.
 - Do not claim VS Code parity: OCIX Gateway calls currently return explicit unsupported behavior there.
 - `.ocix` signing, embedded public-key inspection, confirmation-based publisher trust, managed local Tool/Skill deployment, enable/disable, update/rollback, recoverable uninstall, self-describing signed static marketplace catalogs, and Connector Authentication v1 are implemented. An embedded signing key proves package signature self-consistency, not the publisher's real-world identity and is unrelated to a business Access Key. Do not claim an official hosted marketplace, revocation/transparency service, malware review, or remote dual-install negotiation exists.
 
 ## Completion checklist
 
-- The manifest, view IDs, bundle registration, and tool names agree exactly.
-- `agentRouting.domain` and every intent are namespaced identifiers; `dataAuthority` is correct; every View in a multi-View extension has bounded intents, priority, and operation metadata.
+- The manifest, View/Artifact IDs, bundle registration, HTML entries, and tool names agree exactly.
+- `agentRouting.domain` and every intent are namespaced identifiers; `dataAuthority` is correct; every surface in a multi-surface extension has bounded intents, priority, and operation metadata.
+- Every installed HTML Artifact is self-contained, declares `capabilities.scripts: true`, and lists only the Gateway actions it actually needs under `capabilities.businessActions`.
 - Tool descriptions and the Skill agree with the platform order: explicit Tool → matching installed business Tool → other specialized/MCP Tool → generic `interactive_ui` → text.
 - Packaged Tool file names are globally unique, default-export one tool each, and packaged Skills have valid frontmatter; no per-extension `OPENCODE_CONFIG_DIR` setup remains in the handoff.
 - Query and write actions are declared; write actions require confirmation and carry revision data where relevant.

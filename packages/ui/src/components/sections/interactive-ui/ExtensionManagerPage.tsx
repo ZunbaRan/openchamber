@@ -25,6 +25,7 @@ import { clearInteractiveUIRoutingCache } from '@/lib/interactive-ui/routing';
 import {
   EMPTY_MANAGER_SNAPSHOT,
   EMPTY_CONNECTION_SNAPSHOT,
+  classifyCatalogInstallState,
   normalizeCatalogEntries,
   normalizeConnectionSnapshot,
   normalizeManagerSnapshot,
@@ -203,8 +204,8 @@ export const ExtensionManagerPage: React.FC = () => {
         ) : (
           <div className="divide-y divide-border/60">
             {snapshot.extensions.map((extension) => (
-              <div key={extension.id} className="flex flex-col gap-3 py-4 first:pt-0 @xl:flex-row @xl:items-center">
-                <div className="min-w-0 flex-1">
+              <div key={extension.id} className="grid gap-3 py-4 first:pt-0 @xl:grid-cols-[minmax(0,1fr)_auto] @xl:items-start">
+                <div className="min-w-0">
                   <div className={SETTINGS_FIELD_LABEL_CLASS}>{extension.name}</div>
                   <div className={SETTINGS_HELPER_CLASS}>{extension.id} · {extension.activeVersion}</div>
                   <div className={SETTINGS_HELPER_CLASS}>
@@ -216,6 +217,31 @@ export const ExtensionManagerPage: React.FC = () => {
                       skills: extension.versions[extension.activeVersion]?.agentRuntime.skills.length ?? 0,
                     })}
                   </div>
+                  <details className="mt-2 max-w-[40rem]">
+                    <summary className="cursor-pointer typography-meta font-medium text-[var(--surface-muted-foreground)] outline-none hover:text-[var(--surface-foreground)] focus-visible:ring-2 focus-visible:ring-[var(--interactive-focus-ring)]">
+                      {t('settings.interactiveUI.installed.diagnostics')}
+                    </summary>
+                    {(() => {
+                      const active = extension.versions[extension.activeVersion];
+                      const unresolved = active?.agentRuntime.unresolvedSurfaceTools ?? [];
+                      return (
+                        <dl className="mt-2 grid gap-x-4 gap-y-1 typography-meta @xl:grid-cols-[auto_minmax(0,1fr)]">
+                          <dt className="text-[var(--surface-muted-foreground)]">{t('settings.interactiveUI.installed.source')}</dt>
+                          <dd className="min-w-0 break-all text-[var(--surface-foreground)]">{active?.source.type ?? '—'}{active?.source.marketplaceId ? ` · ${active.source.marketplaceId}` : ''}</dd>
+                          <dt className="text-[var(--surface-muted-foreground)]">{t('settings.interactiveUI.installed.tools')}</dt>
+                          <dd className="min-w-0 break-all text-[var(--surface-foreground)]">{active?.agentRuntime.tools.map((item) => item.name).join(', ') || '—'}</dd>
+                          <dt className="text-[var(--surface-muted-foreground)]">{t('settings.interactiveUI.installed.skills')}</dt>
+                          <dd className="min-w-0 break-all text-[var(--surface-foreground)]">{active?.agentRuntime.skills.map((item) => item.name).join(', ') || '—'}</dd>
+                          <dt className="text-[var(--surface-muted-foreground)]">SHA-256</dt>
+                          <dd className="min-w-0 break-all font-mono text-[var(--surface-foreground)]">{active?.packageHash || '—'}</dd>
+                          {unresolved.length > 0 ? <>
+                            <dt className="text-[var(--status-warning)]">{t('settings.interactiveUI.installed.unresolved')}</dt>
+                            <dd className="min-w-0 break-all text-[var(--status-warning)]">{unresolved.join(', ')}</dd>
+                          </> : null}
+                        </dl>
+                      );
+                    })()}
+                  </details>
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
                   <Switch
@@ -393,14 +419,35 @@ export const ExtensionManagerPage: React.FC = () => {
                 <Button variant="ghost" size="sm" onClick={() => void runMutation(`marketplace:${marketplace.id}`, () => requestJson(`/api/interactive-ui/manager/marketplaces/${encodeURIComponent(marketplace.id)}`, { method: 'DELETE' }), 'settings.interactiveUI.toast.marketplaceRemoved')}>{t('settings.interactiveUI.actions.remove')}</Button>
               </div>
             </div>
-            {catalogs[marketplace.id]?.map((entry) => (
-              <div key={`${entry.id}@${entry.version}`} className="ml-4 mt-3 flex items-center justify-between gap-3 border-l border-border/60 pl-4">
-                <div className="min-w-0"><div className={SETTINGS_FIELD_LABEL_CLASS}>{entry.name}</div><div className={SETTINGS_HELPER_CLASS}>{entry.id} · {entry.version}</div></div>
-                <Button size="sm" onClick={() => void runMutation(`market-install:${entry.id}:${entry.version}`, () => requestJson(`/api/interactive-ui/manager/marketplaces/${encodeURIComponent(marketplace.id)}/install`, {
-                  method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ extensionId: entry.id, version: entry.version }),
-                }), 'settings.interactiveUI.toast.installed')}>{t('settings.interactiveUI.actions.install')}</Button>
-              </div>
-            ))}
+            {catalogs[marketplace.id]?.map((entry) => {
+              const installedExtension = snapshot.extensions.find((extension) => extension.id === entry.id);
+              const installedVersion = installedExtension?.activeVersion;
+              const installState = classifyCatalogInstallState(entry.version, installedVersion);
+              const current = installState === 'installed';
+              const update = installState === 'update';
+              return (
+                <div key={`${entry.id}@${entry.version}`} className="ml-4 mt-3 flex items-center justify-between gap-3 border-l border-border/60 pl-4">
+                  <div className="min-w-0">
+                    <div className={SETTINGS_FIELD_LABEL_CLASS}>{entry.name}</div>
+                    <div className={SETTINGS_HELPER_CLASS}>{entry.id} · {installedVersion && !current ? `${installedVersion} → ` : ''}{entry.version}</div>
+                  </div>
+                  <Button
+                    size="sm"
+                    variant={update ? 'default' : 'outline'}
+                    disabled={current || busy === `market-install:${entry.id}:${entry.version}`}
+                    onClick={() => void runMutation(`market-install:${entry.id}:${entry.version}`, () => requestJson(`/api/interactive-ui/manager/marketplaces/${encodeURIComponent(marketplace.id)}/install`, {
+                      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ extensionId: entry.id, version: entry.version }),
+                    }), 'settings.interactiveUI.toast.installed')}
+                  >
+                    {current
+                      ? t('settings.interactiveUI.actions.installed')
+                      : update
+                        ? t('settings.interactiveUI.actions.update')
+                        : t('settings.interactiveUI.actions.install')}
+                  </Button>
+                </div>
+              );
+            })}
           </div>
         ))}
         <div className="mt-6">
@@ -439,18 +486,29 @@ export const ExtensionManagerPage: React.FC = () => {
                 })}
               </div>
               {pendingPackage.inspection.agentRouting && (
-                <div className={SETTINGS_HELPER_CLASS}>
-                  {t('settings.interactiveUI.packageReview.agentRouting', {
-                    domain: pendingPackage.inspection.agentRouting.domain,
-                    authority: pendingPackage.inspection.agentRouting.dataAuthority,
-                    intents: pendingPackage.inspection.agentRouting.intents.join(', ') || '—',
-                  })}
-                </div>
+                <>
+                  <div className={SETTINGS_HELPER_CLASS}>
+                    {t('settings.interactiveUI.packageReview.agentRouting', {
+                      domain: pendingPackage.inspection.agentRouting.domain,
+                      authority: pendingPackage.inspection.agentRouting.dataAuthority,
+                      intents: pendingPackage.inspection.agentRouting.intents.join(', ') || '—',
+                    })}
+                  </div>
+                  <div className={SETTINGS_HELPER_CLASS}>
+                    {t('settings.interactiveUI.packageReview.surfaces', {
+                      interactive: pendingPackage.inspection.agentRouting.views.length,
+                      artifacts: pendingPackage.inspection.agentRouting.artifacts.length,
+                    })}
+                  </div>
+                </>
               )}
               <div className={SETTINGS_HELPER_CLASS}>
                 {t('settings.interactiveUI.packageReview.permissions', {
                   network: pendingPackage.inspection.permissions.network.join(', ') || '—',
                   native: pendingPackage.inspection.permissions.nativeCode
+                    ? t('settings.interactiveUI.packageReview.nativeYes')
+                    : t('settings.interactiveUI.packageReview.nativeNo'),
+                  artifacts: pendingPackage.inspection.permissions.sandboxedArtifacts
                     ? t('settings.interactiveUI.packageReview.nativeYes')
                     : t('settings.interactiveUI.packageReview.nativeNo'),
                 })}

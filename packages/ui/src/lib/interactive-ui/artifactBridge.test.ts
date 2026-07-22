@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import {
   createHTMLArtifactBridgeRateLimiter,
+  createHTMLArtifactBusinessResultMessage,
   createHTMLArtifactHostInitMessage,
   isHTMLArtifactBrokerNavigationMessage,
   parseHTMLArtifactBridgeMessage,
@@ -55,6 +56,21 @@ describe('HTML Artifact bridge parser', () => {
     });
   });
 
+  test('accepts only a channel-bound execution heartbeat payload', () => {
+    expect(parseHTMLArtifactBridgeMessage(message({
+      type: 'artifact.heartbeat',
+      payload: { leaseId: 'lease-1' },
+    }), 'channel-1', 0)).toEqual({
+      type: 'artifact.heartbeat',
+      payload: { leaseId: 'lease-1' },
+      sequence: 1,
+    });
+    expect(parseHTMLArtifactBridgeMessage(message({
+      type: 'artifact.heartbeat',
+      payload: { leaseId: 'lease-1', privileged: true },
+    }), 'channel-1', 0)).toBeNull();
+  });
+
   test('rejects forged channels, replayed sequences, unknown fields and oversized payloads', () => {
     expect(parseHTMLArtifactBridgeMessage(message(), 'another-channel', 0)).toBeNull();
     expect(parseHTMLArtifactBridgeMessage(message(), 'channel-1', 1)).toBeNull();
@@ -74,6 +90,50 @@ describe('HTML Artifact bridge parser', () => {
       type: 'artifact.callTool',
       payload: { tool: 'bash' },
     }), 'channel-1', 0)).toBeNull();
+  });
+
+  test('allows business requests only for installed third-party Artifacts', () => {
+    const request = message({
+      type: 'artifact.businessRequest',
+      payload: {
+        requestId: 'request-1',
+        intent: 'query',
+        action: 'com.demo.crm.list',
+        input: { stage: 'qualified' },
+      },
+    });
+    expect(parseHTMLArtifactBridgeMessage(request, 'channel-1', 0)).toBeNull();
+    expect(parseHTMLArtifactBridgeMessage(request, 'channel-1', 0, { allowBusiness: true })).toEqual({
+      type: 'artifact.businessRequest',
+      payload: {
+        requestId: 'request-1',
+        intent: 'query',
+        action: 'com.demo.crm.list',
+        input: { stage: 'qualified' },
+      },
+      sequence: 1,
+    });
+    expect(parseHTMLArtifactBridgeMessage(message({
+      type: 'artifact.businessRequest',
+      payload: { requestId: 'request-1', intent: 'query', action: 'invalid', input: {} },
+    }), 'channel-1', 0, { allowBusiness: true })).toBeNull();
+  });
+
+  test('builds a channel-bound business result without exposing host internals', () => {
+    expect(createHTMLArtifactBusinessResultMessage({
+      channelId: 'channel-1',
+      requestId: 'request-1',
+      ok: true,
+      data: { total: 3 },
+    })).toEqual({
+      source: 'openchamber-host',
+      direction: 'host-to-artifact',
+      bridgeVersion: 1,
+      channelId: 'channel-1',
+      sequence: 1,
+      type: 'host.businessResult',
+      payload: { requestId: 'request-1', ok: true, data: { total: 3 } },
+    });
   });
 
   test('accepts only the strict broker navigation signal on the active channel', () => {

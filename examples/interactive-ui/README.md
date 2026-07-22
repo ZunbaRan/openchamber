@@ -5,7 +5,7 @@ This example exercises the implemented OCIX v1 vertical slice in the normal Open
 - `agent-runtime/tools/interactive_ui.ts`: task-specific Declarative UI composition tool.
 - `agent-runtime/tools/html_artifact.ts`: strict static or scripts-opt-in HTML Artifact tool for custom SVG, simulators, and explorers that the Declarative DSL cannot reasonably express.
 - `artifact-fixtures.mjs`: deterministic static SVG, learning-rate simulator, and topology explorer fixtures used by acceptance tests.
-- `unified-acceptance-corpus.json`: frozen 16-case bilingual corpus for the final cross-model routing matrix.
+- `unified-acceptance-corpus.json`: frozen 17-case bilingual corpus for the cross-model routing matrix, including installed third-party HTML Artifact selection.
 - `builtin-visualization`: safe generated-layout host plus the backward-compatible process-flow view.
 - `agent-runtime/tools/crm_open_dashboard.ts`: enterprise CRM Agent tool.
 - `acme-crm`: trusted Native CRM extension with live query and confirmed write action.

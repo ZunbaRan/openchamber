@@ -2,6 +2,7 @@ import { runtimeFetch } from '@/lib/runtime-fetch';
 import type {
   InteractiveActionErrorPayload,
   InteractiveActionRequest,
+  InstalledHTMLArtifactDescriptor,
   InteractiveViewDescriptor,
 } from './types';
 import type { HTMLArtifactResultEnvelope } from './artifactResult';
@@ -39,6 +40,17 @@ export const getInteractiveViewDescriptor = async (
     headers: { Accept: 'application/json' },
   });
   return readJsonResponse<InteractiveViewDescriptor>(response);
+};
+
+export const getInstalledHTMLArtifactDescriptor = async (
+  artifactId: string,
+  toolName: string,
+): Promise<InstalledHTMLArtifactDescriptor> => {
+  const query = new URLSearchParams({ tool: toolName });
+  const response = await runtimeFetch(`/api/interactive-ui/installed-artifacts/${encodeURIComponent(artifactId)}?${query.toString()}`, {
+    headers: { Accept: 'application/json' },
+  });
+  return readJsonResponse<InstalledHTMLArtifactDescriptor>(response);
 };
 
 export const invokeInteractiveAction = async <TOutput = unknown>(

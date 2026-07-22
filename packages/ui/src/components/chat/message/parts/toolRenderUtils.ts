@@ -1,4 +1,5 @@
 import { parseHTMLArtifactResultEnvelope } from '@/lib/interactive-ui/artifactResult';
+import { parseInstalledHTMLArtifactResultEnvelope } from '@/lib/interactive-ui/installedArtifactResult';
 import { parseInteractiveResultEnvelope } from '@/lib/interactive-ui/result';
 import { ACTIVITY_STANDALONE_TOOL_NAMES } from '../../lib/turns/constants';
 
@@ -48,7 +49,8 @@ export const hasRichToolResult = (part: unknown): boolean => {
     const output = readCompletedToolOutput(part);
     if (!output) return false;
     return parseInteractiveResultEnvelope(output) !== null
-        || parseHTMLArtifactResultEnvelope(output) !== null;
+        || parseHTMLArtifactResultEnvelope(output) !== null
+        || parseInstalledHTMLArtifactResultEnvelope(output) !== null;
 };
 
 const POST_RICH_RESULT_TEXT_LENGTH_LIMIT = 240;

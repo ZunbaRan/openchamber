@@ -1,0 +1,8 @@
+{
+  "$schema": "openchamber://declarative-view/v1",
+  "id": "com.openchamber.builtin.interactive-ui.gallery",
+  "layout": {
+    "type": "generated-layout",
+    "data": { "$path": "data.layout" }
+  }
+}

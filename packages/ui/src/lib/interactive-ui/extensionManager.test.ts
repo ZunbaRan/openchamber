@@ -1,11 +1,23 @@
 import { describe, expect, test } from 'bun:test';
 import {
+  classifyCatalogInstallState,
   normalizeCatalogEntries,
   normalizeManagerSnapshot,
   normalizeConnectionSnapshot,
   normalizeMarketplaceInspection,
   normalizePackageInspection,
 } from './extensionManager';
+
+describe('classifyCatalogInstallState', () => {
+  test('distinguishes available, installed, update, older, and prerelease catalog entries', () => {
+    expect(classifyCatalogInstallState('1.0.0')).toBe('available');
+    expect(classifyCatalogInstallState('1.0.0', '1.0.0')).toBe('installed');
+    expect(classifyCatalogInstallState('1.1.0', '1.0.9')).toBe('update');
+    expect(classifyCatalogInstallState('1.0.0', '2.0.0')).toBe('older');
+    expect(classifyCatalogInstallState('1.0.0', '1.0.0-beta.2')).toBe('update');
+    expect(classifyCatalogInstallState('1.0.0-beta.2', '1.0.0-beta.10')).toBe('older');
+  });
+});
 
 describe('normalizeManagerSnapshot', () => {
   test('migrates missing lifecycle arrays and optional response collections', () => {
@@ -40,11 +52,13 @@ describe('normalizeManagerSnapshot', () => {
     const inspection = normalizePackageInspection({
       extension: { id: 'com.acme.operations', name: 'Operations', version: '1.0.0' },
       publisher: { id: 'com.acme.publisher', name: 'Acme', keyId: 'release', fingerprint: 'sha256-value', trusted: false },
-      permissions: { network: ['https://api.example.com'], nativeCode: true },
+      permissions: { network: ['https://api.example.com'], nativeCode: true, sandboxedArtifacts: true },
       agentRouting: {
         domain: 'operations',
         intents: ['operations.overview', 'operations.item.approve'],
         dataAuthority: 'connected-business-system',
+        views: [{ id: 'com.acme.operations.overview', tools: ['operations_open'] }],
+        artifacts: [{ id: 'com.acme.operations.explorer', tools: ['operations_explore'] }],
       },
       agentRuntime: {
         tools: [{ name: 'operations_open', entry: 'agent-runtime/tools/operations_open.ts' }, null],
@@ -56,8 +70,11 @@ describe('normalizeManagerSnapshot', () => {
       domain: 'operations',
       intents: ['operations.overview', 'operations.item.approve'],
       dataAuthority: 'connected-business-system',
+      views: [{ id: 'com.acme.operations.overview', tools: ['operations_open'] }],
+      artifacts: [{ id: 'com.acme.operations.explorer', tools: ['operations_explore'] }],
     });
     expect(inspection?.permissions.nativeCode).toBe(true);
+    expect(inspection?.permissions.sandboxedArtifacts).toBe(true);
     expect(normalizePackageInspection({ extension: {}, publisher: {} })).toBeNull();
   });
 
