@@ -8,6 +8,10 @@ const mainLayoutSource = readFileSync(
     join(__dirname, '..', 'MainLayout.tsx'),
     'utf-8',
 );
+const sessionSidebarSource = readFileSync(
+    join(__dirname, '..', '..', 'session', 'SessionSidebar.tsx'),
+    'utf-8',
+);
 
 describe('MainLayout mobile SessionSidebar mount (issue #1695 regression guard)', () => {
     test('mobile SessionSidebar is not conditionally mounted on mobileLeftDrawerVisible', () => {
@@ -20,10 +24,11 @@ describe('MainLayout mobile SessionSidebar mount (issue #1695 regression guard)'
         expect(/\{\s*mobileLeftDrawerVisible\s*&&\s*\(/.test(precedingWindow)).toBe(false);
 
         expect(precedingWindow.includes('pointer-events-none')).toBe(true);
+        expect(mainLayoutSource.slice(mobileSidebarIndex, mobileSidebarIndex + 120)).toContain('isVisible={mobileLeftDrawerVisible}');
     });
 
     test('desktop SessionSidebar is rendered inside Sidebar without drawer-visibility gating', () => {
-        const desktopSidebarIndex = mainLayoutSource.indexOf('<SessionSidebar onSessionSelected={handleDesktopSessionSelected} />');
+        const desktopSidebarIndex = mainLayoutSource.indexOf('isVisible={isSidebarOpen}');
         expect(desktopSidebarIndex).toBeGreaterThan(-1);
 
         const windowStart = Math.max(0, desktopSidebarIndex - 300);
@@ -44,6 +49,14 @@ describe('MainLayout mobile SessionSidebar mount (issue #1695 regression guard)'
     test('selecting a session closes the persistent sidebar in a narrow desktop window', () => {
         expect(mainLayoutSource).toContain('const handleDesktopSessionSelected = React.useCallback(() => {');
         expect(mainLayoutSource).toContain('window.innerWidth >= LEFT_SIDEBAR_AUTO_CLOSE_WIDTH');
-        expect(mainLayoutSource).toContain('<SessionSidebar onSessionSelected={handleDesktopSessionSelected} />');
+        expect(mainLayoutSource).toContain('onSessionSelected={handleDesktopSessionSelected}');
+    });
+
+    test('hidden sidebars disable render-only subscriptions and effects', () => {
+        expect(sessionSidebarSource).toContain('useGitAllBranches(isVisible)');
+        expect(sessionSidebarSource).toContain('useGitRepoStatusMap(isVisible ? normalizedProjectPaths : EMPTY_STRING_ARRAY)');
+        expect(sessionSidebarSource).toContain('enabled: isVisible,\n    isSessionSearchOpen');
+        expect(sessionSidebarSource).toContain('enabled: isVisible,\n    isDesktopShellRuntime');
+        expect(sessionSidebarSource).toContain('if (!isVisible) return EMPTY_STRING_ARRAY;');
     });
 });
