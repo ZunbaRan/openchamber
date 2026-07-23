@@ -2,7 +2,7 @@
   "$schema": "openchamber://interactive-ui-visual-golden/v1",
   "baselineDate": "2026-07-21",
   "platform": "darwin-arm64",
-  "browser": "Chrome/150.0.7871.130",
+  "browser": "Chrome/150.0.7871.182",
   "thresholds": {
     "pixelChannel": 12,
     "changedPixelRatio": 0.0005,
@@ -331,55 +331,55 @@
       "file": "native-dark-1024-zh-CN.png",
       "width": 1024,
       "height": 1000,
-      "sha256": "47eceac423062576e679de8c1ece9610e766e62d59672c4bfd5e852985743302"
+      "sha256": "376d78255e05c1632e619f566b5e70e73e3af4df2fb8a1d159d4dff436b6ae7f"
     },
     {
       "file": "native-dark-1440-zh-CN.png",
       "width": 1440,
       "height": 1000,
-      "sha256": "ca1dcb9d6b36a149cabaf645c5851f8fb06be16b6011a6a9922b36f84e7da8c7"
+      "sha256": "44719e45dce1f744e53998fa4789fabf9616d162def8d985fc02b0edd40a0e91"
     },
     {
       "file": "native-dark-390-zh-CN.png",
       "width": 390,
       "height": 1000,
-      "sha256": "9195fdba4143d1a0dac6d5f82d60469e088d0f18b6807655a22d46fe4aaedd23"
+      "sha256": "e2234349182d5d2ffdf22095e6a9c96273089f6d49defcc826ceca975e148ea9"
     },
     {
       "file": "native-dark-768-zh-CN.png",
       "width": 768,
       "height": 1000,
-      "sha256": "87b33f48af8d355fefd3766fb250c47969eedaa7d2cdadab5931dc5a0fcce25f"
+      "sha256": "ad1fd7a4b5fc90d8b68ac822627e2380eccadc6141408b1967620d686bf94388"
     },
     {
       "file": "native-light-1024-zh-CN.png",
       "width": 1024,
       "height": 1000,
-      "sha256": "92ecbd8ecaefb65540c374a23a7b5105bf1cbc165d80046f7fb1c97259298744"
+      "sha256": "06344a8768a6734e8596552f048df6e0f1b82db7e5b6948a32fc51952ee468dd"
     },
     {
       "file": "native-light-1440-zh-CN.png",
       "width": 1440,
       "height": 1000,
-      "sha256": "ed483e4f7b64cd60ead786c969d25d422fb1458a987a99ba2f504485a752a380"
+      "sha256": "b4b3e519df36bc1d55f6f7e5a40a647bd121fb23e5cb273861a7d9d719207c6a"
     },
     {
       "file": "native-light-390-en.png",
       "width": 390,
       "height": 1000,
-      "sha256": "68551491ba73174b084095971a5ae4da8336a17e645bf9d5171150de7c25395e"
+      "sha256": "73931a7bb60a6b1c755fc3161b49a5d61469889429398b6825e64c2e11463112"
     },
     {
       "file": "native-light-390-zh-CN.png",
       "width": 390,
       "height": 1000,
-      "sha256": "50dee8ae30565cb033267edee90d27344255549e9a1db55b4020f05c0deb674e"
+      "sha256": "ae04e94c587aa95885943addcb2075ba01dcedce0baeca0e6e51df75243c231d"
     },
     {
       "file": "native-light-768-zh-CN.png",
       "width": 768,
       "height": 1000,
-      "sha256": "a6b7f90912af7cb472fc61507b9c81d928472b4676fdeb88f589753b99fc95bc"
+      "sha256": "bf81d2c74f39ed424fb356fe31ea9033a643249c39c6e377578040539bde886b"
     }
   ]
 }
