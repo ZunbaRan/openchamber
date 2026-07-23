@@ -13,6 +13,8 @@ HTML Artifact 是 Agent 在对话流中临时生成的、自包含 UI 文档。�
 - 关系、网络或空间探索器；
 - 不适合固化成 OCIX 企业模块的一次性可视化。
 
+用户明确要求“使用 HTML Artifact”时也应直接选择该 Tool。播放/暂停、滑杆、拖拽、动画时间线和参数模拟属于 HTML Artifact；切换页签、展开/收起、图表悬停/聚焦和代码复制则可以由 Interactive UI 的 Host 组件安全提供。
+
 选择顺序必须是：
 
 ```text
@@ -55,6 +57,8 @@ Tool 必须返回单个 JSON 对象，不要使用 Markdown 代码围栏：
 - `inlineHeight` 为 120–900 的整数；
 - `preferred` 只允许 `inline`、`workspace`、`fullscreen`；
 - 所有 CSS、SVG、图片 data URI 与可选脚本都在一个 HTML 字符串中；
+- 脚本使用普通 HTML5 `<script>` 内容，不要使用 CDATA 或 HTML 注释包装；
+- `html_artifact` Tool 在返回 Envelope 前会预检禁止元素、远程资源、声明不一致与禁止执行能力。预检失败会以可修复 Tool error 返给模型，不会产生一个表面成功、宿主随后失败的结果；
 - 未知字段会被拒绝，不存在“Host 自动忽略”的扩展字段。
 
 ## 3. Static 与 scripts
@@ -63,12 +67,13 @@ Tool 必须返回单个 JSON 对象，不要使用 Markdown 代码围栏：
 
 只有本地交互确实必要时才使用 `scripts: true`。当前 scripts 能力：
 
-- 默认关闭，必须由 `OPENCHAMBER_HTML_ARTIFACTS_SCRIPTS=true` 明确开启；
-- capability API 报告 `scriptsMode: "experimental"`；
-- Host iframe 仅获得 `allow-scripts`；受信 Broker 再把 Artifact 装入 opaque `data:` 子 frame。浏览器攻击矩阵已经证明 form、nested frame、download、self-navigation、meta refresh 与脚本网络 API 不会产生目标请求；Artifact 仍没有 same-origin、网络、表单、弹窗或 Host 权限；
-- 在 Web 与当前 Desktop iframe 中不能保证独立终止恶意无限循环，因此不能描述为生产安全脚本环境。
+- Managed Desktop 默认开启并报告 `scriptsMode: "supported"`；它把 Broker 放入独立 `WebContentsView`，专用 preload 不向 Artifact 暴露 Electron API，主进程可以强制终止 renderer；
+- 普通 Web 默认关闭；只有显式 `OPENCHAMBER_HTML_ARTIFACTS_SCRIPTS=true` 时报告 `scriptsMode: "experimental"`；
+- 两种后端都使用受信 Broker + opaque `data:` 子 frame。浏览器攻击矩阵已经证明 form、nested frame、download、self-navigation、meta refresh 与脚本网络 API 不会产生目标请求；Artifact 仍没有 same-origin、网络、表单、弹窗或 Host 权限；
+- Desktop 主进程限制每窗 4 个、全局 8 个实例、15 分钟租约、256 MiB working set 与连续高 CPU；用户 Stop 会销毁独立 renderer；
+- `OPENCHAMBER_HTML_ARTIFACTS_SCRIPTS=false` 在 Desktop 上是紧急 kill switch。
 
-如果 Runtime 没有开启 scripts，Host 返回明确 unsupported。Agent 应改做 Static Artifact 或 Generated Declarative，不能悄悄删掉脚本后返回一个失效页面。
+如果 Runtime 没有开启或不支持 scripts，Host 返回明确 unsupported。Agent 应改做 Static Artifact 或 Generated Declarative，不能悄悄删掉脚本后返回一个失效页面。
 
 ## 4. 视觉与主题合同
 
@@ -280,7 +285,7 @@ OPENCHAMBER_TEST_ARTIFACT_SCRIPTS=true bun run test:html-artifact-browser
 - [ ] 标准 Interactive UI 组件确实无法合理表达；
 - [ ] 真实业务能力已排除或改用 OCIX；
 - [ ] Envelope 严格匹配 v1，且在大小限制内；
-- [ ] 默认 static；scripts 使用理由明确并标为 experimental；
+- [ ] 默认 static；scripts 使用理由明确，并按 Runtime 标记 Desktop supported / Web experimental；
 - [ ] 没有网络、存储、远程资源或 Host 权限；
 - [ ] light/dark、390 px、键盘与 reduced motion 可用；
 - [ ] 数据来源明确；

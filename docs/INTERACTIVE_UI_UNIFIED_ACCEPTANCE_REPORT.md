@@ -1,8 +1,10 @@
 # Interactive UI 统一验收报告
 
-> 日期：2026-07-21  
-> 范围：Agent Generated Declarative、Installed Declarative、Trusted Native、HTML Artifact Runtime v1  
+> 日期：2026-07-22
+> 范围：Agent Generated Declarative、Installed Declarative、Trusted Native、HTML Artifact Runtime v1、Managed Desktop 独立 Scripts Artifact Runner
 > 结论：本机可执行的产品门禁全部通过；OpenAI 路由矩阵和非 macOS 桌面/Capacitor 仍明确标记为外部未验证，不推断通过。
+
+> 2026-07-22 实现增量：Managed Desktop 已加入独立 Scripts Artifact Runner、主进程 CPU/内存/租约/并发门禁和强制 Stop；连接状态已拆为 credential 与 runtime health；Declarative 新增 `agenda`/`funnel`/`network`。最新 macOS arm64 打包报告已重新生成，确认 Scripts Artifact 使用 `desktop-runner` 并完成 `ready → stopped`；普通 Web Scripts 等级不变。
 
 ## 1. 发布结论
 
@@ -14,7 +16,7 @@
 | Installed Declarative | `stable`（已验收 Runtime） | 签名 OCIX、真实 CRM API、查询、状态映射和生命周期通过 |
 | Trusted Native | `stable`（已验收 Runtime） | Host UI Kit、确认/取消、权限拒绝、revision 冲突和写后刷新通过 |
 | Static HTML Artifact | `stable` | Web、Hosted Mobile 390 和打包 macOS arm64 可显示、重放、重建并切换显示模式 |
-| Scripts HTML Artifact | `experimental / default-off` | 交互与权限隔离通过，但普通 Web iframe 缺少可独立终止的 CPU/内存边界 |
+| Scripts HTML Artifact | Managed Desktop `supported/default-on`；Web `experimental/default-off` | Desktop 独立 Runner、资源终止门禁及打包态 `ready → stopped` 均通过；Web 等级不变 |
 | VS Code / E2EE relay Artifact | `unsupported` | 不降级为较弱的 `srcdoc`/blob 实现 |
 | Windows/Linux Desktop、Capacitor | `unverified` | 本轮没有对应 CI 或实机证据 |
 | OpenAI `gpt-5.4` 路由 | `unverified / external blocker` | 当前验收实例没有连接该 Provider；没有降低阈值或替换模型冒充通过 |
@@ -93,7 +95,7 @@ Scripts 测试通过确定性学习率模拟器：滑块值从 `0.0016` 变化�
 
 浏览器记录到严格的 `broker.navigationBlocked`，目标网络请求为 0，Runtime error 为 0。Bridge 仍只允许 resize、受控复制、受控外链、follow-up 和展开，不允许 Tool、Gateway、Token、文件系统或任意网络。
 
-Scripts 仍不能升级为 stable：当前 Web/Desktop iframe 无法证明无限循环或内存攻击能由宿主独立终止。因此生产默认关闭，只在显式 flag 与 Runtime capability 同时满足时作为 experimental 使用。
+Scripts 必须按 Runtime 判定：Managed Desktop 已使用可由主进程终止的独立 `WebContentsView` Runner，默认开启并保留 kill switch；普通 Web iframe 仍无法证明无限循环或内存攻击能由宿主独立终止，因此继续默认关闭，只在显式 flag 与 Runtime capability 同时满足时作为 experimental 使用。
 
 ## 6. 视觉、响应式与可访问性
 
@@ -116,8 +118,10 @@ macOS arm64 `.app` 使用当前源码重新构建后，在全新 user-data/data/
 - 使用 `Contents/Resources/opencode-cli/opencode`，版本 1.18.3；不依赖用户额外安装 OpenCode。
 - 包内 OpenCode 发现 `interactive_ui`、`html_artifact` 和 `interactive-ui-visualization` Skill。
 - Generated 与 Static Artifact 实际内容为 `ready`，不是只出现空 Host 卡片。
-- cache 重建保持相同 content ID；inline/workspace/fullscreen、scripts-disabled fallback、应用停止和二次启动均通过。
-- Runtime error 为 0；截图位于 `.tmp/interactive-ui-packaged-desktop/static-artifact-packaged-macos.png`。
+- Scripts Artifact 使用独立 `WebContentsView` Runner，状态完成 `ready → stopped`；停止后 Runner 及其会话资源被销毁。
+- cache 重建保持相同 content ID；inline/workspace/fullscreen、应用停止和二次启动均通过。
+- 混合 OCIX `com.demo.simple.crm@1.3.0-packaged.1` 在打包态发现 3 个 Tool，并通过 4 条真实 Gateway 客户数据验收。
+- Runtime error 为 0；报告位于 `.tmp/interactive-ui-packaged-desktop/report.json`，截图位于同目录。
 
 性能结果：
 
@@ -184,5 +188,6 @@ bun run build:web
 
 1. 连接 OpenAI Provider 后原样运行 `bun run test:interactive-ui-model-routing`，补齐第三模型；不得修改 16 条语料、acceptable tools 或阈值。
 2. 若要声明 Windows/Linux Desktop 或 Capacitor 支持，需在对应 CI/实机补做自定义协议、Secret Store、Artifact CSP、进程生命周期和显示模式验收。
-3. 若要把 Scripts Artifact 升级为 stable，需先实现可独立终止的 renderer/process，并进行 CPU/内存专项安全评审。
+3. Managed Desktop Runner 已具备独立终止、CPU/内存/租约/并发门禁；若要把 `supported` 升为正式 `stable`，仍需完成独立安全审计和持续版本回归策略。
 4. 日常 Simple CRM 演示若要免手动启动业务 API，应另补 demo lifecycle；统一功能验收已经证明真实动态 API 闭环，但不把测试服务器当作生产部署方案。
+5. Marketplace 发现、审核、发布与更新通道不在本轮范围内；本轮仅保留现有扩展管理接口，不据此宣称公共市场可用。

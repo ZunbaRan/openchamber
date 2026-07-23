@@ -28,7 +28,7 @@ const SUPPORTED_NODE_TYPES = new Set([
   'text', 'markdown', 'progress', 'status', 'badge', 'key-value', 'flow', 'chart',
   'list', 'callout', 'data-table', 'divider', 'timeline', 'activity-feed',
   'comparison', 'tabs', 'accordion', 'code-block', 'sparkline', 'git-graph',
-  'tree', 'diff-summary', 'gauge', 'heatmap', 'kanban',
+  'tree', 'diff-summary', 'gauge', 'heatmap', 'kanban', 'agenda', 'funnel', 'network',
 ]);
 const BANNED_DECLARATIVE_KEYS = new Set(['dangerouslySetInnerHTML', 'html', 'script', 'srcDoc', 'srcdoc']);
 const REPOSITORY_PROVIDED_TOOL_NAMES = new Set(['html_artifact', 'interactive_ui', 'interactive_ui_gallery', 'crm_open_dashboard']);
@@ -219,6 +219,16 @@ const validateDeclarativeDefinition = (definition, declaredActions) => {
       if (value.type === 'kanban') {
         if (!Array.isArray(value.columns)) errors.push(`${location}.columns: kanban requires a columns array`);
         if (!Array.isArray(value.cards)) errors.push(`${location}.cards: kanban requires a cards array`);
+      }
+      if (value.type === 'agenda' && !Array.isArray(value.entries) && !Array.isArray(value.items) && !Array.isArray(value.data)) {
+        errors.push(`${location}.entries: agenda requires an entries, items, or data array`);
+      }
+      if (value.type === 'funnel' && !Array.isArray(value.stages) && !Array.isArray(value.items) && !Array.isArray(value.data)) {
+        errors.push(`${location}.stages: funnel requires a stages, items, or data array`);
+      }
+      if (value.type === 'network') {
+        if (!Array.isArray(value.nodes)) errors.push(`${location}.nodes: network requires a nodes array`);
+        if (!Array.isArray(value.edges)) errors.push(`${location}.edges: network requires an edges array`);
       }
     }
     if ('$path' in value) validateBindingPath(value.$path, `${location}.$path`, errors, DECLARATIVE_BINDING_ROOTS);

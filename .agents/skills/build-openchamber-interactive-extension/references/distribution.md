@@ -47,7 +47,7 @@ Use **Settings → Interactive UI Extensions** to:
 
 Global Agent files are owned by the extension manager. Installation must fail without overwriting when a Tool or Skill target is user-owned, modified outside OpenChamber, or already owned by another enabled OCIX. Multiple extensions coexist in the shared directories; no extension-specific `OPENCODE_CONFIG_DIR` is used.
 
-The manager also persists the signed OCIX file index for each installed version and re-hashes the managed source before exposing an enabled extension to the runtime. A missing or mismatched record fails closed; reinstall the version after investigating tampering.
+The manager also persists the signed OCIX file index for each installed version and re-hashes the managed source before exposing an enabled extension to the runtime. A missing or mismatched record fails closed by quarantining Host surfaces and managed Agent files. The record remains visible in Settings so the user can reinstall the signed package or perform a recoverable uninstall; OpenChamber never synthesizes a trusted record from the current on-disk files.
 
 When changing manager persistence, test successful round trips and injected state-write failure cleanup. Never expose public-key PEM, local managed paths, tokens, or private keys in manager API responses.
 

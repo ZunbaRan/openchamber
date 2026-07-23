@@ -23,6 +23,7 @@ import type {
 import {
   AccordionPrimitive,
   ActivityFeedPrimitive,
+  AgendaPrimitive,
   CodeBlockPrimitive,
   ComparisonPrimitive,
   DiffSummaryPrimitive,
@@ -30,6 +31,8 @@ import {
   GitGraphPrimitive,
   HeatmapPrimitive,
   KanbanPrimitive,
+  FunnelPrimitive,
+  NetworkPrimitive,
   SparklinePrimitive,
   TabsPrimitive,
   TimelinePrimitive,
@@ -159,16 +162,28 @@ const asNodes = (value: unknown): DeclarativeViewNode[] => (
   Array.isArray(value) ? value.filter((entry): entry is DeclarativeViewNode => !!asRecord(entry) && typeof entry.type === 'string') : []
 );
 
-const columnsClass = (value: unknown): string => {
+const boundedColumnCount = (value: unknown): number => {
   const record = asRecord(value);
-  const count = typeof record?.default === 'number'
+  return typeof record?.default === 'number'
     ? Math.max(1, Math.min(4, Math.trunc(record.default)))
     : typeof value === 'number'
       ? Math.max(1, Math.min(4, Math.trunc(value)))
       : 1;
+};
+
+const columnsClass = (value: unknown): string => {
+  const count = boundedColumnCount(value);
   if (count === 4) return 'grid-cols-1 sm:grid-cols-2 xl:grid-cols-4';
   if (count === 3) return 'grid-cols-1 sm:grid-cols-2 lg:grid-cols-3';
   if (count === 2) return 'grid-cols-1 sm:grid-cols-2';
+  return 'grid-cols-1';
+};
+
+const metricGridClass = (value: unknown): string => {
+  const count = boundedColumnCount(value);
+  if (count === 4) return 'grid-cols-1 @xs/metric-grid:grid-cols-2 @2xl/metric-grid:grid-cols-4';
+  if (count === 3) return 'grid-cols-1 @xs/metric-grid:grid-cols-2 @xl/metric-grid:grid-cols-3';
+  if (count === 2) return 'grid-cols-1 @xs/metric-grid:grid-cols-2';
   return 'grid-cols-1';
 };
 
@@ -538,24 +553,26 @@ const DeclarativeNode: React.FC<{
 
   if (node.type === 'metric-grid') {
     return (
-      <div className={cn('grid gap-2', columnsClass(node.columns))}>
-        {(Array.isArray(node.items) ? node.items : []).map((item, index) => {
-          const metric = asRecord(item) ?? {};
-          const tone = resolved(metric.tone);
-          const trend = resolved(metric.trend);
-          const trendName = trendIcon(trend);
-          return (
-            <div key={String(metric.label ?? index)} className={OCIX_PANEL}>
-              <div className={OCIX_META}>{displayDeclarativeValue(metric.label)}</div>
-              <div className={cn('mt-1 flex min-w-0 items-center gap-1 typography-body font-semibold', metricToneClass(tone))}>
-                {trendName ? <Icon name={trendName} className="size-3.5 shrink-0" /> : null}
-                <span className="min-w-0 break-words">{displayDeclarativeValue(resolved(metric.value))}</span>
+      <div className="@container/metric-grid min-w-0">
+        <div className={cn('grid min-w-0 gap-2', metricGridClass(node.columns))} data-ocix-metric-grid>
+          {(Array.isArray(node.items) ? node.items : []).map((item, index) => {
+            const metric = asRecord(item) ?? {};
+            const tone = resolved(metric.tone);
+            const trend = resolved(metric.trend);
+            const trendName = trendIcon(trend);
+            return (
+              <div key={String(metric.label ?? index)} className={OCIX_PANEL}>
+                <div className={OCIX_META}>{displayDeclarativeValue(metric.label)}</div>
+                <div className={cn('mt-1 flex min-w-0 items-center gap-1 typography-body font-semibold', metricToneClass(tone))}>
+                  {trendName ? <Icon name={trendName} className="size-3.5 shrink-0" /> : null}
+                  <span className="min-w-0 break-words">{displayDeclarativeValue(resolved(metric.value))}</span>
+                </div>
+                {metric.trendValue !== undefined ? <div className={cn('mt-0.5 typography-micro', metricToneClass(tone))}>{displayDeclarativeValue(resolved(metric.trendValue))}</div> : null}
+                {metric.detail !== undefined ? <div className={cn('mt-1', OCIX_META)}>{displayDeclarativeValue(resolved(metric.detail))}</div> : null}
               </div>
-              {metric.trendValue !== undefined ? <div className={cn('mt-0.5 typography-micro', metricToneClass(tone))}>{displayDeclarativeValue(resolved(metric.trendValue))}</div> : null}
-              {metric.detail !== undefined ? <div className={cn('mt-1', OCIX_META)}>{displayDeclarativeValue(resolved(metric.detail))}</div> : null}
-            </div>
-          );
-        })}
+            );
+          })}
+        </div>
       </div>
     );
   }
@@ -670,6 +687,9 @@ const DeclarativeNode: React.FC<{
   if (node.type === 'gauge') return <GaugePrimitive node={node} resolveValue={resolved} emptyLabel={emptyLabel} />;
   if (node.type === 'heatmap') return <HeatmapPrimitive node={node} resolveValue={resolved} emptyLabel={emptyLabel} />;
   if (node.type === 'kanban') return <KanbanPrimitive node={node} resolveValue={resolved} emptyLabel={emptyLabel} />;
+  if (node.type === 'agenda') return <AgendaPrimitive node={node} resolveValue={resolved} emptyLabel={emptyLabel} />;
+  if (node.type === 'funnel') return <FunnelPrimitive node={node} resolveValue={resolved} emptyLabel={emptyLabel} />;
+  if (node.type === 'network') return <NetworkPrimitive node={node} resolveValue={resolved} emptyLabel={emptyLabel} />;
   if (node.type === 'git-graph') return <GitGraphPrimitive node={node} resolveValue={resolved} emptyLabel={emptyLabel} />;
   if (node.type === 'tree') return <TreePrimitive node={node} resolveValue={resolved} emptyLabel={emptyLabel} />;
   if (node.type === 'diff-summary') return <DiffSummaryPrimitive node={node} resolveValue={resolved} emptyLabel={emptyLabel} />;

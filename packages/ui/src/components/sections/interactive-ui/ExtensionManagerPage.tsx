@@ -60,7 +60,7 @@ const fileToBase64 = (file: File): Promise<string> => new Promise((resolve, reje
 });
 
 export const ExtensionManagerPage: React.FC = () => {
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
   const packageInputRef = React.useRef<HTMLInputElement>(null);
   const [snapshot, setSnapshot] = React.useState<ManagerSnapshot>(EMPTY_MANAGER_SNAPSHOT);
   const [connectionSnapshot, setConnectionSnapshot] = React.useState<ConnectionSnapshot>(EMPTY_CONNECTION_SNAPSHOT);
@@ -101,6 +101,7 @@ export const ExtensionManagerPage: React.FC = () => {
       return true;
     } catch (error) {
       toast.error(t('settings.interactiveUI.toast.actionFailed'), { description: error instanceof Error ? error.message : undefined });
+      await refresh().catch(() => undefined);
       return false;
     } finally {
       setBusy(null);
@@ -217,6 +218,15 @@ export const ExtensionManagerPage: React.FC = () => {
                       skills: extension.versions[extension.activeVersion]?.agentRuntime.skills.length ?? 0,
                     })}
                   </div>
+                  {extension.integrity.status === 'unavailable' ? (
+                    <p className="mt-2 typography-meta text-[var(--status-warning)]">
+                      {t('settings.interactiveUI.installed.integrityUnavailable')}
+                    </p>
+                  ) : extension.integrity.status === 'failed' ? (
+                    <p className="mt-2 typography-meta text-[var(--status-error)]">
+                      {t('settings.interactiveUI.installed.integrityFailed')}
+                    </p>
+                  ) : null}
                   <details className="mt-2 max-w-[40rem]">
                     <summary className="cursor-pointer typography-meta font-medium text-[var(--surface-muted-foreground)] outline-none hover:text-[var(--surface-foreground)] focus-visible:ring-2 focus-visible:ring-[var(--interactive-focus-ring)]">
                       {t('settings.interactiveUI.installed.diagnostics')}
@@ -245,9 +255,9 @@ export const ExtensionManagerPage: React.FC = () => {
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
                   <Switch
-                    checked={extension.enabled}
+                    checked={extension.enabled && extension.integrity.status !== 'unavailable' && extension.integrity.status !== 'failed'}
                     aria-label={t('settings.interactiveUI.actions.enableAria', { name: extension.name })}
-                    disabled={busy === `toggle:${extension.id}`}
+                    disabled={extension.integrity.status === 'unavailable' || extension.integrity.status === 'failed' || busy === `toggle:${extension.id}`}
                     onCheckedChange={(enabled) => void runMutation(`toggle:${extension.id}`, () => requestJson(`/api/interactive-ui/manager/extensions/${encodeURIComponent(extension.id)}`, {
                       method: 'PATCH',
                       headers: { 'Content-Type': 'application/json' },
@@ -285,18 +295,28 @@ export const ExtensionManagerPage: React.FC = () => {
               const key = connectionKey(connection.extension.id, connection.connector.id);
               const statusKey = connection.credential.expired
                 ? 'settings.interactiveUI.connections.statusExpired'
-                : connection.credential.configured
-                  ? 'settings.interactiveUI.connections.statusConnected'
-                  : 'settings.interactiveUI.connections.statusNotConnected';
+                : !connection.credential.configured
+                  ? 'settings.interactiveUI.connections.statusNotConnected'
+                  : connection.health.status === 'reachable'
+                    ? 'settings.interactiveUI.connections.statusReachable'
+                    : connection.health.status === 'unreachable'
+                      ? 'settings.interactiveUI.connections.statusUnreachable'
+                      : connection.health.status === 'unauthorized'
+                        ? 'settings.interactiveUI.connections.statusUnauthorized'
+                        : connection.health.status === 'forbidden'
+                          ? 'settings.interactiveUI.connections.statusForbidden'
+                          : 'settings.interactiveUI.connections.statusConfigured';
+              const healthWarning = connection.credential.expired || ['unreachable', 'unauthorized', 'forbidden'].includes(connection.health.status);
               return (
                 <div key={key} className="space-y-3 py-5 first:pt-0">
                   <div className="flex flex-col gap-2 @xl:flex-row @xl:items-start @xl:justify-between">
                     <div className="min-w-0">
                       <div className={SETTINGS_FIELD_LABEL_CLASS}>{connection.extension.name}</div>
                       <div className={SETTINGS_HELPER_CLASS}>{connection.connector.id} · {connection.connector.origin}</div>
-                      <div className={connection.credential.expired ? 'text-sm text-status-warning' : SETTINGS_HELPER_CLASS}>
+                      <div className={healthWarning ? 'text-sm text-status-warning' : SETTINGS_HELPER_CLASS}>
                         {t(statusKey)}
                         {connection.credential.displayName ? ` · ${connection.credential.displayName}` : ''}
+                        {connection.health.checkedAt ? ` · ${t('settings.interactiveUI.connections.lastChecked')} ${new Intl.DateTimeFormat(locale, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(connection.health.checkedAt))}` : ''}
                       </div>
                     </div>
                     <div className="flex flex-wrap gap-2">

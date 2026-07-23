@@ -30,6 +30,8 @@ window.__OPENCHAMBER_RUNTIME_APIS__ = runtimeAPIs;
 initializeLocale();
 
 const params = new URLSearchParams(window.location.search);
+const artifactSessionId = params.get('session') || undefined;
+const artifactClipTest = params.get('clipTest') === 'true';
 const requestedRuntime = params.get('runtime');
 const runtime = requestedRuntime === 'generated'
   || requestedRuntime === 'declarative'
@@ -101,8 +103,32 @@ const crashedArtifactEnvelope: HTMLArtifactResultEnvelope = {
   summary: '确定性的运行时失败 fixture；错误必须移除 iframe 并显示安全状态。',
   html: learningRateSimulatorArtifact.html.replace('</body>', '<script>addEventListener("openchamber:host-init", () => setTimeout(() => { throw new Error("deterministic fixture crash") }, 0), { once: true })</script></body>'),
 };
+const clippingArtifactEnvelope: HTMLArtifactResultEnvelope = {
+  $schema: 'openchamber://html-artifact-result/v1',
+  schemaVersion: 1,
+  title: 'Runner 裁剪验收',
+  summary: '紫色区域只能出现在滚动容器内部，不能覆盖下方绿色保护区。',
+  capabilities: { scripts: true },
+  display: { preferred: 'inline', allowExpand: false, inlineHeight: 420 },
+  html: String.raw`<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <style>
+    *{box-sizing:border-box}html,body{width:100%;height:100%;margin:0}body{display:grid;place-items:center;background:#ff00cc;color:#160014;font:700 24px/1.4 ui-sans-serif,system-ui,sans-serif}.panel{text-align:center}.panel button{margin-top:18px;padding:10px 18px;border:2px solid #160014;border-radius:10px;background:#fff;color:#160014;font:inherit;cursor:pointer}
+  </style>
+</head>
+<body>
+  <main class="panel"><div>ARTIFACT CLIP TEST</div><button id="counter" type="button">count 0</button></main>
+  <script>(()=>{let count=0;const button=document.getElementById('counter');button.addEventListener('click',()=>{count+=1;button.textContent='count '+count})})()</script>
+</body>
+</html>`,
+};
 const artifactEnvelope = isStaticArtifact
   ? staticNeuralNetworkArtifact
+  : artifactClipTest
+    ? clippingArtifactEnvelope
   : isBlockedArtifact
     ? blockedArtifactEnvelope
     : isCrashedArtifact
@@ -129,6 +155,7 @@ const DemoContent = () => {
     return (
       <HTMLArtifactView
         envelope={artifactViewEnvelope}
+        sessionId={artifactSessionId}
         toolPartId={`interactive-ui-demo-${runtime}`}
         tool={isInstalledArtifact ? {
           id: 'interactive-ui-demo-installed-artifact-tool',
@@ -154,8 +181,34 @@ const DemoContent = () => {
   );
 };
 
+// This fixture deliberately resembles the chat topology: the Artifact is
+// inside an overflow scroller while a sibling surface remains below it. Native
+// Runner pixels must never escape into the green guard.
+// eslint-disable-next-line react-refresh/only-export-components
+const ClipTestDemo = () => (
+  <main className="min-h-screen bg-[#101014] p-8 text-white" data-ocix-clip-test>
+    <section
+      className="mx-auto h-[520px] w-full max-w-5xl overflow-y-auto rounded-2xl border-4 border-white bg-[#24242b] p-5"
+      data-ocix-clip-test-scroller
+    >
+      <div className="mb-5 flex h-44 items-center justify-center rounded-xl bg-[#353541] text-xl font-semibold">
+        Scroll spacer
+      </div>
+      <DemoContent />
+      <div className="mt-5 h-[520px] rounded-xl bg-[#353541]" />
+    </section>
+    <section
+      className="mx-auto mt-4 flex h-32 w-full max-w-5xl items-center justify-center rounded-2xl bg-[#39ff14] text-2xl font-black text-black"
+      data-ocix-clip-test-guard
+    >
+      NATIVE RUNNER MUST NOT COVER THIS AREA
+    </section>
+  </main>
+);
+
 // eslint-disable-next-line react-refresh/only-export-components
 const Demo = () => (
+  artifactClipTest ? <ClipTestDemo /> :
   <main className={`${theme === 'dark' ? 'dark ' : ''}min-h-screen bg-background p-4 text-foreground sm:p-8`} data-visual-theme={theme}>
     <div className="mx-auto w-full max-w-5xl rounded-2xl border border-border bg-[var(--surface-muted)] p-3 shadow-sm sm:p-5">
       <DemoContent />

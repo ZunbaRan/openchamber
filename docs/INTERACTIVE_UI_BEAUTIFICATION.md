@@ -13,7 +13,7 @@
 
 - `packages/ui/src/styles/ocix-theme.css` 已提供独立 light/dark token、语义 tone、chart palette、密度、圆角、阴影和 motion token；Interactive UI 与 Artifact host 均挂载 `.ocix-scope`。
 - 既有节点已完成层级、metric trend/tone、flow state、table density/hover/sticky header、chart tooltip/hover/focus/empty state、callout、progress、Skeleton 和空态升级。
-- Declarative 已新增 `divider`、`timeline`、`activity-feed`、`comparison`、`tabs`、`accordion`、`code-block`、`sparkline`、`gauge`、`heatmap`、`kanban`、`git-graph`、`tree`、`diff-summary`。Generated Declarative 使用同一渲染器，但仍经过节点/深度/行列/文本上限和无 action/query/binding/script 的 sanitizer。显式开发验收可调用 `interactive_ui_gallery`，Gallery 会直接出现在正常对话 ToolPart，而不是 standalone demo。
+- Declarative 已新增 `divider`、`timeline`、`activity-feed`、`agenda`、`funnel`、`network`、`comparison`、`tabs`、`accordion`、`code-block`、`sparkline`、`gauge`、`heatmap`、`kanban`、`git-graph`、`tree`、`diff-summary`。Generated Declarative 使用同一渲染器，但仍经过节点/深度/行列/文本上限和无 action/query/binding/script 的 sanitizer。显式开发验收可调用 `interactive_ui_gallery`，Gallery 会直接出现在正常对话 ToolPart，而不是 standalone demo。
 - Native `activationHost.ui` 已扩展为 Button、Card、Badge、Notice、Skeleton、Separator、Progress、Table、Tabs、Input、Textarea 和 EmptyState；扩展继续复用 Host React，不打包第二份 React。销售与 CRM 示例已改为 Host UI Kit，统一使用 Notice 表达失败/陈旧状态，并避免依赖不会进入宿主 Tailwind 扫描的扩展自定义响应式 class。
 - Host 现在统一显示 Envelope summary、扩展来源、Live/Snapshot、Connector 与更新时间；业务失败按 unconfigured/unreachable/unauthorized/forbidden/error 分类，刷新失败保留上次成功数据并显示 stale Notice，不向页面直接透传上游错误正文。
 - `bun run test:interactive-ui-visual` 已用实际 Host 和 Business Gateway 覆盖 Generated、Installed Declarative、Native Sales、Native CRM 的 light/dark、1440/1024/768/390 px 与 zh-CN/en，共 36 个组合；阶段截图写入 `.tmp/interactive-ui-visual-smoke/`。

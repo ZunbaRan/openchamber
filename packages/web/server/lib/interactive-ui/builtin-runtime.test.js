@@ -8,6 +8,12 @@ import { createInteractiveUIRuntime } from './runtime.js';
 describe('production built-in Interactive UI runtime', () => {
   it('ships valid Generated and Gallery Views, three Agent Tools, and the routing Skill', async () => {
     const builtIn = createBuiltInInteractiveUIRuntime();
+    expect(builtIn.version).toBe('1.2.1');
+    expect(Object.keys(builtIn.legacyAssets).sort()).toEqual([
+      'skills/interactive-ui-visualization/SKILL.md',
+      'tools/html_artifact.ts',
+      'tools/interactive_ui.ts',
+    ]);
     const runtime = createInteractiveUIRuntime({
       fsPromises: fs,
       path,

@@ -6,6 +6,7 @@ import {
   checkForDesktopUpdates,
   downloadDesktopUpdate,
   restartToApplyUpdate,
+  isDesktopUpdatesEnabled,
   isDesktopLocalOriginActive,
   isElectronShell,
   isVSCodeRuntime,
@@ -200,6 +201,15 @@ export const useUpdateStore = create<UpdateStore>()((set, get) => ({
     const runtime = detectRuntimeType();
     if (!runtime) return null;
 
+    if (runtime === 'desktop' && !isDesktopUpdatesEnabled()) {
+      set({
+        ...initialState,
+        runtimeType: 'desktop',
+        lastChecked: Date.now(),
+      });
+      return null;
+    }
+
     set({ checking: true, error: null, runtimeType: runtime });
 
     try {
@@ -208,14 +218,17 @@ export const useUpdateStore = create<UpdateStore>()((set, get) => ({
 
       if (runtime === 'desktop') {
         const appVersion = typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : undefined;
-        const [desktopResult, apiResult] = await Promise.allSettled([
-          checkForDesktopUpdates(),
-          checkForWebUpdates('desktop', appVersion),
-        ]);
-        const desktopInfo = desktopResult.status === 'fulfilled' ? desktopResult.value : null;
-        suggestedSec = apiResult.status === 'fulfilled'
-          ? (apiResult.value?.nextSuggestedCheckInSec ?? null)
-          : null;
+        const desktopInfo = await checkForDesktopUpdates();
+        if (desktopInfo?.updatesEnabled === false) {
+          set({
+            ...initialState,
+            runtimeType: 'desktop',
+            lastChecked: Date.now(),
+          });
+          return null;
+        }
+        const apiInfo = await checkForWebUpdates('desktop', appVersion);
+        suggestedSec = apiInfo?.nextSuggestedCheckInSec ?? null;
         set({
           checking: false,
           available: desktopInfo?.available ?? false,

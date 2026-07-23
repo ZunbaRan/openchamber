@@ -136,7 +136,7 @@ describe('HTML Artifact store', () => {
       cspRevision: 3,
       runtimeSupport: {
         web: { static: 'supported', scripts: 'experimental' },
-        managedDesktop: { static: 'supported', scripts: 'experimental' },
+        managedDesktop: { static: 'supported', scripts: 'supported' },
         hostedMobile: { static: 'supported', scripts: 'unsupported' },
         capacitorMobile: { static: 'supported', scripts: 'unsupported' },
         vscode: { static: 'unsupported', scripts: 'unsupported' },
@@ -147,6 +147,27 @@ describe('HTML Artifact store', () => {
     expect(document.html).toContain('openchamberArtifact');
     expect(document.html).toContain('artifact.heartbeat');
     expect(document.html).toContain('artifact.resize');
+  });
+
+  test('reports the enabled Scripts Artifact as supported in the managed Desktop runtime', async () => {
+    const store = await createStore({
+      OPENCHAMBER_RUNTIME: 'desktop',
+    });
+    expect(store.getCapabilities()).toMatchObject({
+      scriptsMode: 'supported',
+      runtimeSupport: {
+        web: { scripts: 'experimental' },
+        managedDesktop: { scripts: 'supported' },
+      },
+    });
+  });
+
+  test('keeps an explicit Desktop Scripts kill switch', async () => {
+    const store = await createStore({
+      OPENCHAMBER_RUNTIME: 'desktop',
+      OPENCHAMBER_HTML_ARTIFACTS_SCRIPTS: 'false',
+    });
+    expect(store.getCapabilities()).toMatchObject({ scripts: false, scriptsMode: 'unsupported' });
   });
 
   test('reports scripts as unsupported unless the explicit experimental gate is enabled', async () => {

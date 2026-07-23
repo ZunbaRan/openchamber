@@ -376,6 +376,26 @@ export const createInteractiveUIRuntime = ({
   }
 
   const pendingConfirmations = new Map();
+  // Credential state is durable; reachability is only recent runtime evidence.
+  // Keep health ephemeral so it can never become an authorization source.
+  const connectionHealth = new Map();
+  const connectionHealthKey = (extensionId, connectorId) => `${extensionId}\u0000${connectorId}`;
+  const getConnectionHealth = (extensionId, connectorId) => connectionHealth.get(connectionHealthKey(extensionId, connectorId)) ?? {
+    status: 'unknown',
+    checkedAt: null,
+  };
+  const setConnectionHealth = (extensionId, connectorId, status, code = null) => {
+    const health = {
+      status,
+      checkedAt: new Date().toISOString(),
+      ...(code ? { code } : {}),
+    };
+    connectionHealth.set(connectionHealthKey(extensionId, connectorId), health);
+    return health;
+  };
+  const resetConnectionHealth = (extensionId, connectorId) => {
+    connectionHealth.delete(connectionHealthKey(extensionId, connectorId));
+  };
   const sweepConfirmations = (now = Date.now()) => {
     for (const [token, entry] of pendingConfirmations) {
       if (entry.expiresAt <= now) pendingConfirmations.delete(token);
@@ -564,6 +584,7 @@ export const createInteractiveUIRuntime = ({
           provisionable: connector.auth.type === 'issued-key',
         },
         credential: await getConnectionStatus(extension.id, connector),
+        health: getConnectionHealth(extension.id, connector.id),
       })))),
       errors,
     };
@@ -575,6 +596,7 @@ export const createInteractiveUIRuntime = ({
       throw new InteractiveUIRuntimeError('Connector does not accept a manually configured access key', 409, 'manual_configuration_unsupported');
     }
     const credential = await connectionStore.setManualCredential(extensionId, connectorId, input?.accessKey);
+    resetConnectionHealth(extensionId, connectorId);
     return { extensionId, connectorId, credential };
   };
 
@@ -584,16 +606,21 @@ export const createInteractiveUIRuntime = ({
       throw new InteractiveUIRuntimeError('Connector does not support credential provisioning', 409, 'provisioning_unsupported');
     }
     const credential = await connectionStore.provisionCredential(extensionId, connector, input?.setupCode);
+    resetConnectionHealth(extensionId, connectorId);
     return { extensionId, connectorId, credential };
   };
 
   const removeConnection = async (extensionId, connectorId) => {
     await findConnector(extensionId, connectorId);
+    resetConnectionHealth(extensionId, connectorId);
     if (!connectionStore?.removeCredential) return { removed: false };
     return connectionStore.removeCredential(extensionId, connectorId);
   };
 
   const removeExtensionConnections = async (extensionId) => {
+    for (const key of connectionHealth.keys()) {
+      if (key.startsWith(`${extensionId}\u0000`)) connectionHealth.delete(key);
+    }
     if (!connectionStore?.removeExtensionCredentials) return { removed: 0 };
     return connectionStore.removeExtensionCredentials(extensionId);
   };
@@ -615,6 +642,7 @@ export const createInteractiveUIRuntime = ({
       });
     } catch (error) {
       const timeout = error?.name === 'TimeoutError';
+      setConnectionHealth(extensionId, connectorId, 'unreachable', timeout ? 'connection_test_timeout' : 'upstream_unavailable');
       throw new InteractiveUIRuntimeError(
         timeout ? 'Connection test timed out' : 'Connection test failed',
         502,
@@ -624,11 +652,19 @@ export const createInteractiveUIRuntime = ({
     const body = await response.arrayBuffer();
     if (body.byteLength > MAX_UPSTREAM_BYTES) throw new InteractiveUIRuntimeError('Connection test response is too large', 502, 'upstream_response_too_large');
     if (!response.ok) {
-      if (response.status === 401) throw new InteractiveUIRuntimeError('Access key is invalid or expired', 401, 'connector_unauthorized');
-      if (response.status === 403) throw new InteractiveUIRuntimeError('Access key does not have permission', 403, 'connector_forbidden');
+      if (response.status === 401) {
+        setConnectionHealth(extensionId, connectorId, 'unauthorized', 'connector_unauthorized');
+        throw new InteractiveUIRuntimeError('Access key is invalid or expired', 401, 'connector_unauthorized');
+      }
+      if (response.status === 403) {
+        setConnectionHealth(extensionId, connectorId, 'forbidden', 'connector_forbidden');
+        throw new InteractiveUIRuntimeError('Access key does not have permission', 403, 'connector_forbidden');
+      }
+      setConnectionHealth(extensionId, connectorId, 'reachable', 'upstream_error');
       throw new InteractiveUIRuntimeError(`Business system rejected the connection test (${response.status})`, response.status >= 400 && response.status < 500 ? response.status : 502, 'upstream_error');
     }
-    return { ok: true, status: response.status, requestId, checkedAt: new Date().toISOString() };
+    const health = setConnectionHealth(extensionId, connectorId, 'reachable');
+    return { ok: true, status: response.status, requestId, checkedAt: health.checkedAt };
   };
 
   const getViewDescriptor = async (viewId, toolName = '') => {
@@ -814,6 +850,7 @@ export const createInteractiveUIRuntime = ({
       response = await fetchImpl(target, init);
     } catch (error) {
       const message = error?.name === 'TimeoutError' ? 'Business system request timed out' : 'Business system request failed';
+      setConnectionHealth(extension.id, connector.id, 'unreachable', 'upstream_unavailable');
       throw new InteractiveUIRuntimeError(message, 502, 'upstream_unavailable');
     }
     const body = await response.arrayBuffer();
@@ -829,11 +866,14 @@ export const createInteractiveUIRuntime = ({
     }
     if (!response.ok) {
       if (response.status === 401) {
+        setConnectionHealth(extension.id, connector.id, 'unauthorized', 'connector_unauthorized');
         throw new InteractiveUIRuntimeError('Access key is invalid or expired', 401, 'connector_unauthorized');
       }
       if (response.status === 403) {
+        setConnectionHealth(extension.id, connector.id, 'forbidden', 'connector_forbidden');
         throw new InteractiveUIRuntimeError('Access key does not have permission', 403, 'connector_forbidden');
       }
+      setConnectionHealth(extension.id, connector.id, 'reachable', 'upstream_error');
       throw new InteractiveUIRuntimeError(
         `Business system rejected the request (${response.status})`,
         response.status >= 400 && response.status < 500 ? response.status : 502,
@@ -847,6 +887,7 @@ export const createInteractiveUIRuntime = ({
       action: action.id,
       risk: action.risk,
     });
+    setConnectionHealth(extension.id, connector.id, 'reachable');
     return { data, requestId };
   };
 

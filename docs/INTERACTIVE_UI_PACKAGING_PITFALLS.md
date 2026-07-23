@@ -101,6 +101,12 @@ View 声明的业务 Tool 必须由 `agent-runtime/tools` 提供，或在 manife
 - Tool/Skill 必须通过远端管理员的部署通道安装到 OpenCode Server；
 - 当前没有远程双端自动协商，缺少任一半都应明确报错，不能用通用空 View 冒充成功。
 
+### 2.9 升级后旧扩展消失，但弹出完整性错误
+
+旧版安装记录可能没有持久化签名文件索引。新版不能根据当前目录反向生成“可信”哈希，否则被修改过的文件也会得到背书。
+
+管理器应将这类版本隔离：不加载 Host View/Artifact，不向 OpenCode 部署 Tool/Skill，但继续在 Settings 中显示版本和原因，允许用户用原签名 `.ocix` 重新安装或执行可恢复卸载。不要让一个被隔离的扩展使整个扩展/连接列表请求失败，也不要把空白初始列表展示成“卸载成功”的证据。
+
 ## 3. Electron / Desktop 打包踩坑
 
 ### 3.1 验收的是旧 `.app`
@@ -155,6 +161,7 @@ bun run test:interactive-ui-desktop-packaged
 - Static Artifact state 为 `ready`、iframe 数量为 1、summary 非空；
 - cache 清空后以相同 content ID 重建；
 - inline/workspace/fullscreen 复用同一 iframe；
+- Scripts Artifact 的 Desktop Runner 在 `inline → workspace/fullscreen → inline` 中不被重启、不误报 navigation blocked，退出后停止与两种展开按钮恢复；
 - scripts 关闭时无 iframe，并显示明确 fallback；
 - app 停止后端口关闭，重新启动后内容仍恢复；
 - renderer Runtime error 为 0。
@@ -170,6 +177,51 @@ bun run test:interactive-ui-desktop-packaged
 当前真实证据覆盖 macOS arm64，并可使用 ad-hoc 签名完成本机验收。生产 Developer ID signing/notarization 是独立发布治理；Windows/Linux desktop 和 Capacitor 必须分别验证自定义协议、Secret Store、进程生命周期、CSP 和显示模式。
 
 macOS 构建时缺少 Windows/Linux 可选 native dependency 的提示，不必阻断 macOS；但也绝不能由此推断其他平台通过。
+
+### 3.9 安装包已更新，但真实用户仍加载旧 Runtime
+
+**症状**：源码、构建目录和 `.app` 内都已经包含新版 `interactive_ui` / `html_artifact`，干净配置下的打包验收也通过；但从旧版升级的用户仍看到旧异常，启动日志出现 `agent_tool_conflict`，OpenCode 的权威 Tool/Skill inventory 仍来自旧全局文件。
+
+**根因**：安装包中的资源和用户实际激活的 Runtime 是两个独立状态。早期版本可能已经把内置 Tool/Skill 写入全局 OpenCode 目录，却没有记录 owner、version 和 hash。新版管理器为了保护用户文件，会把这些同名旧文件视为未受管理内容并拒绝覆盖。干净配置验收只能证明首次安装，不能证明升级迁移。
+
+**安全迁移规则**：
+
+- 只按“精确目标路径 + 历史发布字节的 SHA-256”识别可接管的旧内置文件；
+- 命中允许列表时，原子地写入当前资源及 owner/version/hash 状态，并补齐缺失 Tool/Skill；
+- 未命中时必须继续视为用户文件并报冲突，不能按文件名、目录、注释或近似内容强行接管；
+- 迁移必须幂等；中途失败时保留可重试的有效状态，不能留下部分新、部分旧的 Runtime；
+- 协调完成后再启动或重启 Managed OpenCode，并读取权威 inventory 验证实际加载版本；
+- 内置 Agent Runtime 的 manifest/version 与资源内容必须一起升级，不能只替换某个 `.ts` 文件。
+
+**发布验收矩阵**：
+
+| 用户配置起点 | 预期结果 |
+|---|---|
+| 全新空配置 | 安装当前 Tool/Skill 并登记所有权 |
+| 历史内置文件、无 owner state、hash 精确命中 | 安全接管并升级到当前版本 |
+| 当前内置文件、无 owner state、hash 精确命中 | 接管并补写状态，不制造冲突 |
+| 用户自有同名文件或未知 hash | 保留原文件，明确报告冲突 |
+| 已受管文件被外部修改 | 不覆盖，报告完整性冲突 |
+
+发布证据必须检查应用启动后的 owner state、Runtime version、文件 hash 和 OpenCode Tool/Skill inventory。只检查 `app.asar`、`.app/Contents/Resources` 或干净临时目录不足以证明升级成功。
+
+### 3.10 孤立 Artifact fixture 通过，但真实会话被 CORS 拦截
+
+Packaged Desktop 的 UI origin 是 `openchamber-ui://app`，Artifact API 位于 loopback HTTP，因此它们不是浏览器同源。真实会话的 materialize 请求携带 `X-OpenChamber-Session-ID`；如果打包验收只渲染不带 session ID 的 demo，Scripts Runner、HTML 和服务端存储即使全部正常，也可能在生产会话中被 CORS 预检提前拦截。
+
+发布验收必须让 Generated Scripts Artifact 带合法 session ID 完成 materialize，并进入独立 Desktop Runner 的 `ready` 状态。新增任何自定义请求头时，同时更新和验证 packaged-origin CORS allowlist；不能用同源浏览器或直接 `curl` 成功替代这项证据。
+
+### 3.11 Static Artifact 模式测试不能代表 Desktop Runner 生命周期
+
+Static Artifact 的 iframe 在 workspace/fullscreen 中保持同一 DOM 节点，只能证明 `<dialog>` 提升没有复制 iframe。Scripts Artifact 使用独立 `WebContentsView`；React 外壳节点即使未卸载，回调依赖变化仍可能让底层 Runner stop/start，并把第二次加载误判为导航攻击。
+
+涉及 Artifact Host、事件回调、mode/theme 或 Electron Runner 的发布候选，必须在重新打包后运行：
+
+```bash
+bun run test:artifact-runner-clipping-packaged
+```
+
+该测试除滚动裁剪外，还会进入、退出并再次进入 workspace/fullscreen，断言同一 Runner Host、`ready` 状态、无安全 fallback、控件恢复，并保存真实 macOS 窗口截图。DevTools 主 renderer 截图不能替代这项原生 View 合成证据。
 
 ## 4. 推荐命令
 
@@ -216,6 +268,9 @@ bun run test:interactive-ui-runtime-performance
 - [ ] 扩展升级、回滚、禁用和卸载后 Agent Runtime 与 active version 一致；
 - [ ] 源码/资源变化后已重新构建 `.app`；
 - [ ] 干净环境证明使用 bundled OpenCode；
+- [ ] 真实升级配置覆盖“历史内置文件存在但无 owner state”，并且只接管精确历史 hash；
+- [ ] 启动后的 owner state、Runtime version、文件 hash 和 OpenCode 权威 inventory 与包内版本一致；
+- [ ] Generated Scripts Artifact 在 `openchamber-ui://app` 中携带真实 session ID，并通过 CORS 预检进入 Desktop Runner `ready`；
 - [ ] 实际内容、cache 重建、显示模式、重启和进程退出均通过；
 - [ ] 平台、签名和 Runtime 支持声明没有超出证据范围。
 

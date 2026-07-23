@@ -1,11 +1,3 @@
-import fs from 'node:fs';
-
-export const PRODUCTION_UPDATER_FEED = Object.freeze({
-  provider: 'github',
-  owner: 'openchamber',
-  repo: 'openchamber',
-});
-
 const isLoopbackHostname = (hostname) => {
   if (hostname === '::1' || hostname === '[::1]') return true;
   const octets = hostname.split('.');
@@ -38,10 +30,10 @@ export const resolveUpdaterFeed = ({
 } = {}) => {
   if (environment.OPENCHAMBER_E2E !== '1'
     || testBuild !== true) {
-    return PRODUCTION_UPDATER_FEED;
+    return null;
   }
 
   const url = parseLoopbackUpdaterUrl(environment.OPENCHAMBER_UPDATER_E2E_URL);
-  if (!url) return PRODUCTION_UPDATER_FEED;
+  if (!url) return null;
   return { provider: 'generic', url };
 };

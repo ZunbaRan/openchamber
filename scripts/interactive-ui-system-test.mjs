@@ -115,7 +115,7 @@ try {
     cspRevision: 3,
     runtimeSupport: {
       web: { static: 'supported', scripts: 'experimental' },
-      managedDesktop: { static: 'supported', scripts: 'experimental' },
+      managedDesktop: { static: 'supported', scripts: 'supported' },
       hostedMobile: { static: 'supported', scripts: 'unsupported' },
       capacitorMobile: { static: 'supported', scripts: 'unsupported' },
       vscode: { static: 'unsupported', scripts: 'unsupported' },

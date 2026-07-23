@@ -131,6 +131,8 @@ describe('Interactive UI Agent routing metadata', () => {
     expect(system).toContain('at most one primary OpenChamber surface per assistant turn');
     expect(system).toContain('do not call interactive_ui or html_artifact to restate the same data');
     expect(system).toContain('exactly one short conclusion or next-step sentence');
+    expect(system).toContain('presentation=tabs or presentation=accordion');
+    expect(system).toContain('the user explicitly asks for an HTML Artifact');
   });
 
   it('keeps the bilingual routing corpus aligned with example extension capabilities', async () => {

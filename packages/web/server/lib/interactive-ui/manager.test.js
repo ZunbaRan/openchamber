@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from 'bun:test';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import { createInteractiveUIExtensionManager } from './manager.js';
 import { createExtensionPackage, createSignedExtensionCatalog, generatePublisherKeyPair } from './package-format.js';
 import { createBuiltInInteractiveUIRuntime } from './builtin-runtime.js';
@@ -120,6 +121,9 @@ describe('Interactive UI extension manager', () => {
     expect(installedInteractiveUITool).toContain('interactive_ui requires at least one valid section');
     expect(installedInteractiveUITool).toContain('interactive_ui requires at least one supported widget');
     expect(installedInteractiveUITool).toContain('normalizeTableCellValue');
+    expect(installedInteractiveUITool).toContain("presentation: tool.schema.enum(['stack', 'tabs', 'accordion'])");
+    expect(installedInteractiveUITool).toContain('children.length > 1');
+    expect(installedInteractiveUITool).toContain('inheritedMetricColumns');
     expect(installedInteractiveUITool).toContain('只补一句');
     const installedInteractiveUIGalleryTool = await fs.readFile(path.join(opencodeConfigDirectory, 'tools', 'interactive_ui_gallery.ts'), 'utf8');
     expect(installedInteractiveUIGalleryTool).toContain('com.openchamber.builtin.interactive-ui.gallery');
@@ -128,17 +132,46 @@ describe('Interactive UI extension manager', () => {
     expect(installedHTMLArtifactTool).toContain('openchamber://html-artifact-result/v1');
     expect(installedHTMLArtifactTool).toContain('禁止硬编码白色画布');
     expect(installedHTMLArtifactTool).toContain('Artifact HTML contains executable markup');
+    expect(installedHTMLArtifactTool).toContain('validateArtifactHTML');
+    expect(installedHTMLArtifactTool).toContain('Artifact HTML exceeds 4,000 elements');
     expect(installedHTMLArtifactTool).toContain('scripts: tool.schema.boolean().describe');
     expect(installedInteractiveUISkill).toContain('name: interactive-ui-visualization');
     expect(installedInteractiveUISkill).toContain('incompatible units');
     expect(await manager.list()).toMatchObject({
       builtInRuntime: {
         id: 'com.openchamber.builtin.interactive-ui',
-        version: '1.1.0',
+        version: '1.2.1',
         status: 'ready',
       },
       extensions: [],
     });
+  });
+
+  it('adopts and upgrades an exact legacy built-in Tool while preserving arbitrary user Tools', async () => {
+    const dataDirectory = await createTemporaryDirectory('ocix-manager-builtin-legacy-data-');
+    const opencodeConfigDirectory = await createTemporaryDirectory('ocix-manager-builtin-legacy-config-');
+    const legacyContent = 'export default { description: "legacy OpenChamber built-in" };\n';
+    const legacySha256 = `sha256-${crypto.createHash('sha256').update(legacyContent).digest('base64')}`;
+    const builtIn = createBuiltInInteractiveUIRuntime();
+    const builtInRuntime = {
+      ...builtIn,
+      legacyAssets: {
+        ...builtIn.legacyAssets,
+        'tools/interactive_ui.ts': [legacySha256],
+      },
+    };
+    const existingTool = path.join(opencodeConfigDirectory, 'tools', 'interactive_ui.ts');
+    await fs.mkdir(path.dirname(existingTool), { recursive: true });
+    await fs.writeFile(existingTool, legacyContent);
+    const manager = createInteractiveUIExtensionManager({
+      dataDirectory,
+      opencodeConfigDirectory,
+      builtInRuntime,
+    });
+
+    await expect(manager.initialize()).resolves.toMatchObject({ changed: true });
+    expect(await fs.readFile(existingTool, 'utf8')).toContain('openchamber://interactive-result/v1');
+    expect((await manager.list()).builtInRuntime).toMatchObject({ version: '1.2.1', status: 'ready' });
   });
 
   it('preserves an unmanaged Tool and reports a built-in initialization conflict', async () => {
@@ -326,13 +359,45 @@ describe('Interactive UI extension manager', () => {
     await manager.installPackage(extensionPackage.buffer, { confirmedPublisherFingerprint: inspection.publisher.fingerprint });
 
     await fs.appendFile(path.join(dataDirectory, 'extensions', 'com.acme.operations', '1.0.0', 'ui', 'view.json'), '\n');
-    await expect(manager.getEnabledExtensionRoots()).rejects.toMatchObject({
+    expect(await manager.getEnabledExtensionRoots()).toEqual([]);
+    expect((await manager.list()).extensions[0].integrity).toEqual({
+      status: 'failed',
       code: 'extension_integrity_failed',
-      status: 409,
     });
+    await manager.initialize();
+    await expect(fs.stat(path.join(opencodeConfigDirectory, 'tools', 'operations_open.ts'))).rejects.toMatchObject({ code: 'ENOENT' });
     await expect(manager.installPackage(extensionPackage.buffer, {
       confirmedPublisherFingerprint: inspection.publisher.fingerprint,
     })).rejects.toMatchObject({ code: 'extension_integrity_failed' });
+  });
+
+  it('quarantines legacy versions without signed file records and keeps them uninstallable', async () => {
+    const dataDirectory = await createTemporaryDirectory('ocix-manager-legacy-integrity-data-');
+    const opencodeConfigDirectory = await createTemporaryDirectory('ocix-manager-legacy-integrity-opencode-');
+    const keys = generatePublisherKeyPair();
+    const extensionPackage = await createPackage({ version: '1.0.0', keys });
+    const manager = createInteractiveUIExtensionManager({ dataDirectory, opencodeConfigDirectory });
+    const inspection = await manager.inspectPackage(extensionPackage.buffer);
+    await manager.installPackage(extensionPackage.buffer, { confirmedPublisherFingerprint: inspection.publisher.fingerprint });
+
+    const statePath = path.join(dataDirectory, 'interactive-ui', 'installations.json');
+    const legacyState = JSON.parse(await fs.readFile(statePath, 'utf8'));
+    delete legacyState.extensions['com.acme.operations'].versions['1.0.0'].fileHashes;
+    await fs.writeFile(statePath, `${JSON.stringify(legacyState, null, 2)}\n`);
+
+    const restartedManager = createInteractiveUIExtensionManager({ dataDirectory, opencodeConfigDirectory });
+    await restartedManager.initialize();
+
+    expect(await restartedManager.getEnabledExtensionRoots()).toEqual([]);
+    expect((await restartedManager.list()).extensions[0]).toMatchObject({
+      id: 'com.acme.operations',
+      enabled: true,
+      integrity: { status: 'unavailable', code: 'extension_integrity_unavailable' },
+    });
+    await expect(fs.stat(path.join(opencodeConfigDirectory, 'tools', 'operations_open.ts'))).rejects.toMatchObject({ code: 'ENOENT' });
+
+    expect(await restartedManager.uninstall('com.acme.operations')).toMatchObject({ removed: true });
+    expect((await restartedManager.list()).extensions).toEqual([]);
   });
 
   it('does not leave extracted code behind when the persistent state commit fails', async () => {

@@ -73,7 +73,10 @@ const gates = [
   },
   {
     id: 'packaged-desktop-macos-arm64',
-    passed: reports.packagedDesktop?.ok === true && reports.packagedDesktop?.runtimeErrors === 0,
+    passed: reports.packagedDesktop?.ok === true
+      && reports.packagedDesktop?.runtimeErrors === 0
+      && reports.packagedDesktop?.artifact?.scriptsMode === 'supported'
+      && reports.packagedDesktop?.artifact?.scriptsRunner === 'desktop-runner:ready-then-stopped',
     report: reportPaths.packagedDesktop,
   },
   { id: 'runtime-performance', passed: performancePassed, report: reportPaths.performance },
@@ -92,7 +95,7 @@ const report = {
   generatedAt: new Date().toISOString(),
   ok: localGatesPassed,
   complete,
-  releaseCandidate: localGatesPassed ? 'static-first-tested-runtimes' : 'blocked',
+  releaseCandidate: localGatesPassed ? 'tested-runtimes' : 'blocked',
   gates,
   capabilities: {
     stable: [
@@ -100,8 +103,9 @@ const report = {
       'installed-declarative',
       'trusted-native',
       'static-html-artifact',
+      'managed-desktop-scripts-html-artifact',
     ],
-    experimentalDefaultOff: ['scripts-html-artifact'],
+    experimentalDefaultOff: ['web-scripts-html-artifact'],
     verifiedRuntimes: performance.releaseScope?.verified ?? [],
     unsupportedRuntimes: performance.releaseScope?.unsupported ?? [],
   },

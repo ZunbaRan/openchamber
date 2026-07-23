@@ -27,6 +27,7 @@ describe('normalizeManagerSnapshot', () => {
         name: 'Operations',
         enabled: true,
         activeVersion: '1.0.0',
+        integrity: { status: 'unavailable', code: 'extension_integrity_unavailable', path: '/must-not-survive' },
         versions: {
           '1.0.0': { version: '1.0.0', publisher: { name: 'Acme' } },
         },
@@ -34,6 +35,7 @@ describe('normalizeManagerSnapshot', () => {
     });
     expect(snapshot.extensions[0].activationHistory).toEqual([]);
     expect(snapshot.extensions[0].activeVersion).toBe('1.0.0');
+    expect(snapshot.extensions[0].integrity).toEqual({ status: 'unavailable', code: 'extension_integrity_unavailable' });
     expect(snapshot.publishers).toEqual([]);
     expect(snapshot.marketplaces).toEqual([]);
   });
@@ -41,6 +43,13 @@ describe('normalizeManagerSnapshot', () => {
   test('returns a safe empty snapshot for unrelated or malformed API payloads', () => {
     expect(normalizeManagerSnapshot(null)).toEqual({ extensions: [], publishers: [], marketplaces: [] });
     expect(normalizeManagerSnapshot({ extensions: {}, publishers: null })).toEqual({ extensions: [], publishers: [], marketplaces: [] });
+  });
+
+  test('defaults missing or unsupported integrity states to unknown', () => {
+    const snapshot = normalizeManagerSnapshot({
+      extensions: [{ id: 'com.acme.operations', activeVersion: '1.0.0', integrity: { status: 'trusted' } }],
+    });
+    expect(snapshot.extensions[0].integrity).toEqual({ status: 'unknown' });
   });
 
   test('drops malformed marketplace catalog entries instead of crashing the page', () => {
@@ -99,6 +108,7 @@ describe('normalizeConnectionSnapshot', () => {
           id: 'crm-api', origin: 'https://crm.example.com', authType: 'api-key', testable: true, configurable: true, provisionable: false,
         },
         credential: { configured: true, expired: false, source: 'manual', accessKey: 'must-not-survive' },
+        health: { status: 'reachable', checkedAt: '2026-07-22T10:00:00.000Z', secret: 'must-not-survive' },
       }, { connector: {} }],
     })).toEqual({
       connections: [{
@@ -107,7 +117,19 @@ describe('normalizeConnectionSnapshot', () => {
           id: 'crm-api', origin: 'https://crm.example.com', authType: 'api-key', testable: true, configurable: true, provisionable: false,
         },
         credential: { configured: true, expired: false, source: 'manual' },
+        health: { status: 'reachable', checkedAt: '2026-07-22T10:00:00.000Z' },
       }],
     });
+  });
+
+  test('defaults malformed runtime health to unknown', () => {
+    expect(normalizeConnectionSnapshot({
+      connections: [{
+        extension: { id: 'com.acme.crm' },
+        connector: { id: 'crm-api', authType: 'api-key' },
+        credential: { configured: true },
+        health: { status: 'admin', checkedAt: 42 },
+      }],
+    }).connections[0]?.health).toEqual({ status: 'unknown', checkedAt: null });
   });
 });

@@ -37,6 +37,42 @@ describe('sanitizeGeneratedLayout', () => {
     expect(sanitizeGeneratedLayout({ type: 'metric', label: 'Secret', value: { $path: 'host.token' } })).toBeNull();
   });
 
+  test('keeps responsive metric columns and repairs the persisted single-child grid shape', () => {
+    expect(sanitizeGeneratedLayout({
+      type: 'metric-grid',
+      columns: { default: 3 },
+      items: [{ label: 'Loss', value: 0.342 }],
+    })).toEqual({
+      type: 'metric-grid',
+      columns: 3,
+      items: [{ label: 'Loss', value: 0.342 }],
+    });
+
+    expect(sanitizeGeneratedLayout({
+      type: 'grid',
+      columns: 4,
+      children: [{
+        type: 'metric-grid',
+        columns: 3,
+        items: [
+          { label: 'Current loss', value: 0.342 },
+          { label: 'Validation loss', value: 0.487 },
+          { label: 'Learning rate', value: '2.1e-5' },
+          { label: 'Perplexity', value: 4.21 },
+        ],
+      }],
+    })).toEqual({
+      type: 'metric-grid',
+      columns: 4,
+      items: [
+        { label: 'Current loss', value: 0.342 },
+        { label: 'Validation loss', value: 0.487 },
+        { label: 'Learning rate', value: '2.1e-5' },
+        { label: 'Perplexity', value: 4.21 },
+      ],
+    });
+  });
+
   test('keeps reviewed visual semantics and strips invalid variants', () => {
     const layout = sanitizeGeneratedLayout({
       type: 'section',
@@ -95,6 +131,13 @@ describe('sanitizeGeneratedLayout', () => {
           columns: [{ id: 'todo', title: 'Todo' }, { id: 'constructor', title: 'Blocked' }],
           cards: [{ id: 'card_1', column: 'todo', title: 'Safe', description: 'Visible', token: 'secret' }, { column: 'missing', title: 'Dropped' }],
         },
+        { type: 'agenda', entries: [{ id: 'review', title: 'Review', date: 'Today', time: '09:00', location: 'HQ', onclick: 'steal()' }] },
+        { type: 'funnel', stages: [{ label: 'Lead', value: 20, detail: 'all' }, { label: 'Bad', value: 'many' }] },
+        {
+          type: 'network',
+          nodes: [{ id: 'agent', label: 'Agent', token: 'secret' }, { id: 'host', label: 'Host' }],
+          edges: [{ source: 'agent', target: 'host', label: 'result' }, { source: 'agent', target: 'missing' }],
+        },
         { type: 'diff-summary', items: [{ path: 'src/app.ts', additions: 3, deletions: 1, content: 'private' }] },
       ],
     });
@@ -109,6 +152,9 @@ describe('sanitizeGeneratedLayout', () => {
         { type: 'gauge', label: 'Quality', value: 100, minimum: 0, maximum: 100, unit: '%', tone: 'success' },
         { type: 'heatmap', title: 'Load', cells: [{ row: 'Mon', column: '09:00', value: 7 }] },
         { type: 'kanban', columns: [{ id: 'todo', title: 'Todo' }], cards: [{ id: 'card_1', column: 'todo', title: 'Safe', description: 'Visible' }] },
+        { type: 'agenda', entries: [{ id: 'review', title: 'Review', date: 'Today', time: '09:00', location: 'HQ' }] },
+        { type: 'funnel', stages: [{ label: 'Lead', value: 20, detail: 'all' }] },
+        { type: 'network', nodes: [{ id: 'agent', label: 'Agent' }, { id: 'host', label: 'Host' }], edges: [{ source: 'agent', target: 'host', label: 'result' }] },
         { type: 'diff-summary', items: [{ path: 'src/app.ts', additions: 3, deletions: 1 }] },
       ],
     });

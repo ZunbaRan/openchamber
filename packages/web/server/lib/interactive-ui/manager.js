@@ -155,11 +155,12 @@ const sanitizeMarketplaces = (marketplaces) => ({
   marketplaces: Object.values(marketplaces.marketplaces ?? {}).map(({ publicKey: _publicKey, ...marketplace }) => marketplace),
 });
 
-const sanitizeExtensions = (state) => Object.values(state.extensions ?? {}).map((extension) => {
+const sanitizeExtensions = (state, integrityByExtension = {}) => Object.values(state.extensions ?? {}).map((extension) => {
   const result = clone(extension);
   for (const version of Object.values(result.versions ?? {})) {
     if (isRecord(version)) delete version.fileHashes;
   }
+  result.integrity = clone(integrityByExtension[extension.id] ?? { status: 'unknown' });
   return result;
 });
 
@@ -254,6 +255,7 @@ export const createInteractiveUIExtensionManager = ({
     ? { id: builtInRuntime.extensionId, version: builtInRuntime.version, status: 'pending' }
     : { status: 'not-configured' };
   let mutationQueue = Promise.resolve();
+  const reportedQuarantines = new Set();
 
   const mutate = (operation) => {
     const pending = mutationQueue.then(operation, operation);
@@ -291,8 +293,9 @@ export const createInteractiveUIExtensionManager = ({
   };
 
   const commitStateWithAgentRuntime = async (previousState, nextState, { reload = true } = {}) => {
+    const runtimeState = await createRuntimeSafeState(nextState);
     const deployment = await reconcileOpenCodeAgentRuntime({
-      state: nextState,
+      state: runtimeState,
       previousAssets: previousState.agentRuntime?.assets ?? {},
       configDirectory: resolvedOpenCodeConfigDirectory,
       versionsDirectory,
@@ -412,6 +415,34 @@ export const createInteractiveUIExtensionManager = ({
         );
       }
     }
+  };
+
+  const inspectInstalledVersionIntegrity = async (extension, metadata) => {
+    const directory = pathImpl.join(versionsDirectory, extension.id, metadata.version);
+    try {
+      await verifyInstalledVersionIntegrity(extension, metadata, directory);
+      return { status: 'ready' };
+    } catch (error) {
+      if (error?.code === 'extension_integrity_unavailable') {
+        return { status: 'unavailable', code: error.code };
+      }
+      if (error?.code === 'extension_integrity_failed') {
+        return { status: 'failed', code: error.code };
+      }
+      throw error;
+    }
+  };
+
+  const createRuntimeSafeState = async (state) => {
+    const runtimeState = clone(state);
+    for (const extension of Object.values(runtimeState.extensions ?? {})) {
+      if (!extension.enabled) continue;
+      const active = extension.versions?.[extension.activeVersion];
+      if (!active) continue;
+      const integrity = await inspectInstalledVersionIntegrity(extension, active);
+      if (integrity.status !== 'ready') extension.enabled = false;
+    }
+    return runtimeState;
   };
 
   const validateStagedExtension = async (directory, verified) => {
@@ -612,14 +643,17 @@ export const createInteractiveUIExtensionManager = ({
       const active = extension.versions?.[extension.activeVersion];
       if (!active) continue;
       const directory = pathImpl.join(versionsDirectory, extension.id, extension.activeVersion);
-      try {
-        if ((await fsImpl.stat(directory)).isDirectory()) {
-          await verifyInstalledVersionIntegrity(extension, active, directory);
-          roots.push(directory);
+      const integrity = await inspectInstalledVersionIntegrity(extension, active);
+      if (integrity.status !== 'ready') {
+        const quarantineKey = `${extension.id}@${extension.activeVersion}:${integrity.code}`;
+        if (!reportedQuarantines.has(quarantineKey)) {
+          reportedQuarantines.add(quarantineKey);
+          logger.warn?.(`[InteractiveUI] Quarantined ${extension.id}@${extension.activeVersion}: ${integrity.code}`);
         }
-      } catch (error) {
-        if (error?.code === 'extension_integrity_failed' || error?.code === 'extension_integrity_unavailable') throw error;
-        if (error?.code !== 'ENOENT') logger.warn?.('[InteractiveUI] Failed to inspect managed extension', error);
+        continue;
+      }
+      if ((await fsImpl.stat(directory)).isDirectory()) {
+        roots.push(directory);
       }
     }
     return roots;
@@ -649,10 +683,18 @@ export const createInteractiveUIExtensionManager = ({
 
   const list = async () => {
     const [state, trust, marketplaces] = await Promise.all([readState(), readTrust(), readMarketplaces()]);
+    const integrityByExtension = Object.fromEntries(await Promise.all(
+      Object.values(state.extensions ?? {}).map(async (extension) => {
+        const active = extension.versions?.[extension.activeVersion];
+        return [extension.id, active
+          ? await inspectInstalledVersionIntegrity(extension, active)
+          : { status: 'failed', code: 'extension_integrity_failed' }];
+      }),
+    ));
     return {
       apiVersion: 1,
       builtInRuntime: clone(builtInRuntimeStatus),
-      extensions: sanitizeExtensions(state),
+      extensions: sanitizeExtensions(state, integrityByExtension),
       ...sanitizeTrust(trust),
       ...sanitizeMarketplaces(marketplaces),
     };
@@ -690,6 +732,14 @@ export const createInteractiveUIExtensionManager = ({
     const nextState = clone(previousState);
     const extension = nextState.extensions[id];
     if (!extension) throw new InteractiveUIExtensionManagerError('Extension was not found', 'extension_not_found', 404);
+    if (enabled) {
+      const active = extension.versions?.[extension.activeVersion];
+      await verifyInstalledVersionIntegrity(
+        extension,
+        active,
+        pathImpl.join(versionsDirectory, extension.id, extension.activeVersion),
+      );
+    }
     extension.enabled = enabled;
     const openCode = await commitStateWithAgentRuntime(previousState, nextState);
     return { ...clone(extension), openCode };
@@ -707,6 +757,11 @@ export const createInteractiveUIExtensionManager = ({
       if (candidate !== extension.activeVersion && extension.versions[candidate]) previous = candidate;
     }
     if (!previous) throw new InteractiveUIExtensionManagerError('No previously active version is available', 'rollback_unavailable', 409);
+    await verifyInstalledVersionIntegrity(
+      extension,
+      extension.versions[previous],
+      pathImpl.join(versionsDirectory, extension.id, previous),
+    );
     const current = extension.activeVersion;
     extension.activeVersion = previous;
     extension.activationHistory.push(current);

@@ -12,6 +12,7 @@ type ManagedRemoteTunnelPreset = {
 };
 
 export type UpdateInfo = {
+  updatesEnabled?: boolean;
   available: boolean;
   version?: string;
   currentVersion: string;
@@ -210,6 +211,7 @@ export type DesktopSettings = {
 };
 
 type DesktopBridgeGlobal = {
+  updatesEnabled?: boolean;
   invoke?: (cmd: string, args?: Record<string, unknown>) => Promise<unknown>;
   openDialog?: (options: Record<string, unknown>) => Promise<unknown>;
   grantFileAccess?: (path: string) => Promise<unknown>;
@@ -277,10 +279,22 @@ export const hasDesktopInvoke = (): boolean => {
 
 export const canUseElectronDesktopIPC = (): boolean => isElectronShell() && hasDesktopInvoke();
 
+export const isDesktopUpdatesEnabled = (): boolean => getDesktopBridge()?.updatesEnabled === true;
+
 export const invokeDesktop = async <T = unknown>(command: string, args?: Record<string, unknown>): Promise<T | null> => {
   const bridge = getDesktopBridge();
   if (typeof bridge?.invoke !== 'function') return null;
   return bridge.invoke(command, args ?? {}) as Promise<T>;
+};
+
+export const listenDesktopEvent = async (
+  event: string,
+  handler: (payload: unknown) => void,
+): Promise<() => void> => {
+  const bridge = getDesktopBridge();
+  if (!isElectronShell() || typeof bridge?.listen !== 'function') return () => undefined;
+  const unlisten = await bridge.listen(event, (message) => handler(message?.payload));
+  return typeof unlisten === 'function' ? unlisten : () => undefined;
 };
 
 type LaunchAtLoginStatus = {

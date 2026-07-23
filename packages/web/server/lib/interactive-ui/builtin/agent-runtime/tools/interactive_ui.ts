@@ -7,7 +7,7 @@ const scalar = tool.schema.union([
 ]);
 
 const widget = tool.schema.object({
-  type: tool.schema.string().describe('组件类型：text、code-block、callout、metric、metric-grid、progress、status、flow、chart、table、comparison、list、timeline、activity-feed、tree、diff-summary、sparkline、gauge、heatmap、kanban、git-graph 或 divider'),
+  type: tool.schema.string().describe('组件类型：text、code-block、callout、metric、metric-grid、progress、status、flow、chart、table、comparison、list、timeline、activity-feed、agenda、funnel、network、tree、diff-summary、sparkline、gauge、heatmap、kanban、git-graph 或 divider'),
   title: tool.schema.string().optional().describe('组件标题；chart、table、list、callout 可用'),
   label: tool.schema.string().optional().describe('metric、progress、status 的短标签'),
   value: scalar.optional().describe('metric/status 的值，或 progress 的 0 到 1 数字'),
@@ -79,6 +79,32 @@ const widget = tool.schema.object({
     badge: tool.schema.string().optional(),
     tone: tool.schema.string().optional(),
   })).max(40).optional().describe('kanban 的只读卡片'),
+  agendaEntries: tool.schema.array(tool.schema.object({
+    id: tool.schema.string().optional(),
+    title: tool.schema.string(),
+    date: tool.schema.string().optional().describe('分组日期标签，例如 7 月 22 日'),
+    time: tool.schema.string().optional().describe('开始时间标签，例如 09:30'),
+    endTime: tool.schema.string().optional(),
+    description: tool.schema.string().optional(),
+    location: tool.schema.string().optional(),
+    tone: tool.schema.string().optional(),
+  })).max(40).optional().describe('agenda 的只读日程条目，最多覆盖 14 个日期分组'),
+  funnelStages: tool.schema.array(tool.schema.object({
+    label: tool.schema.string(),
+    value: tool.schema.number(),
+    detail: tool.schema.string().optional(),
+  })).max(8).optional().describe('funnel 的阶段，按业务漏斗顺序排列；value 必须使用同一单位'),
+  networkNodes: tool.schema.array(tool.schema.object({
+    id: tool.schema.string(),
+    label: tool.schema.string(),
+    detail: tool.schema.string().optional(),
+    tone: tool.schema.string().optional(),
+  })).max(30).optional().describe('network 的节点；只适合小型关系图，复杂拓扑应改用 HTML Artifact'),
+  networkEdges: tool.schema.array(tool.schema.object({
+    source: tool.schema.string().describe('必须对应 networkNodes.id'),
+    target: tool.schema.string().describe('必须对应 networkNodes.id'),
+    label: tool.schema.string().optional(),
+  })).max(60).optional().describe('network 的有向关系'),
   commits: tool.schema.array(tool.schema.object({
     id: tool.schema.string(),
     message: tool.schema.string(),
@@ -144,6 +170,10 @@ type WidgetInput = {
   heatmapCells?: Array<{ row: string; column: string; value: number; label?: string }>;
   kanbanColumns?: Array<{ id: string; title: string; tone?: string }>;
   kanbanCards?: Array<{ id?: string; column: string; title: string; description?: string; badge?: string; tone?: string }>;
+  agendaEntries?: Array<{ id?: string; title: string; date?: string; time?: string; endTime?: string; description?: string; location?: string; tone?: string }>;
+  funnelStages?: Array<{ label: string; value: number; detail?: string }>;
+  networkNodes?: Array<{ id: string; label: string; detail?: string; tone?: string }>;
+  networkEdges?: Array<{ source: string; target: string; label?: string }>;
   commits?: Array<{ id: string; message: string; branch?: string; parents?: string[]; author?: string; timestamp?: string }>;
   tableColumns?: Array<{ key: string; label: string; format?: string; render?: string; align?: string }>;
   tableRows?: Array<{ cells: Array<{ key: string; value: Scalar }> }>;
@@ -158,6 +188,7 @@ type SectionInput = {
 type InteractiveUIArgs = {
   title?: unknown;
   summary?: unknown;
+  presentation?: unknown;
   sections?: unknown;
 };
 
@@ -205,7 +236,7 @@ const normalizeTableCellValue = (value: unknown, format: string | undefined): un
     : value
 );
 
-const toNode = (rawInput: unknown): Record<string, unknown> | null => {
+const toNode = (rawInput: unknown, inheritedMetricColumns?: number): Record<string, unknown> | null => {
   const input = asRecord(rawInput) as WidgetInput | null;
   if (!input) return null;
   const type = input.type
@@ -232,7 +263,7 @@ const toNode = (rawInput: unknown): Record<string, unknown> | null => {
     };
   }
   if (type === 'metric-grid') {
-    return { type: 'metric-grid', columns: clampColumns(input.columns ?? 3), items: asArray(input.metrics).slice(0, 12) };
+    return { type: 'metric-grid', columns: clampColumns(input.columns ?? inheritedMetricColumns ?? 3), items: asArray(input.metrics).slice(0, 12) };
   }
   if (type === 'progress') {
     return { type: 'progress', label: input.label, value: typeof input.value === 'number' ? input.value : Number(input.value) || 0, detail: input.detail };
@@ -267,6 +298,16 @@ const toNode = (rawInput: unknown): Record<string, unknown> | null => {
       title: input.title,
       columns: asArray(input.kanbanColumns).slice(0, 6),
       cards: asArray(input.kanbanCards).slice(0, 40),
+    };
+  }
+  if (type === 'agenda') return { type: 'agenda', title: input.title, entries: asArray(input.agendaEntries).slice(0, 40) };
+  if (type === 'funnel') return { type: 'funnel', title: input.title, stages: asArray(input.funnelStages).slice(0, 8) };
+  if (type === 'network') {
+    return {
+      type: 'network',
+      title: input.title,
+      nodes: asArray(input.networkNodes).slice(0, 30),
+      edges: asArray(input.networkEdges).slice(0, 60),
     };
   }
   if (type === 'git-graph') return { type: 'git-graph', title: input.title, commits: asArray(input.commits).slice(0, 40) };
@@ -337,31 +378,36 @@ const toNode = (rawInput: unknown): Record<string, unknown> | null => {
 };
 
 export default tool({
-  description: '在没有匹配的已安装业务 Tool 或 MCP Tool 时，为当前任务临时组合一个只读 Interactive UI。适合把用户提供的数据、模型推导结果、流程或明确标注的示例/模拟数据展示为指标、图表、表格、流程、状态、列表和说明。不得伪造 CRM、ERP、销售、财务等企业系统事实，也不得冒充已安装业务模块；若业务 Tool 已匹配或本回合已返回 openchamber://interactive-result/v1，就不要再调用本 Tool 重复展示。图表不得把单位或数量级不兼容的系列放在同一单轴中，必须拆图并保持标签、绘制值与无障碍值一致。Tool 完成后只补一句不含指标、表格或章节复述的结论或下一步，然后结束回答。Use for one ad-hoc primary View only when no installed business tool matches; never call it after a specialized Tool already returned an Interactive Result, never fabricate business metrics, keep incompatible units on separate charts, and after the View return exactly one short conclusion or next-step sentence without restating its metrics or sections.',
+  description: '在没有匹配的已安装业务 Tool 或 MCP Tool 时，为当前任务临时组合一个 Interactive UI。适合把用户提供的数据、模型推导结果、流程或明确标注的示例/模拟数据展示为指标、图表、表格、流程、状态、列表和说明；可用 presentation=tabs 或 accordion 添加宿主控制的安全本地交互。若用户要求播放/暂停、滑杆、拖拽、动画模拟器或其他自定义交互，应改用 html_artifact。不得伪造 CRM、ERP、销售、财务等企业系统事实，也不得冒充已安装业务模块；若业务 Tool 已匹配或本回合已返回 openchamber://interactive-result/v1，就不要再调用本 Tool 重复展示。图表不得把单位或数量级不兼容的系列放在同一单轴中，必须拆图并保持标签、绘制值与无障碍值一致。Tool 完成后只补一句不含指标、表格或章节复述的结论或下一步，然后结束回答。Use for one ad-hoc primary View only when no installed business tool matches. Tabs and accordion are safe Host-owned local interactions; use html_artifact for sliders, playback, drag, animation, or custom simulation. Never fabricate business metrics, keep incompatible units on separate charts, and after the View return exactly one short conclusion or next-step sentence without restating its metrics or sections.',
   args: {
     title: tool.schema.string().describe('这次可视化的简短标题'),
     summary: tool.schema.string().describe('一句话给出结论、目标或范围，不要重复标题'),
+    presentation: tool.schema.enum(['stack', 'tabs', 'accordion']).optional().describe('页面分区的展示方式：stack 直接排列（默认）；tabs 可切换页签；accordion 可展开/收起。tabs/accordion 时每个 section 都必须有 title'),
     sections: tool.schema.array(tool.schema.object({
       title: tool.schema.string().optional().describe('分区标题'),
-      columns: tool.schema.number().optional().describe('本分区响应式列数，1 到 4；图表和表格通常使用 1'),
+      columns: tool.schema.number().optional().describe('本分区中多个 widgets 的响应式列数，1 到 4；只有一个 metric-grid 时优先设置 metric-grid 自身的 columns，若漏填则继承这里的列数'),
       widgets: tool.schema.array(widget).min(1).max(12),
-    })).min(1).max(8).describe('根据任务现场设计的页面分区；优先选择最能表达信息的组件组合。标准组件能表达时不要要求 HTML Artifact'),
+    })).min(1).max(8).describe('必须直接传入结构化数组，禁止把数组 JSON.stringify 成字符串。根据任务现场设计页面分区；优先选择最能表达信息的组件组合。标准组件能表达时不要要求 HTML Artifact'),
   },
   async execute(rawArgs) {
     const args = (asRecord(rawArgs) ?? {}) as InteractiveUIArgs;
     const title = typeof args.title === 'string' && args.title.trim() ? args.title.slice(0, 160) : 'Interactive UI';
     const summary = typeof args.summary === 'string' ? args.summary.slice(0, 1_000) : '';
+    const presentation = args.presentation === 'tabs' || args.presentation === 'accordion' ? args.presentation : 'stack';
     const sections = parseSections(args.sections);
     if (sections.length === 0) {
       throw new Error('interactive_ui requires at least one valid section');
     }
     const renderedSections = sections.flatMap((section) => {
-      const children = section.widgets.map(toNode).filter((node): node is Record<string, unknown> => node !== null);
+      const inheritedMetricColumns = section.widgets.length === 1 ? section.columns : undefined;
+      const children = section.widgets
+        .map((widgetInput) => toNode(widgetInput, inheritedMetricColumns))
+        .filter((node): node is Record<string, unknown> => node !== null);
       if (children.length === 0) return [];
       return [{
         type: 'section',
         title: section.title,
-        children: clampColumns(section.columns) > 1
+        children: children.length > 1 && clampColumns(section.columns) > 1
           ? [{ type: 'grid', columns: clampColumns(section.columns), children }]
           : children,
       }];
@@ -369,12 +415,24 @@ export default tool({
     if (renderedSections.length === 0) {
       throw new Error('interactive_ui requires at least one supported widget');
     }
+    if (presentation !== 'stack' && renderedSections.some((section) => typeof section.title !== 'string' || !section.title.trim())) {
+      throw new Error(`interactive_ui presentation=${presentation} requires a title for every section`);
+    }
+    const body = presentation === 'stack'
+      ? renderedSections
+      : [{
+          type: presentation,
+          items: renderedSections.map((section) => ({
+            label: section.title,
+            children: section.children,
+          })),
+        }];
     const layout = {
       type: 'stack',
       title,
       children: [
         ...(summary ? [{ type: 'text', value: summary }] : []),
-        ...renderedSections,
+        ...body,
       ],
     };
 

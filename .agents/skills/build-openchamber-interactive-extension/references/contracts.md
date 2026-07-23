@@ -97,7 +97,8 @@ The manifest Artifact must bind the exact Tool. This Envelope cannot include HTM
 ## Declarative
 
 - Schema: `openchamber://declarative-view/v1`.
-- Supported primitives: `stack`, `section`, `row`, `grid`, `metric-grid`, `metric`, `text`, `markdown`, `progress`, `status`, `badge`, `key-value`, `flow`, `chart`, `list`, `callout`, `data-table`, `divider`, `timeline`, `activity-feed`, `comparison`, `tabs`, `accordion`, `code-block`, `sparkline`, `gauge`, `heatmap`, `kanban`, `git-graph`, `tree`, and `diff-summary`.
+- Supported primitives: `stack`, `section`, `row`, `grid`, `metric-grid`, `metric`, `text`, `markdown`, `progress`, `status`, `badge`, `key-value`, `flow`, `chart`, `list`, `callout`, `data-table`, `divider`, `timeline`, `activity-feed`, `agenda`, `funnel`, `network`, `comparison`, `tabs`, `accordion`, `code-block`, `sparkline`, `gauge`, `heatmap`, `kanban`, `git-graph`, `tree`, and `diff-summary`.
+- `agenda` is bounded to 40 entries and 14 displayed date groups; `funnel` to 8 same-unit stages; `network` to 30 nodes and 60 valid node-to-node edges. Larger or freely laid-out simulations belong in HTML Artifact.
 - Bindings use `$path` against `data`, `context`, `query`, or `host`; table actions use `$row`.
 - Installed definitions may declare queries and row actions, but every action must exist in the extension manifest.
 - No JavaScript, raw HTML, arbitrary expressions, or host globals are accepted in Declarative definitions.

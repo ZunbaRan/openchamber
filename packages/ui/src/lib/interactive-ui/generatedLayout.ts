@@ -10,6 +10,10 @@ const MAX_GRAPH_ITEMS = 60;
 const MAX_KANBAN_COLUMNS = 6;
 const MAX_KANBAN_CARDS = 40;
 const MAX_HEATMAP_CELLS = 60;
+const MAX_AGENDA_ENTRIES = 40;
+const MAX_FUNNEL_STAGES = 8;
+const MAX_NETWORK_NODES = 30;
+const MAX_NETWORK_EDGES = 60;
 const MAX_TEXT_LENGTH = 6_000;
 const SAFE_DATA_KEY = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/;
 const SAFE_GRAPH_ID = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,79}$/;
@@ -59,7 +63,12 @@ const sanitizeTrend = (value: unknown): string | undefined => (
 );
 
 const sanitizeColumns = (value: unknown): number => {
-  const numeric = typeof value === 'number' ? value : 1;
+  const record = asRecord(value);
+  const numeric = typeof record?.default === 'number'
+    ? record.default
+    : typeof value === 'number'
+      ? value
+      : 1;
   return Math.max(1, Math.min(4, Math.trunc(numeric)));
 };
 
@@ -100,11 +109,18 @@ export const sanitizeGeneratedLayout = (input: unknown): DeclarativeViewNode | n
       const children = Array.isArray(source.children)
         ? compact(source.children.slice(0, MAX_CHILDREN).map((child) => sanitizeNode(child, depth + 1)))
         : [];
+      const columns = sanitizeColumns(source.columns);
+      // OpenChamber 1.16.2 briefly emitted a sole metric-grid inside a wider
+      // grid when the model placed `columns` on the section. Preserve those
+      // persisted conversations by applying the outer count to the metric grid.
+      if (source.type === 'grid' && !title && children.length === 1 && children[0].type === 'metric-grid') {
+        return { ...children[0], columns };
+      }
       return {
         type: source.type,
         ...(title ? { title } : {}),
         ...(source.type === 'section' && source.variant === 'bordered' ? { variant: 'bordered' } : {}),
-        ...((source.type === 'row' || source.type === 'grid') ? { columns: sanitizeColumns(source.columns) } : {}),
+        ...((source.type === 'row' || source.type === 'grid') ? { columns } : {}),
         children,
       };
     }
@@ -411,6 +427,73 @@ export const sanitizeGeneratedLayout = (input: unknown): DeclarativeViewNode | n
         }))
         : [];
       return { type: 'kanban', ...(title ? { title } : {}), columns, cards };
+    }
+
+    if (source.type === 'agenda') {
+      const rawEntries = Array.isArray(source.entries) ? source.entries : Array.isArray(source.items) ? source.items : Array.isArray(source.data) ? source.data : [];
+      const entries = compact(rawEntries.slice(0, MAX_AGENDA_ENTRIES).map((item, index) => {
+        const entry = asRecord(item);
+        if (!entry) return null;
+        const itemTitle = sanitizeString(entry.title, 160);
+        if (!itemTitle) return null;
+        const id = typeof entry.id === 'string' && SAFE_GRAPH_ID.test(entry.id) ? entry.id : `agenda-${index + 1}`;
+        const date = sanitizeString(entry.date, 80);
+        const time = sanitizeString(entry.time, 40);
+        const endTime = sanitizeString(entry.endTime, 40);
+        const description = sanitizeString(entry.description, 500);
+        const location = sanitizeString(entry.location, 160);
+        const tone = sanitizeTone(entry.tone);
+        return {
+          id,
+          title: itemTitle,
+          ...(date ? { date } : {}),
+          ...(time ? { time } : {}),
+          ...(endTime ? { endTime } : {}),
+          ...(description ? { description } : {}),
+          ...(location ? { location } : {}),
+          ...(tone ? { tone } : {}),
+        };
+      }));
+      return { type: 'agenda', ...(title ? { title } : {}), entries };
+    }
+
+    if (source.type === 'funnel') {
+      const rawStages = Array.isArray(source.stages) ? source.stages : Array.isArray(source.items) ? source.items : Array.isArray(source.data) ? source.data : [];
+      const stages = compact(rawStages.slice(0, MAX_FUNNEL_STAGES).map((item) => {
+        const entry = asRecord(item);
+        if (!entry) return null;
+        const stageLabel = sanitizeString(entry.label ?? entry.title, 120);
+        const value = typeof entry.value === 'number' && Number.isFinite(entry.value) ? Math.max(0, entry.value) : undefined;
+        if (!stageLabel || value === undefined) return null;
+        const detail = sanitizeString(entry.detail, 120);
+        return { label: stageLabel, value, ...(detail ? { detail } : {}) };
+      }));
+      return { type: 'funnel', ...(title ? { title } : {}), stages };
+    }
+
+    if (source.type === 'network') {
+      const nodes = Array.isArray(source.nodes)
+        ? compact(source.nodes.slice(0, MAX_NETWORK_NODES).map((item, index) => {
+          const entry = asRecord(item);
+          if (!entry) return null;
+          const nodeLabel = sanitizeString(entry.label ?? entry.title, 120);
+          if (!nodeLabel) return null;
+          const id = typeof entry.id === 'string' && SAFE_GRAPH_ID.test(entry.id) ? entry.id : `node-${index + 1}`;
+          const detail = sanitizeString(entry.detail ?? entry.description, 240);
+          const tone = sanitizeTone(entry.tone);
+          return { id, label: nodeLabel, ...(detail ? { detail } : {}), ...(tone ? { tone } : {}) };
+        }))
+        : [];
+      const nodeIds = new Set(nodes.map((entry) => entry.id));
+      const edges = Array.isArray(source.edges)
+        ? compact(source.edges.slice(0, MAX_NETWORK_EDGES).map((item) => {
+          const entry = asRecord(item);
+          if (!entry || typeof entry.source !== 'string' || typeof entry.target !== 'string' || !nodeIds.has(entry.source) || !nodeIds.has(entry.target)) return null;
+          const edgeLabel = sanitizeString(entry.label, 120);
+          return { source: entry.source, target: entry.target, ...(edgeLabel ? { label: edgeLabel } : {}) };
+        }))
+        : [];
+      return { type: 'network', ...(title ? { title } : {}), nodes, edges };
     }
 
     if (source.type === 'git-graph') {

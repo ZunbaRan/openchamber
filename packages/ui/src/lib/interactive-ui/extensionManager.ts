@@ -44,6 +44,10 @@ export interface InstalledExtension {
   activeVersion: string;
   activationHistory: string[];
   versions: Record<string, InstalledVersion>;
+  integrity: {
+    status: 'ready' | 'unavailable' | 'failed' | 'unknown';
+    code?: string;
+  };
 }
 
 export interface TrustedPublisher {
@@ -109,6 +113,7 @@ export const classifyCatalogInstallState = (catalogVersion: string, installedVer
 };
 
 type ConnectionAuthType = 'none' | 'env-bearer' | 'api-key' | 'issued-key';
+export type ConnectionHealthStatus = 'unknown' | 'reachable' | 'unreachable' | 'unauthorized' | 'forbidden';
 
 export interface ManagedConnection {
   extension: { id: string; name: string; version: string };
@@ -127,6 +132,11 @@ export interface ManagedConnection {
     configuredAt?: string;
     expiresAt?: string | null;
     displayName?: string | null;
+  };
+  health: {
+    status: ConnectionHealthStatus;
+    checkedAt: string | null;
+    code?: string;
   };
 }
 
@@ -281,6 +291,8 @@ const normalizeExtension = (value: unknown): InstalledExtension | null => {
     const normalized = normalizeVersion(metadata, version);
     return normalized ? [[version, normalized]] : [];
   }));
+  const integrityValue = isRecord(value.integrity) ? value.integrity : {};
+  const integrityStatus = stringValue(integrityValue.status, 'unknown');
   return {
     id,
     name: stringValue(value.name, id),
@@ -290,6 +302,12 @@ const normalizeExtension = (value: unknown): InstalledExtension | null => {
       ? value.activationHistory.filter((version): version is string => typeof version === 'string')
       : [],
     versions,
+    integrity: {
+      status: ['ready', 'unavailable', 'failed'].includes(integrityStatus)
+        ? integrityStatus as 'ready' | 'unavailable' | 'failed'
+        : 'unknown',
+      ...(typeof integrityValue.code === 'string' ? { code: integrityValue.code } : {}),
+    },
   };
 };
 
@@ -390,6 +408,17 @@ export const normalizeConnectionSnapshot = (value: unknown): ConnectionSnapshot 
           ...(typeof entry.credential.expiresAt === 'string' || entry.credential.expiresAt === null ? { expiresAt: entry.credential.expiresAt } : {}),
           ...(typeof entry.credential.displayName === 'string' || entry.credential.displayName === null ? { displayName: entry.credential.displayName } : {}),
         },
+        health: (() => {
+          const value = isRecord(entry.health) ? entry.health : {};
+          const status = typeof value.status === 'string' && ['unknown', 'reachable', 'unreachable', 'unauthorized', 'forbidden'].includes(value.status)
+            ? value.status as ConnectionHealthStatus
+            : 'unknown';
+          return {
+            status,
+            checkedAt: typeof value.checkedAt === 'string' && Number.isFinite(Date.parse(value.checkedAt)) ? value.checkedAt : null,
+            ...(typeof value.code === 'string' ? { code: value.code } : {}),
+          };
+        })(),
       }];
     }),
   };

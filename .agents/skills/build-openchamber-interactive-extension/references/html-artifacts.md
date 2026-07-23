@@ -82,7 +82,8 @@ At most four requests run concurrently per Artifact instance. Do not use the bri
 - Remote assets, iframe/form/object/embed, script `src`, `fetch`, XHR, WebSocket, EventSource, Worker, WebAssembly, `eval`, and dynamic `Function` are rejected before installation and again before serving.
 - Theme, locale, viewport, mode, reduced-motion, a bounded execution lease, and Tool result `context` arrive in `host.init`; credentials and connector URLs never do. The injected bootstrap owns the lease heartbeat; extension code must not replace or depend on it.
 - Navigation/reload replaces or disables the inner frame. The original Tool output remains available as fallback when rendering fails.
-- A stalled heartbeat, the 15-minute execution lease, a runtime error, or the user Stop control removes the active iframe and offers a fresh restart. This is Host lifecycle containment, not a guarantee that every browser places the Artifact in an independently killable OS renderer process; Agent Generated Scripts remains experimental and default-off.
+- A stalled heartbeat, the 15-minute execution lease, a runtime error, or the user Stop control removes the active execution surface and offers a fresh restart. Managed Desktop uses an independently terminable, unique-partition `WebContentsView` with no main-world Electron bridge plus main-process CPU/memory/concurrency gates; Scripts are supported there and default on. Ordinary Web keeps the Broker iframe and remains experimental/default-off.
+- `OPENCHAMBER_HTML_ARTIFACTS_SCRIPTS=false` is the Managed Desktop emergency kill switch. Never bypass the fallback when it is disabled.
 - Agent Generated HTML uses the same visual bridge but is materialized with business access disabled. Never add an option that lets model output opt into the installed bridge.
 
 ## Package and acceptance

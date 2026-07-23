@@ -2,7 +2,7 @@
 
 Electron desktop runtime for OpenChamber on macOS, Windows, and Linux.
 
-This package owns the native shell: windows, menus, deep links, native notifications, auto-updates, host switching, SSH connections, tunnel helpers, and packaged desktop builds. The web UI and OpenChamber server logic still live in `packages/web` and shared React UI lives in `packages/ui`.
+This package owns the native shell: windows, menus, deep links, native notifications, desktop update policy, host switching, SSH connections, tunnel helpers, and packaged desktop builds. The web UI and OpenChamber server logic still live in `packages/web` and shared React UI lives in `packages/ui`.
 
 ## How It Runs
 
@@ -18,6 +18,8 @@ The preload bridge exposes desktop-only APIs to the web UI through `window.__OPE
 |------|---------|
 | `main.mjs` | Electron main process, app lifecycle, windows, menus, deep links, native IPC handlers, updates, local server startup |
 | `preload.mjs` | Safe bridge from the rendered UI to Electron IPC |
+| `artifact-runner.mjs` | Main-process lifecycle, URL, permission, concurrency, CPU, memory, and lease gates for Scripts Artifacts |
+| `artifact-runner-preload.cjs` | Message-only Artifact transport; exposes no Electron API to the Artifact main world |
 | `ssh-manager.mjs` | SSH host import, connection lifecycle, tunnel/port forwarding helpers |
 | `scripts/electron-dev.mjs` | Desktop dev launcher with Vite HMR support |
 | `scripts/build-web-assets.mjs` | Builds `packages/web` and stages UI assets into `resources/web-dist` |
@@ -80,15 +82,15 @@ Linux AppImages must be built natively. Set `OPENCHAMBER_TARGET_ARCH=x64` or `OP
 
 After packaging, run `bun run --cwd packages/electron verify:linux-appimage`. The verifier extracts the final AppImage and checks its ELF architecture, desktop identity, Electron executable, pinned OpenCode CLI version and architecture, and all packaged native `.node` modules.
 
-Running a packaged Linux AppImage requires FUSE (`libfuse.so.2`, typically `libfuse2` / `libfuse2t64` on Debian/Ubuntu). Without FUSE, start with `APPIMAGE_EXTRACT_AND_RUN=1`. Keep the AppImage on a writable path so in-app updates can replace it.
+Running a packaged Linux AppImage requires FUSE (`libfuse.so.2`, typically `libfuse2` / `libfuse2t64` on Debian/Ubuntu). Without FUSE, start with `APPIMAGE_EXTRACT_AND_RUN=1`.
 
-Linux updates are supported only when the packaged app is running from a writable AppImage. Update checks, downloads, and installation report an actionable error when `APPIMAGE` is missing, invalid, or read-only; a missing release feed (`latest-linux.yml` 404 before the first Linux publish) is treated as “no update available”. macOS and Windows updater behavior is unchanged. Release builds keep `latest-linux.yml` (x64) and `latest-linux-arm64.yml` separate and validate each manifest against its AppImage before upload. Linux AppImages download full updates (no `.blockmap` differential channel yet).
+This fork does not configure a production desktop updater feed on macOS, Windows, or Linux. Packaged clients do not contact the upstream `openchamber/openchamber` releases, do not show update notifications, and omit native “Check for Updates” menu items. Updates are distributed as explicit replacement installers until this fork defines and operates its own signed release channel.
 
 ### Updater End-to-End Fixture
 
-A loopback-only updater fixture is available for contributor QA of N-to-N+1 AppImage replacement and restart behavior. It is test infrastructure, not a user-configurable update source. See [`scripts/updater-e2e-fixture.md`](./scripts/updater-e2e-fixture.md) for the controlled test procedure. Unit tests cover feed selection, check failures, no-update results, and fixture generation; actual AppImage replacement and restart remains a manual native N-to-N+1 release boundary because it requires executing two packaged versions on each supported architecture.
+A loopback-only updater fixture remains available for contributor QA of the retained updater implementation. It is enabled only by the embedded E2E build marker together with `OPENCHAMBER_E2E=1` and a credential-free loopback URL; invalid or incomplete test configuration resolves to no feed and never falls back to an external source. It is test infrastructure, not a user-configurable or production update source. See [`scripts/updater-e2e-fixture.md`](./scripts/updater-e2e-fixture.md) for the controlled procedure.
 
-The package supports macOS, Windows, and Linux desktop features. Linux AppImage builds include in-app window controls and auto-update; system tray and launch-at-login remain macOS/Windows only. Some native discovery helpers are platform-specific. For example, app icon fetching and app filtering currently only work on macOS, while opening files in installed apps and installed-app discovery work on macOS and Windows (Linux returns an empty list without errors).
+The package supports macOS, Windows, and Linux desktop features. Linux AppImage builds include in-app window controls; system tray and launch-at-login remain macOS/Windows only. Some native discovery helpers are platform-specific. For example, app icon fetching and app filtering currently only work on macOS, while opening files in installed apps and installed-app discovery work on macOS and Windows (Linux returns an empty list without errors).
 
 ## Bundled OpenCode CLI
 
@@ -115,6 +117,7 @@ Use an explicit override when testing a different OpenCode CLI build or when a u
 | `OPENCHAMBER_HMR_UI_PORT` | Preferred Vite UI port for desktop dev, default `5173` |
 | `OPENCHAMBER_HMR_API_PORT` | Preferred API port for desktop dev, default `3901` |
 | `OPENCHAMBER_RUNTIME=desktop` | Set by Electron before starting the web server |
+| `OPENCHAMBER_HTML_ARTIFACTS_SCRIPTS=false` | Emergency kill switch for the default-enabled Managed Desktop Scripts Runner |
 | `OPENCHAMBER_OPENCODE_CLI_VERSION` | Optional packaging override for the bundled OpenCode CLI version; defaults to the pinned root `@opencode-ai/sdk` version |
 | `OPENCHAMBER_TARGET_ARCH` | Explicit desktop package architecture (`x64` or `arm64`); Linux requires it to match the native host |
 | `OPENCHAMBER_DESKTOP_NOTIFY=true` | Enables desktop notification flow in the web server |
@@ -131,7 +134,7 @@ Use an explicit override when testing a different OpenCode CLI build or when a u
 - Local and remote instance handling.
 - SSH host import, connections, logs, and port forwarding.
 - Tunnel lifecycle integration through the web server runtime.
-- Auto-update checks, downloads, and restart/apply flow.
+- Production updater kill switch plus a loopback-only E2E updater flow.
 
 ## IPC Pattern
 
@@ -143,6 +146,12 @@ Add new native capabilities in this order:
 2. Add the real command handling in `main.mjs` under `openchamber:invoke`.
 3. Gate privileged commands in main process logic so remote pages cannot access local filesystem or shell capabilities.
 4. Keep shared UI runtime contracts in `packages/ui` and server/runtime APIs in `packages/web` when the behavior is not inherently native.
+
+### Scripts Artifact Runner
+
+Managed Desktop never renders Scripts Artifacts in the privileged UI renderer. `ArtifactExecutionSurface` asks the main process for a `WebContentsView` using a unique non-persistent partition, `sandbox:true`, `contextIsolation:true`, `nodeIntegration:false`, and a preload that exposes no main-world object. The main process accepts only exact generated/installed Artifact document routes, denies permissions, windows, webviews and unexpected requests/navigation, and terminates the renderer on Stop, lease expiry, memory budget breach, sustained CPU saturation, crash, or owner-window closure. Static Artifacts continue to use the browser iframe backend.
+
+Inline Runner clipping is a native/runtime contract, not a CSS stacking contract. The renderer sends full surface and clipping-ancestor intersections; the main process bounds the `WebContentsView` to the visible intersection, and the trusted Broker preload preserves the full child iframe size with a clipped-content offset. The native View remains hidden until that layout is acknowledged, and clipping-induced resize echoes are rejected. Validate this boundary with `bun run test:artifact-runner-clipping-packaged`, which captures the composed macOS window rather than the main renderer alone.
 
 ## Logs And Data
 

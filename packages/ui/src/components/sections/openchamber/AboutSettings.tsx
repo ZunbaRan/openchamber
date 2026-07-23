@@ -9,6 +9,7 @@ import { Icon } from "@/components/icon/Icon";
 import { OpenChamberLogo } from '@/components/ui/OpenChamberLogo';
 import { useI18n } from '@/lib/i18n';
 import { runtimeFetch } from '@/lib/runtime-fetch';
+import { isDesktopUpdatesEnabled, isElectronShell } from '@/lib/desktop';
 import {
   SettingsSection,
   SETTINGS_BRAND_TITLE_CLASS,
@@ -27,7 +28,8 @@ type AboutSettingsProps = {
 
 export const AboutSettings: React.FC<AboutSettingsProps> = ({ initialUpdateDialogOpen = false }) => {
   const { t } = useI18n();
-  const [updateDialogOpen, setUpdateDialogOpen] = React.useState(initialUpdateDialogOpen);
+  const updateChecksEnabled = !isElectronShell() || isDesktopUpdatesEnabled();
+  const [updateDialogOpen, setUpdateDialogOpen] = React.useState(initialUpdateDialogOpen && updateChecksEnabled);
   const [showChecking, setShowChecking] = React.useState(false);
   const [openChamberVersion, setOpenChamberVersion] = React.useState<string | null>(null);
   const [openCodeVersion, setOpenCodeVersion] = React.useState<string | null>(null);
@@ -137,7 +139,7 @@ export const AboutSettings: React.FC<AboutSettingsProps> = ({ initialUpdateDialo
           </div>
         </div>
 
-        <div className="flex justify-center">
+        {updateChecksEnabled ? <div className="flex justify-center">
           {!updateStore.available && !updateStore.error && (
             <Button
               type="button"
@@ -164,9 +166,9 @@ export const AboutSettings: React.FC<AboutSettingsProps> = ({ initialUpdateDialo
               {t('settings.openchamber.about.actions.updateToVersion', { version: updateStore.info?.version || '' })}
             </Button>
           )}
-        </div>
+        </div> : null}
 
-        {updateStore.error && (
+        {updateChecksEnabled && updateStore.error && (
           <p className="rounded-xl border border-[var(--status-error-border)] bg-[var(--status-error-background)] px-3 py-2 typography-meta text-[var(--status-error)]">
             {updateStore.error}
           </p>
@@ -240,7 +242,7 @@ export const AboutSettings: React.FC<AboutSettingsProps> = ({ initialUpdateDialo
             <span className="typography-meta text-muted-foreground font-mono">{openCodeVersion || t('settings.openchamber.about.state.unknown')}</span>
           </div>
           
-          <div className="flex items-center gap-3">
+          {updateChecksEnabled ? <div className="flex items-center gap-3">
             {updateStore.checking && (
               <div className="flex items-center gap-2 text-muted-foreground">
                 <Icon name="loader" className="h-4 w-4 animate-spin" />
@@ -269,10 +271,10 @@ export const AboutSettings: React.FC<AboutSettingsProps> = ({ initialUpdateDialo
             >
               {t('settings.openchamber.about.actions.checkForUpdates')}
             </Button>
-          </div>
+          </div> : null}
         </div>
         
-        {updateStore.error && (
+        {updateChecksEnabled && updateStore.error && (
           <div className="px-3 py-2 border-b border-border/40">
             <p className="typography-meta text-[var(--status-error)]">{updateStore.error}</p>
           </div>

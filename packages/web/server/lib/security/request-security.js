@@ -1,3 +1,14 @@
+export const PACKAGED_CLIENT_CORS_ALLOWED_HEADERS = Object.freeze([
+  'Content-Type',
+  'Authorization',
+  'Accept',
+  'X-Requested-With',
+  'Cache-Control',
+  'X-OpenCode-Directory',
+  'X-OpenCode-Directory-Encoding',
+  'X-OpenChamber-Session-ID',
+]);
+
 export const createRequestSecurityRuntime = (deps) => {
   const { readSettingsFromDiskMigrated } = deps;
   // Origins of packaged (non-browser) clients whose WebView origin never

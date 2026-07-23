@@ -238,7 +238,13 @@ export const createHTMLArtifactStore = ({
   const root = pathImpl.join(dataDirectory, 'interactive-ui', 'artifacts');
   const referencesRoot = pathImpl.join(root, 'references');
   const staticEnabled = isEnabled(environment.OPENCHAMBER_HTML_ARTIFACTS_STATIC, true);
-  const scriptsEnabled = isEnabled(environment.OPENCHAMBER_HTML_ARTIFACTS_SCRIPTS, false);
+  // Managed Desktop has an independently terminable WebContentsView runner.
+  // Keep Web default-off; retain the same environment variable as a Desktop
+  // kill switch and an explicit Web development opt-in.
+  const scriptsEnabled = isEnabled(
+    environment.OPENCHAMBER_HTML_ARTIFACTS_SCRIPTS,
+    environment.OPENCHAMBER_RUNTIME === 'desktop',
+  );
   let mutationQueue = Promise.resolve();
 
   const withMutationLock = (operation) => {
@@ -344,7 +350,10 @@ export const createHTMLArtifactStore = ({
   return {
     getCapabilities() {
       const staticMode = staticEnabled ? 'supported' : 'unsupported';
-      const scriptsMode = staticEnabled && scriptsEnabled ? 'experimental' : 'unsupported';
+      const scriptsAvailable = staticEnabled && scriptsEnabled;
+      const scriptsMode = scriptsAvailable
+        ? environment.OPENCHAMBER_RUNTIME === 'desktop' ? 'supported' : 'experimental'
+        : 'unsupported';
       return {
         schemaVersion: 1,
         static: staticEnabled,
@@ -352,8 +361,8 @@ export const createHTMLArtifactStore = ({
         scriptsMode,
         cspRevision: CSP_REVISION,
         runtimeSupport: {
-          web: { static: staticMode, scripts: scriptsMode },
-          managedDesktop: { static: staticMode, scripts: scriptsMode },
+          web: { static: staticMode, scripts: scriptsAvailable ? 'experimental' : 'unsupported' },
+          managedDesktop: { static: staticMode, scripts: scriptsAvailable ? 'supported' : 'unsupported' },
           hostedMobile: { static: staticMode, scripts: 'unsupported' },
           capacitorMobile: { static: staticMode, scripts: 'unsupported' },
           vscode: { static: 'unsupported', scripts: 'unsupported' },

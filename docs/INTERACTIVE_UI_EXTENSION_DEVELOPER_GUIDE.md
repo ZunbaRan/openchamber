@@ -381,11 +381,13 @@ Skill 只告诉 Agent：什么用户意图对应 overview/workspace、何时询�
 | 指标 | `metric-grid`, `metric`, `progress`, `status`, `badge`, `key-value` |
 | 内容 | `text`, `markdown`, `list`, `callout`, `flow` |
 | 数据 | `data-table`, `chart` |
-| 进阶数据/历史 | `timeline`, `activity-feed`, `comparison`, `sparkline`, `gauge`, `heatmap`, `kanban`, `git-graph`, `tree`, `diff-summary` |
+| 进阶数据/历史 | `timeline`, `activity-feed`, `agenda`, `funnel`, `network`, `comparison`, `sparkline`, `gauge`, `heatmap`, `kanban`, `git-graph`, `tree`, `diff-summary` |
 | 进阶组织 | `tabs`, `accordion`, `code-block`, `divider` |
 | 受控入口 | `generated-layout`，只应由 built-in generated View 使用 |
 
 `chart.variant` 当前支持 bar、line、area 和 donut；`series` 声明数值字段，`xKey` 声明分类字段。
+
+`agenda` 最多 40 条并显示至多 14 个日期分组；`funnel` 最多 8 个同单位阶段；`network` 最多 30 个节点和 60 条引用已声明节点的边。超过这些规模或需要自由拖拽/布局算法时，改用 HTML Artifact，不要绕过 validator 塞入任意 SVG/脚本字段。
 
 ### 7.2 Binding
 

@@ -121,6 +121,7 @@ const addRuntimeAssets = async ({
   version,
   extensionDirectory,
   agentRuntime,
+  legacyAssets = {},
   fsImpl,
   pathImpl,
   cryptoImpl,
@@ -149,6 +150,9 @@ const addRuntimeAssets = async ({
       name: tool.name,
       content,
       sha256: hash(cryptoImpl, content),
+      adoptableSha256: Array.isArray(legacyAssets[relativeTarget])
+        ? legacyAssets[relativeTarget].filter((value) => MANAGED_HASH_PATTERN.test(value))
+        : [],
     });
   }
 
@@ -177,6 +181,9 @@ const addRuntimeAssets = async ({
         name: skill.name,
         content,
         sha256: hash(cryptoImpl, content),
+        adoptableSha256: Array.isArray(legacyAssets[relativeTarget])
+          ? legacyAssets[relativeTarget].filter((value) => MANAGED_HASH_PATTERN.test(value))
+          : [],
       });
     }
   }
@@ -191,6 +198,7 @@ const buildDesiredAssets = async ({ state, versionsDirectory, builtInRuntime, fs
       version: builtInRuntime.version,
       extensionDirectory: builtInRuntime.rootDirectory,
       agentRuntime: builtInRuntime.agentRuntime,
+      legacyAssets: isRecord(builtInRuntime.legacyAssets) ? builtInRuntime.legacyAssets : {},
       fsImpl,
       pathImpl,
       cryptoImpl,
@@ -266,7 +274,11 @@ const validateExistingTargets = async ({ desired, previousAssets, configDirector
       if (await statOrNull(fsImpl, candidate) && !previousAssets[relativeCandidate]) {
         const desiredAsset = desired.get(relativeCandidate);
         const existingContent = desiredAsset ? await readFileOrNull(fsImpl, candidate) : null;
-        if (desiredAsset && existingContent && hash(cryptoImpl, existingContent) === desiredAsset.sha256) continue;
+        const existingSha256 = existingContent ? hash(cryptoImpl, existingContent) : null;
+        if (desiredAsset && existingSha256 && (
+          existingSha256 === desiredAsset.sha256
+          || desiredAsset.adoptableSha256.includes(existingSha256)
+        )) continue;
         throw new InteractiveUIAgentRuntimeError(
           `OpenCode Tool ${name} already exists and is not managed by OCIX`,
           'agent_tool_conflict',
@@ -291,7 +303,11 @@ const validateExistingTargets = async ({ desired, previousAssets, configDirector
         const existingContent = desiredAsset
           ? await readFileOrNull(fsImpl, pathImpl.join(configDirectory, ...relativeCandidate.split('/')))
           : null;
-        if (desiredAsset && existingContent && hash(cryptoImpl, existingContent) === desiredAsset.sha256) continue;
+        const existingSha256 = existingContent ? hash(cryptoImpl, existingContent) : null;
+        if (desiredAsset && existingSha256 && (
+          existingSha256 === desiredAsset.sha256
+          || desiredAsset.adoptableSha256.includes(existingSha256)
+        )) continue;
         throw new InteractiveUIAgentRuntimeError(
           `OpenCode Skill ${name} already exists and is not managed by OCIX`,
           'agent_skill_conflict',

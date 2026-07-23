@@ -97,10 +97,10 @@ object-src 'none'; media-src 'none'; base-uri 'none'; form-action 'none';
 iframe sandbox 是权限隔离，不是所有 runtime 上的 CPU/内存进程隔离。因而：
 
 - Static Artifact 在 Web/Desktop 首先可用。
-- Interactive JS Artifact 默认关闭；只有可提供可终止隔离或完成目标 runtime 安全评审后才开启。
+- Interactive JS Artifact 按 Runtime 分级：Managed Desktop 在独立 Runner 中默认开启；普通 Web 默认关闭，只有显式实验开关才开启。
 - VS Code、Mobile 与外部 OpenCode 必须通过 capability 明示 static、scripts 或 unsupported，不能弱化 sandbox 后继续运行。
 
-2026-07-21 的端到端浏览器探针先证明：直接 sandbox iframe 即使没有 `allow-downloads`，脚本创建的下载/导航仍可能产生实际请求；CSP 中已经废弃或实现不一致的 navigation 声明不能替代行为证据。随后实现的受信 Broker + opaque `data:` 子 frame 已通过 form、nested frame、download、self-navigation、meta refresh 及脚本 API 攻击矩阵：全部攻击代码实际运行，目标服务器请求数为零，伪造 Bridge 消息被拒绝，子页面导航触发 `broker.navigationBlocked` 并被移除。仍未解决的是 CPU/内存攻击无法从宿主独立终止，因此当前 Scripts 继续保持 experimental、默认关闭，不属于生产能力。
+2026-07-21 的端到端浏览器探针先证明：直接 sandbox iframe 即使没有 `allow-downloads`，脚本创建的下载/导航仍可能产生实际请求；CSP 中已经废弃或实现不一致的 navigation 声明不能替代行为证据。随后实现的受信 Broker + opaque `data:` 子 frame 已通过 form、nested frame、download、self-navigation、meta refresh 及脚本 API 攻击矩阵：全部攻击代码实际运行，目标服务器请求数为零，伪造 Bridge 消息被拒绝，子页面导航触发 `broker.navigationBlocked` 并被移除。2026-07-22 又在 Managed Desktop 增加独立 `WebContentsView` Runner、无 main-world API 的专用 preload、主进程 URL/权限/弹窗/请求门禁、强制 Stop、租约、并发、CPU 与内存终止。因此 Desktop Scripts 升为 supported/default-on；普通 Web 仍因缺少等价可终止边界而保持 experimental/default-off。
 
 ## 5. Narrow Host Bridge
 
@@ -121,6 +121,7 @@ v1 不存在 `callTool`、`businessQuery`、`businessAction`、`getToken`、文�
 
 - Artifact 默认嵌入对话流；workspace/fullscreen 是同一 revision 的显示模式。
 - Host 使用同一个 `<dialog>` 容器：inline 时以非 modal 形式参与消息布局，workspace/fullscreen 时把同一节点提升到浏览器 Top Layer。不得通过复制或重建 iframe 来绕过聊天区的 `overflow`/stacking context，否则交互状态和历史语义会漂移。
+- Managed Desktop 的 `WebContentsView` 不继承 DOM 的 overflow/stacking context，普通父 `View` 也不会提供等价于 CSS `overflow:hidden` 的子 View 裁剪。Host 必须计算执行面与 viewport、滚动容器和其它裁剪祖先的可见交集；主进程把 `WebContentsView` 本身限制在该交集内，可信 Broker 则让内部 Artifact iframe 保持完整执行面尺寸，并按裁掉的距离做负偏移。Broker 应用布局并回执后才能显示原生 View；裁剪产生的 viewport 高度不得通过 `artifact.resize` 回写为内容高度。完全滚出时隐藏 Runner，不能把负坐标钳制为 0 后让其覆盖标题栏、侧栏或输入区。
 - 标题、来源、错误、重试与展开控件由 Host 绘制，Artifact 不能覆盖。
 - inline 高度限制在 120–900 px。Bridge 不可用时使用合同中的 `inlineHeight`。
 - CSP、materialize、加载或 Bridge 失败时保留 title/summary 和原始 Tool output fallback。
@@ -129,9 +130,9 @@ v1 不存在 `callTool`、`businessQuery`、`businessAction`、`getToken`、文�
 ## 7. Feature Flags 与紧急关闭
 
 - `OPENCHAMBER_HTML_ARTIFACTS_STATIC`：默认开启；设为 `0`/`false` 时 materialize 返回 unsupported。
-- `OPENCHAMBER_HTML_ARTIFACTS_SCRIPTS`：默认关闭；只有明确设为 `1`/`true` 才允许脚本 Envelope。
+- `OPENCHAMBER_HTML_ARTIFACTS_SCRIPTS`：Managed Desktop 默认开启并可设为 `0`/`false` 紧急关闭；Web 默认关闭，只有明确设为 `1`/`true` 才允许脚本 Envelope。
 
-Capability API 在脚本开关打开时只返回 `scriptsMode: "experimental"`，关闭时返回 `"unsupported"`。该开关只供受控开发验证；尽管网络与 Bridge 负面门禁已经通过，在独立可终止 renderer 交付前仍不得用于生产，也不得返回 production/stable。
+Capability API 在 Managed Desktop Runner 可用且开关未关闭时返回 `scriptsMode: "supported"`；Web 显式开启时只返回 `"experimental"`；关闭时返回 `"unsupported"`。Runtime 不能用 Web iframe 的结果冒充 Desktop 独立终止证据。
 
 两个开关独立。发现脚本稳定性或安全问题时可以立即关闭 scripts，而保留 static Artifact 与全部 Declarative/OCIX 能力。
 

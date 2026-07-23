@@ -72,6 +72,16 @@ describe('DeclarativeInteractiveView', () => {
           children: [
             { type: 'metric', label: '成功率', value: '96.8%', detail: '较上周 +1.4%' },
             {
+              type: 'metric-grid',
+              columns: 4,
+              items: [
+                { label: '当前 Loss', value: '0.342' },
+                { label: '验证 Loss', value: '0.487' },
+                { label: '学习率', value: '2.1e-5' },
+                { label: 'Perplexity', value: '4.21' },
+              ],
+            },
+            {
               type: 'chart',
               title: '每日请求量',
               variant: 'line',
@@ -103,6 +113,10 @@ describe('DeclarativeInteractiveView', () => {
     expect(html).toContain('模型运营看板');
     expect(html).toContain('成功率');
     expect(html).toContain('96.8%');
+    expect(html).toContain('当前 Loss');
+    expect(html).toContain('@container/metric-grid');
+    expect(html).toContain('@2xl/metric-grid:grid-cols-4');
+    expect(html).toContain('data-ocix-metric-grid');
     expect(html).toContain('每日请求量');
     expect(html).toContain('周一');
     expect(html).toContain('<svg');
@@ -187,6 +201,9 @@ describe('DeclarativeInteractiveView', () => {
               columns: [{ id: 'todo', title: '待办' }, { id: 'done', title: '完成', tone: 'success' }],
               cards: [{ id: 'task_1', column: 'todo', title: '完善 Gallery', badge: 'P1' }, { id: 'task_2', column: 'done', title: '接入会话流', tone: 'success' }],
             },
+            { type: 'agenda', title: '日程', entries: [{ id: 'review', date: '今天', time: '09:30', title: '设计评审', location: '会议室' }] },
+            { type: 'funnel', title: '转化漏斗', stages: [{ label: '线索', value: 80 }, { label: '成交', value: 24, detail: '30%' }] },
+            { type: 'network', title: '调用关系', nodes: [{ id: 'agent', label: 'Agent' }, { id: 'host', label: 'Host' }], edges: [{ source: 'agent', target: 'host', label: 'Result' }] },
             { type: 'tabs', items: [{ label: '摘要', children: [{ type: 'text', value: '已完成' }] }, { label: '风险', children: [{ type: 'text', value: '无阻断' }] }] },
             { type: 'accordion', items: [
               { label: '详细信息', children: [{ type: 'text', value: '可访问区域' }] },
@@ -226,6 +243,11 @@ describe('DeclarativeInteractiveView', () => {
     expect(html).toContain('09:00');
     expect(html).toContain('交付看板');
     expect(html).toContain('完善 Gallery');
+    expect(html).toContain('设计评审');
+    expect(html).toContain('转化漏斗');
+    expect(html).toContain('role="img"');
+    expect(html).toContain('aria-label="调用关系: 2 nodes, 1 connections"');
+    expect(html).toContain('role="graphics-symbol"');
     expect(html).toContain('aria-controls=');
     expect(html.match(/role="tabpanel"/g)).toHaveLength(2);
     expect(html.match(/role="region"/g)).toHaveLength(2);

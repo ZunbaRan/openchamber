@@ -105,7 +105,7 @@ For work in Agent Generated Declarative, Installed Declarative, Trusted Native, 
 | Work | Required project guide |
 |---|---|
 | Implementing or debugging the Agent → Tool → View → business API conversation path | [Development pitfalls](docs/INTERACTIVE_UI_DEVELOPMENT_PITFALLS.md) |
-| Building/signing `.ocix`, publishing catalogs, deploying Agent Runtime, or packaging Electron Desktop | [Packaging pitfalls](docs/INTERACTIVE_UI_PACKAGING_PITFALLS.md) |
+| Building/signing `.ocix`, publishing catalogs, deploying Agent Runtime, packaging Electron Desktop, or validating Runtime upgrades/migrations | [Packaging pitfalls](docs/INTERACTIVE_UI_PACKAGING_PITFALLS.md) |
 | Selecting, running, retrying, cleaning up, or reporting Interactive UI/OCIX tests | [Agent autonomous testing](docs/INTERACTIVE_UI_AGENT_AUTONOMOUS_TESTING.md) |
 | Building a mixed Interactive UI + HTML Artifact package or using the Artifact Business Bridge | [OCIX hybrid extension plan and contract](docs/OCIX_HYBRID_INTERACTIVE_UI_HTML_ARTIFACT_PLAN.md) |
 | Continuing component-library, Scripts Artifact runner, or Marketplace productization work | [Interactive UI productization plan](docs/INTERACTIVE_UI_PRODUCTIZATION_PLAN.md) |

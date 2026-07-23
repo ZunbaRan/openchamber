@@ -59,9 +59,11 @@ bun run lint
 
 ```bash
 OPENCHAMBER_TEST_ARTIFACT_SCRIPTS=true bun run test:html-artifact-browser
+node --test packages/electron/artifact-runner.test.mjs
+bun run type-check:electron
 ```
 
-该命令通过仍不改变 `experimental / default-off` 状态，因为普通 iframe 尚无独立 CPU/内存终止边界。
+浏览器命令只证明 Web Broker/Bridge，不能把 Web Scripts 从 `experimental/default-off` 升级。Electron Runner 单测证明主进程 URL/权限/并发/CPU/内存/Stop 合同；Managed Desktop 的最终 `supported` 证据还必须运行当前构建的 packaged desktop 验收，确认页面实际选择 `data-ocix-artifact-backend="desktop-runner"`。
 
 ### Phase C：真实 Host 功能闭环
 
@@ -128,11 +130,12 @@ OPENCHAMBER_ACCEPTANCE_MODELS=<provider/model,...> \
 
 ```bash
 bun run electron:build
+bun run test:artifact-runner-clipping-packaged
 bun run test:interactive-ui-desktop-packaged
 bun run test:interactive-ui-runtime-performance
 ```
 
-打包测试必须在干净 data/user-data/config、清空覆盖变量和受限 PATH 下证明 bundled OpenCode、生产 Tool/Skill、Generated 内容、Static Artifact、cache 重建、显示模式、scripts-disabled fallback、整应用重启和退出清理。
+`test:artifact-runner-clipping-packaged` 是不依赖 Agent Runtime/OCIX 发现的专用 macOS Runner 验收：系统截图检查原生 View 不逃逸滚动裁剪，并对 Scripts Artifact 执行 `inline → workspace → inline → fullscreen → inline → workspace → inline`，确认 Runner 身份、`ready`、failure fallback 和 Host 控件恢复。打包测试还必须在干净 data/user-data/config、清空覆盖变量和受限 PATH 下证明 bundled OpenCode、生产 Tool/Skill、Generated 内容、Static Artifact、cache 重建、显示模式、scripts-disabled fallback、整应用重启和退出清理。
 
 性能测试依赖前面生成的视觉、功能和打包报告；若输入证据不是同一冻结版本，应重跑来源门禁，不能直接复用旧 JSON。
 
@@ -234,7 +237,7 @@ bun run demo:interactive-ui:stop
 - `complete: true`：Qwen3.7 Plus及本次明确要求的其他模型/平台都完成，且没有 external blocker；
 - `complete: false` 不等于本地失败，必须同时说明缺失 Provider/平台；
 - `releaseCandidate: static-first-tested-runtimes`：只对已验证 Runtime 发布 stable 能力；
-- Scripts Artifact 继续列在 `experimentalDefaultOff`。
+- Scripts Artifact 必须按 Runtime 分列：Managed Desktop `supported/default-on`（可由 kill switch 关闭），Web `experimental/default-off`。
 
 Agent 最终汇报至少包括：
 
@@ -257,7 +260,7 @@ Agent 最终汇报至少包括：
 - Installed Declarative：已验收 Runtime 为 `stable`；
 - Trusted Native：已验收 Runtime 为 `stable`；
 - Static HTML Artifact：`stable`；
-- Scripts HTML Artifact：`experimental / default-off`；
+- Scripts HTML Artifact：Managed Desktop `supported / default-on`；Web `experimental / default-off`；
 - VS Code / active E2EE relay Artifact：`unsupported`；
 - Windows/Linux Desktop、Capacitor：`unverified`；
 - 未连接但被当前任务明确指定为必需的 Provider：`external blocker`，保持原语料等待补跑；未指定的 OpenAI 等对照不阻塞普通开发。

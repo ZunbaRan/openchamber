@@ -19,7 +19,7 @@ When changing OpenChamber source rather than only an extension package, also loa
 
 1. Inventory the business module: namespaced routing domain, bounded read/write intents, short bilingual trigger examples, data authority, read models, writes, destructive operations, auth owner, revision field, empty/error states, and target runtimes.
 2. Choose the form inside the 2×2 model:
-   - Use Declarative for layout, metrics, charts/tables, status, lists, flow, timeline, activity feed, comparison, tabs/accordion, code, sparkline, gauge, heatmap, read-only kanban, standard Git graph/tree/diff summary, and simple confirmed row actions.
+   - Use Declarative for layout, metrics, charts/tables, status, lists, flow, timeline, activity feed, agenda, funnel, bounded network, comparison, tabs/accordion, code, sparkline, gauge, heatmap, read-only kanban, standard Git graph/tree/diff summary, and simple confirmed row actions.
    - Use Trusted Native for durable enterprise UI that needs custom state, complex coordinated interaction, dialogs/forms, bespoke composition, or an existing React module. Use only Host React, Host UI Kit, semantic tokens, and Gateway methods.
    - Use a Third-party HTML Artifact for signed, durable custom SVG/Canvas, simulation, drag/drop, or explorer experiences that need more expression than the Host UI Kit. It stays sandboxed and calls only declared Gateway actions through `window.openchamber.business`.
    - A single `.ocix` may ship `views[]`, `artifacts[]`, or both; start with Declarative when it can satisfy the task.

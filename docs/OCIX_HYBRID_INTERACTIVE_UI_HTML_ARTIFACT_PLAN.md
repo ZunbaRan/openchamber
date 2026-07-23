@@ -135,8 +135,13 @@ node scripts/interactive-ui-extension.mjs validate /absolute/new-extension
 | H8 | light/dark、窄宽、workspace/fullscreen Golden 与 a11y | 已完成 |
 | H9 | Qwen 固定语料路由与安全/性能/打包统一验收 | 已完成（已验证 Runtime 范围） |
 | H10 | 组件库 2.0 首批 `gauge`/`heatmap`/`kanban`、对话 Gallery | 已完成 |
-| H11 | Scripts Artifact 执行租约、心跳、停止/重启 | 已完成（仍为 experimental；非 OS 级独立终止） |
+| H11 | Scripts Artifact 执行租约、心跳、停止/重启 | 已完成（Web 仍为 experimental） |
 | H12 | Marketplace 已安装/可更新状态与扩展诊断 | 已完成 |
+| H13 | Business connection 公共健康状态（configured ≠ reachable） | 已完成 |
+| H14 | 第二批 Declarative primitives：`agenda`/`funnel`/`network` | 已完成 |
+| H15 | Managed Desktop 独立 Scripts Artifact Runner 与强制资源终止 | 已完成（Web 保持 experimental） |
+
+Marketplace 搜索、筛选、批量更新和开发目录 hot reload 未进入 H13–H15，本轮不继续扩展 Market。
 
 ## 6. 验收门槛
 

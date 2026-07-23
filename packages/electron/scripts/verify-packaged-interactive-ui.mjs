@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import fs from 'node:fs/promises';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { promisify } from 'node:util';
+import sharp from 'sharp';
 import {
   HYBRID_CRM_FIXTURE,
   createHybridCrmPackage,
@@ -15,8 +17,79 @@ const electronRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), 
 const projectRoot = path.resolve(electronRoot, '../..');
 const outputDirectory = path.join(projectRoot, '.tmp', 'interactive-ui-packaged-desktop');
 const reportPath = path.join(outputDirectory, 'report.json');
+const execFileAsync = promisify(execFile);
 
 const delay = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
+
+const resolveMacWindowId = async (pid) => {
+  const source = `
+import CoreGraphics
+import Foundation
+let targetPID = ${Number(pid)}
+let options: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
+let entries = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] ?? []
+var bestID = 0
+var bestArea = 0.0
+for entry in entries {
+  let ownerPID = (entry[kCGWindowOwnerPID as String] as? NSNumber)?.intValue ?? -1
+  let layer = (entry[kCGWindowLayer as String] as? NSNumber)?.intValue ?? -1
+  guard ownerPID == targetPID, layer == 0,
+        let number = (entry[kCGWindowNumber as String] as? NSNumber)?.intValue,
+        let bounds = entry[kCGWindowBounds as String] as? NSDictionary,
+        let width = (bounds["Width"] as? NSNumber)?.doubleValue,
+        let height = (bounds["Height"] as? NSNumber)?.doubleValue else { continue }
+  let area = width * height
+  if area > bestArea { bestArea = area; bestID = number }
+}
+print(bestID)
+`;
+  const { stdout } = await execFileAsync('/usr/bin/swift', ['-e', source], { timeout: 30_000 });
+  const windowId = Number(stdout.trim());
+  assert.equal(Number.isInteger(windowId) && windowId > 0, true, `Could not resolve OpenChamber window id for pid ${pid}`);
+  return windowId;
+};
+
+const captureMacWindow = async ({ pid, outputPath }) => {
+  const windowId = await resolveMacWindowId(pid);
+  await execFileAsync('/usr/sbin/screencapture', ['-x', '-o', '-l', String(windowId), outputPath], {
+    timeout: 30_000,
+  });
+  await fs.access(outputPath);
+};
+
+const inspectClipGuard = async (screenshotPath, metrics) => {
+  const { data, info } = await sharp(screenshotPath).removeAlpha().raw().toBuffer({ resolveWithObject: true });
+  const scaleX = info.width / metrics.outerWidth;
+  const scaleY = info.height / metrics.outerHeight;
+  const contentLeft = Math.max(0, (metrics.outerWidth - metrics.innerWidth) / 2);
+  const contentTop = Math.max(0, metrics.outerHeight - metrics.innerHeight);
+  const x0 = Math.max(0, Math.floor((contentLeft + metrics.guard.left + 12) * scaleX));
+  const y0 = Math.max(0, Math.floor((contentTop + metrics.guard.top + 12) * scaleY));
+  const x1 = Math.min(info.width, Math.ceil((contentLeft + metrics.guard.right - 12) * scaleX));
+  const y1 = Math.min(info.height, Math.ceil((contentTop + metrics.guard.bottom - 12) * scaleY));
+  let magentaPixels = 0;
+  let greenPixels = 0;
+  let sampledPixels = 0;
+  for (let y = y0; y < y1; y += 1) {
+    for (let x = x0; x < x1; x += 1) {
+      const offset = (y * info.width + x) * info.channels;
+      const red = data[offset];
+      const green = data[offset + 1];
+      const blue = data[offset + 2];
+      if (red > 210 && green < 70 && blue > 160) magentaPixels += 1;
+      if (red < 110 && green > 190 && blue < 100) greenPixels += 1;
+      sampledPixels += 1;
+    }
+  }
+  return {
+    magentaPixels,
+    greenPixels,
+    sampledPixels,
+    greenRatio: sampledPixels > 0 ? greenPixels / sampledPixels : 0,
+    sampleBounds: { x0, y0, x1, y1 },
+    imageSize: { width: info.width, height: info.height },
+  };
+};
 
 const requestJson = async (port, pathname, { method = 'GET', body, timeoutMs = 30_000 } = {}) => {
   const response = await fetch(`http://127.0.0.1:${port}${pathname}`, {
@@ -279,7 +352,6 @@ const childEnvironment = {
   ...process.env,
   OPENCHAMBER_DATA_DIR: dataDirectory,
   OPENCHAMBER_HTML_ARTIFACTS_STATIC: 'true',
-  OPENCHAMBER_HTML_ARTIFACTS_SCRIPTS: 'false',
   OPENCHAMBER_TEST_BUNDLED_OPENCODE_ONLY: 'true',
   OPENCHAMBER_TEST_OPENCODE_CONFIG_DIR: openCodeConfigDirectory,
   PATH: '/usr/bin:/bin:/usr/sbin:/sbin',
@@ -304,6 +376,8 @@ let appProcess;
 let browser;
 let serverPort = 0;
 let failure;
+let clipGuardInspection;
+let clipScreenshotPath;
 
 try {
   crmApi = await startHybridCrmApi();
@@ -347,8 +421,8 @@ try {
   assert.equal(capabilitiesResponse.ok, true);
   const capabilities = await capabilitiesResponse.json();
   assert.equal(capabilities.static, true);
-  assert.equal(capabilities.scripts, false);
-  assert.equal(capabilities.scriptsMode, 'unsupported');
+  assert.equal(capabilities.scripts, true);
+  assert.equal(capabilities.scriptsMode, 'supported');
   assert.equal(capabilities.cspRevision, 3);
   const openCodeHealthResponse = await fetch(`http://127.0.0.1:${port}/api/opencode/version`, {
     headers: { Accept: 'application/json' },
@@ -363,7 +437,7 @@ try {
   const manager = await managerResponse.json();
   assert.deepEqual(manager.builtInRuntime, {
     id: 'com.openchamber.builtin.interactive-ui',
-    version: '1.0.0',
+    version: '1.2.1',
     status: 'ready',
   });
   const packageBase64 = hybridCrmPackage.buffer.toString('base64');
@@ -487,27 +561,69 @@ try {
   })()`);
   assert.equal(rebuiltDocumentPath, initialStatic.documentPath);
 
-  await navigate('artifact-interactive');
-  await waitFor(browser, `document.querySelector('[data-ocix-artifact-state="scripts-disabled"]') !== null`, 'packaged scripts-disabled fallback');
-  const disabled = await browser.evaluate(`(() => {
+  await navigate('artifact-interactive', {
+    session: 'ses_packaged_generated_artifact_clip_test',
+    clipTest: 'true',
+  });
+  await waitFor(browser, `document.querySelector('[data-ocix-artifact-state="ready"] [data-ocix-artifact-backend="desktop-runner"]') !== null`, 'packaged Scripts Artifact Desktop Runner');
+  const scriptsRunner = await browser.evaluate(`(() => {
     const host = document.querySelector('[data-ocix-artifact-host]');
-    const notice = document.querySelector('[data-ocix-artifact-failure="scripts-disabled"]');
-    const fallback = host?.querySelector('details[data-ocix-artifact-fallback]');
+    const runner = host?.querySelector('[data-ocix-artifact-backend="desktop-runner"]');
     return {
       state: host?.getAttribute('data-ocix-artifact-state') || '',
-      role: notice?.getAttribute('role') || '',
-      iframeCount: host?.querySelectorAll('iframe').length ?? -1,
-      fallbackPresent: Boolean(fallback),
-      fallbackOpen: fallback?.hasAttribute('open') ?? false,
+      backend: runner?.getAttribute('data-ocix-artifact-backend') || '',
+      iframeCount: host?.querySelectorAll('iframe').length ?? 0,
+      stopPresent: Boolean(host?.querySelector('[data-ocix-artifact-action="stop"]')),
     };
   })()`);
-  assert.deepEqual(disabled, {
-    state: 'scripts-disabled',
-    role: 'status',
+  assert.deepEqual(scriptsRunner, {
+    state: 'ready',
+    backend: 'desktop-runner',
     iframeCount: 0,
-    fallbackPresent: true,
-    fallbackOpen: false,
+    stopPresent: true,
   });
+  await browser.evaluate(`(() => {
+    const scroller = document.querySelector('[data-ocix-clip-test-scroller]');
+    const runner = document.querySelector('[data-ocix-artifact-backend="desktop-runner"]');
+    if (!(scroller instanceof HTMLElement) || !(runner instanceof HTMLElement)) return false;
+    scroller.scrollTop = 80;
+    return scroller.scrollTop === 80;
+  })()`);
+  await delay(500);
+  const clipMetrics = await browser.evaluate(`(() => {
+    const scroller = document.querySelector('[data-ocix-clip-test-scroller]');
+    const runner = document.querySelector('[data-ocix-artifact-backend="desktop-runner"]');
+    const guard = document.querySelector('[data-ocix-clip-test-guard]');
+    if (!(scroller instanceof HTMLElement) || !(runner instanceof HTMLElement) || !(guard instanceof HTMLElement)) return null;
+    const toJSON = (rect) => ({ left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom, width: rect.width, height: rect.height });
+    return {
+      innerWidth: window.innerWidth,
+      innerHeight: window.innerHeight,
+      outerWidth: window.outerWidth,
+      outerHeight: window.outerHeight,
+      scroller: toJSON(scroller.getBoundingClientRect()),
+      runner: toJSON(runner.getBoundingClientRect()),
+      guard: toJSON(guard.getBoundingClientRect()),
+    };
+  })()`);
+  assert.notEqual(clipMetrics, null);
+  assert.equal(clipMetrics.runner.bottom > clipMetrics.scroller.bottom, true, 'fixture must place the Runner across the clipping edge');
+  assert.equal(clipMetrics.guard.top > clipMetrics.scroller.bottom, true, 'guard must remain outside the clipping scroller');
+  clipScreenshotPath = path.join(outputDirectory, 'scripts-artifact-scroll-clipping-packaged-macos.png');
+  await captureMacWindow({ pid: appProcess.pid, outputPath: clipScreenshotPath });
+  clipGuardInspection = await inspectClipGuard(clipScreenshotPath, clipMetrics);
+  assert.equal(
+    clipGuardInspection.magentaPixels,
+    0,
+    `Native Runner escaped its scroll clip (${clipGuardInspection.magentaPixels} magenta pixels in guard)`,
+  );
+  assert.equal(
+    clipGuardInspection.greenRatio > 0.7,
+    true,
+    `Clip guard was not visually preserved (${clipGuardInspection.greenRatio.toFixed(3)} green ratio)`,
+  );
+  await browser.evaluate(`document.querySelector('[data-ocix-artifact-action="stop"]')?.click()`);
+  await waitFor(browser, `document.querySelector('[data-ocix-artifact-state="stopped"]') !== null`, 'packaged Scripts Artifact forced stop');
 
   await navigate('artifact-installed', {
     artifact: HYBRID_CRM_FIXTURE.artifactId,
@@ -516,21 +632,21 @@ try {
   await waitFor(browser, `document.querySelector('[data-ocix-artifact-source="third-party-extension"][data-ocix-artifact-state="ready"]') !== null`, 'packaged installed Artifact ready');
   const installedArtifact = await browser.evaluate(`(() => {
     const host = document.querySelector('[data-ocix-artifact-source="third-party-extension"]');
-    const frame = host?.querySelector('iframe');
+    const runner = host?.querySelector('[data-ocix-artifact-backend="desktop-runner"]');
     return {
       state: host?.getAttribute('data-ocix-artifact-state') || '',
       source: host?.getAttribute('data-ocix-artifact-source') || '',
-      sandbox: frame?.getAttribute('sandbox') || '',
-      title: frame?.getAttribute('title') || '',
+      backend: runner?.getAttribute('data-ocix-artifact-backend') || '',
+      title: runner?.getAttribute('aria-label') || '',
       iframeCount: host?.querySelectorAll('iframe').length ?? 0,
     };
   })()`);
   assert.deepEqual(installedArtifact, {
     state: 'ready',
     source: 'third-party-extension',
-    sandbox: 'allow-scripts',
+    backend: 'desktop-runner',
     title: 'Simple CRM Explorer',
-    iframeCount: 1,
+    iframeCount: 0,
   });
   const installedGatewayQuery = await requestJson(port, `/api/interactive-ui/actions/${HYBRID_CRM_FIXTURE.queryActionId}`, {
     method: 'POST',
@@ -633,7 +749,8 @@ try {
       cacheRebuild: 'same-content-id',
       displayModes: ['inline', 'workspace', 'fullscreen'],
       scriptsMode: capabilities.scriptsMode,
-      scriptsFallback: disabled.state,
+      scriptsRunner: `${scriptsRunner.backend}:ready-then-stopped`,
+      scriptsRunnerScrollClip: clipGuardInspection,
       cspRevision: capabilities.cspRevision,
       appRestart: 'ready-with-same-content-id',
       installed: {
@@ -643,7 +760,7 @@ try {
         appRestart: 'ready',
       },
     },
-    screenshots: [screenshotPath, installedScreenshotPath],
+    screenshots: [screenshotPath, clipScreenshotPath, installedScreenshotPath],
     runtimeErrors: browser.runtimeErrors.length,
   };
   await fs.writeFile(reportPath, `${JSON.stringify(report, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });

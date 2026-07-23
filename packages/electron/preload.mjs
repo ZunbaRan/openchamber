@@ -18,6 +18,7 @@ const runtimeHeadersRaw = readArgValue('--openchamber-runtime-headers');
 const homeDirectory = readArgValue('--openchamber-home');
 const macosMajorRaw = readArgValue('--openchamber-macos-major');
 const macosMajor = Number.parseInt(macosMajorRaw, 10);
+const desktopUpdatesEnabled = readArgValue('--openchamber-desktop-updates-enabled') === '1';
 const macVibrancySupported = process.platform === 'darwin';
 // Effective state for this window (main process resolves the saved preference
 // and passes it in). Defaults on when supported unless explicitly '0'.
@@ -182,6 +183,7 @@ ipcRenderer.on('openchamber:emit', (_evt, payload) => {
 // for non-local callers (window/host-switcher ops yes, file/shell ops
 // no). See COMMANDS_SAFE_FOR_REMOTE in main.mjs.
 contextBridge.exposeInMainWorld('__OPENCHAMBER_DESKTOP__', {
+  updatesEnabled: desktopUpdatesEnabled,
   invoke: (cmd, args) => ipcRenderer.invoke('openchamber:invoke', cmd, args || {}),
   openDialog: (options) => ipcRenderer.invoke('openchamber:dialog:open', options || {}),
   grantFileAccess: (filePath) => ipcRenderer.invoke('openchamber:file:grant-existing', filePath),

@@ -143,6 +143,7 @@ describe('Interactive UI connector authentication', () => {
 
     const before = await runtime.listConnections();
     expect(before.connections[0].credential.configured).toBe(false);
+    expect(before.connections[0].health).toEqual({ status: 'unknown', checkedAt: null });
     await expect(runtime.invokeAction('com.acme.crm.query', {
       extensionId: 'com.acme.crm',
       viewId: 'com.acme.crm.overview',
@@ -155,6 +156,10 @@ describe('Interactive UI connector authentication', () => {
     expect(JSON.stringify(await runtime.listConnections())).not.toContain('crm-secret');
 
     expect((await runtime.testConnection('com.acme.crm', 'crm-api')).ok).toBe(true);
+    expect((await runtime.listConnections()).connections[0].health).toMatchObject({
+      status: 'reachable',
+      checkedAt: expect.any(String),
+    });
     await runtime.invokeAction('com.acme.crm.query', {
       extensionId: 'com.acme.crm',
       viewId: 'com.acme.crm.overview',
@@ -236,6 +241,7 @@ describe('Interactive UI connector authentication', () => {
     await runtime.configureConnection('com.acme.crm', 'crm-api', { accessKey: 'scoped-key' });
 
     await expect(runtime.testConnection('com.acme.crm', 'crm-api')).rejects.toMatchObject({ code: 'connector_unauthorized', status: 401 });
+    expect((await runtime.listConnections()).connections[0].health.status).toBe('unauthorized');
     status = 403;
     await expect(runtime.invokeAction('com.acme.crm.query', {
       extensionId: 'com.acme.crm',
@@ -247,6 +253,7 @@ describe('Interactive UI connector authentication', () => {
       status: 403,
       message: 'Access key does not have permission',
     });
+    expect((await runtime.listConnections()).connections[0].health.status).toBe('forbidden');
     status = 409;
     await expect(runtime.invokeAction('com.acme.crm.query', {
       extensionId: 'com.acme.crm',

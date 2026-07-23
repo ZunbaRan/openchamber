@@ -417,6 +417,141 @@ export const KanbanPrimitive: React.FC<PrimitiveProps> = ({ node, resolveValue, 
   );
 };
 
+export const AgendaPrimitive: React.FC<PrimitiveProps> = ({ node, resolveValue, emptyLabel }) => {
+  const entries = resolvedRecords(node.entries ?? node.items ?? node.data, resolveValue).flatMap((entry, index) => {
+    const itemTitle = displayDeclarativeValue(resolveValue(entry.title));
+    if (!itemTitle) return [];
+    return [{
+      id: displayDeclarativeValue(resolveValue(entry.id ?? index)),
+      title: itemTitle,
+      date: displayDeclarativeValue(resolveValue(entry.date)),
+      time: displayDeclarativeValue(resolveValue(entry.time)),
+      endTime: displayDeclarativeValue(resolveValue(entry.endTime)),
+      description: displayDeclarativeValue(resolveValue(entry.description)),
+      location: displayDeclarativeValue(resolveValue(entry.location)),
+      tone: entry.tone,
+    }];
+  }).slice(0, 40);
+  if (entries.length === 0) return <div className={cn(PANEL, 'text-center', META)}>{emptyLabel}</div>;
+  const grouped = entries.reduce<Map<string, typeof entries>>((groups, entry) => {
+    const key = entry.date || 'Upcoming';
+    groups.set(key, [...(groups.get(key) ?? []), entry]);
+    return groups;
+  }, new Map());
+  return (
+    <section className={PANEL}>
+      {node.title ? <h3 className={cn('mb-3', TITLE)}>{displayDeclarativeValue(resolveValue(node.title))}</h3> : null}
+      <div className="space-y-4">
+        {Array.from(grouped.entries()).slice(0, 14).map(([date, dateEntries]) => (
+          <section key={date} aria-label={date} className="grid gap-2 sm:grid-cols-[7rem_minmax(0,1fr)]">
+            <h4 className="pt-2 typography-meta font-semibold text-[var(--ocix-muted-foreground)]">{date}</h4>
+            <ol className="space-y-2">
+              {dateEntries.map((entry) => (
+                <li key={entry.id} className="grid min-w-0 grid-cols-[4.75rem_minmax(0,1fr)] gap-3 rounded-lg bg-[var(--ocix-surface-muted)] p-2.5">
+                  <time className="typography-micro font-medium text-[var(--ocix-muted-foreground)]">{entry.time}{entry.endTime ? `–${entry.endTime}` : ''}</time>
+                  <div className="min-w-0 border-l border-[var(--ocix-border)] pl-3">
+                    <div className="flex items-start gap-2">
+                      <span aria-hidden="true" className={cn('mt-1.5 size-2 shrink-0 rounded-full', dotClass(entry.tone))} />
+                      <div className="min-w-0">
+                        <div className="break-words typography-meta font-medium text-[var(--ocix-foreground)]">{entry.title}</div>
+                        {entry.description ? <div className={cn('mt-0.5 break-words', META)}>{entry.description}</div> : null}
+                        {entry.location ? <div className={cn('mt-1 break-words', META)}>{entry.location}</div> : null}
+                      </div>
+                    </div>
+                  </div>
+                </li>
+              ))}
+            </ol>
+          </section>
+        ))}
+      </div>
+    </section>
+  );
+};
+
+export const FunnelPrimitive: React.FC<PrimitiveProps> = ({ node, resolveValue, emptyLabel }) => {
+  const stages = resolvedRecords(node.stages ?? node.items ?? node.data, resolveValue).flatMap((stage, index) => {
+    const stageLabel = displayDeclarativeValue(resolveValue(stage.label ?? stage.title));
+    const value = Number(resolveValue(stage.value));
+    if (!stageLabel || !Number.isFinite(value)) return [];
+    return [{ label: stageLabel, value, detail: displayDeclarativeValue(resolveValue(stage.detail)), index }];
+  }).slice(0, 8);
+  if (stages.length === 0) return <div className={cn(PANEL, 'text-center', META)}>{emptyLabel}</div>;
+  const maximum = Math.max(...stages.map((stage) => Math.max(0, stage.value)), 1);
+  return (
+    <section className={PANEL}>
+      {node.title ? <h3 className={cn('mb-3', TITLE)}>{displayDeclarativeValue(resolveValue(node.title))}</h3> : null}
+      <ol className="space-y-2" aria-label={displayDeclarativeValue(resolveValue(node.title ?? 'Funnel'))}>
+        {stages.map((stage) => {
+          const width = Math.max(10, (Math.max(0, stage.value) / maximum) * 100);
+          return (
+            <li key={`${stage.label}:${stage.index}`} className="grid gap-1.5 sm:grid-cols-[9rem_minmax(0,1fr)_auto] sm:items-center">
+              <span className="break-words typography-meta font-medium text-[var(--ocix-foreground)]">{stage.label}</span>
+              <div className="h-7 overflow-hidden rounded-md bg-[var(--ocix-surface-muted)]" aria-hidden="true">
+                <div className="h-full rounded-md bg-[var(--ocix-chart-1)]" style={{ width: `${width}%`, opacity: Math.max(0.45, 1 - stage.index * 0.07) }} />
+              </div>
+              <span className="typography-meta tabular-nums text-[var(--ocix-foreground)]">{displayDeclarativeValue(stage.value)}{stage.detail ? ` · ${stage.detail}` : ''}</span>
+            </li>
+          );
+        })}
+      </ol>
+    </section>
+  );
+};
+
+export const NetworkPrimitive: React.FC<PrimitiveProps> = ({ node, resolveValue, emptyLabel }) => {
+  const nodes = resolvedRecords(node.nodes, resolveValue).flatMap((entry, index) => {
+    const id = typeof entry.id === 'string' ? entry.id : `node-${index + 1}`;
+    const nodeLabel = displayDeclarativeValue(resolveValue(entry.label ?? entry.title));
+    return nodeLabel ? [{ id, label: nodeLabel, detail: displayDeclarativeValue(resolveValue(entry.detail ?? entry.description)), tone: entry.tone }] : [];
+  }).slice(0, 30);
+  const nodeIds = new Set(nodes.map((entry) => entry.id));
+  const edges = resolvedRecords(node.edges, resolveValue).flatMap((entry) => {
+    if (typeof entry.source !== 'string' || typeof entry.target !== 'string' || !nodeIds.has(entry.source) || !nodeIds.has(entry.target)) return [];
+    return [{ source: entry.source, target: entry.target, label: displayDeclarativeValue(resolveValue(entry.label)) }];
+  }).slice(0, 60);
+  if (nodes.length === 0) return <div className={cn(PANEL, 'text-center', META)}>{emptyLabel}</div>;
+  const positions = new Map(nodes.map((entry, index) => {
+    const angle = (index / nodes.length) * Math.PI * 2 - Math.PI / 2;
+    return [entry.id, { x: 160 + Math.cos(angle) * 112, y: 120 + Math.sin(angle) * 84 }] as const;
+  }));
+  const accessibleTitle = displayDeclarativeValue(resolveValue(node.title ?? 'Network'));
+  return (
+    <section className={PANEL}>
+      {node.title ? <h3 className={cn('mb-3', TITLE)}>{accessibleTitle}</h3> : null}
+      <div className="grid gap-3 lg:grid-cols-[minmax(18rem,1.35fr)_minmax(12rem,0.65fr)]">
+        <div className="min-w-0 overflow-x-auto rounded-lg bg-[var(--ocix-surface-muted)] p-2" tabIndex={0}>
+          <svg viewBox="0 0 320 240" className="mx-auto h-auto min-w-[18rem] max-w-xl" role="img" aria-label={`${accessibleTitle}: ${nodes.length} nodes, ${edges.length} connections`}>
+            {edges.map((edge, index) => {
+              const source = positions.get(edge.source)!;
+              const target = positions.get(edge.target)!;
+              return <line key={`${edge.source}:${edge.target}:${index}`} x1={source.x} y1={source.y} x2={target.x} y2={target.y} stroke="var(--ocix-border)" strokeWidth="2"><title>{edge.label || `${edge.source} to ${edge.target}`}</title></line>;
+            })}
+            {nodes.map((entry, index) => {
+              const position = positions.get(entry.id)!;
+              const color = `var(--ocix-chart-${(index % 5) + 1})`;
+              return (
+                <g key={entry.id} role="graphics-symbol" aria-label={`${entry.label}${entry.detail ? `: ${entry.detail}` : ''}`} tabIndex={0}>
+                  <circle cx={position.x} cy={position.y} r="14" fill={color} stroke="var(--ocix-surface)" strokeWidth="3" />
+                  <text x={position.x} y={position.y + 25} textAnchor="middle" className="fill-[var(--ocix-foreground)] text-[9px] font-medium">{entry.label.slice(0, 18)}</text>
+                </g>
+              );
+            })}
+          </svg>
+        </div>
+        <ol className="space-y-1.5" aria-label={`${accessibleTitle} nodes`}>
+          {nodes.map((entry, index) => (
+            <li key={entry.id} className="flex min-w-0 gap-2 rounded-lg bg-[var(--ocix-surface-muted)] px-2.5 py-2">
+              <span aria-hidden="true" className="mt-1 size-2.5 shrink-0 rounded-full" style={{ background: `var(--ocix-chart-${(index % 5) + 1})` }} />
+              <span className="min-w-0 break-words typography-meta text-[var(--ocix-foreground)]"><strong className="font-medium">{entry.label}</strong>{entry.detail ? ` · ${entry.detail}` : ''}</span>
+            </li>
+          ))}
+        </ol>
+      </div>
+    </section>
+  );
+};
+
 type GitCommit = {
   id: string;
   message: string;

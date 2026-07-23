@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, net as electronNet, Notification, powerMonitor, powerSaveBlocker, protocol, screen, session, shell, webContents } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, net as electronNet, Notification, powerMonitor, powerSaveBlocker, protocol, screen, session, shell, WebContentsView, webContents } from 'electron';
 import contextMenu from 'electron-context-menu';
 import log from 'electron-log/main.js';
 import dgram from 'node:dgram';
@@ -18,12 +18,17 @@ import { assertUpdaterCapability } from './updater-capability.mjs';
 import { checkForDesktopUpdate } from './updater-check.mjs';
 import { resolveUpdaterFeed } from './updater-feed.mjs';
 import { mintOutsideFileGrant } from '@openchamber/web/server/lib/fs/routes.js';
+import { createArtifactRunnerManager } from './artifact-runner.mjs';
 
 const execFileAsync = promisify(execFile);
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const isDev = process.env.OPENCHAMBER_ELECTRON_DEV === '1' || !app.isPackaged;
+const updaterE2eBuild = typeof __OPENCHAMBER_UPDATER_E2E_BUILD__ !== 'undefined'
+  && __OPENCHAMBER_UPDATER_E2E_BUILD__ === true;
+const desktopUpdaterFeed = resolveUpdaterFeed({ testBuild: updaterE2eBuild });
+const desktopUpdatesEnabled = desktopUpdaterFeed !== null;
 
 const DEEP_LINK_PROTOCOL = 'openchamber';
 const UI_PROTOCOL = 'openchamber-ui';
@@ -176,7 +181,6 @@ const LOCAL_DESKTOP_CLIENT_DEDUPE_KEY = 'desktop-local';
 // connecting to someone else's server).
 const REMOTE_DESKTOP_CLIENT_KIND = 'desktop';
 const ENV_OVERRIDE_HOST_ID = '__env';
-const CHANGELOG_URL = 'https://raw.githubusercontent.com/openchamber/openchamber/main/CHANGELOG.md';
 const GITHUB_BUG_REPORT_URL = 'https://github.com/openchamber/openchamber/issues/new?template=bug_report.yml';
 const GITHUB_FEATURE_REQUEST_URL = 'https://github.com/openchamber/openchamber/issues/new?template=feature_request.yml';
 const DISCORD_INVITE_URL = 'https://discord.gg/ZYRSdnwwKA';
@@ -1784,6 +1788,15 @@ const emitToAllWindows = (event, detail) => {
   }
 };
 
+const artifactRunnerManager = createArtifactRunnerManager({
+  WebContentsView,
+  session,
+  app,
+  preloadPath: isDev ? path.join(__dirname, 'artifact-runner-preload.cjs') : path.join(app.getAppPath(), 'artifact-runner-preload.cjs'),
+  emit: (browserWindow, detail) => emitToWindow(browserWindow, 'openchamber:artifact-runner-event', detail),
+  logger: log,
+});
+
 // macOS vibrancy: the native NSVisualEffectView needs a moment to settle after
 // the window is shown/restored. Until then the renderer keeps the sidebar solid
 // to avoid a flash of raw transparency; once ready it switches to the
@@ -2256,6 +2269,7 @@ const createBrowserWindow = ({ label, restoreGeometry, url, runtimeConfig = {} }
         `--openchamber-home=${desktopHome}`,
         `--openchamber-macos-major=${desktopMacosMajor}`,
         `--openchamber-mac-vibrancy=${useVibrancy ? '1' : '0'}`,
+        `--openchamber-desktop-updates-enabled=${desktopUpdatesEnabled ? '1' : '0'}`,
         `--openchamber-boot-outcome=${JSON.stringify(state.bootOutcome || null)}`,
         `--openchamber-relay-host-id=${rendererRuntimeConfig.relayHostId || ''}`,
       ],
@@ -2368,6 +2382,7 @@ const createBrowserWindow = ({ label, restoreGeometry, url, runtimeConfig = {} }
     debounceWindowStatePersist(browserWindow, true);
   });
   browserWindow.on('closed', () => {
+    artifactRunnerManager.stopForOwner(browserWindow);
     state.focusedWindowIds.delete(browserWindow.id);
     if (state.mainWindow && browserWindow.id === state.mainWindow.id) {
       state.mainWindow = null;
@@ -2649,6 +2664,7 @@ const createMiniChatWindow = async ({ mode, sessionId = '', directory = '', proj
         `--openchamber-runtime-headers=${JSON.stringify(desktopRequestHeaders)}`,
         `--openchamber-home=${desktopHome}`,
         `--openchamber-macos-major=${desktopMacosMajor}`,
+        `--openchamber-desktop-updates-enabled=${desktopUpdatesEnabled ? '1' : '0'}`,
       ],
       preload: isDev ? path.join(__dirname, 'preload.mjs') : path.join(app.getAppPath(), 'preload.mjs'),
       backgroundThrottling: false,
@@ -2849,7 +2865,9 @@ const compareSemver = (left, right) => {
 };
 
 const setupAutoUpdater = () => {
-  if (!app.isPackaged) {
+  if (!app.isPackaged || !desktopUpdatesEnabled) {
+    state.pendingUpdate = null;
+    log.info('[electron] desktop auto-updates disabled for this build');
     return;
   }
   autoUpdater.autoDownload = false;
@@ -2859,13 +2877,10 @@ const setupAutoUpdater = () => {
   autoUpdater.disableWebInstaller = false;
   autoUpdater.logger = log;
 
-  const testBuild = typeof __OPENCHAMBER_UPDATER_E2E_BUILD__ !== 'undefined'
-    && __OPENCHAMBER_UPDATER_E2E_BUILD__ === true;
-  const feed = resolveUpdaterFeed({ testBuild });
-  autoUpdater.setFeedURL(feed);
+  autoUpdater.setFeedURL(desktopUpdaterFeed);
   log.info('[electron] updater feed configured', {
-    provider: feed.provider,
-    target: feed.provider === 'github' ? `${feed.owner}/${feed.repo}` : feed.url,
+    provider: desktopUpdaterFeed.provider,
+    target: desktopUpdaterFeed.url,
   });
 
   autoUpdater.on('download-progress', (progress) => {
@@ -2894,25 +2909,6 @@ const setupAutoUpdater = () => {
     setTaskbarProgress(-1);
     log.error('[electron] autoUpdater error', err);
   });
-};
-
-const parseRelevantChangelogNotes = async (fromVersion, toVersion) => {
-  try {
-    const response = await fetch(CHANGELOG_URL, { signal: AbortSignal.timeout(10_000) });
-    if (!response.ok) return null;
-    const changelog = await response.text();
-    const sections = changelog.split(/^##\s+\[/m).slice(1);
-    const relevant = [];
-    for (const section of sections) {
-      const version = section.split(']')[0];
-      if (compareSemver(version, fromVersion) > 0 && compareSemver(version, toVersion) <= 0) {
-        relevant.push(`## [${section}`.trim());
-      }
-    }
-    return relevant.length > 0 ? relevant.join('\n\n') : null;
-  } catch {
-    return null;
-  }
 };
 
 const buildInstalledAppsCachePath = () => path.join(path.dirname(settingsFilePath()), INSTALLED_APPS_CACHE_FILE);
@@ -3464,6 +3460,30 @@ const runSpecChain = (specs, appName) => {
 
 const handleInvoke = async (browserWindow, command, args = {}) => {
   switch (command) {
+    case 'desktop_artifact_runner_start':
+      return artifactRunnerManager.start(browserWindow, {
+        url: args.url,
+        bounds: args.bounds,
+        clipBounds: args.clipBounds,
+        visible: args.visible !== false,
+      });
+
+    case 'desktop_artifact_runner_update':
+      return artifactRunnerManager.update(args.runnerId, {
+        bounds: args.bounds,
+        clipBounds: args.clipBounds,
+        visible: args.visible,
+      });
+
+    case 'desktop_artifact_runner_post':
+      return artifactRunnerManager.post(args.runnerId, args.message);
+
+    case 'desktop_artifact_runner_stop':
+      return artifactRunnerManager.stop(args.runnerId, 'stopped');
+
+    case 'desktop_artifact_runner_status':
+      return artifactRunnerManager.get(args.runnerId);
+
     case 'desktop_start_window_drag':
       return null;
 
@@ -3936,6 +3956,17 @@ const handleInvoke = async (browserWindow, command, args = {}) => {
     }
 
     case 'desktop_check_for_updates': {
+      if (!desktopUpdatesEnabled) {
+        state.pendingUpdate = null;
+        return {
+          updatesEnabled: false,
+          available: false,
+          currentVersion: APP_VERSION,
+          version: null,
+          body: null,
+          date: null,
+        };
+      }
       assertUpdaterCapability({ packaged: app.isPackaged });
       const currentVersion = APP_VERSION;
       const { available, updateInfo, updateResult, nextVersion, pendingUpdate } = await checkForDesktopUpdate({
@@ -3945,10 +3976,10 @@ const handleInvoke = async (browserWindow, command, args = {}) => {
         compareVersions: compareSemver,
       });
       const body =
-        (typeof updateInfo?.releaseNotes === 'string' && updateInfo.releaseNotes.trim() ? updateInfo.releaseNotes : null) ||
-        await parseRelevantChangelogNotes(currentVersion, nextVersion);
+        (typeof updateInfo?.releaseNotes === 'string' && updateInfo.releaseNotes.trim() ? updateInfo.releaseNotes : null);
       state.pendingUpdate = pendingUpdate;
       return {
+        updatesEnabled: true,
         available,
         currentVersion,
         version: available ? nextVersion : null,
@@ -3960,6 +3991,9 @@ const handleInvoke = async (browserWindow, command, args = {}) => {
     }
 
     case 'desktop_download_and_install_update':
+      if (!desktopUpdatesEnabled) {
+        throw new Error('Desktop updates are disabled for this build');
+      }
       assertUpdaterCapability({ packaged: app.isPackaged });
       if (!state.pendingUpdate) {
         throw new Error('No pending update');
@@ -4005,7 +4039,7 @@ const handleInvoke = async (browserWindow, command, args = {}) => {
       }
 
     case 'desktop_restart': {
-      const applyUpdate = Boolean(state.pendingUpdate?.downloaded && app.isPackaged);
+      const applyUpdate = Boolean(desktopUpdatesEnabled && state.pendingUpdate?.downloaded && app.isPackaged);
       if (applyUpdate) assertUpdaterCapability({ packaged: app.isPackaged });
       log.info(`[electron] desktop_restart applyUpdate=${applyUpdate} packaged=${app.isPackaged}`);
       if (applyUpdate && process.platform === 'darwin' && typeof app.isInApplicationsFolder === 'function') {
@@ -4266,10 +4300,10 @@ const buildMacMenu = () => {
       label: app.name,
       submenu: [
         { label: 'About OpenChamber', click: () => dispatchAction('about') },
-        {
+        ...(desktopUpdatesEnabled ? [{
           label: 'Check for Updates',
           click: () => dispatchCheckForUpdates(),
-        },
+        }] : []),
         { type: 'separator' },
         { label: 'Settings', accelerator: 'Cmd+,', click: () => dispatchAction('settings') },
         { label: 'Reload Webview', click: () => reloadMenuTargetWindow() },
@@ -4371,10 +4405,10 @@ const buildAutoHiddenMenu = () => {
       label: 'OpenChamber',
       submenu: [
         { label: 'About OpenChamber', click: () => dispatchAction('about') },
-        {
+        ...(desktopUpdatesEnabled ? [{
           label: 'Check for Updates',
           click: () => dispatchCheckForUpdates(),
-        },
+        }] : []),
         { type: 'separator' },
         { label: 'Settings', accelerator: 'Ctrl+,', click: () => dispatchAction('settings') },
         { label: 'Reload Webview', click: () => reloadMenuTargetWindow() },
@@ -4568,6 +4602,14 @@ ipcMain.handle('openchamber:invoke', async (event, command, args) => {
   }
   const browserWindow = BrowserWindow.fromWebContents(event.sender);
   return handleInvoke(browserWindow, command, args);
+});
+
+ipcMain.on('openchamber:artifact-runner-message', (event, message) => {
+  artifactRunnerManager.handleRendererMessage(event.sender, message);
+});
+
+ipcMain.on('openchamber:artifact-runner-layout-applied', (event, detail) => {
+  artifactRunnerManager.handleLayoutApplied(event.sender, detail);
 });
 
 ipcMain.handle('openchamber:dialog:open', async (event, options) => {
@@ -4845,6 +4887,10 @@ app.on('before-quit', (event) => {
     event.preventDefault();
     performConfirmedQuit();
   }
+});
+
+app.on('will-quit', () => {
+  artifactRunnerManager.dispose();
 });
 
 app.on('second-instance', (_event, argv) => {

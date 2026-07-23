@@ -37,8 +37,10 @@ import {
 import { sessionEvents } from '@/lib/sessionEvents';
 import { isRelayModeActive } from '@/lib/relay/runtime-tunnel';
 import { isMobileSurfaceRuntime } from '@/lib/runtimeSurface';
+import { isElectronShell } from '@/lib/desktop';
 import { recordRoutingArtifactObservation } from '@/lib/interactive-ui/routingInspector';
 import { HTMLArtifactStateNotice } from './HTMLArtifactStateNotice';
+import { ArtifactExecutionSurface, type ArtifactExecutionSurfaceHandle } from './ArtifactExecutionSurface';
 
 interface HTMLArtifactViewProps {
   envelope: HTMLArtifactResultEnvelope | InstalledHTMLArtifactResultEnvelope;
@@ -125,7 +127,7 @@ export const HTMLArtifactView: React.FC<HTMLArtifactViewProps> = ({ envelope, fa
   const themeVariant = themeSystem?.currentTheme.metadata.variant === 'dark' ? 'dark' : 'light';
   const mobileSurface = isMobileSurfaceRuntime();
   const hostRef = React.useRef<HTMLDialogElement>(null);
-  const iframeRef = React.useRef<HTMLIFrameElement>(null);
+  const executionSurfaceRef = React.useRef<ArtifactExecutionSurfaceHandle>(null);
   const lastSequenceRef = React.useRef(0);
   const lastHeartbeatRef = React.useRef(0);
   const executionLeaseRef = React.useRef({ id: createChannelId(), expiresAt: 0 });
@@ -208,9 +210,10 @@ export const HTMLArtifactView: React.FC<HTMLArtifactViewProps> = ({ envelope, fa
     : null, [materialization]);
 
   const sendHostInit = React.useCallback(() => {
-    const target = iframeRef.current?.contentWindow;
+    const target = executionSurfaceRef.current;
     if (!target) return;
     const { tokens, theme } = collectThemeContext(hostRef.current, themeVariant);
+    const viewport = target.getViewport();
     target.postMessage(createHTMLArtifactHostInitMessage({
       channelId,
       mode,
@@ -220,8 +223,8 @@ export const HTMLArtifactView: React.FC<HTMLArtifactViewProps> = ({ envelope, fa
       theme,
       tokens,
       viewport: {
-        width: Math.max(0, Math.round(iframeRef.current?.clientWidth ?? 0)),
-        height: Math.max(0, Math.round(iframeRef.current?.clientHeight ?? 0)),
+        width: viewport.width,
+        height: viewport.height,
       },
       executionLease: {
         id: executionLeaseRef.current.id,
@@ -229,24 +232,22 @@ export const HTMLArtifactView: React.FC<HTMLArtifactViewProps> = ({ envelope, fa
         heartbeatIntervalMs: ARTIFACT_HEARTBEAT_INTERVAL_MS,
       },
       ...(installed && envelope.context !== undefined ? { context: envelope.context } : {}),
-    }), '*');
+    }));
   }, [channelId, envelope, installed, locale, mode, themeVariant]);
 
-  React.useEffect(() => {
-    if (!materialization?.scripts) return;
-    const onMessage = (event: MessageEvent) => {
-      if (event.source !== iframeRef.current?.contentWindow) return;
+  const handleArtifactMessage = React.useCallback((data: unknown, metadata: { userActivated: boolean }) => {
+      if (!materialization?.scripts) return;
       const now = Date.now();
       if (!bridgeRateLimiter.allowMessage(now)) return;
 
-      if (isHTMLArtifactBrokerNavigationMessage(event.data, channelId)) {
+      if (isHTMLArtifactBrokerNavigationMessage(data, channelId)) {
         setFailure('blocked');
         setReady(false);
         recordRoutingArtifactObservation({ sessionId, toolPartId, status: 'failed' });
         return;
       }
 
-      const message = parseHTMLArtifactBridgeMessage(event.data, channelId, lastSequenceRef.current, {
+      const message = parseHTMLArtifactBridgeMessage(data, channelId, lastSequenceRef.current, {
         allowBusiness: installed,
       });
       if (!message) return;
@@ -267,15 +268,15 @@ export const HTMLArtifactView: React.FC<HTMLArtifactViewProps> = ({ envelope, fa
         return;
       }
       if (message.type === 'artifact.requestExpand' && materialization.allowExpand) {
-        if (!hasRecentUserActivation()) return;
+        if (!metadata.userActivated && !hasRecentUserActivation()) return;
         if (!materialization.displayModes.includes(message.payload.mode)) return;
         setMode(message.payload.mode);
         return;
       }
       if (message.type === 'artifact.businessRequest') {
-        const target = iframeRef.current?.contentWindow;
+        const target = executionSurfaceRef.current;
         const respond = (result: Parameters<typeof createHTMLArtifactBusinessResultMessage>[0]) => {
-          target?.postMessage(createHTMLArtifactBusinessResultMessage(result), '*');
+          target?.postMessage(createHTMLArtifactBusinessResultMessage(result));
         };
         if (!installed || !tool || !materialization.extensionId || !materialization.artifactId) {
           respond({
@@ -335,18 +336,18 @@ export const HTMLArtifactView: React.FC<HTMLArtifactViewProps> = ({ envelope, fa
         return;
       }
       if (message.type === 'artifact.proposeFollowUp') {
-        if (!hasRecentUserActivation()) return;
+        if (!metadata.userActivated && !hasRecentUserActivation()) return;
         sessionEvents.requestComposerPrefill({ sessionId, text: message.payload.text });
         toast.info(t('interactiveUI.artifact.followUpPrepared'));
         return;
       }
       if (message.type === 'artifact.copyText') {
-        if (!hasRecentUserActivation()) return;
+        if (!metadata.userActivated && !hasRecentUserActivation()) return;
         void copyTextToClipboard(message.payload.text);
         return;
       }
       if (message.type === 'artifact.openExternal') {
-        if (!hasRecentUserActivation()) return;
+        if (!metadata.userActivated && !hasRecentUserActivation()) return;
         void openExternalUrl(message.payload.url);
         return;
       }
@@ -356,10 +357,34 @@ export const HTMLArtifactView: React.FC<HTMLArtifactViewProps> = ({ envelope, fa
         recordRoutingArtifactObservation({ sessionId, toolPartId, status: 'failed' });
         if (process.env.NODE_ENV === 'development') console.warn('HTML Artifact reported an error.', message.payload);
       }
-    };
-    window.addEventListener('message', onMessage);
-    return () => window.removeEventListener('message', onMessage);
   }, [bridgeRateLimiter, channelId, installed, materialization, sessionId, t, tool, toolPartId]);
+
+  const handleArtifactLoad = React.useCallback(() => {
+    if (loadedOnceRef.current) {
+      setFailure('blocked');
+      recordRoutingArtifactObservation({ sessionId, toolPartId, status: 'failed' });
+      return;
+    }
+    loadedOnceRef.current = true;
+    if (materialization?.scripts) sendHostInit();
+    else {
+      setReady(true);
+      recordRoutingArtifactObservation({ sessionId, toolPartId, status: 'rendered' });
+    }
+  }, [materialization?.scripts, sendHostInit, sessionId, toolPartId]);
+
+  const handleExecutionTerminated = React.useCallback((reason: string) => {
+    setReady(false);
+    setFailure(reason === 'stopped'
+      ? 'stopped'
+      : reason === 'lease-expired'
+        ? 'timed-out'
+        : reason === 'navigation-blocked'
+          ? 'blocked'
+          : 'crashed');
+    businessRequestsRef.current.clear();
+    recordRoutingArtifactObservation({ sessionId, toolPartId, status: 'failed' });
+  }, [sessionId, toolPartId]);
 
   React.useEffect(() => {
     if (!materialization?.scripts || failure) return;
@@ -424,7 +449,9 @@ export const HTMLArtifactView: React.FC<HTMLArtifactViewProps> = ({ envelope, fa
               {installed
                 ? t('interactiveUI.artifact.interactive')
                 : envelope.capabilities.scripts
-                  ? `${t('interactiveUI.artifact.interactive')} · ${t('interactiveUI.artifact.experimental')}`
+                  ? isElectronShell()
+                    ? t('interactiveUI.artifact.interactive')
+                    : `${t('interactiveUI.artifact.interactive')} · ${t('interactiveUI.artifact.experimental')}`
                   : t('interactiveUI.artifact.static')}
             </span>
           </div>
@@ -522,27 +549,17 @@ export const HTMLArtifactView: React.FC<HTMLArtifactViewProps> = ({ envelope, fa
         {materialization && documentUrl && !failure ? (
           <>
             {!ready ? <Skeleton className="absolute inset-3 z-10" /> : null}
-            <iframe
-              ref={iframeRef}
+            <ArtifactExecutionSurface
+              ref={executionSurfaceRef}
               title={materialization.title}
-              src={documentUrl}
-              sandbox={materialization.scripts ? 'allow-scripts' : ''}
-              referrerPolicy="no-referrer"
+              url={documentUrl}
+              scripts={materialization.scripts}
+              ready={ready}
               className={cn('block w-full border-0 bg-transparent transition-opacity', ready ? 'opacity-100' : 'opacity-0')}
               style={{ height: frameHeight, colorScheme: themeVariant }}
-              onLoad={() => {
-                if (loadedOnceRef.current) {
-                  setFailure('blocked');
-                  recordRoutingArtifactObservation({ sessionId, toolPartId, status: 'failed' });
-                  return;
-                }
-                loadedOnceRef.current = true;
-                if (materialization.scripts) sendHostInit();
-                else {
-                  setReady(true);
-                  recordRoutingArtifactObservation({ sessionId, toolPartId, status: 'rendered' });
-                }
-              }}
+              onLoad={handleArtifactLoad}
+              onMessage={handleArtifactMessage}
+              onTerminated={handleExecutionTerminated}
             />
           </>
         ) : null}

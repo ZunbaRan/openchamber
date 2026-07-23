@@ -258,6 +258,10 @@ Before changing store shape or selectors, ask:
 4. Is there already a store cache for this data?
 5. Am I duplicating fetch ownership in a component when it should live in a store action?
 
+## Desktop Update Policy
+
+`useUpdateStore` treats the Electron preload capability flag as authoritative. When `__OPENCHAMBER_DESKTOP__.updatesEnabled` is not explicitly `true`, Desktop update checks clear stale update state and return without invoking native updater IPC or the server `/api/openchamber/update-check` endpoint. This prevents a fork build with no owned release channel from discovering or advertising upstream releases. Web, VS Code, and Capacitor keep their existing runtime-specific checks.
+
 ## Validation Checklist
 
 After meaningful Git/PR store changes, verify manually:
