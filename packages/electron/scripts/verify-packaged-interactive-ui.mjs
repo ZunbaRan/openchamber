@@ -305,7 +305,10 @@ const waitForBuiltInAgentRuntime = async ({ port, directory }) => {
 };
 
 const waitForHybridCrmRuntime = async ({ port, directory, processOutput = () => '' }) => {
-  const deadline = Date.now() + 60_000;
+  // Installing an Agent Runtime intentionally restarts bundled OpenCode. A cold,
+  // isolated packaged profile may need longer than the ordinary API startup
+  // window while the binary rebuilds its runtime index.
+  const deadline = Date.now() + 120_000;
   let lastToolIds = [];
   let lastError = null;
   while (Date.now() < deadline) {
@@ -337,10 +340,18 @@ const temporaryRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'openchamber-packa
 const dataDirectory = path.join(temporaryRoot, 'data');
 const userDataDirectory = path.join(temporaryRoot, 'electron-user-data');
 const openCodeConfigDirectory = path.join(temporaryRoot, 'opencode-config');
+const homeDirectory = path.join(temporaryRoot, 'home');
+const xdgConfigDirectory = path.join(temporaryRoot, 'xdg-config');
+const xdgDataDirectory = path.join(temporaryRoot, 'xdg-data');
+const xdgCacheDirectory = path.join(temporaryRoot, 'xdg-cache');
 const settingsPath = path.join(dataDirectory, 'settings.json');
 await fs.mkdir(dataDirectory, { recursive: true });
 await fs.mkdir(userDataDirectory, { recursive: true });
 await fs.mkdir(openCodeConfigDirectory, { recursive: true });
+await fs.mkdir(homeDirectory, { recursive: true });
+await fs.mkdir(xdgConfigDirectory, { recursive: true });
+await fs.mkdir(xdgDataDirectory, { recursive: true });
+await fs.mkdir(xdgCacheDirectory, { recursive: true });
 await fs.rm(outputDirectory, { recursive: true, force: true });
 await fs.mkdir(outputDirectory, { recursive: true });
 
@@ -354,6 +365,15 @@ const childEnvironment = {
   OPENCHAMBER_HTML_ARTIFACTS_STATIC: 'true',
   OPENCHAMBER_TEST_BUNDLED_OPENCODE_ONLY: 'true',
   OPENCHAMBER_TEST_OPENCODE_CONFIG_DIR: openCodeConfigDirectory,
+  OPENCHAMBER_OPENCODE_CWD: temporaryRoot,
+  OPENCODE_DISABLE_EXTERNAL_SKILLS: 'true',
+  OPENCODE_DISABLE_CLAUDE_CODE: 'true',
+  OPENCODE_DISABLE_CLAUDE_CODE_SKILLS: 'true',
+  OPENCODE_DISABLE_PROJECT_CONFIG: 'true',
+  HOME: homeDirectory,
+  XDG_CONFIG_HOME: xdgConfigDirectory,
+  XDG_DATA_HOME: xdgDataDirectory,
+  XDG_CACHE_HOME: xdgCacheDirectory,
   PATH: '/usr/bin:/bin:/usr/sbin:/sbin',
 };
 for (const key of [
@@ -395,7 +415,7 @@ try {
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   const appendOutput = (chunk) => {
-    processOutput = `${processOutput}${String(chunk)}`.slice(-12_000);
+    processOutput = `${processOutput}${String(chunk)}`.slice(-50_000);
   };
   appProcess.stdout?.on('data', appendOutput);
   appProcess.stderr?.on('data', appendOutput);
@@ -582,6 +602,13 @@ try {
     iframeCount: 0,
     stopPresent: true,
   });
+  const focusReply = await browser.send('Runtime.evaluate', {
+    expression: `window.__OPENCHAMBER_DESKTOP__.invoke('desktop_focus_main_window')`,
+    awaitPromise: true,
+    returnByValue: true,
+  });
+  assert.equal(Boolean(focusReply.result?.exceptionDetails), false, focusReply.result?.exceptionDetails?.text || 'focus main window failed');
+  await delay(500);
   await browser.evaluate(`(() => {
     const scroller = document.querySelector('[data-ocix-clip-test-scroller]');
     const runner = document.querySelector('[data-ocix-artifact-backend="desktop-runner"]');
@@ -607,11 +634,40 @@ try {
     };
   })()`);
   assert.notEqual(clipMetrics, null);
+  assert.equal(clipMetrics.outerWidth > 0 && clipMetrics.outerHeight > 0, true, 'packaged clipping capture requires a visible main window');
   assert.equal(clipMetrics.runner.bottom > clipMetrics.scroller.bottom, true, 'fixture must place the Runner across the clipping edge');
   assert.equal(clipMetrics.guard.top > clipMetrics.scroller.bottom, true, 'guard must remain outside the clipping scroller');
   clipScreenshotPath = path.join(outputDirectory, 'scripts-artifact-scroll-clipping-packaged-macos.png');
   await captureMacWindow({ pid: appProcess.pid, outputPath: clipScreenshotPath });
   clipGuardInspection = await inspectClipGuard(clipScreenshotPath, clipMetrics);
+  if (clipGuardInspection.greenRatio <= 0.7) {
+    const targetResponse = await fetch(`http://127.0.0.1:${debugPort}/json/list`);
+    const targets = await targetResponse.json();
+    const artifactTarget = targets.find((entry) => entry.type === 'page'
+      && /\/api\/interactive-ui\/artifacts\/[a-f0-9]{64}\/document/.test(entry.url || ''));
+    let artifactSurface = null;
+    if (artifactTarget?.webSocketDebuggerUrl) {
+      const artifactBrowser = await connect(artifactTarget);
+      artifactSurface = await artifactBrowser.evaluate(`(() => {
+        const frame = document.querySelector('body[data-ocix-artifact-broker] > iframe');
+        const rect = frame?.getBoundingClientRect();
+        return {
+          readyState: document.readyState,
+          bodyAttributes: Array.from(document.body.attributes).map(({ name, value }) => [name, value]),
+          bodyBackground: getComputedStyle(document.body).backgroundColor,
+          frameRect: rect ? { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom, width: rect.width, height: rect.height } : null,
+          frameStyle: frame?.getAttribute('style') || '',
+        };
+      })()`);
+      artifactBrowser.socket.close();
+    }
+    await fs.writeFile(path.join(outputDirectory, 'clip-diagnostics.json'), JSON.stringify({
+      clipMetrics,
+      clipGuardInspection,
+      targets: targets.map(({ id, type, title, url }) => ({ id, type, title, url })),
+      artifactSurface,
+    }, null, 2));
+  }
   assert.equal(
     clipGuardInspection.magentaPixels,
     0,
@@ -683,7 +739,7 @@ try {
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   const appendRestartOutput = (chunk) => {
-    processOutput = `${processOutput}${String(chunk)}`.slice(-12_000);
+    processOutput = `${processOutput}${String(chunk)}`.slice(-50_000);
   };
   appProcess.stdout?.on('data', appendRestartOutput);
   appProcess.stderr?.on('data', appendRestartOutput);

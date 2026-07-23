@@ -23,6 +23,7 @@ const updateGoldens = process.argv.includes('--update-goldens');
 const pixelChannelThreshold = 12;
 const changedPixelRatioThreshold = 0.0005;
 const meanChannelDeltaThreshold = 0.05;
+const artifactPaintSettleMs = 250;
 
 const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex');
 
@@ -307,7 +308,10 @@ try {
     await waitFor(browser, `document.readyState === 'complete'`, 'document load');
     if (artifactRuntimes.has(entry.runtime)) {
       await waitFor(browser, `document.querySelector('[data-ocix-artifact-state="ready"]') !== null`, `${entry.runtime} artifact ready`);
-      await browser.evaluate(`new Promise((resolve) => setTimeout(resolve, 125))`);
+      // The ready bridge message can reach the host before Chromium composites the
+      // opaque nested Artifact frame. Keep this delay in readyMs so the runtime
+      // budget covers what users can actually see rather than bridge readiness.
+      await browser.evaluate(`new Promise((resolve) => setTimeout(resolve, ${artifactPaintSettleMs}))`);
     } else {
       await waitFor(browser, `Boolean(document.querySelector('[data-ocix-view-metadata]'))`, `${entry.runtime} view metadata`);
       await waitFor(browser, `document.querySelectorAll('tbody tr').length > 0`, `${entry.runtime} rendered rows`);

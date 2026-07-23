@@ -128,6 +128,10 @@ bun run test:interactive-ui-desktop-packaged
 
 打包验收必须清除 `OPENCODE_BINARY`、`OPENCODE_CONFIG_DIR`、host/port、skip-start 等覆盖，并使用受限 `PATH`、全新 data/user-data/config。健康接口必须证明：
 
+还必须隔离用户真实的 Agent 环境：为子进程提供临时 `HOME`、`XDG_CONFIG_HOME`、`XDG_DATA_HOME`、`XDG_CACHE_HOME`，并设置 `OPENCODE_DISABLE_EXTERNAL_SKILLS=true`、`OPENCODE_DISABLE_CLAUDE_CODE=true`、`OPENCODE_DISABLE_CLAUDE_CODE_SKILLS=true`、`OPENCODE_DISABLE_PROJECT_CONFIG=true`。否则新版 OpenCode 可能扫描 `~/.claude/skills` 或项目级配置；一份与 OpenChamber 无关的无效 frontmatter 就足以拖慢启动，让 OCIX Tool 发现超时并产生错误的打包失败结论。
+
+OS 级组合截图还必须先恢复并聚焦被测主窗口，再读取 `outerWidth/outerHeight` 和元素几何。较长的 OCIX/OpenCode 冷启动验收可能让 macOS 将后台测试窗口隐藏，此时 DOM 与 Runner 子页面都可能已经 `ready`，但 `outerWidth/outerHeight` 为 `0`，`screencapture -l` 只会得到窗口背景。应把非零外部尺寸作为截图前置条件；不能把空白截图误判为原生 View 溢出，也不能用渲染器自己的 `Page.captureScreenshot` 代替验证 `WebContentsView` 合成与裁剪。
+
 - `openCodeRunning === true`；
 - `opencodeBinarySource === "bundled"`；
 - resolved binary 指向 `.app/Contents/Resources/opencode-cli/opencode`；

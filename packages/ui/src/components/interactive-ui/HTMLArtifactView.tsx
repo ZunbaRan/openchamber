@@ -12,8 +12,6 @@ import { openExternalUrl } from '@/lib/url';
 import { getRuntimeUrlResolver } from '@/lib/runtime-url';
 import {
   getInstalledHTMLArtifactDescriptor,
-  InteractiveUIRequestError,
-  invokeInteractiveAction,
   materializeHTMLArtifact,
 } from '@/lib/interactive-ui/client';
 import type { HTMLArtifactDisplayMode, HTMLArtifactResultEnvelope } from '@/lib/interactive-ui/artifactResult';
@@ -299,36 +297,22 @@ export const HTMLArtifactView: React.FC<HTMLArtifactViewProps> = ({ envelope, fa
           return;
         }
         businessRequestsRef.current.add(message.payload.requestId);
-        const invoke = (confirmationToken?: string) => invokeInteractiveAction({
+        void import('./artifactBusinessRequest').then(({ executeArtifactBusinessRequest }) => executeArtifactBusinessRequest({
           extensionId: materialization.extensionId!,
           artifactId: materialization.artifactId!,
           instanceId: channelId,
           action: message.payload.action,
           input: message.payload.input,
+          intent: message.payload.intent,
           tool,
-          ...(confirmationToken ? { confirmationToken } : {}),
-        });
-        void invoke().catch(async (requestError) => {
-          if (message.payload.intent !== 'execute'
-            || !(requestError instanceof InteractiveUIRequestError)
-            || !requestError.payload.confirmationRequired) throw requestError;
-          const confirmation = requestError.payload.confirmation ?? {};
-          const text = [confirmation.title, confirmation.description].filter(Boolean).join('\n\n');
-          if (typeof window.confirm !== 'function' || !window.confirm(text)) {
-            throw new Error(requestError.payload.error || 'Action cancelled');
-          }
-          if (!requestError.payload.confirmationToken) throw new Error(requestError.payload.error || 'Action cancelled');
-          return invoke(requestError.payload.confirmationToken);
-        }).then((data) => {
-          respond({ channelId, requestId: message.payload.requestId, ok: true, data });
+        })).then((result) => {
+          respond({ channelId, requestId: message.payload.requestId, ...result });
         }).catch((requestError) => {
-          const payload = requestError instanceof InteractiveUIRequestError ? requestError.payload : {};
           respond({
             channelId,
             requestId: message.payload.requestId,
             ok: false,
-            error: payload.error || (requestError instanceof Error ? requestError.message : 'Business request failed'),
-            ...(payload.code ? { code: payload.code } : {}),
+            error: requestError instanceof Error ? requestError.message : 'Business request failed',
           });
         }).finally(() => {
           businessRequestsRef.current.delete(message.payload.requestId);

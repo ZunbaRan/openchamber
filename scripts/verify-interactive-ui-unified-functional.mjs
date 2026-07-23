@@ -15,6 +15,7 @@ const crmPackagePaths = {
   current: path.join(extensionRoot, 'dist', 'com.demo.simple.crm-1.2.0.ocix'),
 };
 const bundledOpenCodePath = path.join(projectRoot, 'packages', 'electron', 'resources', 'opencode-cli', 'opencode');
+const builtInManifestPath = path.join(projectRoot, 'packages', 'web', 'server', 'lib', 'interactive-ui', 'builtin', 'openchamber.extension.json');
 const corpusPath = path.join(projectRoot, 'examples', 'interactive-ui', 'unified-acceptance-corpus.json');
 const outputDirectory = path.join(projectRoot, '.tmp', 'interactive-ui-unified-functional');
 const reportPath = path.join(outputDirectory, 'report.json');
@@ -30,6 +31,7 @@ const explorerToolName = 'simple_crm_open_explorer';
 const acceptanceToolNames = [...crmToolNames, explorerToolName];
 const crmSkillName = 'simple-crm-interactive-ui';
 const builtInToolNames = ['interactive_ui', 'html_artifact'];
+const builtInExtensionVersion = JSON.parse(await fs.readFile(builtInManifestPath, 'utf8')).version;
 const forbiddenUpstreamMessages = [
   'Invalid or revoked API key',
   'Key lacks write scope',
@@ -292,7 +294,7 @@ export default tool({
   const initialManager = expectStatus(await request('/api/interactive-ui/manager'), 200, 'initial manager');
   assert.deepEqual(initialManager.builtInRuntime, {
     id: 'com.openchamber.builtin.interactive-ui',
-    version: '1.0.0',
+    version: builtInExtensionVersion,
     status: 'ready',
   });
   assert.equal(initialManager.extensions.length, 0);
@@ -409,17 +411,17 @@ export default tool({
     method: 'POST',
     body: { ...overviewActionContext, input: { scope: 'default' } },
   });
-  const advanceOpportunity = (input, confirmed) => request(`/api/interactive-ui/actions/${writeActionId}`, {
+  const advanceOpportunity = (input, confirmationToken) => request(`/api/interactive-ui/actions/${writeActionId}`, {
     method: 'POST',
-    body: { ...workspaceActionContext, input, ...(confirmed === undefined ? {} : { confirmed }) },
+    body: { ...workspaceActionContext, input, ...(confirmationToken === undefined ? {} : { confirmationToken }) },
   });
   const queryDashboardFromArtifact = () => request(`/api/interactive-ui/actions/${queryActionId}`, {
     method: 'POST',
     body: { ...explorerActionContext, input: { scope: 'default' } },
   });
-  const advanceOpportunityFromArtifact = (input, confirmed) => request(`/api/interactive-ui/actions/${writeActionId}`, {
+  const advanceOpportunityFromArtifact = (input, confirmationToken) => request(`/api/interactive-ui/actions/${writeActionId}`, {
     method: 'POST',
-    body: { ...explorerActionContext, input, ...(confirmed === undefined ? {} : { confirmed }) },
+    body: { ...explorerActionContext, input, ...(confirmationToken === undefined ? {} : { confirmationToken }) },
   });
 
   const unconfiguredQuery = await queryDashboard();
@@ -450,17 +452,21 @@ export default tool({
   assert.equal(initialOpportunity.stage, 'proposal');
   assert.equal(initialOpportunity.revision, 4);
 
-  const confirmation = await advanceOpportunity({ opportunityId: 'OP-2001', revision: 4 }, false);
+  const confirmation = await advanceOpportunity({ opportunityId: 'OP-2001', revision: 4 });
   assert.equal(confirmation.status, 409);
   assert.equal(confirmation.payload.code, 'confirmation_required');
   assert.equal(confirmation.payload.confirmationRequired, true);
+  assert.match(confirmation.payload.confirmationToken, /^oc_confirmation_/);
   const afterCancel = expectStatus(await queryDashboard(), 200, 'query after cancelled write').data;
   assert.deepEqual(
     { stage: findOpportunity(afterCancel, 'OP-2001').stage, revision: findOpportunity(afterCancel, 'OP-2001').revision },
     { stage: 'proposal', revision: 4 },
   );
 
-  const advanced = expectStatus(await advanceOpportunity({ opportunityId: 'OP-2001', revision: 4 }, true), 200, 'confirmed CRM write').data.opportunity;
+  const advanced = expectStatus(await advanceOpportunity(
+    { opportunityId: 'OP-2001', revision: 4 },
+    confirmation.payload.confirmationToken,
+  ), 200, 'confirmed CRM write').data.opportunity;
   assert.equal(advanced.stage, 'negotiation');
   assert.equal(advanced.revision, 5);
   const afterWrite = expectStatus(await queryDashboard(), 200, 'query after confirmed write').data;
@@ -469,11 +475,15 @@ export default tool({
     { stage: 'negotiation', revision: 5 },
   );
 
-  const artifactConfirmation = await advanceOpportunityFromArtifact({ opportunityId: 'OP-2004', revision: 1 }, false);
+  const artifactConfirmation = await advanceOpportunityFromArtifact({ opportunityId: 'OP-2004', revision: 1 });
   assert.equal(artifactConfirmation.status, 409);
   assert.equal(artifactConfirmation.payload.code, 'confirmation_required');
+  assert.match(artifactConfirmation.payload.confirmationToken, /^oc_confirmation_/);
   const artifactAdvanced = expectStatus(
-    await advanceOpportunityFromArtifact({ opportunityId: 'OP-2004', revision: 1 }, true),
+    await advanceOpportunityFromArtifact(
+      { opportunityId: 'OP-2004', revision: 1 },
+      artifactConfirmation.payload.confirmationToken,
+    ),
     200,
     'confirmed CRM write from installed Artifact',
   ).data.opportunity;
@@ -483,7 +493,13 @@ export default tool({
   expectStatus(await request(`/api/interactive-ui/connections/${extensionId}/${connectorId}/test`, {
     method: 'POST',
   }), 200, 'test readonly CRM key');
-  const forbiddenWrite = await advanceOpportunity({ opportunityId: 'OP-2002', revision: 2 }, true);
+  const forbiddenConfirmation = await advanceOpportunity({ opportunityId: 'OP-2002', revision: 2 });
+  assert.equal(forbiddenConfirmation.status, 409);
+  assert.match(forbiddenConfirmation.payload.confirmationToken, /^oc_confirmation_/);
+  const forbiddenWrite = await advanceOpportunity(
+    { opportunityId: 'OP-2002', revision: 2 },
+    forbiddenConfirmation.payload.confirmationToken,
+  );
   assert.equal(forbiddenWrite.status, 403);
   assertSafeGatewayError(forbiddenWrite.payload, { code: 'connector_forbidden', status: 403, label: 'readonly write' });
   const afterForbidden = expectStatus(await queryDashboard(), 200, 'query after forbidden write').data;
@@ -493,7 +509,13 @@ export default tool({
   );
 
   expectStatus(await configureConnection(DEMO_KEYS.full), 200, 'restore full CRM key');
-  const revisionConflict = await advanceOpportunity({ opportunityId: 'OP-2001', revision: 4 }, true);
+  const conflictConfirmation = await advanceOpportunity({ opportunityId: 'OP-2001', revision: 4 });
+  assert.equal(conflictConfirmation.status, 409);
+  assert.match(conflictConfirmation.payload.confirmationToken, /^oc_confirmation_/);
+  const revisionConflict = await advanceOpportunity(
+    { opportunityId: 'OP-2001', revision: 4 },
+    conflictConfirmation.payload.confirmationToken,
+  );
   assert.equal(revisionConflict.status, 409);
   assertSafeGatewayError(revisionConflict.payload, { code: 'upstream_error', status: 409, label: 'revision conflict' });
   assert.equal(revisionConflict.payload.error, 'Business system rejected the request (409)');
