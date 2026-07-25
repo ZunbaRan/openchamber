@@ -23,6 +23,10 @@ export type HTMLArtifactBridgeMessage =
     action: string;
     input: unknown;
   } }
+  | { type: 'artifact.dashboardEvent'; payload: {
+    eventId: string;
+    payload: Record<string, unknown>;
+  } }
   | { type: 'artifact.reportError'; payload: { code: string; message?: string; line?: number; column?: number } };
 
 const isRecord = (value: unknown): value is Record<string, unknown> => (
@@ -134,6 +138,20 @@ const parsePayload = (
           intent: payload.intent,
           action: payload.action,
           input: payload.input,
+        },
+      };
+    case 'artifact.dashboardEvent':
+      if (!allowBusiness
+        || !hasOnlyKeys(payload, ['eventId', 'payload'])
+        || !boundedString(payload.eventId, 160)
+        || !/^[a-z0-9]+(?:[._-][a-z0-9]+)+$/i.test(payload.eventId)
+        || !isRecord(payload.payload)
+        || byteLength(payload.payload) > 48 * 1024) return null;
+      return {
+        type,
+        payload: {
+          eventId: payload.eventId,
+          payload: payload.payload,
         },
       };
     case 'artifact.reportError': {

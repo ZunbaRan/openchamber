@@ -49,6 +49,7 @@ const waitForDemoTools = async (baseUrl, timeoutMs = 30_000) => {
             'crm_open_dashboard',
             'sales_get_summary',
             'sales_get_dashboard',
+            'sales_get_order_detail',
           ]
             .every((name) => ids.filter((candidate) => candidate === name).length === 1)) return ids;
       }
@@ -85,6 +86,7 @@ await fs.copyFile(
 await Promise.all([
   'sales_get_summary.ts',
   'sales_get_dashboard.ts',
+  'sales_get_order_detail.ts',
 ].map((filename) => fs.copyFile(
   path.join(demoSalesRuntimeDirectory, 'tools', filename),
   path.join(demoOpenCodeConfigDirectory, 'tools', filename),

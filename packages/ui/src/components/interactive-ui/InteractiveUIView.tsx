@@ -25,13 +25,18 @@ import { recordRoutingViewObservation } from '@/lib/interactive-ui/routingInspec
 
 interface InteractiveUIViewProps {
   envelope: InteractiveResultEnvelope;
-  tool: InteractiveToolContext;
+  tool?: InteractiveToolContext;
+  workbench?: {
+    projectId: string;
+    tileId: string;
+  };
   fallback: React.ReactNode;
   isMobile: boolean;
   traceContext?: {
     sessionId?: string;
     toolPartId: string;
   };
+  onDashboardEmit?: (eventId: string, payload: Record<string, unknown>) => Promise<void>;
 }
 
 const confirmInBrowser = async (options: InteractiveConfirmation): Promise<boolean> => {
@@ -71,7 +76,15 @@ const createInstanceId = (): string => {
   return `ocix-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 };
 
-export const InteractiveUIView: React.FC<InteractiveUIViewProps> = ({ envelope, tool, fallback, isMobile, traceContext }) => {
+export const InteractiveUIView: React.FC<InteractiveUIViewProps> = ({
+  envelope,
+  tool,
+  workbench,
+  fallback,
+  isMobile,
+  traceContext,
+  onDashboardEmit,
+}) => {
   const { t, locale } = useI18n();
   const runtime = React.useContext(RuntimeAPIContext);
   const [descriptor, setDescriptor] = React.useState<InteractiveViewDescriptor | null>(null);
@@ -87,17 +100,21 @@ export const InteractiveUIView: React.FC<InteractiveUIViewProps> = ({ envelope, 
     setError(null);
     recordRoutingViewObservation({
       sessionId: traceContext?.sessionId,
-      toolPartId: traceContext?.toolPartId ?? tool.id,
+      toolPartId: traceContext?.toolPartId ?? tool?.id ?? workbench?.tileId ?? envelope.view,
       viewId: envelope.view,
       status: 'loading',
     });
-    void getInteractiveViewDescriptor(envelope.view, tool.name).then(async (next) => {
+    void getInteractiveViewDescriptor(
+      envelope.view,
+      tool?.name ?? '',
+      workbench ? { launchSource: 'workbench' } : undefined,
+    ).then(async (next) => {
       if (!active) return;
       setDescriptor(next);
       if (next.view.runtime !== 'native') {
         recordRoutingViewObservation({
           sessionId: traceContext?.sessionId,
-          toolPartId: traceContext?.toolPartId ?? tool.id,
+          toolPartId: traceContext?.toolPartId ?? tool?.id ?? workbench?.tileId ?? envelope.view,
           viewId: envelope.view,
           status: 'rendered',
         });
@@ -116,7 +133,7 @@ export const InteractiveUIView: React.FC<InteractiveUIViewProps> = ({ envelope, 
         setNativeComponent(() => component);
         recordRoutingViewObservation({
           sessionId: traceContext?.sessionId,
-          toolPartId: traceContext?.toolPartId ?? tool.id,
+          toolPartId: traceContext?.toolPartId ?? tool?.id ?? workbench?.tileId ?? envelope.view,
           viewId: envelope.view,
           status: 'rendered',
         });
@@ -126,14 +143,23 @@ export const InteractiveUIView: React.FC<InteractiveUIViewProps> = ({ envelope, 
         setError(nextError instanceof Error ? nextError : new Error(String(nextError)));
         recordRoutingViewObservation({
           sessionId: traceContext?.sessionId,
-          toolPartId: traceContext?.toolPartId ?? tool.id,
+          toolPartId: traceContext?.toolPartId ?? tool?.id ?? workbench?.tileId ?? envelope.view,
           viewId: envelope.view,
           status: 'failed',
         });
       }
     });
     return () => { active = false; };
-  }, [descriptorAttempt, envelope.view, tool.id, tool.name, traceContext?.sessionId, traceContext?.toolPartId]);
+  }, [
+    descriptorAttempt,
+    envelope.view,
+    tool?.id,
+    tool?.name,
+    traceContext?.sessionId,
+    traceContext?.toolPartId,
+    workbench?.projectId,
+    workbench?.tileId,
+  ]);
 
   const host = React.useMemo<InteractiveViewHost | null>(() => {
     if (!descriptor) return null;
@@ -143,7 +169,8 @@ export const InteractiveUIView: React.FC<InteractiveUIViewProps> = ({ envelope, 
       instanceId,
       action,
       input,
-      tool: { id: tool.id, name: tool.name },
+      ...(tool ? { tool: { id: tool.id, name: tool.name } } : {}),
+      ...(workbench ? { workbench } : {}),
       ...(confirmationToken ? { confirmationToken } : {}),
     });
     return {
@@ -170,12 +197,28 @@ export const InteractiveUIView: React.FC<InteractiveUIViewProps> = ({ envelope, 
           else toast.info(input.message);
         },
       },
+      dashboard: {
+        emit: async (eventId, payload) => {
+          if (!onDashboardEmit) {
+            throw new Error('Dashboard event routing is unavailable for this surface');
+          }
+          await onDashboardEmit(eventId, payload);
+        },
+      },
       context: {
         runtime: runtime?.runtime.platform ?? 'web',
         locale,
       },
     };
-  }, [descriptor, instanceId, locale, runtime?.runtime.platform, tool.id, tool.name]);
+  }, [
+    descriptor,
+    instanceId,
+    locale,
+    runtime?.runtime.platform,
+    tool,
+    workbench,
+    onDashboardEmit,
+  ]);
 
   const hostMetadata = descriptor ? (
     <div className="mt-3 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 border-t border-[var(--ocix-border)] pt-2 typography-micro text-[var(--ocix-muted-foreground)]" data-ocix-view-metadata>
@@ -240,7 +283,7 @@ export const InteractiveUIView: React.FC<InteractiveUIViewProps> = ({ envelope, 
         resetKey={`${descriptor.extension.id}:${descriptor.extension.version}:${descriptor.view.id}`}
         onError={() => recordRoutingViewObservation({
           sessionId: traceContext?.sessionId,
-          toolPartId: traceContext?.toolPartId ?? tool.id,
+          toolPartId: traceContext?.toolPartId ?? tool?.id ?? workbench?.tileId ?? envelope.view,
           viewId: descriptor.view.id,
           status: 'failed',
         })}
@@ -255,7 +298,10 @@ export const InteractiveUIView: React.FC<InteractiveUIViewProps> = ({ envelope, 
             context={envelope.context}
             snapshot={envelope.data}
             dataRef={envelope.dataRef}
-            tool={tool}
+            tool={tool ?? {
+              id: `workbench:${workbench?.tileId ?? instanceId}`,
+              name: 'openchamber_extension_workbench',
+            }}
             display={{ mode: 'inline', mobile: isMobile }}
             host={host}
           />

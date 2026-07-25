@@ -62,6 +62,7 @@ import { parseHTMLArtifactResultEnvelope } from '@/lib/interactive-ui/artifactRe
 import { parseInstalledHTMLArtifactResultEnvelope } from '@/lib/interactive-ui/installedArtifactResult';
 import { recordRoutingToolObservation } from '@/lib/interactive-ui/routingInspector';
 import { shouldHideToolInputPreview } from './toolRenderUtils';
+import { WorkbenchPinButton } from '@/components/interactive-ui/workbench/WorkbenchPinButton';
 
 const HTMLArtifactView = React.lazy(() => import('@/components/interactive-ui/HTMLArtifactView')
     .then((module) => ({ default: module.HTMLArtifactView })));
@@ -1639,15 +1640,24 @@ const ToolExpandedContent: React.FC<ToolExpandedContentProps> = React.memo(({
                 </div>
             );
             return (
-                <React.Suspense fallback={loadingFallback}>
-                    <HTMLArtifactView
-                        envelope={artifactEnvelope}
-                        fallback={fallback}
-                        sessionId={sessionId}
-                        toolPartId={part.id}
-                        tool={artifactToolContext}
-                    />
-                </React.Suspense>
+                <div className="space-y-1.5">
+                    <div className="flex justify-end">
+                        <WorkbenchPinButton
+                            envelope={artifactEnvelope}
+                            sessionId={sessionId}
+                            toolPartId={part.id}
+                        />
+                    </div>
+                    <React.Suspense fallback={loadingFallback}>
+                        <HTMLArtifactView
+                            envelope={artifactEnvelope}
+                            fallback={fallback}
+                            sessionId={sessionId}
+                            toolPartId={part.id}
+                            tool={artifactToolContext}
+                        />
+                    </React.Suspense>
+                </div>
             );
         }
         if (state.status === 'completed' && interactiveEnvelope) {
@@ -1661,18 +1671,27 @@ const ToolExpandedContent: React.FC<ToolExpandedContentProps> = React.memo(({
                 { className: 'p-1' },
             );
             return (
-                <InteractiveUIView
-                    envelope={interactiveEnvelope}
-                    tool={{
-                        id: part.id,
-                        name: part.tool,
-                        input,
-                        output: outputString,
-                    }}
-                    fallback={fallback}
-                    isMobile={isMobile}
-                    traceContext={{ sessionId, toolPartId: part.id }}
-                />
+                <div className="space-y-1.5">
+                    <div className="flex justify-end">
+                        <WorkbenchPinButton
+                            envelope={interactiveEnvelope}
+                            sessionId={sessionId}
+                            toolPartId={part.id}
+                        />
+                    </div>
+                    <InteractiveUIView
+                        envelope={interactiveEnvelope}
+                        tool={{
+                            id: part.id,
+                            name: part.tool,
+                            input,
+                            output: outputString,
+                        }}
+                        fallback={fallback}
+                        isMobile={isMobile}
+                        traceContext={{ sessionId, toolPartId: part.id }}
+                    />
+                </div>
             );
         }
 

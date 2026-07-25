@@ -4,6 +4,18 @@ import {
   renderInteractiveUIRoutingSystemPrompt,
 } from './routing.js';
 import { createInstalledHTMLArtifactDocument } from './artifact-store.js';
+import {
+  InteractiveUIDashboardContractError,
+  applyDashboardContextMigration,
+  normalizeExtensionDashboardContract,
+  sanitizeDashboardContext,
+  validateExtensionIconAsset,
+} from './dashboard-contract.js';
+import {
+  areWorkbenchVersionRangesCompatible,
+  isWorkbenchVersionCompatible,
+  toWorkbenchCompatibleVersion,
+} from './workbench-version.js';
 
 const MANIFEST_FILE = 'openchamber.extension.json';
 const MAX_MANIFEST_BYTES = 512 * 1024;
@@ -55,6 +67,13 @@ const readLimitedText = async (fsPromises, filePath, maxBytes) => {
   if (!stat.isFile()) throw new InteractiveUIRuntimeError('Extension entry is not a file', 400, 'invalid_entry');
   if (stat.size > maxBytes) throw new InteractiveUIRuntimeError('Extension entry exceeds the size limit', 413, 'entry_too_large');
   return fsPromises.readFile(filePath, 'utf8');
+};
+
+const readLimitedBuffer = async (fsPromises, filePath, maxBytes) => {
+  const stat = await fsPromises.stat(filePath);
+  if (!stat.isFile()) throw new InteractiveUIRuntimeError('Extension entry is not a file', 400, 'invalid_entry');
+  if (stat.size > maxBytes) throw new InteractiveUIRuntimeError('Extension entry exceeds the size limit', 413, 'entry_too_large');
+  return fsPromises.readFile(filePath);
 };
 
 const parseJson = (text, label) => {
@@ -231,7 +250,7 @@ const normalizeAction = (action, connectorIds) => {
   };
 };
 
-const normalizeView = (view, extensionId, routing) => {
+const normalizeView = (view, extensionId, routing, dashboardSurface) => {
   if (!isRecord(view) || typeof view.id !== 'string' || !view.id.startsWith(`${extensionId}.`)) {
     throw new InteractiveUIRuntimeError('View IDs must be inside the extension namespace', 400, 'invalid_manifest');
   }
@@ -243,6 +262,7 @@ const normalizeView = (view, extensionId, routing) => {
   }
   return {
     id: view.id,
+    title: dashboardSurface.title,
     runtime: view.runtime,
     entry: view.entry,
     exportName: typeof view.export === 'string' && view.export.trim() ? view.export.trim() : 'extension',
@@ -251,10 +271,11 @@ const normalizeView = (view, extensionId, routing) => {
     displayModes: Array.isArray(view.displayModes)
       ? view.displayModes.filter((mode) => ['inline', 'workspace', 'fullscreen'].includes(mode))
       : ['inline'],
+    dashboard: dashboardSurface.dashboard,
   };
 };
 
-const normalizeInstalledArtifact = (artifact, extensionId, routing, actionIds) => {
+const normalizeInstalledArtifact = (artifact, extensionId, routing, actionIds, dashboardSurface) => {
   if (!isRecord(artifact) || typeof artifact.id !== 'string' || !artifact.id.startsWith(`${extensionId}.`)) {
     throw new InteractiveUIRuntimeError('HTML Artifact IDs must be inside the extension namespace', 400, 'invalid_manifest');
   }
@@ -304,6 +325,7 @@ const normalizeInstalledArtifact = (artifact, extensionId, routing, actionIds) =
     displayModes,
     inlineHeight,
     businessActions,
+    dashboard: dashboardSurface.dashboard,
   };
 };
 
@@ -314,9 +336,24 @@ const normalizeManifest = (raw, directory, environment) => {
   if (typeof raw.name !== 'string' || !raw.name.trim() || typeof raw.version !== 'string' || !raw.version.trim()) {
     throw new InteractiveUIRuntimeError(`Extension ${raw.id} must declare name and version`, 400, 'invalid_manifest');
   }
+  let dashboardContract;
+  try {
+    dashboardContract = normalizeExtensionDashboardContract(raw);
+  } catch (error) {
+    throw new InteractiveUIRuntimeError(
+      error instanceof Error ? error.message : `Extension ${raw.id} dashboard metadata is invalid`,
+      400,
+      error instanceof InteractiveUIDashboardContractError ? error.code : 'invalid_dashboard_contract',
+    );
+  }
   const normalizedRouting = normalizeInteractiveUIRouting(raw);
   const views = Array.isArray(raw.views)
-    ? raw.views.map((view) => normalizeView(view, raw.id, normalizedRouting.viewRouting.get(view?.id)))
+    ? raw.views.map((view) => normalizeView(
+        view,
+        raw.id,
+        normalizedRouting.viewRouting.get(view?.id),
+        dashboardContract.surfaces.get(view?.id),
+      ))
     : [];
   const viewIds = new Set(views.map((view) => view.id));
   if (viewIds.size !== views.length) throw new InteractiveUIRuntimeError(`Extension ${raw.id} has duplicate view IDs`, 409, 'duplicate_view');
@@ -335,6 +372,7 @@ const normalizeManifest = (raw, directory, environment) => {
         raw.id,
         normalizedRouting.artifactRouting.get(artifact?.id),
         actionIds,
+        dashboardContract.surfaces.get(artifact?.id),
       ))
     : [];
   const artifactIds = new Set(artifacts.map((artifact) => artifact.id));
@@ -351,6 +389,8 @@ const normalizeManifest = (raw, directory, environment) => {
   return {
     id: raw.id,
     name: raw.name.trim(),
+    shortName: dashboardContract.shortName ?? raw.name.trim(),
+    icon: dashboardContract.icon,
     version: raw.version.trim(),
     directory,
     agentRouting: normalizedRouting.agentRouting,
@@ -358,6 +398,7 @@ const normalizeManifest = (raw, directory, environment) => {
     artifacts,
     connectors,
     actions,
+    links: dashboardContract.links,
   };
 };
 
@@ -667,9 +708,9 @@ export const createInteractiveUIRuntime = ({
     return { ok: true, status: response.status, requestId, checkedAt: health.checkedAt };
   };
 
-  const getViewDescriptor = async (viewId, toolName = '') => {
+  const getViewDescriptor = async (viewId, toolName = '', { launchSource = 'tool' } = {}) => {
     const { extension, view } = await findView(viewId);
-    if (view.tools.length > 0 && (!toolName || !view.tools.includes(toolName))) {
+    if (launchSource !== 'workbench' && view.tools.length > 0 && (!toolName || !view.tools.includes(toolName))) {
       throw new InteractiveUIRuntimeError(`Tool ${toolName || '(missing)'} is not bound to view ${viewId}`, 403, 'tool_view_mismatch');
     }
     logger.info?.('[InteractiveUI] Agent routing outcome', {
@@ -682,7 +723,13 @@ export const createInteractiveUIRuntime = ({
     });
     const base = {
       extension: { id: extension.id, name: extension.name, version: extension.version },
-      view: { id: view.id, runtime: view.runtime, displayModes: view.displayModes },
+      view: {
+        id: view.id,
+        title: view.title,
+        runtime: view.runtime,
+        displayModes: view.displayModes,
+        dashboard: view.dashboard,
+      },
     };
     if (view.runtime === 'declarative') {
       const entryPath = resolveEntryPath(path, extension.directory, view.entry, ['.json']);
@@ -718,9 +765,9 @@ export const createInteractiveUIRuntime = ({
     };
   };
 
-  const getInstalledArtifactDescriptor = async (artifactId, toolName = '') => {
+  const getInstalledArtifactDescriptor = async (artifactId, toolName = '', { launchSource = 'tool' } = {}) => {
     const { extension, artifact } = await findInstalledArtifact(artifactId);
-    if (artifact.tools.length > 0 && (!toolName || !artifact.tools.includes(toolName))) {
+    if (launchSource !== 'workbench' && artifact.tools.length > 0 && (!toolName || !artifact.tools.includes(toolName))) {
       throw new InteractiveUIRuntimeError(`Tool ${toolName || '(missing)'} is not bound to HTML Artifact ${artifactId}`, 403, 'tool_artifact_mismatch');
     }
     const entryPath = resolveEntryPath(path, extension.directory, artifact.entry, ['.html']);
@@ -743,10 +790,193 @@ export const createInteractiveUIRuntime = ({
         displayModes: artifact.displayModes,
         inlineHeight: artifact.inlineHeight,
         business: artifact.businessActions.length > 0,
+        dashboard: artifact.dashboard,
       },
       documentPath: `/api/interactive-ui/extensions/${encodeURIComponent(extension.id)}/artifacts/${encodeURIComponent(artifact.id)}`,
       integrity: `sha256-${crypto.createHash('sha256').update(source).digest('base64')}`,
     };
+  };
+
+  const getExtensionIcon = async (extensionId) => {
+    const { extensions } = await loadExtensions();
+    const extension = extensions.find((candidate) => candidate.id === extensionId);
+    if (!extension || !extension.icon) {
+      throw new InteractiveUIRuntimeError('Extension icon was not found', 404, 'asset_not_found');
+    }
+    const entryPath = resolveEntryPath(path, extension.directory, extension.icon, ['.svg', '.png']);
+    const content = await readLimitedBuffer(fsPromises, entryPath, 256 * 1024);
+    try {
+      validateExtensionIconAsset(extension.icon, content);
+    } catch (error) {
+      throw new InteractiveUIRuntimeError(
+        error instanceof Error ? error.message : 'Extension icon is invalid',
+        400,
+        error instanceof InteractiveUIDashboardContractError ? error.code : 'invalid_extension_icon',
+      );
+    }
+    return {
+      content,
+      contentType: extension.icon.toLowerCase().endsWith('.png') ? 'image/png' : 'image/svg+xml',
+    };
+  };
+
+  const prepareWorkbenchTile = async (input) => {
+    if (!isRecord(input) || !isRecord(input.source)) {
+      throw new InteractiveUIRuntimeError('Workbench tile source is required', 400, 'invalid_workbench_tile');
+    }
+    if (input.source.kind === 'agent-generated') {
+      if (typeof input.source.snapshotRef !== 'string' || !input.source.snapshotRef.trim()) {
+        throw new InteractiveUIRuntimeError('Generated Workbench tile snapshotRef is required', 400, 'invalid_workbench_tile');
+      }
+      if (!['interactive-ui', 'html-artifact'].includes(input.form)) {
+        throw new InteractiveUIRuntimeError('Generated Workbench tile form is invalid', 400, 'invalid_workbench_tile');
+      }
+      const snapshotRef = input.source.snapshotRef.trim();
+      return {
+        ...(typeof input.tileId === 'string' ? { tileId: input.tileId } : {}),
+        source: { kind: 'agent-generated', snapshotRef },
+        form: input.form,
+        context: {},
+        contextDigest: `sha256-${crypto.createHash('sha256').update(`${input.form}\0${snapshotRef}`).digest('base64')}`,
+        layout: isRecord(input.layout)
+          ? input.layout
+          : { column: 0, row: 0, columns: 6, rows: 4 },
+        displayMode: input.displayMode ?? 'tile',
+        relationship: input.relationship ?? null,
+        origin: input.origin ?? null,
+      };
+    }
+    if (input.source.kind !== 'third-party-extension'
+      || typeof input.source.extensionId !== 'string'
+      || typeof input.source.surfaceId !== 'string') {
+      throw new InteractiveUIRuntimeError('Installed Workbench tile source is incomplete', 400, 'invalid_workbench_tile');
+    }
+    const { extensions } = await loadExtensions();
+    const extension = extensions.find((candidate) => candidate.id === input.source.extensionId);
+    if (!extension) {
+      throw new InteractiveUIRuntimeError('Workbench extension was not found', 404, 'extension_not_found');
+    }
+    const view = extension.views.find((candidate) => candidate.id === input.source.surfaceId);
+    const artifact = extension.artifacts.find((candidate) => candidate.id === input.source.surfaceId);
+    const surface = view ?? artifact;
+    if (!surface || !surface.dashboard) {
+      throw new InteractiveUIRuntimeError('Surface does not declare a Workbench contract', 409, 'workbench_contract_missing');
+    }
+    const expectedForm = view ? 'interactive-ui' : 'html-artifact';
+    if (input.form !== expectedForm) {
+      throw new InteractiveUIRuntimeError('Workbench tile form does not match the installed surface', 400, 'workbench_form_mismatch');
+    }
+    let context;
+    try {
+      context = sanitizeDashboardContext(surface.dashboard.inputSchema, input.context ?? {}, { requireComplete: true });
+    } catch (error) {
+      throw new InteractiveUIRuntimeError(
+        error instanceof Error ? error.message : 'Workbench tile context is invalid',
+        400,
+        error instanceof InteractiveUIDashboardContractError ? error.code : 'invalid_workbench_context',
+      );
+    }
+    const requestedLayout = isRecord(input.layout) ? input.layout : {};
+    const dashboardLayout = surface.dashboard.layout;
+    const columns = requestedLayout.columns ?? dashboardLayout.columns;
+    const rows = requestedLayout.rows ?? dashboardLayout.rows;
+    if (!Number.isInteger(columns) || columns < dashboardLayout.minColumns || columns > dashboardLayout.maxColumns
+      || !Number.isInteger(rows) || rows < dashboardLayout.minRows || rows > dashboardLayout.maxRows) {
+      throw new InteractiveUIRuntimeError('Workbench tile layout violates the surface bounds', 400, 'invalid_workbench_layout');
+    }
+    return {
+      ...(typeof input.tileId === 'string' ? { tileId: input.tileId } : {}),
+      source: {
+        kind: 'third-party-extension',
+        extensionId: extension.id,
+        surfaceId: surface.id,
+        compatibleVersion: toWorkbenchCompatibleVersion(extension.version),
+      },
+      form: expectedForm,
+      context,
+      contextDigest: `sha256-${crypto.createHash('sha256').update(JSON.stringify(context)).digest('base64')}`,
+      layout: {
+        column: Number.isInteger(requestedLayout.column) ? requestedLayout.column : 0,
+        row: Number.isInteger(requestedLayout.row) ? requestedLayout.row : 0,
+        columns,
+        rows,
+      },
+      displayMode: input.displayMode ?? 'tile',
+      relationship: input.relationship ?? null,
+      origin: input.origin ?? null,
+    };
+  };
+
+  const migrateWorkbenchTile = async (input) => {
+    if (!isRecord(input)
+      || !isRecord(input.source)
+      || input.source.kind !== 'third-party-extension'
+      || typeof input.source.extensionId !== 'string'
+      || typeof input.source.surfaceId !== 'string'
+      || typeof input.source.compatibleVersion !== 'string') {
+      throw new InteractiveUIRuntimeError(
+        'Workbench migration requires an installed tile',
+        400,
+        'invalid_workbench_migration',
+      );
+    }
+    const { extensions } = await loadExtensions();
+    const extension = extensions.find((candidate) => candidate.id === input.source.extensionId);
+    const view = extension?.views.find((candidate) => candidate.id === input.source.surfaceId);
+    const artifact = extension?.artifacts.find((candidate) => candidate.id === input.source.surfaceId);
+    const surface = view ?? artifact;
+    if (!extension || !surface || !surface.dashboard) {
+      throw new InteractiveUIRuntimeError(
+        'Workbench migration target is unavailable',
+        409,
+        'workbench_migration_unavailable',
+      );
+    }
+    const expectedForm = view ? 'interactive-ui' : 'html-artifact';
+    if (input.form !== expectedForm) {
+      throw new InteractiveUIRuntimeError(
+        'Workbench migration cannot change the Surface form',
+        409,
+        'workbench_migration_form_mismatch',
+      );
+    }
+    let context = input.context;
+    if (!isWorkbenchVersionCompatible(input.source.compatibleVersion, extension.version)) {
+      const migration = surface.dashboard.migrations.find((candidate) => (
+        areWorkbenchVersionRangesCompatible(candidate.fromVersion, input.source.compatibleVersion)
+      ));
+      if (!migration) {
+        throw new InteractiveUIRuntimeError(
+          'This extension version does not declare a migration for the saved Tile',
+          409,
+          'workbench_migration_unavailable',
+        );
+      }
+      try {
+        context = applyDashboardContextMigration(surface.dashboard, migration, input.context);
+      } catch (error) {
+        throw new InteractiveUIRuntimeError(
+          error instanceof Error ? error.message : 'Workbench context migration failed',
+          409,
+          error instanceof InteractiveUIDashboardContractError
+            ? error.code
+            : 'dashboard_migration_failed',
+        );
+      }
+    }
+    const bounds = surface.dashboard.layout;
+    const columns = Math.min(bounds.maxColumns, Math.max(bounds.minColumns, input.layout?.columns ?? bounds.columns));
+    const rows = Math.min(bounds.maxRows, Math.max(bounds.minRows, input.layout?.rows ?? bounds.rows));
+    return prepareWorkbenchTile({
+      ...input,
+      context,
+      layout: {
+        column: Math.min(12 - columns, Math.max(0, input.layout?.column ?? 0)),
+        row: Math.max(0, input.layout?.row ?? 0),
+        columns,
+        rows,
+      },
+    });
   };
 
   const getInstalledArtifactDocument = async (extensionId, artifactId) => {
@@ -782,8 +1012,11 @@ export const createInteractiveUIRuntime = ({
       );
     }
     const surface = usesView ? resolved.view : resolved.artifact;
+    const workbenchAuthorized = isRecord(request.__workbenchAuthorization)
+      && typeof request.__workbenchAuthorization.projectId === 'string'
+      && typeof request.__workbenchAuthorization.tileId === 'string';
     const toolName = isRecord(request.tool) && typeof request.tool.name === 'string' ? request.tool.name : '';
-    if (surface.tools.length > 0 && (!toolName || !surface.tools.includes(toolName))) {
+    if (!workbenchAuthorized && surface.tools.length > 0 && (!toolName || !surface.tools.includes(toolName))) {
       throw new InteractiveUIRuntimeError(
         `Tool ${toolName || '(missing)'} is not bound to ${usesView ? 'view' : 'HTML Artifact'} ${surface.id}`,
         403,
@@ -805,6 +1038,7 @@ export const createInteractiveUIRuntime = ({
         actionId,
         instanceId: request.instanceId,
         tool: request.tool,
+        workbench: workbenchAuthorized ? request.__workbenchAuthorization : undefined,
         input: request.input,
       });
       if (!consumeConfirmation(request.confirmationToken, fingerprint)) {
@@ -898,6 +1132,10 @@ export const createInteractiveUIRuntime = ({
       extensions: extensions.map((extension) => ({
         id: extension.id,
         name: extension.name,
+        shortName: extension.shortName,
+        iconPath: extension.icon
+          ? `/api/interactive-ui/extensions/${encodeURIComponent(extension.id)}/icon`
+          : null,
         version: extension.version,
         agentRouting: extension.agentRouting
           ? {
@@ -908,20 +1146,77 @@ export const createInteractiveUIRuntime = ({
           : null,
         views: extension.views.map((view) => ({
           id: view.id,
+          title: view.title,
           runtime: view.runtime,
           tools: view.tools,
           displayModes: view.displayModes,
           routing: view.routing,
+          dashboard: view.dashboard,
         })),
         artifacts: extension.artifacts.map((artifact) => ({
           id: artifact.id,
+          title: artifact.title,
           tools: artifact.tools,
           displayModes: artifact.displayModes,
           routing: artifact.routing,
           scripts: true,
           business: artifact.businessActions.length > 0,
+          dashboard: artifact.dashboard,
         })),
+        links: extension.links,
         actions: extension.actions.map((action) => ({ id: action.id, risk: action.risk, permission: action.permission })),
+      })),
+      errors,
+    };
+  };
+
+  const getWorkbenchCatalog = async () => {
+    const { extensions, errors } = await loadExtensions();
+    return {
+      apiVersion: 1,
+      extensions: extensions.map((extension) => ({
+        id: extension.id,
+        name: extension.name,
+        shortName: extension.shortName,
+        version: extension.version,
+        iconPath: extension.icon
+          ? `/api/interactive-ui/extensions/${encodeURIComponent(extension.id)}/icon`
+          : null,
+        surfaces: [
+          ...extension.views.map((view) => ({
+            extensionId: extension.id,
+            extensionVersion: extension.version,
+            surfaceId: view.id,
+            surfaceKind: 'view',
+            form: 'interactive-ui',
+            runtime: view.runtime,
+            title: view.title,
+            description: view.dashboard?.description ?? null,
+            manualLaunch: view.dashboard?.manualLaunch ?? {
+              enabled: false,
+              missingRequiredPaths: [],
+              reason: 'dashboard-contract-missing',
+            },
+            dashboard: view.dashboard,
+          })),
+          ...extension.artifacts.map((artifact) => ({
+            extensionId: extension.id,
+            extensionVersion: extension.version,
+            surfaceId: artifact.id,
+            surfaceKind: 'artifact',
+            form: 'html-artifact',
+            runtime: 'artifact',
+            title: artifact.title,
+            description: artifact.dashboard?.description ?? null,
+            manualLaunch: artifact.dashboard?.manualLaunch ?? {
+              enabled: false,
+              missingRequiredPaths: [],
+              reason: 'dashboard-contract-missing',
+            },
+            dashboard: artifact.dashboard,
+          })),
+        ],
+        links: extension.links,
       })),
       errors,
     };
@@ -948,6 +1243,7 @@ export const createInteractiveUIRuntime = ({
 
   return {
     listExtensions,
+    getWorkbenchCatalog,
     getRoutingCapabilities,
     listConnections,
     configureConnection,
@@ -957,6 +1253,9 @@ export const createInteractiveUIRuntime = ({
     testConnection,
     getViewDescriptor,
     getNativeBundle,
+    getExtensionIcon,
+    prepareWorkbenchTile,
+    migrateWorkbenchTile,
     getInstalledArtifactDescriptor,
     getInstalledArtifactDocument,
     invokeAction,

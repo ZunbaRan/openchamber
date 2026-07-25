@@ -49,6 +49,7 @@ import { createInteractiveUIExtensionManager } from '../interactive-ui/manager.j
 import { createInteractiveUIConnectionStore } from '../interactive-ui/connection-store.js';
 import { createHTMLArtifactStore } from '../interactive-ui/artifact-store.js';
 import { createBuiltInInteractiveUIRuntime } from '../interactive-ui/builtin-runtime.js';
+import { createInteractiveUIWorkbenchStore } from '../interactive-ui/workbench-store.js';
 
 export const createFeatureRoutesRuntime = (dependencies) => {
   const {
@@ -158,10 +159,17 @@ export const createFeatureRoutesRuntime = (dependencies) => {
       cryptoImpl: crypto,
       environment: processLike.env,
     });
+    const interactiveUIWorkbenchStore = createInteractiveUIWorkbenchStore({
+      dataDirectory: openchamberDataDir,
+      fsImpl: fsPromises,
+      pathImpl: path,
+      cryptoImpl: crypto,
+    });
     registerInteractiveUIRoutes(app, {
       express,
       manager: interactiveUIExtensionManager,
       artifactStore: htmlArtifactStore,
+      workbenchStore: interactiveUIWorkbenchStore,
       uiAuthController,
       runtime: createInteractiveUIRuntime({
         fsPromises,

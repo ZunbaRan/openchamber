@@ -3,6 +3,7 @@ import crypto from 'node:crypto';
 export const ARTIFACT_RUNNER_LIMITS = Object.freeze({
   global: 8,
   perWindow: 4,
+  popoutsPerWindow: 3,
   leaseMs: 15 * 60_000,
   memoryWorkingSetKb: 256 * 1024,
   cpuPercent: 90,
@@ -89,6 +90,7 @@ const serializedBytes = (value) => {
 };
 
 export const createArtifactRunnerManager = ({
+  BrowserWindow,
   WebContentsView,
   session,
   app,
@@ -99,7 +101,8 @@ export const createArtifactRunnerManager = ({
   setIntervalImpl = setInterval,
   clearIntervalImpl = clearInterval,
 } = {}) => {
-  if (!WebContentsView || !session || !app || typeof preloadPath !== 'string' || typeof emit !== 'function') {
+  if (!BrowserWindow || !WebContentsView || !session || !app
+    || typeof preloadPath !== 'string' || typeof emit !== 'function') {
     throw new Error('Artifact Runner dependencies are incomplete');
   }
   const runners = new Map();
@@ -110,10 +113,11 @@ export const createArtifactRunnerManager = ({
     state: runner.state,
     reason: runner.reason ?? null,
     expiresAt: runner.expiresAt,
+    poppedOut: Boolean(runner.popoutWindow),
   });
 
   const notify = (runner, type, detail = {}) => {
-    emit(runner.owner, {
+    emit(runner.eventOwner, {
       runnerId: runner.id,
       type,
       ...detail,
@@ -155,7 +159,14 @@ export const createArtifactRunnerManager = ({
     runnerByWebContentsId.delete(runner.webContents.id);
     runner.state = reason === 'stopped' ? 'stopped' : 'terminated';
     runner.reason = reason;
-    try { runner.owner.contentView.removeChildView(runner.view); } catch {}
+    if (runner.attached) {
+      try { runner.container.contentView.removeChildView(runner.view); } catch {}
+      runner.attached = false;
+    }
+    if (runner.popoutWindow && !runner.popoutWindow.isDestroyed?.()) {
+      runner.closingPopout = true;
+      try { runner.popoutWindow.destroy(); } catch {}
+    }
     try { runner.view.setVisible(false); } catch {}
     try { runner.webContents.close({ waitForBeforeUnload: false }); } catch {
       try { runner.webContents.forcefullyCrashRenderer(); } catch {}
@@ -170,7 +181,7 @@ export const createArtifactRunnerManager = ({
     const url = validateArtifactRunnerUrl(rawUrl);
     if (!url) throw new Error('Artifact Runner URL is not an allowed artifact document');
     if (runners.size >= ARTIFACT_RUNNER_LIMITS.global) throw new Error('Artifact Runner global limit reached');
-    const ownerCount = Array.from(runners.values()).filter((runner) => runner.owner === owner).length;
+    const ownerCount = Array.from(runners.values()).filter((runner) => runner.eventOwner === owner).length;
     if (ownerCount >= ARTIFACT_RUNNER_LIMITS.perWindow) throw new Error('Artifact Runner window limit reached');
 
     const id = crypto.randomUUID();
@@ -197,7 +208,8 @@ export const createArtifactRunnerManager = ({
     });
     const runner = {
       id,
-      owner,
+      eventOwner: owner,
+      container: owner,
       view,
       webContents: view.webContents,
       partitionSession,
@@ -207,9 +219,17 @@ export const createArtifactRunnerManager = ({
       expiresAt: now() + ARTIFACT_RUNNER_LIMITS.leaseMs,
       highCpuSamples: 0,
       userActiveUntil: 0,
+      inlineRequest: {
+        bounds,
+        clipBounds,
+        visible: visible === true,
+      },
       requestedBounds: bounds,
       requestedClipBounds: clipBounds,
       requestedVisible: visible === true,
+      popoutWindow: null,
+      closingPopout: false,
+      attached: false,
       layoutRevision: 0,
       pendingGeometry: null,
       committedGeometry: null,
@@ -217,7 +237,6 @@ export const createArtifactRunnerManager = ({
     };
     runners.set(id, runner);
     runnerByWebContentsId.set(runner.webContents.id, id);
-    owner.contentView.addChildView(view);
     const geometry = resolveGeometry(owner, bounds, clipBounds);
     view.setBounds(geometry.viewBounds);
     view.setVisible(false);
@@ -231,28 +250,42 @@ export const createArtifactRunnerManager = ({
     runner.webContents.on('before-input-event', () => { runner.userActiveUntil = now() + 1_500; });
     runner.webContents.on('before-mouse-event', () => { runner.userActiveUntil = now() + 1_500; });
     runner.webContents.on('render-process-gone', (_event, details) => stop(id, details?.reason === 'killed' ? 'stopped' : 'crashed'));
-    runner.webContents.on('did-finish-load', () => {
-      if (!runners.has(id)) return;
-      runner.state = 'running';
-      stageGeometry(runner, resolveGeometry(runner.owner, runner.requestedBounds, runner.requestedClipBounds));
-    });
     runner.webContents.on('did-fail-load', (_event, _code, _description, failedUrl, isMainFrame) => {
       if (isMainFrame && failedUrl === url) stop(id, 'load-failed');
     });
-    void runner.webContents.loadURL(url).catch((error) => {
+    try {
+      await runner.webContents.loadURL(url);
+    } catch (error) {
       logger.warn?.('[ArtifactRunner] document load failed', error?.message || error);
       stop(id, 'load-failed');
-    });
+      throw new Error('Artifact Runner document could not be loaded');
+    }
+    if (!runners.has(id)) throw new Error('Artifact Runner document could not be loaded');
+    owner.contentView.addChildView(view);
+    runner.attached = true;
+    runner.state = 'running';
+    stageGeometry(runner, resolveGeometry(runner.container, runner.requestedBounds, runner.requestedClipBounds));
     return publicState(runner);
   };
 
   const update = (id, { bounds, clipBounds, visible } = {}) => {
     const runner = runners.get(id);
     if (!runner) return null;
+    if (runner.popoutWindow) {
+      if (bounds) runner.inlineRequest.bounds = bounds;
+      if (clipBounds) runner.inlineRequest.clipBounds = clipBounds;
+      if (typeof visible === 'boolean') runner.inlineRequest.visible = visible;
+      return publicState(runner);
+    }
     if (bounds) runner.requestedBounds = bounds;
     if (clipBounds) runner.requestedClipBounds = clipBounds;
     if (typeof visible === 'boolean') runner.requestedVisible = visible;
-    const geometry = resolveGeometry(runner.owner, runner.requestedBounds, runner.requestedClipBounds);
+    runner.inlineRequest = {
+      bounds: runner.requestedBounds,
+      clipBounds: runner.requestedClipBounds,
+      visible: runner.requestedVisible,
+    };
+    const geometry = resolveGeometry(runner.container, runner.requestedBounds, runner.requestedClipBounds);
     if (runner.state === 'running') {
       stageGeometry(runner, geometry);
     } else {
@@ -260,6 +293,146 @@ export const createArtifactRunnerManager = ({
       runner.view.setVisible(false);
     }
     return publicState(runner);
+  };
+
+  const resizePopout = (runner) => {
+    const bounds = runner.popoutWindow?.getContentBounds?.();
+    if (!bounds) return;
+    runner.requestedBounds = { x: 0, y: 0, width: bounds.width, height: bounds.height };
+    runner.requestedClipBounds = { x: 0, y: 0, width: bounds.width, height: bounds.height };
+    runner.requestedVisible = true;
+    if (runner.state === 'running') {
+      stageGeometry(runner, resolveGeometry(
+        runner.container,
+        runner.requestedBounds,
+        runner.requestedClipBounds,
+      ));
+    }
+  };
+
+  const restore = (id, reason = 'restored') => {
+    const runner = runners.get(id);
+    if (!runner) return { restored: false };
+    if (!runner.popoutWindow) return { restored: false, ...publicState(runner) };
+    const popoutWindow = runner.popoutWindow;
+    runner.closingPopout = true;
+    if (runner.attached) {
+      try { runner.container.contentView.removeChildView(runner.view); } catch {}
+      runner.attached = false;
+    }
+    runner.container = runner.eventOwner;
+    runner.popoutWindow = null;
+    runner.requestedBounds = runner.inlineRequest.bounds;
+    runner.requestedClipBounds = runner.inlineRequest.clipBounds;
+    runner.requestedVisible = runner.inlineRequest.visible;
+    try {
+      runner.container.contentView.addChildView(runner.view);
+      runner.attached = true;
+    } catch {
+      stop(id, 'restore-failed');
+      return { restored: false };
+    }
+    if (runner.state === 'running') {
+      stageGeometry(runner, resolveGeometry(
+        runner.container,
+        runner.requestedBounds,
+        runner.requestedClipBounds,
+      ));
+    }
+    try { if (!popoutWindow.isDestroyed?.()) popoutWindow.destroy(); } catch {}
+    runner.closingPopout = false;
+    notify(runner, 'popout-closed', { reason });
+    return { restored: true, ...publicState(runner) };
+  };
+
+  const popout = async (id, {
+    title = 'OpenChamber Artifact',
+    width = 960,
+    height = 720,
+  } = {}) => {
+    const runner = runners.get(id);
+    if (!runner) throw new Error('Artifact Runner was not found');
+    if (runner.popoutWindow) return { opened: false, ...publicState(runner) };
+    const popoutCount = Array.from(runners.values()).filter(
+      (candidate) => candidate.eventOwner === runner.eventOwner && candidate.popoutWindow,
+    ).length;
+    if (popoutCount >= ARTIFACT_RUNNER_LIMITS.popoutsPerWindow) {
+      const error = new Error('Artifact Runner popout limit reached');
+      error.code = 'artifact_popout_limit';
+      throw error;
+    }
+    const popoutWindow = new BrowserWindow({
+      width: clamp(Math.trunc(Number(width) || 960), 480, 1_920),
+      height: clamp(Math.trunc(Number(height) || 720), 320, 1_440),
+      minWidth: 420,
+      minHeight: 280,
+      show: true,
+      title: String(title || 'OpenChamber Artifact').slice(0, 160),
+      backgroundColor: '#111111',
+      autoHideMenuBar: true,
+      webPreferences: {
+        sandbox: true,
+        contextIsolation: true,
+        nodeIntegration: false,
+        webSecurity: true,
+      },
+    });
+    try { popoutWindow.setMenuBarVisibility?.(false); } catch {}
+    runner.popoutWindow = popoutWindow;
+    const handleResize = () => {
+      if (runners.has(id) && runner.popoutWindow === popoutWindow && runner.container === popoutWindow) {
+        resizePopout(runner);
+      }
+    };
+    popoutWindow.on('resize', handleResize);
+    popoutWindow.on('close', (event) => {
+      if (runner.closingPopout || !runners.has(id)) return;
+      event.preventDefault?.();
+      restore(id, 'window-closed');
+    });
+
+    // Commit a valid same-origin root document before moving the live View.
+    // Attaching an HTTP View to an empty (opaque-origin) BrowserWindow first
+    // causes Chromium to reject the site tuple and leaves a hidden NSWindow.
+    const popoutHostUrl = new URL('/artifact-popout-host.html', runner.url);
+    try {
+      await popoutWindow.loadURL(popoutHostUrl.toString());
+      if (!runners.has(id) || runner.popoutWindow !== popoutWindow) {
+        return { opened: false, ...publicState(runner) };
+      }
+      runner.container.contentView.removeChildView(runner.view);
+      runner.attached = false;
+      runner.container = popoutWindow;
+      popoutWindow.contentView.addChildView(runner.view);
+      runner.attached = true;
+      resizePopout(runner);
+      const ownerBounds = runner.eventOwner.getBounds?.();
+      if (ownerBounds) {
+        const popoutBounds = popoutWindow.getBounds();
+        popoutWindow.setPosition(
+          Math.round(ownerBounds.x + Math.max(24, (ownerBounds.width - popoutBounds.width) / 2)),
+          Math.round(ownerBounds.y + Math.max(24, (ownerBounds.height - popoutBounds.height) / 2)),
+        );
+      }
+      try { popoutWindow.setAlwaysOnTop(true, 'floating'); } catch {}
+      popoutWindow.show();
+      try { popoutWindow.focus(); } catch {}
+      try { popoutWindow.moveTop?.(); } catch {}
+      const releaseTopmostTimer = setTimeout(() => {
+        try {
+          if (!popoutWindow.isDestroyed?.()) popoutWindow.setAlwaysOnTop(false);
+        } catch {}
+      }, 600);
+      releaseTopmostTimer.unref?.();
+      notify(runner, 'popout-opened');
+      return { opened: true, ...publicState(runner) };
+    } catch (error) {
+      logger.warn?.('[ArtifactRunner] popout host load failed', error?.message || error);
+      if (runners.has(id) && runner.popoutWindow === popoutWindow) {
+        restore(id, 'popout-host-load-failed');
+      }
+      throw new Error('Artifact popout could not be opened');
+    }
   };
 
   const post = (id, message) => {
@@ -286,7 +459,7 @@ export const createArtifactRunnerManager = ({
 
   const stopForOwner = (owner, reason = 'owner-closed') => {
     for (const runner of Array.from(runners.values())) {
-      if (runner.owner === owner) stop(runner.id, reason);
+      if (runner.eventOwner === owner) stop(runner.id, reason);
     }
   };
 
@@ -318,5 +491,18 @@ export const createArtifactRunnerManager = ({
     for (const runner of Array.from(runners.values())) stop(runner.id, 'runtime-stopped');
   };
 
-  return { start, update, post, stop, stopForOwner, handleRendererMessage, handleLayoutApplied, monitor, dispose, get: (id) => runners.has(id) ? publicState(runners.get(id)) : null };
+  return {
+    start,
+    update,
+    post,
+    popout,
+    restore,
+    stop,
+    stopForOwner,
+    handleRendererMessage,
+    handleLayoutApplied,
+    monitor,
+    dispose,
+    get: (id) => runners.has(id) ? publicState(runners.get(id)) : null,
+  };
 };

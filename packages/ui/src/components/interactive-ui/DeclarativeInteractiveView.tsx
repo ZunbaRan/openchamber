@@ -502,11 +502,21 @@ const DeclarativeNode: React.FC<{
   );
 
   const executeAction = async (action: DeclarativeActionDefinition, row?: unknown) => {
-    setRunningAction(action.id || action.action);
+    const actionKey = action.id || action.action || action.event || 'declarative-action';
+    setRunningAction(actionKey);
     try {
       if (action.confirm && !await host.dialog.confirm(action.confirm)) return;
-      await host.business.execute(action.action, resolved(action.input ?? {}, row));
-      refreshQueries();
+      if (action.type === 'emit') {
+        if (!action.event) throw new Error('Declarative emit action is missing its event');
+        const payload = resolved(action.payload ?? {}, row);
+        const payloadRecord = asRecord(payload);
+        if (!payloadRecord) throw new Error('Declarative emit payload must resolve to an object');
+        await host.dashboard.emit(action.event, payloadRecord);
+      } else {
+        if (!action.action) throw new Error('Declarative business action is missing its action ID');
+        await host.business.execute(action.action, resolved(action.input ?? {}, row));
+        refreshQueries();
+      }
     } catch (error) {
       host.notifications.show({ message: error instanceof Error ? error.message : String(error), tone: 'error' });
     } finally {
@@ -750,7 +760,15 @@ const DeclarativeNode: React.FC<{
       ? node.columns.map(asRecord).filter((entry): entry is Record<string, unknown> => !!entry && typeof entry.key === 'string') as DataTableColumn[]
       : [];
     const actions = Array.isArray(node.rowActions)
-      ? node.rowActions.filter((entry): entry is DeclarativeActionDefinition => !!asRecord(entry) && typeof entry.action === 'string' && typeof entry.label === 'string')
+      ? node.rowActions.filter((entry): entry is DeclarativeActionDefinition => {
+        const record = asRecord(entry);
+        return !!record
+          && typeof record.label === 'string'
+          && (
+            typeof record.action === 'string'
+            || (record.type === 'emit' && typeof record.event === 'string')
+          );
+      })
       : [];
     return (
       <div className="min-w-0 rounded-xl border border-[var(--ocix-border)] bg-[var(--ocix-surface)]">
@@ -788,7 +806,7 @@ const DeclarativeNode: React.FC<{
                     <td className="whitespace-nowrap px-3 py-2 text-right">
                       {visibleActions.map((action) => (
                         <Button
-                          key={action.id || action.action}
+                          key={action.id || action.action || action.event}
                           variant="outline"
                           size="xs"
                           disabled={runningAction !== null}

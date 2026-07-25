@@ -115,6 +115,8 @@ export const settingsDict = {
   'settings.interactiveUI.fields.setupCodePlaceholder': '설정 코드 입력',
   'settings.interactiveUI.uninstall.title': '확장을 제거할까요?',
   'settings.interactiveUI.uninstall.description': '{name} 확장을 비활성화하고 복구 가능한 저장소로 이동합니다.',
+  'settings.interactiveUI.uninstall.impact': '로컬 프로젝트 {projects}개에 있는 Workbench 타일 {tiles}개도 삭제됩니다.',
+  'settings.interactiveUI.uninstall.impactLoading': '영향을 받는 Workbench 타일을 계산하는 중…',
   'settings.interactiveUI.toast.loadFailed': '확장을 불러오지 못했습니다',
   'settings.interactiveUI.toast.actionFailed': '확장 작업에 실패했습니다',
   'settings.interactiveUI.toast.installed': '확장을 설치했습니다',

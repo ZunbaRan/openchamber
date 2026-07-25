@@ -115,6 +115,8 @@
   'settings.interactiveUI.fields.setupCodePlaceholder': '輸入連線碼',
   'settings.interactiveUI.uninstall.title': '解除安裝擴充套件？',
   'settings.interactiveUI.uninstall.description': '{name} 將停用並移至可復原的儲存空間。',
+  'settings.interactiveUI.uninstall.impact': '同時會刪除 {projects} 個本機專案中的 {tiles} 個工作台磁貼。',
+  'settings.interactiveUI.uninstall.impactLoading': '正在計算受影響的工作台磁貼…',
   'settings.interactiveUI.toast.loadFailed': '無法載入擴充套件',
   'settings.interactiveUI.toast.actionFailed': '擴充套件操作失敗',
   'settings.interactiveUI.toast.installed': '擴充套件已安裝',

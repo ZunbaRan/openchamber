@@ -134,7 +134,7 @@ export const createHybridCrmPackage = async ({
   await fs.writeFile(path.join(toolDirectory, `${HYBRID_CRM_FIXTURE.explorerToolName}.ts`), `import { tool } from '@opencode-ai/plugin';
 
 export default tool({
-  description: 'Open the installed Simple CRM HTML Artifact explorer for authoritative customer and pipeline exploration through the Business Gateway. Prefer this Tool for explicit CRM explorer or custom canvas requests; do not call generic html_artifact for the same business data.',
+  description: 'Open the installed Simple CRM HTML Artifact explorer for authoritative customer and pipeline exploration through the Business Gateway. Prefer this Tool for explicit CRM explorer or custom canvas requests; do not call generic html_artifact for the same business data. Call it at most once per assistant turn; a successful result is terminal and already rendered, so never call this or another primary surface Tool again.',
   args: { scope: tool.schema.string().optional() },
   async execute(args) {
     return JSON.stringify({
@@ -142,7 +142,7 @@ export default tool({
       schemaVersion: 1,
       artifact: '${HYBRID_CRM_FIXTURE.artifactId}',
       mode: 'live',
-      summary: 'Simple CRM explorer opened',
+      summary: 'Simple CRM explorer opened; the primary surface is already rendered and no second Tool call is needed',
       context: { scope: args.scope || 'default' },
       updatedAt: new Date().toISOString(),
     });

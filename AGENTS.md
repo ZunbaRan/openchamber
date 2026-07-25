@@ -109,6 +109,8 @@ For work in Agent Generated Declarative, Installed Declarative, Trusted Native, 
 | Selecting, running, retrying, cleaning up, or reporting Interactive UI/OCIX tests | [Agent autonomous testing](docs/INTERACTIVE_UI_AGENT_AUTONOMOUS_TESTING.md) |
 | Building a mixed Interactive UI + HTML Artifact package or using the Artifact Business Bridge | [OCIX hybrid extension plan and contract](docs/OCIX_HYBRID_INTERACTIVE_UI_HTML_ARTIFACT_PLAN.md) |
 | Continuing component-library, Scripts Artifact runner, or Marketplace productization work | [Interactive UI productization plan](docs/INTERACTIVE_UI_PRODUCTIZATION_PLAN.md) |
+| Implementing the Right Sidebar extension catalog, persistent tile board, pin/focus/popout, or same-OCIX linked surfaces | [OCIX Extension Workbench design](docs/OCIX_EXTENSION_WORKBENCH_DESIGN.md) |
+| Testing Extension Workbench manifests, board persistence, pin/link behavior, drag/resize, Runner lifecycle, or packaged acceptance | [OCIX Extension Workbench test plan](docs/OCIX_EXTENSION_WORKBENCH_TEST_PLAN.md) |
 
 The canonical current release evidence is [the unified acceptance report](docs/INTERACTIVE_UI_UNIFIED_ACCEPTANCE_REPORT.md). The execution order and frozen gates are in [the execution plan](docs/INTERACTIVE_UI_BEAUTIFICATION_HTML_ARTIFACT_EXECUTION_PLAN.md). Qwen3.7 Plus is the default affordable model-routing baseline; OpenAI is optional comparison coverage unless a specific release task explicitly requires it. Do not replace evidence documents with fixture-only observations.
 

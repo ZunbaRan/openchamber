@@ -115,6 +115,8 @@ export const settingsDict = {
   'settings.interactiveUI.fields.setupCodePlaceholder': 'Введіть код налаштування',
   'settings.interactiveUI.uninstall.title': 'Видалити розширення?',
   'settings.interactiveUI.uninstall.description': '{name} буде вимкнено й переміщено до сховища з можливістю відновлення.',
+  'settings.interactiveUI.uninstall.impact': 'Також буде видалено {tiles} плиток Workbench у {projects} локальних проєктах.',
+  'settings.interactiveUI.uninstall.impactLoading': 'Обчислення плиток Workbench, яких це стосується…',
   'settings.interactiveUI.toast.loadFailed': 'Не вдалося завантажити розширення',
   'settings.interactiveUI.toast.actionFailed': 'Не вдалося виконати дію розширення',
   'settings.interactiveUI.toast.installed': 'Розширення встановлено',

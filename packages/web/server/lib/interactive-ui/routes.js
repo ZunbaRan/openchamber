@@ -1,4 +1,7 @@
 import { InteractiveUIRuntimeError } from './runtime.js';
+import { isWorkbenchVersionCompatible } from './workbench-version.js';
+
+const isRecord = (value) => typeof value === 'object' && value !== null && !Array.isArray(value);
 
 const sendError = (res, error) => {
   if (error instanceof InteractiveUIRuntimeError || (Number.isInteger(error?.status) && typeof error?.code === 'string')) {
@@ -67,7 +70,14 @@ const setArtifactDocumentHeaders = (res, scripts) => {
   res.setHeader('Permissions-Policy', 'accelerometer=(), autoplay=(), camera=(), clipboard-read=(), clipboard-write=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=()');
 };
 
-export const registerInteractiveUIRoutes = (app, { express, runtime, manager, artifactStore, uiAuthController = null }) => {
+export const registerInteractiveUIRoutes = (app, {
+  express,
+  runtime,
+  manager,
+  artifactStore,
+  workbenchStore = null,
+  uiAuthController = null,
+}) => {
   // Interactive UI owns both read-only descriptors and privileged mutations
   // (extension install/trust, connector credentials, and Business Gateway
   // actions).  Keep the route family behind the same UI auth gate as the rest
@@ -78,6 +88,120 @@ export const registerInteractiveUIRoutes = (app, { express, runtime, manager, ar
       Promise.resolve(uiAuthController.requireAuth(req, res, next)).catch((error) => sendError(res, error));
     });
   }
+
+  const authorizeWorkbenchAction = async (request) => {
+    if (!isRecord(request)) return request;
+    const {
+      __workbenchAuthorization: _untrustedAuthorization,
+      ...cleanRequest
+    } = request;
+    if (!isRecord(request.workbench)) return cleanRequest;
+    if (!workbenchStore) {
+      throw new InteractiveUIRuntimeError(
+        'Extension Workbench is unavailable in this runtime',
+        501,
+        'workbench_unsupported',
+      );
+    }
+    const projectId = typeof request.workbench.projectId === 'string'
+      ? request.workbench.projectId.trim()
+      : '';
+    const tileId = typeof request.workbench.tileId === 'string'
+      ? request.workbench.tileId.trim()
+      : '';
+    if (!projectId || !tileId) {
+      throw new InteractiveUIRuntimeError(
+        'Workbench action context is incomplete',
+        400,
+        'invalid_workbench_action',
+      );
+    }
+    const snapshot = await workbenchStore.read(projectId);
+    const board = snapshot.boards.find((candidate) => candidate.id === snapshot.activeBoardId);
+    const tile = board?.tiles.find((candidate) => candidate.tileId === tileId);
+    if (!tile) {
+      throw new InteractiveUIRuntimeError(
+        'Workbench tile was not found',
+        404,
+        'workbench_tile_not_found',
+      );
+    }
+    if (tile.source.kind !== 'third-party-extension') {
+      throw new InteractiveUIRuntimeError(
+        'Generated Workbench tiles cannot call the Business Gateway',
+        403,
+        'workbench_business_not_allowed',
+      );
+    }
+    const surfaceId = typeof request.viewId === 'string'
+      ? request.viewId
+      : typeof request.artifactId === 'string'
+        ? request.artifactId
+        : '';
+    if (request.extensionId !== tile.source.extensionId || surfaceId !== tile.source.surfaceId) {
+      throw new InteractiveUIRuntimeError(
+        'Workbench tile does not own this action surface',
+        403,
+        'workbench_surface_mismatch',
+      );
+    }
+    if ((request.viewId && tile.form !== 'interactive-ui')
+      || (request.artifactId && tile.form !== 'html-artifact')) {
+      throw new InteractiveUIRuntimeError(
+        'Workbench tile form does not match the requested action',
+        403,
+        'workbench_form_mismatch',
+      );
+    }
+    const catalog = await runtime.getWorkbenchCatalog();
+    const extension = catalog.extensions.find((candidate) => candidate.id === tile.source.extensionId);
+    const surface = extension?.surfaces.find((candidate) => candidate.surfaceId === tile.source.surfaceId);
+    if (!extension || !surface) {
+      throw new InteractiveUIRuntimeError(
+        'Workbench extension or surface is disabled or unavailable',
+        409,
+        'workbench_surface_unavailable',
+      );
+    }
+    if (!isWorkbenchVersionCompatible(tile.source.compatibleVersion, extension.version)) {
+      throw new InteractiveUIRuntimeError(
+        'Workbench tile requires migration before it can call the Business Gateway',
+        409,
+        'workbench_migration_required',
+      );
+    }
+    try {
+      await runtime.prepareWorkbenchTile({
+        tileId: tile.tileId,
+        source: {
+          kind: 'third-party-extension',
+          extensionId: tile.source.extensionId,
+          surfaceId: tile.source.surfaceId,
+        },
+        form: tile.form,
+        context: tile.context,
+        layout: tile.layout,
+        displayMode: tile.displayMode,
+        relationship: tile.relationship,
+        origin: tile.origin,
+      });
+    } catch (error) {
+      throw new InteractiveUIRuntimeError(
+        'Workbench tile is incompatible with the installed surface and requires migration',
+        409,
+        'workbench_migration_required',
+        { causeCode: typeof error?.code === 'string' ? error.code : 'invalid_workbench_context' },
+      );
+    }
+    return {
+      ...cleanRequest,
+      __workbenchAuthorization: {
+        projectId,
+        tileId,
+        contextDigest: tile.contextDigest,
+      },
+    };
+  };
 
   app.get('/api/interactive-ui/artifacts/capabilities', async (_req, res) => {
     try {
@@ -205,12 +329,26 @@ export const registerInteractiveUIRoutes = (app, { express, runtime, manager, ar
     }
   });
 
+  app.get('/api/interactive-ui/manager/extensions/:extensionId/uninstall-impact', async (req, res) => {
+    try {
+      res.setHeader('Cache-Control', 'no-store');
+      res.json(workbenchStore
+        ? await workbenchStore.getExtensionTileImpact(req.params.extensionId)
+        : { tiles: 0, projects: 0 });
+    } catch (error) {
+      sendError(res, error);
+    }
+  });
+
   app.delete('/api/interactive-ui/manager/extensions/:extensionId', async (req, res) => {
     try {
       const result = await manager.uninstall(req.params.extensionId);
       try {
         const credentials = await runtime.removeExtensionConnections(req.params.extensionId);
-        res.json({ ...result, credentials });
+        const workbench = workbenchStore
+          ? await workbenchStore.removeExtensionTiles(req.params.extensionId)
+          : { removed: 0, projects: 0 };
+        res.json({ ...result, credentials, workbench });
       } catch (error) {
         error.details = { ...(error.details ?? {}), extensionRemoved: true, recoveryPath: result.recoveryPath ?? null };
         sendError(res, error);
@@ -278,6 +416,132 @@ export const registerInteractiveUIRoutes = (app, { express, runtime, manager, ar
     }
   });
 
+  app.get('/api/interactive-ui/workbench/catalog', async (_req, res) => {
+    try {
+      res.setHeader('Cache-Control', 'no-store');
+      res.json(await runtime.getWorkbenchCatalog());
+    } catch (error) {
+      sendError(res, error);
+    }
+  });
+
+  app.post('/api/interactive-ui/workbench/snapshots', express.json({ limit: '600kb' }), async (req, res) => {
+    try {
+      if (!workbenchStore) {
+        throw new InteractiveUIRuntimeError('Extension Workbench is unavailable in this runtime', 501, 'workbench_unsupported');
+      }
+      if (req.body?.form === 'html-artifact') {
+        await artifactStore.materialize(req.body?.envelope);
+      }
+      const snapshot = await workbenchStore.writeSnapshot(req.body?.form, req.body?.envelope);
+      res.setHeader('Cache-Control', 'no-store');
+      res.status(201).json(snapshot);
+    } catch (error) {
+      sendError(res, error);
+    }
+  });
+
+  app.get('/api/interactive-ui/workbench/snapshots/:snapshotRef', async (req, res) => {
+    try {
+      if (!workbenchStore) {
+        throw new InteractiveUIRuntimeError('Extension Workbench is unavailable in this runtime', 501, 'workbench_unsupported');
+      }
+      res.setHeader('Cache-Control', 'no-store');
+      res.json(await workbenchStore.readSnapshot(req.params.snapshotRef));
+    } catch (error) {
+      sendError(res, error);
+    }
+  });
+
+  app.get('/api/interactive-ui/workbench/boards/:projectId', async (req, res) => {
+    try {
+      if (!workbenchStore) {
+        throw new InteractiveUIRuntimeError('Extension Workbench is unavailable in this runtime', 501, 'workbench_unsupported');
+      }
+      res.setHeader('Cache-Control', 'no-store');
+      res.json(await workbenchStore.read(req.params.projectId));
+    } catch (error) {
+      sendError(res, error);
+    }
+  });
+
+  app.post('/api/interactive-ui/workbench/boards/:projectId/tiles', express.json({ limit: '256kb' }), async (req, res) => {
+    try {
+      if (!workbenchStore) {
+        throw new InteractiveUIRuntimeError('Extension Workbench is unavailable in this runtime', 501, 'workbench_unsupported');
+      }
+      if (req.body?.tile?.source?.kind === 'agent-generated') {
+        await workbenchStore.readSnapshot(req.body?.tile?.source?.snapshotRef);
+      }
+      const tile = await runtime.prepareWorkbenchTile(req.body?.tile);
+      const result = await workbenchStore.upsertTile(req.params.projectId, req.body?.expectedRevision, tile);
+      res.setHeader('Cache-Control', 'no-store');
+      res.status(result.created ? 201 : 200).json(result);
+    } catch (error) {
+      sendError(res, error);
+    }
+  });
+
+  app.patch('/api/interactive-ui/workbench/boards/:projectId/tiles/:tileId', express.json({ limit: '64kb' }), async (req, res) => {
+    try {
+      if (!workbenchStore) {
+        throw new InteractiveUIRuntimeError('Extension Workbench is unavailable in this runtime', 501, 'workbench_unsupported');
+      }
+      const result = await workbenchStore.updateTile(
+        req.params.projectId,
+        req.params.tileId,
+        req.body?.expectedRevision,
+        req.body?.patch,
+      );
+      res.setHeader('Cache-Control', 'no-store');
+      res.json(result);
+    } catch (error) {
+      sendError(res, error);
+    }
+  });
+
+  app.post('/api/interactive-ui/workbench/boards/:projectId/tiles/:tileId/migrate', express.json({ limit: '64kb' }), async (req, res) => {
+    try {
+      if (!workbenchStore || typeof runtime.migrateWorkbenchTile !== 'function') {
+        throw new InteractiveUIRuntimeError('Extension Workbench migration is unavailable', 501, 'workbench_unsupported');
+      }
+      const current = await workbenchStore.read(req.params.projectId);
+      const board = current.boards.find((candidate) => candidate.id === current.activeBoardId);
+      const tile = board?.tiles.find((candidate) => candidate.tileId === req.params.tileId);
+      if (!tile) {
+        throw new InteractiveUIRuntimeError('Workbench tile was not found', 404, 'workbench_tile_not_found');
+      }
+      const migrated = await runtime.migrateWorkbenchTile(tile);
+      const result = await workbenchStore.migrateTile(
+        req.params.projectId,
+        req.params.tileId,
+        req.body?.expectedRevision,
+        migrated,
+      );
+      res.setHeader('Cache-Control', 'no-store');
+      res.json(result);
+    } catch (error) {
+      sendError(res, error);
+    }
+  });
+
+  app.delete('/api/interactive-ui/workbench/boards/:projectId/tiles/:tileId', express.json({ limit: '16kb' }), async (req, res) => {
+    try {
+      if (!workbenchStore) {
+        throw new InteractiveUIRuntimeError('Extension Workbench is unavailable in this runtime', 501, 'workbench_unsupported');
+      }
+      const result = await workbenchStore.removeTile(
+        req.params.projectId,
+        req.params.tileId,
+        req.body?.expectedRevision,
+      );
+      res.setHeader('Cache-Control', 'no-store');
+      res.json(result);
+    } catch (error) {
+      sendError(res, error);
+    }
+  });
+
   app.get('/api/interactive-ui/connections', async (_req, res) => {
     try {
       res.setHeader('Cache-Control', 'no-store');
@@ -326,8 +590,9 @@ export const registerInteractiveUIRoutes = (app, { express, runtime, manager, ar
   app.get('/api/interactive-ui/views/:viewId', async (req, res) => {
     try {
       const tool = typeof req.query?.tool === 'string' ? req.query.tool : '';
+      const launchSource = req.query?.launch === 'workbench' ? 'workbench' : 'tool';
       res.setHeader('Cache-Control', 'no-store');
-      res.json(await runtime.getViewDescriptor(req.params.viewId, tool));
+      res.json(await runtime.getViewDescriptor(req.params.viewId, tool, { launchSource }));
     } catch (error) {
       sendError(res, error);
     }
@@ -336,8 +601,21 @@ export const registerInteractiveUIRoutes = (app, { express, runtime, manager, ar
   app.get('/api/interactive-ui/installed-artifacts/:artifactId', async (req, res) => {
     try {
       const tool = typeof req.query?.tool === 'string' ? req.query.tool : '';
+      const launchSource = req.query?.launch === 'workbench' ? 'workbench' : 'tool';
       res.setHeader('Cache-Control', 'no-store');
-      res.json(await runtime.getInstalledArtifactDescriptor(req.params.artifactId, tool));
+      res.json(await runtime.getInstalledArtifactDescriptor(req.params.artifactId, tool, { launchSource }));
+    } catch (error) {
+      sendError(res, error);
+    }
+  });
+
+  app.get('/api/interactive-ui/extensions/:extensionId/icon', async (req, res) => {
+    try {
+      const icon = await runtime.getExtensionIcon(req.params.extensionId);
+      res.setHeader('Cache-Control', 'private, max-age=300');
+      res.setHeader('Content-Type', icon.contentType);
+      res.setHeader('X-Content-Type-Options', 'nosniff');
+      res.send(icon.content);
     } catch (error) {
       sendError(res, error);
     }
@@ -370,7 +648,10 @@ export const registerInteractiveUIRoutes = (app, { express, runtime, manager, ar
   app.post('/api/interactive-ui/actions/:actionId', express.json({ limit: '256kb' }), async (req, res) => {
     try {
       res.setHeader('Cache-Control', 'no-store');
-      res.json(await runtime.invokeAction(req.params.actionId, req.body));
+      res.json(await runtime.invokeAction(
+        req.params.actionId,
+        await authorizeWorkbenchAction(req.body),
+      ));
     } catch (error) {
       sendError(res, error);
     }

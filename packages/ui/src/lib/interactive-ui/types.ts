@@ -75,6 +75,10 @@ interface InteractiveActionRequestBase {
   action: string;
   input: unknown;
   tool?: Pick<InteractiveToolContext, 'id' | 'name'>;
+  workbench?: {
+    projectId: string;
+    tileId: string;
+  };
   confirmationToken?: string;
 }
 
@@ -110,6 +114,9 @@ export interface InteractiveViewHost {
   };
   notifications: {
     show(input: { message: string; tone?: 'success' | 'error' | 'info' }): void;
+  };
+  dashboard: {
+    emit(eventId: string, payload: Record<string, unknown>): Promise<void>;
   };
   context: {
     runtime: 'web' | 'desktop' | 'vscode';
@@ -194,7 +201,10 @@ export interface DeclarativeQueryDefinition {
 export interface DeclarativeActionDefinition {
   id?: string;
   label: string;
-  action: string;
+  type?: 'business' | 'emit';
+  action?: string;
+  event?: string;
+  payload?: unknown;
   input?: unknown;
   confirm?: InteractiveConfirmation;
   when?: {

@@ -1,6 +1,11 @@
 import React from 'react';
 import { cn } from '@/lib/utils';
-import { useUIStore, RIGHT_SIDEBAR_MIN_WIDTH, RIGHT_SIDEBAR_MAX_WIDTH } from '@/stores/useUIStore';
+import {
+  useUIStore,
+  RIGHT_SIDEBAR_MIN_WIDTH,
+  RIGHT_SIDEBAR_MAX_WIDTH,
+  RIGHT_SIDEBAR_WORKBENCH_MIN_WIDTH,
+} from '@/stores/useUIStore';
 import { useI18n } from '@/lib/i18n';
 
 const RIGHT_SIDEBAR_CONTENT_WIDTH = 420;
@@ -14,7 +19,14 @@ interface RightSidebarProps {
 export const RightSidebar: React.FC<RightSidebarProps> = ({ isOpen, children, className }) => {
   const { t } = useI18n();
   const rightSidebarWidth = useUIStore((state) => state.rightSidebarWidth);
+  const rightSidebarWorkbenchWidth = useUIStore((state) => state.rightSidebarWorkbenchWidth);
+  const hasManuallyResizedWorkbench = useUIStore((state) => state.hasManuallyResizedRightSidebarWorkbench);
+  const rightSidebarTab = useUIStore((state) => state.rightSidebarTab);
   const setRightSidebarWidth = useUIStore((state) => state.setRightSidebarWidth);
+  const setRightSidebarWorkbenchWidth = useUIStore((state) => state.setRightSidebarWorkbenchWidth);
+  const [viewportWidth, setViewportWidth] = React.useState(() => (
+    typeof window === 'undefined' ? 1440 : window.innerWidth
+  ));
   const [isResizing, setIsResizing] = React.useState(false);
   const startXRef = React.useRef(0);
   const startWidthRef = React.useRef(rightSidebarWidth || RIGHT_SIDEBAR_CONTENT_WIDTH);
@@ -22,9 +34,26 @@ export const RightSidebar: React.FC<RightSidebarProps> = ({ isOpen, children, cl
   const activeResizePointerIDRef = React.useRef<number | null>(null);
   const sidebarRef = React.useRef<HTMLElement | null>(null);
 
+  const isWorkbench = rightSidebarTab === 'extensions';
+  const workbenchMaximum = Math.max(
+    Math.min(RIGHT_SIDEBAR_WORKBENCH_MIN_WIDTH, viewportWidth),
+    Math.floor(viewportWidth * 0.65),
+  );
+  const workbenchMinimum = Math.min(
+    workbenchMaximum,
+    Math.max(RIGHT_SIDEBAR_WORKBENCH_MIN_WIDTH, Math.floor(viewportWidth * 0.45)),
+  );
+  const defaultWorkbenchWidth = Math.min(
+    workbenchMaximum,
+    Math.max(workbenchMinimum, Math.floor(viewportWidth * 0.55)),
+  );
+
   const clampRightSidebarWidth = React.useCallback((value: number) => {
+    if (isWorkbench) {
+      return Math.min(workbenchMaximum, Math.max(workbenchMinimum, value));
+    }
     return Math.min(RIGHT_SIDEBAR_MAX_WIDTH, Math.max(RIGHT_SIDEBAR_MIN_WIDTH, value));
-  }, []);
+  }, [isWorkbench, workbenchMaximum, workbenchMinimum]);
 
   const applyLiveWidth = React.useCallback((nextWidth: number) => {
     const sidebar = sidebarRef.current;
@@ -38,8 +67,18 @@ export const RightSidebar: React.FC<RightSidebarProps> = ({ isOpen, children, cl
     sidebar.style.setProperty('--oc-right-sidebar-width', `${nextWidth}px`);
   }, []);
 
-  const openWidth = Math.min(RIGHT_SIDEBAR_MAX_WIDTH, Math.max(RIGHT_SIDEBAR_MIN_WIDTH, rightSidebarWidth || RIGHT_SIDEBAR_CONTENT_WIDTH));
+  const openWidth = isWorkbench
+    ? clampRightSidebarWidth(
+      hasManuallyResizedWorkbench ? rightSidebarWorkbenchWidth : defaultWorkbenchWidth,
+    )
+    : clampRightSidebarWidth(rightSidebarWidth || RIGHT_SIDEBAR_CONTENT_WIDTH);
   const appliedWidth = isOpen ? openWidth : 0;
+
+  React.useEffect(() => {
+    const handleResize = () => setViewportWidth(window.innerWidth);
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
 
   React.useLayoutEffect(() => {
     if (isResizing) {
@@ -105,7 +144,11 @@ export const RightSidebar: React.FC<RightSidebarProps> = ({ isOpen, children, cl
     activeResizePointerIDRef.current = null;
     resizingWidthRef.current = null;
     setIsResizing(false);
-    setRightSidebarWidth(finalWidth);
+    if (isWorkbench) {
+      setRightSidebarWorkbenchWidth(finalWidth);
+    } else {
+      setRightSidebarWidth(finalWidth);
+    }
   };
 
   const currentWidth = isResizing ? (resizingWidthRef.current ?? appliedWidth) : appliedWidth;

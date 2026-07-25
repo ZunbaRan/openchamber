@@ -43,6 +43,15 @@
         ],
         "rowActions": [
           {
+            "id": "open-item",
+            "label": "Open",
+            "type": "emit",
+            "event": "item.selected",
+            "payload": {
+              "itemId": { "$row": "id" }
+            }
+          },
+          {
             "id": "approve-item",
             "label": "Approve",
             "action": "__EXTENSION_ID__.item.approve",

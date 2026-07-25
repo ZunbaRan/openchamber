@@ -84,6 +84,14 @@
       "buildResources": "resources/icons",
       "output": "dist"
     },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "ZunbaRan",
+        "repo": "openchamber",
+        "releaseType": "release"
+      }
+    ],
     "artifactName": "${productName}-${version}-${arch}.${ext}",
     "npmRebuild": false,
     "mac": {

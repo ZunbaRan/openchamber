@@ -17,7 +17,21 @@ export interface ArtifactRunnerGeometry {
   visible: boolean;
 }
 
+export interface ArtifactRunnerVisibilityInput {
+  documentVisible: boolean;
+  baseDialogOpen: boolean;
+  blockingNativeDialogOpen: boolean;
+}
+
 const finite = (value: number, fallback = 0): number => Number.isFinite(value) ? value : fallback;
+
+export const resolveArtifactRunnerVisibility = ({
+  documentVisible,
+  baseDialogOpen,
+  blockingNativeDialogOpen,
+}: ArtifactRunnerVisibilityInput): boolean => (
+  documentVisible && !baseDialogOpen && !blockingNativeDialogOpen
+);
 
 export const resolveArtifactRunnerGeometry = (
   surface: ArtifactRunnerRect,

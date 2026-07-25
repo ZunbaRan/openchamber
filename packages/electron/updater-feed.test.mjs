@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import {
   parseLoopbackUpdaterUrl,
+  PRODUCTION_UPDATER_FEED,
   resolveUpdaterFeed,
 } from './updater-feed.mjs';
 
@@ -11,16 +12,24 @@ const overrideEnvironment = {
   OPENCHAMBER_UPDATER_E2E_URL: 'http://127.0.0.1:49152/updates/',
 };
 
-test('production and incomplete E2E builds have no updater feed', () => {
+test('production builds use the fork GitHub release feed', () => {
+  for (const environment of [{}, overrideEnvironment]) {
+    assert.deepEqual(resolveUpdaterFeed({ environment }), PRODUCTION_UPDATER_FEED);
+  }
+  assert.deepEqual(PRODUCTION_UPDATER_FEED, {
+    provider: 'github',
+    owner: 'ZunbaRan',
+    repo: 'openchamber',
+  });
+});
+
+test('incomplete E2E builds have no updater feed and never fall back to production', () => {
   const cases = [
-    {},
-    { environment: overrideEnvironment },
     { environment: { OPENCHAMBER_E2E: '1' }, testBuild: true },
     {
       environment: { OPENCHAMBER_UPDATER_E2E_URL: overrideEnvironment.OPENCHAMBER_UPDATER_E2E_URL },
       testBuild: true,
     },
-    { environment: overrideEnvironment, testBuild: false },
   ];
   for (const input of cases) assert.equal(resolveUpdaterFeed(input), null);
 });
@@ -54,7 +63,7 @@ test('uses a generic feed only when every test-only gate is valid', () => {
   });
 });
 
-test('invalid E2E URLs do not fall back to an external feed', () => {
+test('invalid E2E URLs do not fall back to the production feed', () => {
   for (const url of ['https://example.com/feed', 'http://localhost/feed', '']) {
     assert.equal(resolveUpdaterFeed({
       environment: { ...overrideEnvironment, OPENCHAMBER_UPDATER_E2E_URL: url },

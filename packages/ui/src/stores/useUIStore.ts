@@ -12,7 +12,7 @@ import type { TerminalShell } from '@/lib/api/types';
 
 export type MainTab = 'chat' | 'plan' | 'git' | 'diff' | 'terminal' | 'files' | 'context' | 'diagram';
 export type PendingDiffScope = 'working' | 'staged' | 'turn';
-export type RightSidebarTab = 'git' | 'files' | 'context';
+export type RightSidebarTab = 'git' | 'files' | 'context' | 'extensions';
 export type ContextPanelMode = 'diff' | 'file' | 'context' | 'plan' | 'chat' | 'preview' | 'browser';
 export type MermaidRenderingMode = 'svg' | 'ascii';
 export type UserMessageRenderingMode = 'markdown' | 'plain';
@@ -120,6 +120,8 @@ const CONTEXT_PANEL_MAX_LABEL_LENGTH = 120;
 const LEFT_SIDEBAR_MIN_WIDTH = 280;
 export const RIGHT_SIDEBAR_MIN_WIDTH = 360;
 export const RIGHT_SIDEBAR_MAX_WIDTH = 860;
+export const RIGHT_SIDEBAR_WORKBENCH_MIN_WIDTH = 620;
+export const RIGHT_SIDEBAR_WORKBENCH_MAX_WIDTH = 2400;
 const activeMainTabByRuntime = new Map<string, MainTab>();
 
 const runtimeMemoryKey = (value?: string | null): string => {
@@ -534,6 +536,8 @@ interface UIStore {
   isRightSidebarOpen: boolean;
   rightSidebarWidth: number;
   hasManuallyResizedRightSidebar: boolean;
+  rightSidebarWorkbenchWidth: number;
+  hasManuallyResizedRightSidebarWorkbench: boolean;
   rightSidebarTab: RightSidebarTab;
   contextPanelByDirectory: Record<string, ContextPanelDirectoryState>;
   isBottomTerminalOpen: boolean;
@@ -678,6 +682,7 @@ interface UIStore {
   toggleRightSidebar: () => void;
   setRightSidebarOpen: (open: boolean) => void;
   setRightSidebarWidth: (width: number) => void;
+  setRightSidebarWorkbenchWidth: (width: number) => void;
   setRightSidebarTab: (tab: RightSidebarTab) => void;
   openContextPanelTab: (directory: string, tab: ContextPanelTabDescriptor) => void;
   openContextDiff: (directory: string, filePath: string, staged?: boolean, scope?: PendingDiffScope | null) => void;
@@ -854,6 +859,8 @@ export const useUIStore = create<UIStore>()(
         isRightSidebarOpen: false,
         rightSidebarWidth: RIGHT_SIDEBAR_MIN_WIDTH,
         hasManuallyResizedRightSidebar: false,
+        rightSidebarWorkbenchWidth: 960,
+        hasManuallyResizedRightSidebarWorkbench: false,
         rightSidebarTab: 'git',
         contextPanelByDirectory: {},
         isBottomTerminalOpen: false,
@@ -1065,6 +1072,17 @@ export const useUIStore = create<UIStore>()(
             Math.max(RIGHT_SIDEBAR_MIN_WIDTH, width)
           );
           set({ rightSidebarWidth: clamped, hasManuallyResizedRightSidebar: true });
+        },
+
+        setRightSidebarWorkbenchWidth: (width) => {
+          const clamped = Math.min(
+            RIGHT_SIDEBAR_WORKBENCH_MAX_WIDTH,
+            Math.max(RIGHT_SIDEBAR_WORKBENCH_MIN_WIDTH, width)
+          );
+          set({
+            rightSidebarWorkbenchWidth: clamped,
+            hasManuallyResizedRightSidebarWorkbench: true,
+          });
         },
 
         setRightSidebarTab: (tab) => {
@@ -2283,7 +2301,12 @@ export const useUIStore = create<UIStore>()(
 
           if (
             typeof state.rightSidebarTab !== 'string'
-            || (state.rightSidebarTab !== 'git' && state.rightSidebarTab !== 'files' && state.rightSidebarTab !== 'context')
+            || (
+              state.rightSidebarTab !== 'git'
+              && state.rightSidebarTab !== 'files'
+              && state.rightSidebarTab !== 'context'
+              && state.rightSidebarTab !== 'extensions'
+            )
           ) {
             state.rightSidebarTab = 'git';
           }
@@ -2329,6 +2352,7 @@ export const useUIStore = create<UIStore>()(
           sidebarWidth: state.sidebarWidth,
           isRightSidebarOpen: state.isRightSidebarOpen,
           rightSidebarWidth: state.rightSidebarWidth,
+          rightSidebarWorkbenchWidth: state.rightSidebarWorkbenchWidth,
           rightSidebarTab: state.rightSidebarTab,
           contextPanelByDirectory: state.contextPanelByDirectory,
           isBottomTerminalOpen: state.isBottomTerminalOpen,

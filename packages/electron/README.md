@@ -84,11 +84,13 @@ After packaging, run `bun run --cwd packages/electron verify:linux-appimage`. Th
 
 Running a packaged Linux AppImage requires FUSE (`libfuse.so.2`, typically `libfuse2` / `libfuse2t64` on Debian/Ubuntu). Without FUSE, start with `APPIMAGE_EXTRACT_AND_RUN=1`.
 
-This fork does not configure a production desktop updater feed on macOS, Windows, or Linux. Packaged clients do not contact the upstream `openchamber/openchamber` releases, do not show update notifications, and omit native “Check for Updates” menu items. Updates are distributed as explicit replacement installers until this fork defines and operates its own signed release channel.
+Production Desktop updates use the public GitHub Release feed at `ZunbaRan/openchamber`. Packaged clients never query the upstream `openchamber/openchamber` release channel. Development builds keep the updater capability disabled.
+
+Each published version must use a semver tag greater than the installed application version and include the platform artifacts plus electron-builder metadata produced by this repository's release workflow. In particular, macOS requires the merged `latest-mac.yml` and matching ZIP/blockmap assets in addition to the user-facing DMG; Windows requires `latest.yml` and the matching NSIS installer/blockmap. A Release without the expected platform manifest is treated as no available update rather than falling back to upstream.
 
 ### Updater End-to-End Fixture
 
-A loopback-only updater fixture remains available for contributor QA of the retained updater implementation. It is enabled only by the embedded E2E build marker together with `OPENCHAMBER_E2E=1` and a credential-free loopback URL; invalid or incomplete test configuration resolves to no feed and never falls back to an external source. It is test infrastructure, not a user-configurable or production update source. See [`scripts/updater-e2e-fixture.md`](./scripts/updater-e2e-fixture.md) for the controlled procedure.
+A loopback-only updater fixture remains available for contributor QA. It is enabled only by the embedded E2E build marker together with `OPENCHAMBER_E2E=1` and a credential-free loopback URL; invalid or incomplete E2E configuration resolves to no feed and never falls back to the production GitHub source. It is test infrastructure, not a user-configurable update source. See [`scripts/updater-e2e-fixture.md`](./scripts/updater-e2e-fixture.md) for the controlled procedure.
 
 The package supports macOS, Windows, and Linux desktop features. Linux AppImage builds include in-app window controls; system tray and launch-at-login remain macOS/Windows only. Some native discovery helpers are platform-specific. For example, app icon fetching and app filtering currently only work on macOS, while opening files in installed apps and installed-app discovery work on macOS and Windows (Linux returns an empty list without errors).
 
@@ -137,7 +139,7 @@ Use an explicit override when testing a different OpenCode CLI build or when a u
 - SSH host import, connections, logs, and port forwarding.
 - SSH uses OpenSSH ControlMaster on macOS/Linux. Windows uses independent hidden OpenSSH processes for setup commands and each long-lived forward because Win32 OpenSSH does not support ControlMaster reliably.
 - Tunnel lifecycle integration through the web server runtime.
-- Production updater kill switch plus a loopback-only E2E updater flow.
+- Fork-owned production GitHub updater plus an isolated loopback-only E2E updater flow.
 
 ## IPC Pattern
 

@@ -24,6 +24,8 @@ const createFixture = async (fetchImpl, {
   networkPermissions = ['https://crm.example.com'],
   artifacts = false,
   views = true,
+  dashboard = false,
+  version = '1.0.0',
 } = {}) => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ocix-runtime-auth-'));
   const dataDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'ocix-runtime-auth-data-'));
@@ -33,7 +35,8 @@ const createFixture = async (fetchImpl, {
     $schema: 'openchamber://extension/v1',
     id: 'com.acme.crm',
     name: 'Acme CRM',
-    version: '1.0.0',
+    ...(dashboard ? { shortName: 'CRM' } : {}),
+    version,
     ...(routing ? {
       agentRouting: {
         domain: 'crm',
@@ -63,6 +66,32 @@ const createFixture = async (fetchImpl, {
       runtime: 'declarative',
       entry: 'ui/view.json',
       tools: ['crm_open'],
+      ...(dashboard ? {
+        title: 'Customer list',
+        dashboard: {
+          inputSchema: {
+            type: 'object',
+            properties: { region: { type: 'string', enum: ['all', 'apac'] } },
+            required: ['region'],
+          },
+          defaultContext: { region: 'all' },
+          events: {
+            emits: [{
+              id: 'customer.selected',
+              payloadSchema: {
+                type: 'object',
+                properties: { customerId: { type: 'string' } },
+                required: ['customerId'],
+              },
+            }],
+            accepts: [],
+          },
+          migrations: [{
+            fromVersion: '^0.0.0',
+            operations: [{ op: 'rename', from: 'territory', to: 'region' }],
+          }],
+        },
+      } : {}),
       ...(routing ? { routing: { intents: ['crm.overview', 'crm.pipeline.view'], priority: 90, operation: 'read' } } : {}),
     }] : [],
     ...(artifacts ? {
@@ -75,6 +104,27 @@ const createFixture = async (fetchImpl, {
         displayModes: ['inline', 'workspace'],
         inlineHeight: 480,
         capabilities: { scripts: true, businessActions: ['com.acme.crm.query'] },
+        ...(dashboard ? {
+          dashboard: {
+            inputSchema: {
+              type: 'object',
+              properties: { customerId: { type: 'string', minLength: 1 } },
+              required: ['customerId'],
+            },
+            events: { emits: [], accepts: ['customer.selected'] },
+          },
+        } : {}),
+      }],
+    } : {}),
+    ...(dashboard && artifacts ? {
+      links: [{
+        id: 'customer-list-to-detail',
+        from: 'com.acme.crm.overview',
+        event: 'customer.selected',
+        to: 'com.acme.crm.explorer',
+        map: { customerId: '$event.payload.customerId' },
+        relationship: 'customer',
+        placement: 'adjacent',
       }],
     } : {}),
     actions: [{
@@ -232,6 +282,97 @@ describe('Interactive UI connector authentication', () => {
     expect((await runtime.getRoutingCapabilities()).extensions[0].tools[0]).toMatchObject({
       name: 'crm_open_explorer',
       forms: ['html-artifact'],
+    });
+  });
+
+  it('publishes a normalized Workbench catalog without weakening Tool-bound descriptors', async () => {
+    const { runtime } = await createFixture(async () => new Response('{}'), {
+      artifacts: true,
+      routing: true,
+      dashboard: true,
+    });
+    const catalog = await runtime.getWorkbenchCatalog();
+    expect(catalog.errors).toEqual([]);
+    expect(catalog.extensions[0]).toMatchObject({
+      id: 'com.acme.crm',
+      shortName: 'CRM',
+      links: [{ id: 'customer-list-to-detail' }],
+      surfaces: [
+        {
+          surfaceId: 'com.acme.crm.overview',
+          form: 'interactive-ui',
+          title: 'Customer list',
+          manualLaunch: { enabled: true },
+        },
+        {
+          surfaceId: 'com.acme.crm.explorer',
+          form: 'html-artifact',
+          manualLaunch: { enabled: false, missingRequiredPaths: ['customerId'] },
+        },
+      ],
+    });
+
+    await expect(runtime.getViewDescriptor('com.acme.crm.overview'))
+      .rejects.toMatchObject({ code: 'tool_view_mismatch' });
+    await expect(runtime.getViewDescriptor('com.acme.crm.overview', '', { launchSource: 'workbench' }))
+      .resolves.toMatchObject({
+        view: {
+          id: 'com.acme.crm.overview',
+          title: 'Customer list',
+          dashboard: { manualLaunch: { enabled: true } },
+        },
+      });
+    await expect(runtime.prepareWorkbenchTile({
+      source: {
+        kind: 'third-party-extension',
+        extensionId: 'com.acme.crm',
+        surfaceId: 'com.acme.crm.overview',
+      },
+      form: 'interactive-ui',
+      context: { region: 'all', undeclared: 'removed' },
+    })).resolves.toMatchObject({
+      source: {
+        kind: 'third-party-extension',
+        extensionId: 'com.acme.crm',
+        surfaceId: 'com.acme.crm.overview',
+        compatibleVersion: '^1.0.0',
+      },
+      context: { region: 'all' },
+      layout: { column: 0, row: 0, columns: 6, rows: 4 },
+      contextDigest: expect.stringMatching(/^sha256-/),
+    });
+    await expect(runtime.prepareWorkbenchTile({
+      source: {
+        kind: 'third-party-extension',
+        extensionId: 'com.acme.crm',
+        surfaceId: 'com.acme.crm.explorer',
+      },
+      form: 'html-artifact',
+      context: {},
+    })).rejects.toMatchObject({
+      code: 'invalid_dashboard_contract',
+      status: 400,
+    });
+
+    await expect(runtime.migrateWorkbenchTile({
+      tileId: 'tile-legacy',
+      source: {
+        kind: 'third-party-extension',
+        extensionId: 'com.acme.crm',
+        surfaceId: 'com.acme.crm.overview',
+        compatibleVersion: '^0.0.0',
+      },
+      form: 'interactive-ui',
+      context: { territory: 'apac' },
+      layout: { column: 9, row: 2, columns: 3, rows: 2 },
+      displayMode: 'tile',
+      relationship: null,
+      origin: null,
+    })).resolves.toMatchObject({
+      tileId: 'tile-legacy',
+      source: { compatibleVersion: '^1.0.0' },
+      context: { region: 'apac' },
+      layout: { column: 8, row: 2, columns: 4, rows: 3 },
     });
   });
 

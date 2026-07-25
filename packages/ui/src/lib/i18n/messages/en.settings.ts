@@ -115,6 +115,8 @@ export const settingsDict = {
   'settings.interactiveUI.fields.setupCodePlaceholder': 'Enter setup code',
   'settings.interactiveUI.uninstall.title': 'Uninstall extension?',
   'settings.interactiveUI.uninstall.description': '{name} will be disabled and moved to recoverable storage.',
+  'settings.interactiveUI.uninstall.impact': 'This also removes {tiles} Workbench tiles across {projects} local projects.',
+  'settings.interactiveUI.uninstall.impactLoading': 'Calculating the affected Workbench tiles…',
   'settings.interactiveUI.toast.loadFailed': 'Could not load extensions',
   'settings.interactiveUI.toast.actionFailed': 'Extension action failed',
   'settings.interactiveUI.toast.installed': 'Extension installed',

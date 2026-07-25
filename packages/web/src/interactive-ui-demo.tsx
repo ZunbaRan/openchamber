@@ -116,11 +116,11 @@ const clippingArtifactEnvelope: HTMLArtifactResultEnvelope = {
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <style>
-    *{box-sizing:border-box}html,body{width:100%;height:100%;margin:0}body{display:grid;place-items:center;background:#ff00cc;color:#160014;font:700 24px/1.4 ui-sans-serif,system-ui,sans-serif}.panel{text-align:center}.panel button{margin-top:18px;padding:10px 18px;border:2px solid #160014;border-radius:10px;background:#fff;color:#160014;font:inherit;cursor:pointer}
+    *{box-sizing:border-box}html,body{width:100%;height:100%;margin:0}body{color:#160014;font:700 24px/1.4 ui-sans-serif,system-ui,sans-serif}.panel{position:fixed;inset:0;display:grid;place-items:center;background:#ff00cc}.content{text-align:center}.panel button{margin-top:18px;padding:10px 18px;border:2px solid #160014;border-radius:10px;background:#fff;color:#160014;font:inherit;cursor:pointer}
   </style>
 </head>
 <body>
-  <main class="panel"><div>ARTIFACT CLIP TEST</div><button id="counter" type="button">count 0</button></main>
+  <main class="panel"><div class="content"><div>ARTIFACT CLIP TEST</div><button id="counter" type="button">count 0</button></div></main>
   <script>(()=>{let count=0;const button=document.getElementById('counter');button.addEventListener('click',()=>{count+=1;button.textContent='count '+count})})()</script>
 </body>
 </html>`,

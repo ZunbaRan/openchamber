@@ -115,6 +115,8 @@ export const settingsDict = {
   'settings.interactiveUI.fields.setupCodePlaceholder': '输入连接码',
   'settings.interactiveUI.uninstall.title': '卸载扩展？',
   'settings.interactiveUI.uninstall.description': '{name} 将被停用并移至可恢复存储。',
+  'settings.interactiveUI.uninstall.impact': '同时会删除 {projects} 个本地项目中的 {tiles} 个工作台磁贴。',
+  'settings.interactiveUI.uninstall.impactLoading': '正在计算受影响的工作台磁贴…',
   'settings.interactiveUI.toast.loadFailed': '无法加载扩展',
   'settings.interactiveUI.toast.actionFailed': '扩展操作失败',
   'settings.interactiveUI.toast.installed': '扩展已安装',

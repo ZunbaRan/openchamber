@@ -40,6 +40,33 @@ test('scaffolds and validates a mixed Interactive UI plus HTML Artifact extensio
       placement: { type: 'header', name: 'Authorization', prefix: 'Bearer ' },
     });
     assert.deepEqual(manifest.connectors[0].test, { method: 'GET', path: '/interactive-ui/health' });
+    assert.equal(manifest.shortName, 'Acme Operations');
+    assert.equal(manifest.views[0].dashboard.layout.columns, 6);
+    assert.equal(manifest.views[0].dashboard.events.emits[0].id, 'item.selected');
+    assert.deepEqual(manifest.views[1].dashboard.inputSchema.required, ['scope', 'itemId']);
+    assert.deepEqual(manifest.views[1].dashboard.defaultContext, { scope: 'default' });
+    assert.equal(manifest.views[1].dashboard.popout.supported, false);
+    assert.equal(manifest.artifacts[0].dashboard.popout.supported, true);
+    assert.deepEqual(manifest.links, [{
+      id: 'overview-item-to-workspace',
+      from: 'com.acme.operations.overview',
+      event: 'item.selected',
+      to: 'com.acme.operations.workspace',
+      map: {
+        scope: '$source.context.scope',
+        itemId: '$event.payload.itemId',
+      },
+      relationship: 'item',
+      placement: 'adjacent',
+    }]);
+    const overview = JSON.parse(await readFile(path.join(target, 'ui', 'declarative', 'overview.view.json'), 'utf8'));
+    assert.deepEqual(overview.layout.children[1].rowActions[0], {
+      id: 'open-item',
+      label: 'Open',
+      type: 'emit',
+      event: 'item.selected',
+      payload: { itemId: { $row: 'id' } },
+    });
 
     const report = await validateExtension(target);
     assert.deepEqual(report.declarativeViews, ['com.acme.operations.overview']);

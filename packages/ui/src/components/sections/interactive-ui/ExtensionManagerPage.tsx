@@ -68,6 +68,7 @@ export const ExtensionManagerPage: React.FC = () => {
   const [loading, setLoading] = React.useState(true);
   const [busy, setBusy] = React.useState<string | null>(null);
   const [confirmUninstall, setConfirmUninstall] = React.useState<InstalledExtension | null>(null);
+  const [uninstallImpact, setUninstallImpact] = React.useState<{ tiles: number; projects: number } | null>(null);
   const [pendingPackage, setPendingPackage] = React.useState<{ packageBase64: string; inspection: PackageInspection } | null>(null);
   const [marketplaceUrl, setMarketplaceUrl] = React.useState('');
   const [pendingMarketplace, setPendingMarketplace] = React.useState<MarketplaceInspection | null>(null);
@@ -90,6 +91,31 @@ export const ExtensionManagerPage: React.FC = () => {
   }, [t]);
 
   React.useEffect(() => { void refresh(); }, [refresh]);
+
+  React.useEffect(() => {
+    if (!confirmUninstall) {
+      setUninstallImpact(null);
+      return;
+    }
+    let active = true;
+    setUninstallImpact(null);
+    void requestJson<{ tiles: number; projects: number }>(
+      `/api/interactive-ui/manager/extensions/${encodeURIComponent(confirmUninstall.id)}/uninstall-impact`,
+      { cache: 'no-store' },
+    ).then((impact) => {
+      if (active) setUninstallImpact(impact);
+    }).catch((error) => {
+      if (active) {
+        toast.error(t('settings.interactiveUI.toast.loadFailed'), {
+          description: error instanceof Error ? error.message : undefined,
+        });
+        setConfirmUninstall(null);
+      }
+    });
+    return () => {
+      active = false;
+    };
+  }, [confirmUninstall, t]);
 
   const runMutation = React.useCallback(async (key: string, operation: () => Promise<unknown>, successKey: Parameters<typeof t>[0]): Promise<boolean> => {
     setBusy(key);
@@ -601,9 +627,14 @@ export const ExtensionManagerPage: React.FC = () => {
             <DialogTitle>{t('settings.interactiveUI.uninstall.title')}</DialogTitle>
             <DialogDescription>{t('settings.interactiveUI.uninstall.description', { name: confirmUninstall?.name ?? '' })}</DialogDescription>
           </DialogHeader>
+          <p className="typography-ui-caption text-muted-foreground">
+            {uninstallImpact
+              ? t('settings.interactiveUI.uninstall.impact', uninstallImpact)
+              : t('settings.interactiveUI.uninstall.impactLoading')}
+          </p>
           <DialogFooter>
             <Button variant="outline" onClick={() => setConfirmUninstall(null)}>{t('settings.interactiveUI.actions.cancel')}</Button>
-            <Button variant="destructive" disabled={!confirmUninstall || busy === `uninstall:${confirmUninstall.id}`} onClick={() => {
+            <Button variant="destructive" disabled={!confirmUninstall || !uninstallImpact || busy === `uninstall:${confirmUninstall.id}`} onClick={() => {
               if (!confirmUninstall) return;
               const extension = confirmUninstall;
               setConfirmUninstall(null);

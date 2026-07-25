@@ -2,6 +2,7 @@
   "$schema": "openchamber://extension/v1",
   "id": "com.openchamber.demo.sales",
   "name": "OpenChamber Demo Sales",
+  "shortName": "Sales",
   "version": "1.0.0",
   "publisher": "OpenChamber",
   "agentRouting": {
@@ -32,6 +33,7 @@
   "views": [
     {
       "id": "com.openchamber.demo.sales.summary",
+      "title": "销售概览",
       "runtime": "declarative",
       "entry": "ui/declarative/sales-summary.view.json",
       "tools": ["sales_get_summary"],
@@ -40,10 +42,58 @@
         "priority": 85,
         "operation": "mixed"
       },
-      "displayModes": ["inline", "workspace"]
+      "displayModes": ["inline", "workspace"],
+      "dashboard": {
+        "description": "查看指定区域与月份的真实销售概览。",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "region": { "type": "string", "minLength": 1, "maxLength": 80 },
+            "period": { "type": "string", "minLength": 7, "maxLength": 7 }
+          },
+          "required": ["region", "period"]
+        },
+        "defaultContext": {
+          "region": "east",
+          "period": "2026-07"
+        },
+        "layout": {
+          "columns": 6,
+          "rows": 5,
+          "minColumns": 4,
+          "maxColumns": 12,
+          "minRows": 3,
+          "maxRows": 12,
+          "overflow": "auto"
+        },
+        "instances": "byContext",
+        "refresh": {
+          "mode": "onFocus",
+          "minimumIntervalSeconds": 30
+        },
+        "events": {
+          "emits": [
+            {
+              "id": "order.selected",
+              "payloadSchema": {
+                "type": "object",
+                "properties": {
+                  "orderId": { "type": "string", "minLength": 1, "maxLength": 160 }
+                },
+                "required": ["orderId"]
+              }
+            }
+          ],
+          "accepts": []
+        },
+        "popout": {
+          "supported": true
+        }
+      }
     },
     {
       "id": "com.openchamber.demo.sales.dashboard",
+      "title": "销售原生工作台",
       "runtime": "native",
       "entry": "dist/ui.mjs",
       "export": "extension",
@@ -53,7 +103,109 @@
         "priority": 80,
         "operation": "mixed"
       },
-      "displayModes": ["inline", "workspace", "fullscreen"]
+      "displayModes": ["inline", "workspace", "fullscreen"],
+      "dashboard": {
+        "description": "需要 Agent 提供区域参数的 Trusted Native 销售工作台。",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "region": { "type": "string", "minLength": 1, "maxLength": 80 }
+          },
+          "required": ["region"]
+        },
+        "layout": {
+          "columns": 6,
+          "rows": 6,
+          "minColumns": 4,
+          "maxColumns": 12,
+          "minRows": 4,
+          "maxRows": 16,
+          "overflow": "auto"
+        },
+        "instances": "byContext",
+        "refresh": {
+          "mode": "manual",
+          "minimumIntervalSeconds": 30
+        },
+        "events": {
+          "emits": [],
+          "accepts": []
+        },
+        "popout": {
+          "supported": false
+        }
+      }
+    }
+  ],
+  "artifacts": [
+    {
+      "id": "com.openchamber.demo.sales.order-detail",
+      "title": "订单详情",
+      "entry": "ui/artifacts/order-detail.html",
+      "tools": ["sales_get_order_detail"],
+      "routing": {
+        "intents": ["sales.order.view"],
+        "priority": 82,
+        "operation": "read"
+      },
+      "displayModes": ["inline", "workspace", "fullscreen"],
+      "inlineHeight": 420,
+      "capabilities": {
+        "scripts": true,
+        "businessActions": ["sales.dashboard.query"]
+      },
+      "dashboard": {
+        "description": "从销售概览联动打开指定订单；缺少 orderId 时不能手动启动。",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "region": { "type": "string", "minLength": 1, "maxLength": 80 },
+            "period": { "type": "string", "minLength": 7, "maxLength": 7 },
+            "orderId": { "type": "string", "minLength": 1, "maxLength": 160 }
+          },
+          "required": ["region", "period", "orderId"]
+        },
+        "defaultContext": {
+          "region": "east",
+          "period": "2026-07"
+        },
+        "layout": {
+          "columns": 6,
+          "rows": 5,
+          "minColumns": 4,
+          "maxColumns": 12,
+          "minRows": 3,
+          "maxRows": 12,
+          "overflow": "auto"
+        },
+        "instances": "byContext",
+        "refresh": {
+          "mode": "manual",
+          "minimumIntervalSeconds": 30
+        },
+        "events": {
+          "emits": [],
+          "accepts": ["order.selected"]
+        },
+        "popout": {
+          "supported": true
+        }
+      }
+    }
+  ],
+  "links": [
+    {
+      "id": "summary-order-to-detail",
+      "from": "com.openchamber.demo.sales.summary",
+      "event": "order.selected",
+      "to": "com.openchamber.demo.sales.order-detail",
+      "map": {
+        "region": "$source.context.region",
+        "period": "$source.context.period",
+        "orderId": "$event.payload.orderId"
+      },
+      "relationship": "order",
+      "placement": "adjacent"
     }
   ],
   "actions": [

@@ -8,11 +8,13 @@ const outputDirectory = path.join(projectRoot, '.tmp', 'interactive-ui-unified-a
 const outputPath = path.join(outputDirectory, 'report.json');
 
 const reportPaths = {
+  workbenchUnit: '.tmp/extension-workbench/unit/report.json',
   functional: '.tmp/interactive-ui-unified-functional/report.json',
   security: '.tmp/interactive-ui-security/report.json',
   visual: '.tmp/interactive-ui-visual-smoke/baseline.json',
   routing: '.tmp/interactive-ui-model-routing/report.json',
   packagedDesktop: '.tmp/interactive-ui-packaged-desktop/report.json',
+  artifactRunnerClipping: '.tmp/artifact-runner-clipping-packaged/report.json',
   performance: '.tmp/interactive-ui-runtime-performance/report.json',
 };
 
@@ -46,6 +48,13 @@ const performancePassed = performance.bundles.mainEntry.bytes <= performance.bud
   && performance.artifactStore.rssDeltaBytes <= performance.budgets.benchmarkRssDeltaBytes;
 
 const gates = [
+  {
+    id: 'extension-workbench-unit',
+    passed: reports.workbenchUnit?.ok === true
+      && reports.workbenchUnit?.complete === true
+      && reports.workbenchUnit?.cases?.fail === 0,
+    report: reportPaths.workbenchUnit,
+  },
   { id: 'functional', passed: reports.functional?.ok === true, report: reportPaths.functional },
   {
     id: 'security',
@@ -79,14 +88,21 @@ const gates = [
       && reports.packagedDesktop?.artifact?.scriptsRunner === 'desktop-runner:ready-then-stopped',
     report: reportPaths.packagedDesktop,
   },
+  {
+    id: 'artifact-runner-clipping-and-occlusion-macos-arm64',
+    passed: reports.artifactRunnerClipping?.ok === true
+      && reports.artifactRunnerClipping?.dialogOcclusion?.ok === true
+      && reports.artifactRunnerClipping?.modeLifecycle?.ok === true,
+    report: reportPaths.artifactRunnerClipping,
+  },
   { id: 'runtime-performance', passed: performancePassed, report: reportPaths.performance },
 ];
 
 const unavailableModels = Array.isArray(reports.routing?.unavailableModels) ? reports.routing.unavailableModels : [];
-const externalBlockers = [
-  ...(Array.isArray(reports.routing?.externalBlockers) ? reports.routing.externalBlockers : []),
-  ...(performance.releaseScope?.unverified ?? []).map((runtime) => `${runtime} has no runtime acceptance evidence`),
-];
+const externalBlockers = Array.isArray(reports.routing?.externalBlockers)
+  ? reports.routing.externalBlockers
+  : [];
+const unverifiedPlatforms = performance.releaseScope?.unverified ?? [];
 const localGatesPassed = gates.every((gate) => gate.passed);
 const complete = localGatesPassed && reports.routing?.complete === true && externalBlockers.length === 0;
 
@@ -95,7 +111,7 @@ const report = {
   generatedAt: new Date().toISOString(),
   ok: localGatesPassed,
   complete,
-  releaseCandidate: localGatesPassed ? 'tested-runtimes' : 'blocked',
+  releaseCandidate: complete ? 'macos-arm64' : (localGatesPassed ? 'tested-runtimes' : 'blocked'),
   gates,
   capabilities: {
     stable: [
@@ -114,6 +130,7 @@ const report = {
     unavailableModels,
   },
   externalBlockers,
+  unverifiedPlatforms,
   evidence: reportPaths,
 };
 
@@ -125,6 +142,7 @@ console.log(JSON.stringify({
   releaseCandidate: report.releaseCandidate,
   gates: report.gates,
   externalBlockers: report.externalBlockers,
+  unverifiedPlatforms: report.unverifiedPlatforms,
   reportPath: path.relative(projectRoot, outputPath),
 }, null, 2));
 

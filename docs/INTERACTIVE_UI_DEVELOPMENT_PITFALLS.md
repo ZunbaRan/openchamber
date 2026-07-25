@@ -215,6 +215,16 @@ OpenChamber 安装器统一协调所有已启用扩展的 Tool/Skill，并在 Op
 
 **验收教训**：DevTools `Page.captureScreenshot` 只捕获主 renderer，不会包含叠加的原生 `WebContentsView`，因此空白截图也可能“通过”。回归必须启动打包后的 `.app`，把 Artifact 滚到固定输入区/保护区边界，用 macOS 系统级窗口截图检查最终合成画面，并至少断言保护区像素未被 Runner 覆盖。`test:artifact-runner-clipping-packaged` 是该边界的独立验收，不依赖 Agent Runtime 或 OCIX 安装。
 
+### 2.20 React Portal 弹窗的 z-index 盖不住 Desktop Runner
+
+**症状**：更新、设置或确认弹窗已经出现并带有遮罩，但 Scripts HTML Artifact 仍显示在弹窗上方；关闭弹窗后还可能因为错误地销毁 Runner 而丢失交互状态。
+
+**根因**：Base UI 的 Dialog 通过 `div` Portal 渲染，不是原生 `<dialog open aria-modal="true">`。`WebContentsView` 又不属于 DOM stacking context，所以同时存在两个错误假设：提高 Portal 的 z-index 可以盖住原生 View，以及只查询 `dialog[open]` 就能发现全部模态层。
+
+**修正原则**：共享 Dialog Host 在第一个 Base UI 遮罩挂载时给 `documentElement` 设置 `oc-dialog-open`，最后一个关闭时清除；Artifact Host 同时观察这个权威信号和原生 `<dialog>`，只把 Runner 设为不可见，不 stop/restart。关闭弹窗后重新计算几何并恢复同一个 Runner。
+
+**验收要求**：打包态测试必须使用系统级窗口截图，在 Runner 区域放置不透明 Portal 遮罩并验证遮罩像素不被 Artifact 覆盖；移除遮罩后再次截图，证明原 Runner 像素恢复。识别色必须放在 Artifact 的内部内容层，不能放在 `html/body` 背景上，因为安全基线会强制根页面透明；否则像素断言会把已经恢复的 Runner 误判为缺失。只断言 DOM 中的遮罩存在或 z-index 更高不算通过。
+
 ## 3. 推荐的开发闭环
 
 1. 读取最近的 `DOCUMENTATION.md`、本仓库 `AGENTS.md` 和匹配的项目 Skill。

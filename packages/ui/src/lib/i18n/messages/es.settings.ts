@@ -115,6 +115,8 @@ export const settingsDict = {
   'settings.interactiveUI.fields.setupCodePlaceholder': 'Introduce el código de configuración',
   'settings.interactiveUI.uninstall.title': '¿Desinstalar la extensión?',
   'settings.interactiveUI.uninstall.description': '{name} se desactivará y moverá a un almacenamiento recuperable.',
+  'settings.interactiveUI.uninstall.impact': 'También se eliminarán {tiles} mosaicos del Workbench en {projects} proyectos locales.',
+  'settings.interactiveUI.uninstall.impactLoading': 'Calculando los mosaicos del Workbench afectados…',
   'settings.interactiveUI.toast.loadFailed': 'No se pudieron cargar las extensiones',
   'settings.interactiveUI.toast.actionFailed': 'La acción de extensión falló',
   'settings.interactiveUI.toast.installed': 'Extensión instalada',

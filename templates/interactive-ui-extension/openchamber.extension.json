@@ -2,6 +2,7 @@
   "$schema": "openchamber://extension/v1",
   "id": "__EXTENSION_ID__",
   "name": "__EXTENSION_NAME__",
+  "shortName": "__EXTENSION_NAME__",
   "version": "1.0.0",
   "publisher": "Your Organization",
   "agentRouting": {
@@ -53,7 +54,52 @@
         "priority": 80,
         "operation": "read"
       },
-      "displayModes": ["inline", "workspace"]
+      "displayModes": ["inline", "workspace"],
+      "dashboard": {
+        "description": "A manually launchable overview tile for the extension Workbench.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "scope": { "type": "string", "minLength": 1, "maxLength": 80 }
+          },
+          "required": ["scope"]
+        },
+        "defaultContext": {
+          "scope": "default"
+        },
+        "layout": {
+          "columns": 6,
+          "rows": 5,
+          "minColumns": 4,
+          "maxColumns": 12,
+          "minRows": 3,
+          "maxRows": 12,
+          "overflow": "auto"
+        },
+        "instances": "byContext",
+        "refresh": {
+          "mode": "onFocus",
+          "minimumIntervalSeconds": 30
+        },
+        "events": {
+          "emits": [
+            {
+              "id": "item.selected",
+              "payloadSchema": {
+                "type": "object",
+                "properties": {
+                  "itemId": { "type": "string", "minLength": 1, "maxLength": 160 }
+                },
+                "required": ["itemId"]
+              }
+            }
+          ],
+          "accepts": []
+        },
+        "popout": {
+          "supported": true
+        }
+      }
     },
     {
       "id": "__EXTENSION_ID__.workspace",
@@ -66,7 +112,42 @@
         "priority": 85,
         "operation": "mixed"
       },
-      "displayModes": ["inline", "workspace", "fullscreen"]
+      "displayModes": ["inline", "workspace", "fullscreen"],
+      "dashboard": {
+        "description": "An item workspace opened by an Agent or a declared overview event.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "scope": { "type": "string", "minLength": 1, "maxLength": 80 },
+            "itemId": { "type": "string", "minLength": 1, "maxLength": 160 }
+          },
+          "required": ["scope", "itemId"]
+        },
+        "defaultContext": {
+          "scope": "default"
+        },
+        "layout": {
+          "columns": 6,
+          "rows": 6,
+          "minColumns": 4,
+          "maxColumns": 12,
+          "minRows": 4,
+          "maxRows": 16,
+          "overflow": "auto"
+        },
+        "instances": "byContext",
+        "refresh": {
+          "mode": "manual",
+          "minimumIntervalSeconds": 30
+        },
+        "events": {
+          "emits": [],
+          "accepts": ["item.selected"]
+        },
+        "popout": {
+          "supported": false
+        }
+      }
     }
   ],
   "artifacts": [
@@ -88,7 +169,55 @@
           "__EXTENSION_ID__.overview.query",
           "__EXTENSION_ID__.item.approve"
         ]
+      },
+      "dashboard": {
+        "description": "A script-capable HTML Artifact that can be launched or pinned in the Workbench.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "scope": { "type": "string", "minLength": 1, "maxLength": 80 }
+          },
+          "required": ["scope"]
+        },
+        "defaultContext": {
+          "scope": "default"
+        },
+        "layout": {
+          "columns": 6,
+          "rows": 7,
+          "minColumns": 4,
+          "maxColumns": 12,
+          "minRows": 4,
+          "maxRows": 18,
+          "overflow": "auto"
+        },
+        "instances": "byContext",
+        "refresh": {
+          "mode": "manual",
+          "minimumIntervalSeconds": 30
+        },
+        "events": {
+          "emits": [],
+          "accepts": []
+        },
+        "popout": {
+          "supported": true
+        }
       }
+    }
+  ],
+  "links": [
+    {
+      "id": "overview-item-to-workspace",
+      "from": "__EXTENSION_ID__.overview",
+      "event": "item.selected",
+      "to": "__EXTENSION_ID__.workspace",
+      "map": {
+        "scope": "$source.context.scope",
+        "itemId": "$event.payload.itemId"
+      },
+      "relationship": "item",
+      "placement": "adjacent"
     }
   ],
   "actions": [

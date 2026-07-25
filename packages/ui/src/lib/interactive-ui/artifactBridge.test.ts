@@ -119,6 +119,30 @@ describe('HTML Artifact bridge parser', () => {
     }), 'channel-1', 0, { allowBusiness: true })).toBeNull();
   });
 
+  test('allows bounded dashboard events only for installed third-party Artifacts', () => {
+    const dashboardEvent = message({
+      type: 'artifact.dashboardEvent',
+      payload: {
+        eventId: 'customer.selected',
+        payload: { customerId: 'cust-1001' },
+      },
+    });
+    expect(parseHTMLArtifactBridgeMessage(dashboardEvent, 'channel-1', 0)).toBeNull();
+    expect(parseHTMLArtifactBridgeMessage(
+      dashboardEvent,
+      'channel-1',
+      0,
+      { allowBusiness: true },
+    )).toEqual({
+      type: 'artifact.dashboardEvent',
+      payload: {
+        eventId: 'customer.selected',
+        payload: { customerId: 'cust-1001' },
+      },
+      sequence: 1,
+    });
+  });
+
   test('builds a channel-bound business result without exposing host internals', () => {
     expect(createHTMLArtifactBusinessResultMessage({
       channelId: 'channel-1',

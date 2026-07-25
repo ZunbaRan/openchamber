@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
+import { gzipSync } from 'node:zlib';
 import { createHTMLArtifactStore } from '../packages/web/server/lib/interactive-ui/artifact-store.js';
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -58,6 +59,19 @@ const directoryBytes = async (directory) => {
   return total;
 };
 
+const readCurrentBundle = async (prefix, { largest = false } = {}) => {
+  const names = (await fs.readdir(distAssetsDirectory))
+    .filter((name) => name.startsWith(prefix) && name.endsWith('.js'));
+  assert(names.length > 0, `Current production build is missing ${prefix}*.js`);
+  const entries = await Promise.all(names.map(async (file) => {
+    const content = await fs.readFile(path.join(distAssetsDirectory, file));
+    return { file, bytes: content.byteLength, gzipBytes: gzipSync(content).byteLength };
+  }));
+  return largest
+    ? entries.sort((left, right) => right.bytes - left.bytes)[0]
+    : entries.sort((left, right) => left.file.localeCompare(right.file))[0];
+};
+
 await fs.rm(outputDirectory, { recursive: true, force: true });
 await fs.mkdir(outputDirectory, { recursive: true });
 
@@ -80,16 +94,14 @@ if (desktop) {
   assert.equal(desktop.runtimeErrors, 0);
 }
 
-const mainBundle = visual.bundleBaseline.find((entry) => entry.file.startsWith('main-') && entry.file.endsWith('.js'));
-const artifactBundle = visual.bundleBaseline.find((entry) => entry.file.startsWith('HTMLArtifactView-') && entry.file.endsWith('.js'));
-assert(mainBundle, 'Main web entry bundle was not recorded');
-assert(artifactBundle, 'HTML Artifact lazy bundle was not recorded');
+// Vite content hashes change on every relevant source edit. Read the current
+// production assets instead of trusting a hash captured by an older visual run.
+const mainBundle = await readCurrentBundle('main-', { largest: true });
+const artifactBundle = await readCurrentBundle('HTMLArtifactView-');
 assert.notEqual(mainBundle.file, artifactBundle.file, 'HTML Artifact renderer must remain a separate lazy chunk');
 assert.equal(mainBundle.bytes <= budgets.mainEntryBytes, true, `Main entry exceeded ${budgets.mainEntryBytes} bytes`);
 assert.equal(artifactBundle.bytes <= budgets.artifactLazyBytes, true, `Artifact lazy chunk exceeded ${budgets.artifactLazyBytes} bytes`);
 assert.equal(artifactBundle.gzipBytes <= budgets.artifactLazyGzipBytes, true, `Artifact lazy gzip chunk exceeded ${budgets.artifactLazyGzipBytes} bytes`);
-await fs.access(path.join(distAssetsDirectory, mainBundle.file));
-await fs.access(path.join(distAssetsDirectory, artifactBundle.file));
 
 for (const runtime of ['generated', 'declarative', 'native', 'crm']) {
   const medianMs = visual.readyBaseline?.[runtime]?.medianMs;

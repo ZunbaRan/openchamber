@@ -11,7 +11,11 @@ interface ArtifactBusinessRequest {
   action: string;
   input: unknown;
   intent: 'query' | 'execute';
-  tool: Pick<InteractiveToolContext, 'id' | 'name'>;
+  tool?: Pick<InteractiveToolContext, 'id' | 'name'>;
+  workbench?: {
+    projectId: string;
+    tileId: string;
+  };
 }
 
 type ArtifactBusinessRequestResult =
@@ -27,7 +31,8 @@ export const executeArtifactBusinessRequest = async (
     instanceId: request.instanceId,
     action: request.action,
     input: request.input,
-    tool: request.tool,
+    ...(request.tool ? { tool: request.tool } : {}),
+    ...(request.workbench ? { workbench: request.workbench } : {}),
     ...(confirmationToken ? { confirmationToken } : {}),
   });
 

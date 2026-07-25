@@ -28,7 +28,7 @@ const isDev = process.env.OPENCHAMBER_ELECTRON_DEV === '1' || !app.isPackaged;
 const updaterE2eBuild = typeof __OPENCHAMBER_UPDATER_E2E_BUILD__ !== 'undefined'
   && __OPENCHAMBER_UPDATER_E2E_BUILD__ === true;
 const desktopUpdaterFeed = resolveUpdaterFeed({ testBuild: updaterE2eBuild });
-const desktopUpdatesEnabled = desktopUpdaterFeed !== null;
+const desktopUpdatesEnabled = app.isPackaged && desktopUpdaterFeed !== null;
 
 const DEEP_LINK_PROTOCOL = 'openchamber';
 const UI_PROTOCOL = 'openchamber-ui';
@@ -1797,6 +1797,7 @@ const emitToAllWindows = (event, detail) => {
 };
 
 const artifactRunnerManager = createArtifactRunnerManager({
+  BrowserWindow,
   WebContentsView,
   session,
   app,
@@ -2449,6 +2450,35 @@ const createBrowserWindow = ({ label, restoreGeometry, url, runtimeConfig = {} }
 
   browserWindow.webContents.setWindowOpenHandler(({ url }) => {
     if (isAllowedNavigationUrl(url)) {
+      // `window.open()` does not inherit the opener's preload script. The
+      // Workbench popout renders the same trusted OpenChamber UI and needs the
+      // desktop bridge to launch isolated HTML Artifact runners. Reapply the
+      // exact runtime arguments and security posture used by the owner window
+      // instead of leaving the child with an unprivileged renderer.
+      try {
+        const target = new URL(url);
+        if (target.pathname.endsWith('/workbench-popout.html')) {
+          return {
+            action: 'allow',
+            overrideBrowserWindowOptions: {
+              title: 'OpenChamber Workbench',
+              width: 960,
+              height: 720,
+              minWidth: 640,
+              minHeight: 480,
+              backgroundColor: useVibrancy ? '#00000000' : '#151313',
+              autoHideMenuBar: process.platform !== 'darwin',
+              titleBarStyle: usesCustomTitleBar ? 'hidden' : 'default',
+              trafficLightPosition: process.platform === 'darwin' ? { x: 16, y: 17 } : undefined,
+              webPreferences: {
+                ...options.webPreferences,
+                additionalArguments: [...options.webPreferences.additionalArguments],
+              },
+            },
+          };
+        }
+      } catch {
+      }
       return { action: 'allow' };
     }
     void shell.openExternal(url).catch(() => {});
@@ -2893,7 +2923,9 @@ const setupAutoUpdater = () => {
   autoUpdater.setFeedURL(desktopUpdaterFeed);
   log.info('[electron] updater feed configured', {
     provider: desktopUpdaterFeed.provider,
-    target: desktopUpdaterFeed.url,
+    target: desktopUpdaterFeed.provider === 'github'
+      ? `${desktopUpdaterFeed.owner}/${desktopUpdaterFeed.repo}`
+      : desktopUpdaterFeed.url,
   });
 
   autoUpdater.on('download-progress', (progress) => {
@@ -3490,6 +3522,16 @@ const handleInvoke = async (browserWindow, command, args = {}) => {
 
     case 'desktop_artifact_runner_post':
       return artifactRunnerManager.post(args.runnerId, args.message);
+
+    case 'desktop_artifact_runner_popout':
+      return artifactRunnerManager.popout(args.runnerId, {
+        title: args.title,
+        width: args.width,
+        height: args.height,
+      });
+
+    case 'desktop_artifact_runner_restore':
+      return artifactRunnerManager.restore(args.runnerId);
 
     case 'desktop_artifact_runner_stop':
       return artifactRunnerManager.stop(args.runnerId, 'stopped');

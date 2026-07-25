@@ -18,7 +18,7 @@ const envelope = (scripts = false) => ({
   display: { preferred: 'inline', allowExpand: true, inlineHeight: 360 },
 });
 
-const createApp = async (environment = {}, runtime = {}, uiAuthController = null) => {
+const createApp = async (environment = {}, runtime = {}, uiAuthController = null, workbenchStore = null) => {
   const dataDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'openchamber-artifact-routes-'));
   temporaryDirectories.push(dataDirectory);
   const app = express();
@@ -27,6 +27,7 @@ const createApp = async (environment = {}, runtime = {}, uiAuthController = null
     runtime,
     manager: {},
     uiAuthController,
+    workbenchStore,
     artifactStore: createHTMLArtifactStore({
       dataDirectory,
       fsImpl: fs,
@@ -149,6 +150,186 @@ describe('HTML Artifact routes', () => {
     expect(document.headers.etag).toBe('"sha256-fixture"');
     expect(document.text).toContain('data-ocix-artifact-broker');
     expect(document.text).toContain('host.businessResult');
+  });
+
+  test('authorizes Workbench business actions against the persisted tile and discards spoofed authorization', async () => {
+    const calls = [];
+    const runtime = {
+      async getWorkbenchCatalog() {
+        return {
+          extensions: [{
+            id: 'com.acme.crm',
+            version: '1.4.0',
+            surfaces: [{ surfaceId: 'com.acme.crm.explorer' }],
+          }],
+        };
+      },
+      async prepareWorkbenchTile(tile) {
+        return tile;
+      },
+      async invokeAction(actionId, body) {
+        calls.push({ actionId, body });
+        return { data: { ok: true } };
+      },
+    };
+    const workbenchStore = {
+      async read(projectId) {
+        return {
+          projectId,
+          activeBoardId: 'default',
+          boards: [{
+            id: 'default',
+            tiles: [{
+              tileId: 'tile_crm',
+              source: {
+                kind: 'third-party-extension',
+                extensionId: 'com.acme.crm',
+                surfaceId: 'com.acme.crm.explorer',
+                compatibleVersion: '^1.0.0',
+              },
+              form: 'html-artifact',
+              context: {},
+              contextDigest: 'sha256-real',
+              layout: { column: 0, row: 0, columns: 6, rows: 4 },
+              displayMode: 'tile',
+              relationship: null,
+              origin: null,
+            }],
+          }],
+        };
+      },
+    };
+    const app = await createApp({}, runtime, null, workbenchStore);
+    const response = await request(app)
+      .post('/api/interactive-ui/actions/com.acme.crm.query')
+      .send({
+        extensionId: 'com.acme.crm',
+        artifactId: 'com.acme.crm.explorer',
+        instanceId: 'artifact-channel',
+        input: {},
+        workbench: { projectId: 'project-1', tileId: 'tile_crm' },
+        __workbenchAuthorization: {
+          projectId: 'attacker-project',
+          tileId: 'attacker-tile',
+          contextDigest: 'sha256-spoofed',
+        },
+      })
+      .expect(200);
+
+    expect(response.body).toEqual({ data: { ok: true } });
+    expect(calls).toHaveLength(1);
+    expect(calls[0].body.__workbenchAuthorization).toEqual({
+      projectId: 'project-1',
+      tileId: 'tile_crm',
+      contextDigest: 'sha256-real',
+    });
+
+    await request(app)
+      .post('/api/interactive-ui/actions/com.acme.crm.query')
+      .send({
+        extensionId: 'com.attacker.crm',
+        artifactId: 'com.acme.crm.explorer',
+        input: {},
+        workbench: { projectId: 'project-1', tileId: 'tile_crm' },
+      })
+      .expect(403);
+    expect(calls).toHaveLength(1);
+
+    runtime.getWorkbenchCatalog = async () => ({
+      extensions: [{
+        id: 'com.acme.crm',
+        version: '2.0.0',
+        surfaces: [{ surfaceId: 'com.acme.crm.explorer' }],
+      }],
+    });
+    await request(app)
+      .post('/api/interactive-ui/actions/com.acme.crm.query')
+      .send({
+        extensionId: 'com.acme.crm',
+        artifactId: 'com.acme.crm.explorer',
+        input: {},
+        workbench: { projectId: 'project-1', tileId: 'tile_crm' },
+      })
+      .expect(409)
+      .expect(({ body }) => {
+        expect(body.code).toBe('workbench_migration_required');
+      });
+    expect(calls).toHaveLength(1);
+  });
+
+  test('migrates a persisted Tile through the runtime and reports uninstall impact', async () => {
+    const currentTile = {
+      tileId: 'tile_crm',
+      source: {
+        kind: 'third-party-extension',
+        extensionId: 'com.acme.crm',
+        surfaceId: 'com.acme.crm.overview',
+        compatibleVersion: '^1.0.0',
+      },
+      form: 'interactive-ui',
+      context: { territory: 'apac' },
+      contextDigest: 'sha256-old',
+      layout: { column: 0, row: 0, columns: 6, rows: 4 },
+      displayMode: 'tile',
+      relationship: null,
+      origin: null,
+    };
+    const calls = [];
+    const runtime = {
+      async migrateWorkbenchTile(tile) {
+        calls.push({ kind: 'runtime', tile });
+        return {
+          ...tile,
+          source: { ...tile.source, compatibleVersion: '^2.0.0' },
+          context: { region: 'apac' },
+          contextDigest: 'sha256-new',
+        };
+      },
+    };
+    const workbenchStore = {
+      async read(projectId) {
+        return {
+          projectId,
+          activeBoardId: 'default',
+          boards: [{ id: 'default', revision: 3, tiles: [currentTile] }],
+        };
+      },
+      async migrateTile(projectId, tileId, expectedRevision, tile) {
+        calls.push({ kind: 'store', projectId, tileId, expectedRevision, tile });
+        return {
+          snapshot: {
+            projectId,
+            activeBoardId: 'default',
+            boards: [{ id: 'default', revision: 4, tiles: [tile] }],
+          },
+          tile,
+        };
+      },
+      async getExtensionTileImpact(extensionId) {
+        calls.push({ kind: 'impact', extensionId });
+        return { tiles: 3, projects: 2 };
+      },
+    };
+    const app = await createApp({}, runtime, null, workbenchStore);
+    const migrated = await request(app)
+      .post('/api/interactive-ui/workbench/boards/project-1/tiles/tile_crm/migrate')
+      .send({ expectedRevision: 3 })
+      .expect(200);
+    expect(migrated.body.tile).toMatchObject({
+      source: { compatibleVersion: '^2.0.0' },
+      context: { region: 'apac' },
+    });
+    expect(calls[1]).toMatchObject({
+      kind: 'store',
+      projectId: 'project-1',
+      tileId: 'tile_crm',
+      expectedRevision: 3,
+    });
+
+    const impact = await request(app)
+      .get('/api/interactive-ui/manager/extensions/com.acme.crm/uninstall-impact')
+      .expect(200);
+    expect(impact.body).toEqual({ tiles: 3, projects: 2 });
   });
 
   test('returns an explicit capability error instead of silently stripping scripts', async () => {

@@ -260,7 +260,7 @@ Before changing store shape or selectors, ask:
 
 ## Desktop Update Policy
 
-`useUpdateStore` treats the Electron preload capability flag as authoritative. When `__OPENCHAMBER_DESKTOP__.updatesEnabled` is not explicitly `true`, Desktop update checks clear stale update state and return without invoking native updater IPC or the server `/api/openchamber/update-check` endpoint. This prevents a fork build with no owned release channel from discovering or advertising upstream releases. Web, VS Code, and Capacitor keep their existing runtime-specific checks.
+`useUpdateStore` treats the Electron preload capability flag as authoritative. Packaged Desktop checks only the native fork-owned `ZunbaRan/openchamber` GitHub Release feed and uses the local one-hour polling default; it does not call the server `/api/openchamber/update-check` telemetry/scheduling endpoint as a secondary source. Development and updater-fixture builds without a valid feed clear stale update state without invoking updater IPC. Desktop never falls back to the upstream `openchamber/openchamber` release channel. Web, VS Code, and Capacitor keep their existing runtime-specific checks.
 
 ## Validation Checklist
 

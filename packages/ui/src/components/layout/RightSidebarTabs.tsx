@@ -13,11 +13,12 @@ import { useEffectiveDirectory } from '@/hooks/useEffectiveDirectory';
 import { formatDirectoryName, cn } from '@/lib/utils';
 import { useI18n } from '@/lib/i18n';
 import { SidebarFilesTree } from './SidebarFilesTree';
+import { ExtensionWorkbench } from '@/components/interactive-ui/workbench/ExtensionWorkbench';
 
-type RightTab = 'git' | 'files' | 'context';
+type RightTab = 'git' | 'files' | 'context' | 'extensions';
 
 const isRightTab = (value: string): value is RightTab =>
-  value === 'git' || value === 'files' || value === 'context';
+  value === 'git' || value === 'files' || value === 'context' || value === 'extensions';
 
 const RIGHT_TAB_FALLBACK: RightTab = 'files';
 
@@ -165,6 +166,11 @@ export const RightSidebarTabs: React.FC = () => {
       label: t('layout.rightSidebar.context'),
       icon: <Icon name="file-list-2" className="h-3.5 w-3.5" />,
     },
+    {
+      id: 'extensions',
+      label: t('layout.rightSidebar.extensions'),
+      icon: <Icon name="apps-2-ai" className="h-3.5 w-3.5" />,
+    },
   ], [t]);
 
   const visibleTabItems = React.useMemo(
@@ -204,6 +210,9 @@ export const RightSidebarTabs: React.FC = () => {
         </div>
         <div className={cn('h-full', rightSidebarTab !== 'context' && 'hidden')}>
           <ProjectContextPanel />
+        </div>
+        <div className={cn('h-full', rightSidebarTab !== 'extensions' && 'hidden')}>
+          <ExtensionWorkbench />
         </div>
       </div>
     </div>

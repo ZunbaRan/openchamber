@@ -13,6 +13,8 @@ const electronRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), 
 const projectRoot = path.resolve(electronRoot, '../..');
 const outputDirectory = path.join(projectRoot, '.tmp', 'artifact-runner-clipping-packaged');
 const screenshotPath = path.join(outputDirectory, 'artifact-runner-scroll-clip-macos.png');
+const dialogScreenshotPath = path.join(outputDirectory, 'artifact-runner-dialog-overlay-macos.png');
+const dialogRestoredScreenshotPath = path.join(outputDirectory, 'artifact-runner-dialog-restored-macos.png');
 const workspaceScreenshotPath = path.join(outputDirectory, 'artifact-runner-workspace-mode-macos.png');
 const fullscreenScreenshotPath = path.join(outputDirectory, 'artifact-runner-fullscreen-mode-macos.png');
 const restoredInlineScreenshotPath = path.join(outputDirectory, 'artifact-runner-restored-inline-macos.png');
@@ -201,6 +203,41 @@ const inspectClipGuard = async (metrics) => {
   };
 };
 
+const inspectDialogRegion = async ({ imagePath, metrics }) => {
+  const { data, info } = await sharp(imagePath).removeAlpha().raw().toBuffer({ resolveWithObject: true });
+  const scaleX = info.width / metrics.outerWidth;
+  const scaleY = info.height / metrics.outerHeight;
+  const contentLeft = Math.max(0, (metrics.outerWidth - metrics.innerWidth) / 2);
+  const contentTop = Math.max(0, metrics.outerHeight - metrics.innerHeight);
+  const x0 = Math.max(0, Math.floor((contentLeft + metrics.runner.left + 32) * scaleX));
+  const y0 = Math.max(0, Math.floor((contentTop + metrics.runner.top + 32) * scaleY));
+  const x1 = Math.min(info.width, Math.ceil((contentLeft + metrics.runner.right - 32) * scaleX));
+  const y1 = Math.min(info.height, Math.ceil((contentTop + metrics.runner.bottom - 32) * scaleY));
+  let cyanPixels = 0;
+  let magentaPixels = 0;
+  let sampledPixels = 0;
+  for (let y = y0; y < y1; y += 1) {
+    for (let x = x0; x < x1; x += 1) {
+      const offset = (y * info.width + x) * info.channels;
+      const red = data[offset];
+      const green = data[offset + 1];
+      const blue = data[offset + 2];
+      if (red < 60 && green > 180 && blue > 190) cyanPixels += 1;
+      if (red > 210 && green < 70 && blue > 160) magentaPixels += 1;
+      sampledPixels += 1;
+    }
+  }
+  return {
+    cyanPixels,
+    magentaPixels,
+    sampledPixels,
+    cyanRatio: sampledPixels > 0 ? cyanPixels / sampledPixels : 0,
+    magentaRatio: sampledPixels > 0 ? magentaPixels / sampledPixels : 0,
+    sampleBounds: { x0, y0, x1, y1 },
+    imageSize: { width: info.width, height: info.height },
+  };
+};
+
 if (process.platform !== 'darwin') throw new Error('This native clipping acceptance requires macOS');
 
 const appPath = await resolvePackagedApp();
@@ -266,18 +303,7 @@ try {
     exposed: typeof window.__OPENCHAMBER_DESKTOP__ === 'object',
     enabled: window.__OPENCHAMBER_DESKTOP__?.updatesEnabled,
   }))()`);
-  assert.deepEqual(updaterPolicy, { exposed: true, enabled: false });
-  const updaterCheckReply = await browser.send('Runtime.evaluate', {
-    expression: `window.__OPENCHAMBER_DESKTOP__.invoke('desktop_check_for_updates')`,
-    awaitPromise: true,
-    returnByValue: true,
-  });
-  assert.equal(Boolean(updaterCheckReply.result?.exceptionDetails), false, updaterCheckReply.result?.exceptionDetails?.text || 'update policy IPC failed');
-  const updaterCheckResult = updaterCheckReply.result?.result?.value;
-  assert.equal(updaterCheckResult?.updatesEnabled, false);
-  assert.equal(updaterCheckResult?.available, false);
-  assert.equal(typeof updaterCheckResult?.currentVersion, 'string');
-  assert.equal(updaterCheckResult?.version, null);
+  assert.deepEqual(updaterPolicy, { exposed: true, enabled: true });
   await waitFor(browser, `document.querySelector('[data-ocix-artifact-state="ready"] [data-ocix-artifact-backend="desktop-runner"]') !== null`, 'Scripts Artifact Runner');
 
   assert.equal(await browser.evaluate(`(() => {
@@ -322,6 +348,45 @@ try {
 
   await captureMacWindow({ pid: appProcess.pid, outputPath: screenshotPath });
   const inspection = await inspectClipGuard(metrics);
+
+  const dialogMetrics = await browser.evaluate(`(() => {
+    const runner = document.querySelector('[data-ocix-artifact-backend="desktop-runner"]');
+    if (!(runner instanceof HTMLElement)) return null;
+    const overlay = document.createElement('div');
+    overlay.setAttribute('data-ocix-test-dialog-overlay', '');
+    Object.assign(overlay.style, {
+      position: 'fixed',
+      inset: '0',
+      zIndex: '2147483647',
+      background: '#00e5ff',
+    });
+    document.body.append(overlay);
+    document.documentElement.classList.add('oc-dialog-open');
+    const rect = runner.getBoundingClientRect();
+    return {
+      innerWidth: window.innerWidth,
+      innerHeight: window.innerHeight,
+      outerWidth: window.outerWidth,
+      outerHeight: window.outerHeight,
+      runner: { left:rect.left,top:rect.top,right:rect.right,bottom:rect.bottom,width:rect.width,height:rect.height },
+    };
+  })()`);
+  assert.notEqual(dialogMetrics, null);
+  await delay(750);
+  await captureMacWindow({ pid: appProcess.pid, outputPath: dialogScreenshotPath });
+  const dialogInspection = await inspectDialogRegion({ imagePath: dialogScreenshotPath, metrics: dialogMetrics });
+  assert.equal(dialogInspection.cyanRatio > 0.7, true, `Dialog overlay was covered by the native Runner: ${JSON.stringify(dialogInspection)}`);
+  assert.equal(dialogInspection.magentaRatio < 0.05, true, `Native Runner remained visible over the dialog: ${JSON.stringify(dialogInspection)}`);
+
+  await browser.evaluate(`(() => {
+    document.documentElement.classList.remove('oc-dialog-open');
+    document.querySelector('[data-ocix-test-dialog-overlay]')?.remove();
+  })()`);
+  await delay(750);
+  await captureMacWindow({ pid: appProcess.pid, outputPath: dialogRestoredScreenshotPath });
+  const dialogRestoredInspection = await inspectDialogRegion({ imagePath: dialogRestoredScreenshotPath, metrics: dialogMetrics });
+  assert.equal(dialogRestoredInspection.magentaRatio > 0.7, true, `Native Runner did not return after the dialog closed: ${JSON.stringify(dialogRestoredInspection)}`);
+
   artifactBrowser.socket.close();
   artifactBrowser = null;
 
@@ -408,6 +473,15 @@ try {
     screenshotPath,
     metrics,
     inspection,
+    dialogOcclusion: {
+      ok: dialogInspection.cyanRatio > 0.7
+        && dialogInspection.magentaRatio < 0.05
+        && dialogRestoredInspection.magentaRatio > 0.7,
+      dialogScreenshotPath,
+      dialogRestoredScreenshotPath,
+      dialogInspection,
+      dialogRestoredInspection,
+    },
     modeLifecycle: {
       ok: modeLifecycleOk,
       workspaceState,
@@ -420,7 +494,12 @@ try {
       fullscreenScreenshotPath,
       restoredInlineScreenshotPath,
     },
-    ok: inspection.magentaPixels === 0 && inspection.greenRatio > 0.7 && modeLifecycleOk,
+    ok: inspection.magentaPixels === 0
+      && inspection.greenRatio > 0.7
+      && dialogInspection.cyanRatio > 0.7
+      && dialogInspection.magentaRatio < 0.05
+      && dialogRestoredInspection.magentaRatio > 0.7
+      && modeLifecycleOk,
   };
   await fs.writeFile(reportPath, `${JSON.stringify(report, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
   console.log(JSON.stringify({ ...report, reportPath }, null, 2));

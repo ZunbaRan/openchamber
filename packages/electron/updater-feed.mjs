@@ -24,12 +24,21 @@ export const parseLoopbackUpdaterUrl = (value) => {
   }
 };
 
+export const PRODUCTION_UPDATER_FEED = Object.freeze({
+  provider: 'github',
+  owner: 'ZunbaRan',
+  repo: 'openchamber',
+});
+
 export const resolveUpdaterFeed = ({
   environment = process.env,
   testBuild = false,
 } = {}) => {
-  if (environment.OPENCHAMBER_E2E !== '1'
-    || testBuild !== true) {
+  if (testBuild !== true) {
+    return PRODUCTION_UPDATER_FEED;
+  }
+
+  if (environment.OPENCHAMBER_E2E !== '1') {
     return null;
   }
 

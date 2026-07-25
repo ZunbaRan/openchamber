@@ -23,7 +23,7 @@ const updateGoldens = process.argv.includes('--update-goldens');
 const pixelChannelThreshold = 12;
 const changedPixelRatioThreshold = 0.0005;
 const meanChannelDeltaThreshold = 0.05;
-const artifactPaintSettleMs = 250;
+const artifactPaintSettleMs = 750;
 
 const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex');
 
@@ -147,10 +147,16 @@ const connect = async (target) => {
   socket.addEventListener('close', () => rejectPending(new Error('Chrome DevTools socket closed')));
   const send = (method, params = {}) => new Promise((resolve, reject) => {
     const id = ++requestId;
+    // Full-page screenshots keep Chromium's renderer busy for several seconds on
+    // slower CI/packaged hosts. A 10s CDP timeout made the next harmless
+    // Runtime.evaluate flaky even though the page remained healthy.
+    const timeoutMs = method === 'Runtime.evaluate' || method === 'Page.captureScreenshot'
+      ? 30_000
+      : 10_000;
     const timeout = setTimeout(() => {
       pending.delete(id);
-      reject(new Error(`Chrome DevTools ${method} timed out`));
-    }, 10_000);
+      reject(new Error(`Chrome DevTools ${method} timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
     pending.set(id, {
       reject,
       resolve(message) {
@@ -311,7 +317,7 @@ try {
       // The ready bridge message can reach the host before Chromium composites the
       // opaque nested Artifact frame. Keep this delay in readyMs so the runtime
       // budget covers what users can actually see rather than bridge readiness.
-      await browser.evaluate(`new Promise((resolve) => setTimeout(resolve, ${artifactPaintSettleMs}))`);
+      await new Promise((resolve) => setTimeout(resolve, artifactPaintSettleMs));
     } else {
       await waitFor(browser, `Boolean(document.querySelector('[data-ocix-view-metadata]'))`, `${entry.runtime} view metadata`);
       await waitFor(browser, `document.querySelectorAll('tbody tr').length > 0`, `${entry.runtime} rendered rows`);
@@ -437,6 +443,10 @@ try {
       assert.match(metrics.metadataText, entry.runtime === 'generated' ? /Snapshot/ : /Live data/);
     }
 
+    await browser.evaluate('window.scrollTo(0, 0)');
+    // Headless Chromium can throttle requestAnimationFrame while device metrics
+    // are changing. Settle from the host so this wait cannot strand CDP.
+    await new Promise((resolve) => setTimeout(resolve, 50));
     const screenshot = await browser.send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: true });
     assert.equal(typeof screenshot.result?.data, 'string');
     const file = `${entry.runtime}-${entry.theme}-${entry.width}-${entry.locale}.png`;
@@ -512,6 +522,7 @@ try {
         await waitFor(browser, `document.querySelector('[data-ocix-artifact-mode="${mode}"]') !== null`, `${entry.runtime} ${mode} mode`);
         const retained = await browser.evaluate(`window.__openchamberArtifactFixtureFrame === document.querySelector('[data-ocix-artifact-host] iframe')`);
         assert.equal(retained, true, `${entry.runtime} should retain the iframe instance in ${mode}`);
+        await browser.evaluate('window.scrollTo(0, 0)');
         const expandedScreenshot = await browser.send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: true });
         const expandedFile = `${entry.runtime}-light-1024-zh-CN-${mode}.png`;
         await writeScreenshot(expandedFile, expandedScreenshot.result.data);
@@ -581,6 +592,8 @@ try {
     assert.deepEqual(observed.brokenAriaReferences, []);
     const newRuntimeErrors = browser.runtimeErrors.slice(runtimeErrorOffset);
     assert.equal(newRuntimeErrors.length, 0, newRuntimeErrors.join('\n'));
+    await browser.evaluate('window.scrollTo(0, 0)');
+    await new Promise((resolve) => setTimeout(resolve, 50));
     const screenshot = await browser.send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: true });
     const file = `${runtime}-${surface}-light-1024-zh-CN-${expectedState}.png`;
     await writeScreenshot(file, screenshot.result.data);

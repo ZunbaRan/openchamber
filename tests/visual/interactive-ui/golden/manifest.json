@@ -2,7 +2,7 @@
   "$schema": "openchamber://interactive-ui-visual-golden/v1",
   "baselineDate": "2026-07-21",
   "platform": "darwin-arm64",
-  "browser": "Chrome/150.0.7871.182",
+  "browser": "Chrome/150.0.7871.187",
   "thresholds": {
     "pixelChannel": 12,
     "changedPixelRatio": 0.0005,
@@ -223,55 +223,55 @@
       "file": "declarative-dark-1024-zh-CN.png",
       "width": 1024,
       "height": 1000,
-      "sha256": "b8e25449f5e8541cff4128f3a07a0f2f979d3fc30d6b70950df11e09dc0c0372"
+      "sha256": "c66802c84b89c9f56a69eef08e509134a3acc6abf1bc689eb79481fa395c3014"
     },
     {
       "file": "declarative-dark-1440-zh-CN.png",
       "width": 1440,
       "height": 1000,
-      "sha256": "3b651dbcc1087a070cd0f99c8968aaea0be5ca5fcdf1911ad270667a85102bee"
+      "sha256": "224c3e57272b61c6b7fc0773762104d96b3549092de76b354679074df8b45977"
     },
     {
       "file": "declarative-dark-390-zh-CN.png",
       "width": 390,
       "height": 1000,
-      "sha256": "903df582c308712cd8b0231ae592e29a0478e1dd1317ce56b0df4e45a6dac0f0"
+      "sha256": "c2f34990bb381a3a5edefc8751c425fe7a3fd815c06788c1b0ec0202cae9991f"
     },
     {
       "file": "declarative-dark-768-zh-CN.png",
       "width": 768,
       "height": 1000,
-      "sha256": "bf0a7c15afc5d13e675df810ac7126ec913b2d829ce55d4f7271ea687bdbd968"
+      "sha256": "749df4871071e2bd97a6b97dfafa8ef670e950c61b54d1de1e547c8d94da522d"
     },
     {
       "file": "declarative-light-1024-zh-CN.png",
       "width": 1024,
       "height": 1000,
-      "sha256": "59b07bf0045cb2f79e17f0702b0a7a706f2fe4ad77ff9825338662b6ab3b4b38"
+      "sha256": "3de05fbcbad1d15ea036ed6ee5d500f2380e5d0ef9fde5e6346c20aa6e1f251b"
     },
     {
       "file": "declarative-light-1440-zh-CN.png",
       "width": 1440,
       "height": 1000,
-      "sha256": "8208771e760891035aedc34a3a967d9f4d73c5631093e465b692d9d9e112a9fe"
+      "sha256": "692c4b13a3d9f158e29cb01921cfcb03874782b0eadf8e9d5a06fb897f094bf4"
     },
     {
       "file": "declarative-light-390-en.png",
       "width": 390,
       "height": 1000,
-      "sha256": "54b0f7df84a754efc8736db2cabbfcd1b9f7d0f3cf99e6ddf38bc55ff3d38f8c"
+      "sha256": "5f119bae5b48f6808d349cd884b8228aa835fdc92eef22381dbcecdf366c209a"
     },
     {
       "file": "declarative-light-390-zh-CN.png",
       "width": 390,
       "height": 1000,
-      "sha256": "7dacc9f5cd99d2aad749402ab0b4d5f651679208c4aa310971c8380e48fd95a0"
+      "sha256": "bbfe7456ede9f7583ac097dcb072cce6f113a37b68006246d15a37c1c8689638"
     },
     {
       "file": "declarative-light-768-zh-CN.png",
       "width": 768,
       "height": 1000,
-      "sha256": "95084cfb11ecdac7b058c5336b21c9e0dd88ec7666bf9defc829a135372f08f0"
+      "sha256": "67398e79ca4ad06dfb5c1a3b4a7eeac69656270a686c7ffd588fd73b0e4d2790"
     },
     {
       "file": "generated-dark-1024-zh-CN.png",

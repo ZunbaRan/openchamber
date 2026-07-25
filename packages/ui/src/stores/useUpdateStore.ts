@@ -217,7 +217,6 @@ export const useUpdateStore = create<UpdateStore>()((set, get) => ({
       let suggestedSec: number | null = null;
 
       if (runtime === 'desktop') {
-        const appVersion = typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : undefined;
         const desktopInfo = await checkForDesktopUpdates();
         if (desktopInfo?.updatesEnabled === false) {
           set({
@@ -227,17 +226,15 @@ export const useUpdateStore = create<UpdateStore>()((set, get) => ({
           });
           return null;
         }
-        const apiInfo = await checkForWebUpdates('desktop', appVersion);
-        suggestedSec = apiInfo?.nextSuggestedCheckInSec ?? null;
         set({
           checking: false,
           available: desktopInfo?.available ?? false,
           info: desktopInfo,
           lastChecked: Date.now(),
-          nextCheckInSec: suggestedSec,
+          nextCheckInSec: null,
         });
 
-        return suggestedSec;
+        return null;
       } else if (runtime === 'web') {
         info = await checkForWebUpdates('web');
         suggestedSec = info?.nextSuggestedCheckInSec ?? null;

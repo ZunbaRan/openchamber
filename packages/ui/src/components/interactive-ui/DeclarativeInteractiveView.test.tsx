@@ -35,6 +35,7 @@ describe('DeclarativeInteractiveView', () => {
       },
       dialog: { confirm: async () => false },
       notifications: { show() {} },
+      dashboard: { emit: async () => {} },
       context: { runtime: 'web', locale: 'zh-CN' },
     };
 
@@ -101,6 +102,7 @@ describe('DeclarativeInteractiveView', () => {
       },
       dialog: { confirm: async () => false },
       notifications: { show() {} },
+      dashboard: { emit: async () => {} },
       context: { runtime: 'web', locale: 'zh-CN' },
     };
 
@@ -153,6 +155,7 @@ describe('DeclarativeInteractiveView', () => {
       },
       dialog: { confirm: async () => false },
       notifications: { show() {} },
+      dashboard: { emit: async () => {} },
       context: { runtime: 'web', locale: 'zh-CN' },
     };
 
@@ -222,6 +225,7 @@ describe('DeclarativeInteractiveView', () => {
       },
       dialog: { confirm: async () => false },
       notifications: { show() {} },
+      dashboard: { emit: async () => {} },
       context: { runtime: 'web', locale: 'zh-CN' },
     };
 
@@ -300,6 +304,7 @@ describe('DeclarativeInteractiveView', () => {
       },
       dialog: { confirm: async () => false },
       notifications: { show() {} },
+      dashboard: { emit: async () => {} },
       context: { runtime: 'web', locale: 'en' },
     };
 

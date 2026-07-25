@@ -3,6 +3,7 @@ import { canUseElectronDesktopIPC, invokeDesktop, listenDesktopEvent } from '@/l
 import { cn } from '@/lib/utils';
 import {
   resolveArtifactRunnerGeometry,
+  resolveArtifactRunnerVisibility,
   type ArtifactRunnerClipRegion,
   type ArtifactRunnerGeometry,
   type ArtifactRunnerRect,
@@ -11,6 +12,9 @@ import {
 export interface ArtifactExecutionSurfaceHandle {
   postMessage(message: unknown): void;
   getViewport(): { width: number; height: number };
+  popout(options?: { title?: string; width?: number; height?: number }): Promise<boolean>;
+  restore(): Promise<boolean>;
+  isNativeRunner(): boolean;
 }
 
 interface ArtifactExecutionSurfaceProps {
@@ -18,16 +22,18 @@ interface ArtifactExecutionSurfaceProps {
   title: string;
   scripts: boolean;
   ready: boolean;
+  layoutEpoch?: string | number;
   className?: string;
   style?: React.CSSProperties;
   onLoad(): void;
   onMessage(message: unknown, metadata: { userActivated: boolean }): void;
   onTerminated(reason: string): void;
+  onPopoutChange?(poppedOut: boolean): void;
 }
 
 type RunnerEvent = {
   runnerId: string;
-  type: 'loaded' | 'message' | 'terminated';
+  type: 'loaded' | 'message' | 'terminated' | 'popout-opened' | 'popout-closed';
   message?: unknown;
   userActivated?: boolean;
   reason?: string;
@@ -36,7 +42,10 @@ type RunnerEvent = {
 const asRunnerEvent = (value: unknown): RunnerEvent | null => {
   if (!value || typeof value !== 'object') return null;
   const event = value as Record<string, unknown>;
-  if (typeof event.runnerId !== 'string' || !['loaded', 'message', 'terminated'].includes(String(event.type))) return null;
+  if (typeof event.runnerId !== 'string'
+    || !['loaded', 'message', 'terminated', 'popout-opened', 'popout-closed'].includes(String(event.type))) {
+    return null;
+  }
   return event as unknown as RunnerEvent;
 };
 
@@ -54,6 +63,11 @@ const collectClippingAncestors = (element: HTMLElement): HTMLElement[] => {
   for (let ancestor = element.parentElement; ancestor; ancestor = ancestor.parentElement) {
     const style = window.getComputedStyle(ancestor);
     if (CLIPPING_OVERFLOW.has(style.overflowX) || CLIPPING_OVERFLOW.has(style.overflowY)) ancestors.push(ancestor);
+    // A viewport-fixed workbench tile has escaped the board's scrolling
+    // containing block. Preserve clipping inside the focused tile itself, but
+    // do not intersect the native Runner with stale overflow ancestors above
+    // that fixed boundary.
+    if (style.position === 'fixed') break;
   }
   return ancestors;
 };
@@ -86,11 +100,20 @@ const measureNativeRunner = (element: HTMLElement): ArtifactRunnerGeometry => {
 };
 
 const isElementAllowedVisible = (element: HTMLElement): boolean => {
-  if (document.visibilityState !== 'visible') return false;
   const ownDialog = element.closest('dialog');
-  const blockingModal = Array.from(document.querySelectorAll<HTMLDialogElement>('dialog[open][aria-modal="true"]'))
+  const blockingNativeDialogOpen = Array.from(document.querySelectorAll<HTMLDialogElement>('dialog[open][aria-modal="true"]'))
     .some((dialog) => dialog !== ownDialog);
-  return !blockingModal;
+  const focusedWorkbenchTile = document.querySelector<HTMLElement>(
+    '[data-workbench-tile][aria-modal="true"]',
+  );
+  const obscuredByFocusedWorkbenchTile = Boolean(
+    focusedWorkbenchTile && !focusedWorkbenchTile.contains(element),
+  );
+  return resolveArtifactRunnerVisibility({
+    documentVisible: document.visibilityState === 'visible',
+    baseDialogOpen: document.documentElement.classList.contains('oc-dialog-open'),
+    blockingNativeDialogOpen: blockingNativeDialogOpen || obscuredByFocusedWorkbenchTile,
+  });
 };
 
 export const ArtifactExecutionSurface = React.forwardRef<ArtifactExecutionSurfaceHandle, ArtifactExecutionSurfaceProps>(({
@@ -98,11 +121,13 @@ export const ArtifactExecutionSurface = React.forwardRef<ArtifactExecutionSurfac
   title,
   scripts,
   ready,
+  layoutEpoch,
   className,
   style,
   onLoad,
   onMessage,
   onTerminated,
+  onPopoutChange,
 }, ref) => {
   const elementRef = React.useRef<HTMLDivElement>(null);
   const iframeRef = React.useRef<HTMLIFrameElement>(null);
@@ -111,6 +136,7 @@ export const ArtifactExecutionSurface = React.forwardRef<ArtifactExecutionSurfac
   const onLoadRef = React.useRef(onLoad);
   const onMessageRef = React.useRef(onMessage);
   const onTerminatedRef = React.useRef(onTerminated);
+  const onPopoutChangeRef = React.useRef(onPopoutChange);
   const pendingEventsRef = React.useRef<RunnerEvent[]>([]);
   const lastNativeUpdateRef = React.useRef('');
   const [nativeRunner, setNativeRunner] = React.useState(scripts && canUseElectronDesktopIPC());
@@ -119,6 +145,7 @@ export const ArtifactExecutionSurface = React.forwardRef<ArtifactExecutionSurfac
   onLoadRef.current = onLoad;
   onMessageRef.current = onMessage;
   onTerminatedRef.current = onTerminated;
+  onPopoutChangeRef.current = onPopoutChange;
 
   const postNativeUpdate = React.useCallback(() => {
     const element = elementRef.current;
@@ -149,7 +176,28 @@ export const ArtifactExecutionSurface = React.forwardRef<ArtifactExecutionSurfac
       const element = elementRef.current ?? iframeRef.current;
       return { width: Math.max(0, Math.round(element?.clientWidth ?? 0)), height: Math.max(0, Math.round(element?.clientHeight ?? 0)) };
     },
-  }), []);
+    async popout(options) {
+      const runnerId = runnerIdRef.current;
+      if (!nativeRunner || !runnerId) return false;
+      const result = await invokeDesktop<{ opened?: boolean; poppedOut?: boolean }>(
+        'desktop_artifact_runner_popout',
+        { runnerId, ...options },
+      );
+      return result?.poppedOut === true;
+    },
+    async restore() {
+      const runnerId = runnerIdRef.current;
+      if (!nativeRunner || !runnerId) return false;
+      const result = await invokeDesktop<{ restored?: boolean; poppedOut?: boolean }>(
+        'desktop_artifact_runner_restore',
+        { runnerId },
+      );
+      return result?.restored === true || result?.poppedOut === false;
+    },
+    isNativeRunner() {
+      return nativeRunner && Boolean(runnerIdRef.current);
+    },
+  }), [nativeRunner]);
 
   React.useEffect(() => {
     if (!nativeRunner) return;
@@ -159,6 +207,8 @@ export const ArtifactExecutionSurface = React.forwardRef<ArtifactExecutionSurfac
       if (event.type === 'loaded') onLoadRef.current();
       else if (event.type === 'message') onMessageRef.current(event.message, { userActivated: event.userActivated === true });
       else if (event.type === 'terminated') onTerminatedRef.current(event.reason || 'terminated');
+      else if (event.type === 'popout-opened') onPopoutChangeRef.current?.(true);
+      else if (event.type === 'popout-closed') onPopoutChangeRef.current?.(false);
     };
     void listenDesktopEvent('openchamber:artifact-runner-event', (payload) => {
       const event = asRunnerEvent(payload);
@@ -227,7 +277,13 @@ export const ArtifactExecutionSurface = React.forwardRef<ArtifactExecutionSurfac
     const clippingAncestors = collectClippingAncestors(elementRef.current);
     for (const ancestor of clippingAncestors) observer.observe(ancestor);
     const modalObserver = new MutationObserver(schedule);
-    modalObserver.observe(document.body, { attributes: true, subtree: true, attributeFilter: ['open', 'aria-modal'] });
+    modalObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
+    modalObserver.observe(document.body, {
+      attributes: true,
+      childList: true,
+      subtree: true,
+      attributeFilter: ['open', 'aria-modal'],
+    });
     const layoutObserver = new MutationObserver(schedule);
     const scrollContainer = clippingAncestors.at(0);
     if (scrollContainer) {
@@ -250,7 +306,7 @@ export const ArtifactExecutionSurface = React.forwardRef<ArtifactExecutionSurfac
       window.removeEventListener('blur', schedule);
       document.removeEventListener('visibilitychange', schedule);
     };
-  }, [nativeRunner, postNativeUpdate, ready, runnerStarted]);
+  }, [layoutEpoch, nativeRunner, postNativeUpdate, ready, runnerStarted]);
 
   React.useEffect(() => {
     if (nativeRunner || !scripts) return;

@@ -46,6 +46,19 @@ interface HTMLArtifactViewProps {
   sessionId?: string;
   toolPartId: string;
   tool?: Pick<InteractiveToolContext, 'id' | 'name'>;
+  workbench?: {
+    projectId: string;
+    tileId: string;
+  };
+  onDashboardEmit?: (eventId: string, payload: Record<string, unknown>) => Promise<void>;
+  onPopoutChange?: (poppedOut: boolean) => void;
+  layoutEpoch?: string | number;
+}
+
+export interface HTMLArtifactViewHandle {
+  canPopout(): boolean;
+  popout(): Promise<boolean>;
+  restore(): Promise<boolean>;
 }
 
 interface ResolvedHTMLArtifact {
@@ -60,7 +73,11 @@ interface ResolvedHTMLArtifact {
 }
 
 const ARTIFACT_HEARTBEAT_INTERVAL_MS = 1_000;
-const ARTIFACT_HEARTBEAT_TIMEOUT_MS = 6_000;
+// The isolated Desktop Runner keeps its own hard 15-minute lease. This
+// renderer-side watchdog only detects a stalled Broker heartbeat, so allow
+// enough scheduling jitter for dense workbenches, focus transitions, and
+// native dialog animations without terminating a healthy Runner.
+const ARTIFACT_HEARTBEAT_TIMEOUT_MS = 20_000;
 const ARTIFACT_EXECUTION_LEASE_MS = 15 * 60_000;
 
 const OCIX_ARTIFACT_TOKENS = [
@@ -118,7 +135,17 @@ const hasRecentUserActivation = (): boolean => (
   && (navigator.userActivation?.isActive ?? false)
 );
 
-export const HTMLArtifactView: React.FC<HTMLArtifactViewProps> = ({ envelope, fallback, sessionId, toolPartId, tool }) => {
+export const HTMLArtifactView = React.forwardRef<HTMLArtifactViewHandle, HTMLArtifactViewProps>(({
+  envelope,
+  fallback,
+  sessionId,
+  toolPartId,
+  tool,
+  workbench,
+  onDashboardEmit,
+  onPopoutChange,
+  layoutEpoch,
+}, forwardedRef) => {
   const { t, locale } = useI18n();
   const runtime = React.useContext(RuntimeAPIContext);
   const themeSystem = useOptionalThemeSystem();
@@ -141,12 +168,37 @@ export const HTMLArtifactView: React.FC<HTMLArtifactViewProps> = ({ envelope, fa
   const [attempt, setAttempt] = React.useState(0);
   const [mode, setMode] = React.useState<HTMLArtifactDisplayMode>(installed ? 'inline' : envelope.display.preferred);
   const [height, setHeight] = React.useState(installed ? 420 : envelope.display.inlineHeight);
+  const [poppedOut, setPoppedOut] = React.useState(false);
+  const handlePopoutChange = React.useCallback((nextPoppedOut: boolean) => {
+    setPoppedOut(nextPoppedOut);
+    onPopoutChange?.(nextPoppedOut);
+  }, [onPopoutChange]);
+
+  React.useImperativeHandle(forwardedRef, () => ({
+    canPopout() {
+      return Boolean(materialization?.scripts && executionSurfaceRef.current?.isNativeRunner());
+    },
+    async popout() {
+      const target = executionSurfaceRef.current;
+      if (!materialization?.scripts || !target?.isNativeRunner()) return false;
+      const viewport = target.getViewport();
+      return target.popout({
+        title: materialization.title,
+        width: Math.max(720, viewport.width),
+        height: Math.max(520, viewport.height),
+      });
+    },
+    async restore() {
+      return executionSurfaceRef.current?.restore() ?? false;
+    },
+  }), [materialization]);
 
   React.useEffect(() => {
     let active = true;
     setMaterialization(null);
     setFailure(null);
     setReady(false);
+    setPoppedOut(false);
     lastSequenceRef.current = 0;
     lastHeartbeatRef.current = Date.now();
     executionLeaseRef.current = {
@@ -168,8 +220,12 @@ export const HTMLArtifactView: React.FC<HTMLArtifactViewProps> = ({ envelope, fa
       return () => { active = false; };
     }
     const resolveArtifact = installed
-      ? (tool
-        ? getInstalledHTMLArtifactDescriptor(envelope.artifact, tool.name).then((descriptor): ResolvedHTMLArtifact => ({
+      ? (tool || workbench
+        ? getInstalledHTMLArtifactDescriptor(
+          envelope.artifact,
+          tool?.name ?? '',
+          workbench ? { launchSource: 'workbench' } : undefined,
+        ).then((descriptor): ResolvedHTMLArtifact => ({
           scripts: true,
           inlineHeight: descriptor.artifact.inlineHeight,
           allowExpand: descriptor.artifact.displayModes.length > 1,
@@ -179,7 +235,7 @@ export const HTMLArtifactView: React.FC<HTMLArtifactViewProps> = ({ envelope, fa
           extensionId: descriptor.extension.id,
           artifactId: descriptor.artifact.id,
         }))
-        : Promise.reject(new Error('Installed HTML Artifact requires its originating tool context')))
+        : Promise.reject(new Error('Installed HTML Artifact requires a Tool or Workbench context')))
       : materializeHTMLArtifact(envelope, sessionId).then((result): ResolvedHTMLArtifact => ({
         scripts: result.scripts,
         inlineHeight: result.inlineHeight,
@@ -201,7 +257,18 @@ export const HTMLArtifactView: React.FC<HTMLArtifactViewProps> = ({ envelope, fa
       }
     });
     return () => { active = false; };
-  }, [attempt, bridgeRateLimiter, envelope, installed, mobileSurface, runtime?.runtime.isVSCode, sessionId, tool, toolPartId]);
+  }, [
+    attempt,
+    bridgeRateLimiter,
+    envelope,
+    installed,
+    mobileSurface,
+    runtime?.runtime.isVSCode,
+    sessionId,
+    tool,
+    toolPartId,
+    workbench,
+  ]);
 
   const documentUrl = React.useMemo(() => materialization
     ? getRuntimeUrlResolver().authenticatedAsset(materialization.documentPath)
@@ -276,7 +343,7 @@ export const HTMLArtifactView: React.FC<HTMLArtifactViewProps> = ({ envelope, fa
         const respond = (result: Parameters<typeof createHTMLArtifactBusinessResultMessage>[0]) => {
           target?.postMessage(createHTMLArtifactBusinessResultMessage(result));
         };
-        if (!installed || !tool || !materialization.extensionId || !materialization.artifactId) {
+        if (!installed || (!tool && !workbench) || !materialization.extensionId || !materialization.artifactId) {
           respond({
             channelId,
             requestId: message.payload.requestId,
@@ -305,6 +372,7 @@ export const HTMLArtifactView: React.FC<HTMLArtifactViewProps> = ({ envelope, fa
           input: message.payload.input,
           intent: message.payload.intent,
           tool,
+          workbench,
         })).then((result) => {
           respond({ channelId, requestId: message.payload.requestId, ...result });
         }).catch((requestError) => {
@@ -316,6 +384,13 @@ export const HTMLArtifactView: React.FC<HTMLArtifactViewProps> = ({ envelope, fa
           });
         }).finally(() => {
           businessRequestsRef.current.delete(message.payload.requestId);
+        });
+        return;
+      }
+      if (message.type === 'artifact.dashboardEvent') {
+        if (!installed || !onDashboardEmit) return;
+        void onDashboardEmit(message.payload.eventId, message.payload.payload).catch((eventError) => {
+          toast.error(eventError instanceof Error ? eventError.message : 'Dashboard event failed');
         });
         return;
       }
@@ -341,7 +416,18 @@ export const HTMLArtifactView: React.FC<HTMLArtifactViewProps> = ({ envelope, fa
         recordRoutingArtifactObservation({ sessionId, toolPartId, status: 'failed' });
         if (process.env.NODE_ENV === 'development') console.warn('HTML Artifact reported an error.', message.payload);
       }
-  }, [bridgeRateLimiter, channelId, installed, materialization, sessionId, t, tool, toolPartId]);
+  }, [
+    bridgeRateLimiter,
+    channelId,
+    installed,
+    materialization,
+    onDashboardEmit,
+    sessionId,
+    t,
+    tool,
+    toolPartId,
+    workbench,
+  ]);
 
   const handleArtifactLoad = React.useCallback(() => {
     if (loadedOnceRef.current) {
@@ -539,15 +625,26 @@ export const HTMLArtifactView: React.FC<HTMLArtifactViewProps> = ({ envelope, fa
               url={documentUrl}
               scripts={materialization.scripts}
               ready={ready}
+              layoutEpoch={layoutEpoch}
               className={cn('block w-full border-0 bg-transparent transition-opacity', ready ? 'opacity-100' : 'opacity-0')}
               style={{ height: frameHeight, colorScheme: themeVariant }}
               onLoad={handleArtifactLoad}
               onMessage={handleArtifactMessage}
               onTerminated={handleExecutionTerminated}
+              onPopoutChange={handlePopoutChange}
             />
+            {poppedOut ? (
+              <div className="absolute inset-0 z-20 flex items-center justify-center bg-[var(--ocix-surface)] p-6 text-center">
+                <p className="typography-ui-caption text-[var(--ocix-muted-foreground)]">
+                  {t('interactiveUI.artifact.poppedOut')}
+                </p>
+              </div>
+            ) : null}
           </>
         ) : null}
       </div>
     </dialog>
   );
-};
+});
+
+HTMLArtifactView.displayName = 'HTMLArtifactView';

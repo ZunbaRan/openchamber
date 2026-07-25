@@ -1,5 +1,8 @@
 import { describe, expect, test } from 'bun:test';
-import { resolveArtifactRunnerGeometry } from './artifactRunnerGeometry';
+import {
+  resolveArtifactRunnerGeometry,
+  resolveArtifactRunnerVisibility,
+} from './artifactRunnerGeometry';
 
 describe('resolveArtifactRunnerGeometry', () => {
   test('keeps the full surface while clipping the visible child to its scroll viewport', () => {
@@ -37,5 +40,28 @@ describe('resolveArtifactRunnerGeometry', () => {
     expect(result.clipBounds.width).toBe(800);
     expect(result.clipBounds.height).toBe(0);
     expect(result.visible).toBe(false);
+  });
+});
+
+describe('resolveArtifactRunnerVisibility', () => {
+  test('hides a native runner behind Base UI and native modal dialogs', () => {
+    expect(resolveArtifactRunnerVisibility({
+      documentVisible: true,
+      baseDialogOpen: true,
+      blockingNativeDialogOpen: false,
+    })).toBe(false);
+    expect(resolveArtifactRunnerVisibility({
+      documentVisible: true,
+      baseDialogOpen: false,
+      blockingNativeDialogOpen: true,
+    })).toBe(false);
+  });
+
+  test('restores the runner after the blocking dialog closes', () => {
+    expect(resolveArtifactRunnerVisibility({
+      documentVisible: true,
+      baseDialogOpen: false,
+      blockingNativeDialogOpen: false,
+    })).toBe(true);
   });
 });

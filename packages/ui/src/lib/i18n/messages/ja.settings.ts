@@ -115,6 +115,8 @@ export const settingsDict = {
   'settings.interactiveUI.fields.setupCodePlaceholder': '設定コードを入力',
   'settings.interactiveUI.uninstall.title': '拡張機能をアンインストールしますか？',
   'settings.interactiveUI.uninstall.description': '{name} は無効化され、復元可能な領域へ移動します。',
+  'settings.interactiveUI.uninstall.impact': 'ローカルの {projects} プロジェクトにある Workbench タイル {tiles} 個も削除されます。',
+  'settings.interactiveUI.uninstall.impactLoading': '影響を受ける Workbench タイルを計算しています…',
   'settings.interactiveUI.toast.loadFailed': '拡張機能を読み込めませんでした',
   'settings.interactiveUI.toast.actionFailed': '拡張機能の操作に失敗しました',
   'settings.interactiveUI.toast.installed': '拡張機能をインストールしました',

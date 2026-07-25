@@ -1,7 +1,7 @@
 # OpenChamber OCIX：Interactive UI + HTML Artifact 开发手册
 
 > 规范：OCIX v1 Managed Distribution Preview<br>
-> 更新日期：2026-07-21<br>
+> 更新日期：2026-07-25<br>
 > 配套 Agent skill：`.agents/skills/build-openchamber-interactive-extension/`<br>
 > 架构背景：[Interactive UI 扩展架构](./INTERACTIVE_UI_EXTENSION_ARCHITECTURE.md)
 
@@ -22,6 +22,7 @@ OCIX 已经支持一个签名扩展同时携带 Third-party Interactive UI 与 T
 - Extension Manager：确认式信任、Tool/Skill 全局受管安装、多扩展冲突保护、启停、更新、回滚、可恢复卸载和持久化信任库。
 - 自描述签名 marketplace catalog 协议、URL-only 添加流程、客户端和静态目录生成 CLI。
 - OCIX Connector Authentication v1：Extension Manager 内配置/签发/测试/断开业务连接，服务端 Secret Store 与 Gateway Key 注入。
+- Extension Workbench：右侧扩展目录、项目级磁贴看板、四类 Pin、12 列拖拽/缩放、同 DOM Focus、生成结果快照和同扩展事件联动。
 
 这已经是一条可用于企业私有分发、内测渠道和静态公共目录的完整技术链，但不等于 OpenChamber 官方已经运营一个公共市场。公网域名/CDN、扩展审核组织、离线根密钥仪式、签名密钥吊销/透明日志、恶意软件响应、Native ABI 兼容窗口、VS Code Gateway 和远程 OpenCode 双端协商仍属于部署方或后续平台治理。业务 Key 的权限、RBAC/ABAC、撤销和审计由接入的第三方系统负责，不是 OpenChamber 要复制的一套多用户权限系统。
 
@@ -167,11 +168,13 @@ Content-Type: application/json
 | `$schema` | 应为 `openchamber://extension/v1`；CLI 强制检查 |
 | `id` | 至少两段的 namespaced ID，如 `com.acme.operations` |
 | `name` | 注册表显示名 |
+| `shortName` | Workbench 扩展分组的短名称 |
 | `version` | CLI 要求 semver；Native 更新后必须递增 |
 | `agentRouting` | 可选的受约束 Agent 路由元数据：业务域、意图、示例和数据权威性 |
 | `connectors` | 服务端 HTTP(S) 连接定义 |
 | `views` | Declarative/Native entry 与 tool binding |
 | `artifacts` | 已安装 HTML entry、tool binding、显示模式与 Business action 子集 |
+| `links` | 同一 OCIX 内声明式磁贴联动；不允许跨扩展 |
 | `actions` | Gateway allowlist |
 | `permissions.network` | connector origin allowlist |
 | `trust` | runtime 类型说明；生产授权来自 `.ocix` 包签名和 Host 信任库，不依赖该字段自报 |
@@ -225,7 +228,106 @@ OpenChamber Web 在发送用户消息前调用 `GET /api/interactive-ui/capabili
 
 开发与验收时可以在 **Settings → Interactive UI Extensions → Routing Inspector** 查看最近的实际链路。它显示发送时注入的可用 Tool、声明的 intent/priority/operation/connection、实际观察到的 Tool 状态，以及 View 是否完成加载。这里的“候选”表示注入给模型的能力集合，并不是对模型隐藏推理或语义相关度的猜测。复制出的诊断报告已缩短会话/消息 ID，且不包含问题原文、Tool 输入输出、业务数据、接口地址或凭据。
 
-### 5.3 Connector
+### 5.3 Extension Workbench
+
+要让 View 或 Artifact 出现在右侧 **Extensions** Catalog 中，在对应 surface 上声明 `dashboard`：
+
+```json
+{
+  "shortName": "Operations",
+  "views": [{
+    "id": "com.acme.operations.overview",
+    "runtime": "declarative",
+    "entry": "ui/declarative/overview.view.json",
+    "tools": ["operations_open_overview"],
+    "dashboard": {
+      "description": "Operations overview",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "scope": { "type": "string", "minLength": 1, "maxLength": 80 }
+        },
+        "required": ["scope"]
+      },
+      "defaultContext": { "scope": "default" },
+      "layout": {
+        "columns": 6,
+        "rows": 5,
+        "minColumns": 4,
+        "maxColumns": 12,
+        "minRows": 3,
+        "maxRows": 12,
+        "overflow": "auto"
+      },
+      "instances": "byContext",
+      "refresh": { "mode": "onFocus", "minimumIntervalSeconds": 30 },
+      "events": {
+        "emits": [{
+          "id": "item.selected",
+          "payloadSchema": {
+            "type": "object",
+            "properties": {
+              "itemId": { "type": "string", "minLength": 1, "maxLength": 160 }
+            },
+            "required": ["itemId"]
+          }
+        }],
+        "accepts": []
+      },
+      "popout": { "supported": true }
+    }
+  }]
+}
+```
+
+规则：
+
+- Workbench 使用 12 列网格；默认 `columns: 6` 即一排两个磁贴。内容在磁贴内部横向/纵向滚动，不能突破右侧栏或对话容器的层叠边界。
+- `inputSchema` 只接受受限 JSON Schema。`defaultContext` 和 `hostContext` 会先被校验，再决定 Catalog 是否允许用户手动启动。
+- 详情页需要具体 `itemId` 时，应把它声明为 required 且不提供伪默认值。这样目录会显示“需要参数”；Agent 调用后的页面仍可携带实际 Context Pin 到看板，或由声明式 Link 唤起。
+- `instances: "byContext"` 按规范化 Context 去重；`"single"` 只保留一个 surface 实例。
+- `refresh.mode` 是 `manual`、`onFocus` 或 `interval`。间隔刷新受最小秒数约束，失败时保留最后一次有效数据。
+- Declarative 和 HTML Artifact 默认可声明 Popout；Native 必须显式支持独立生命周期才能打开。Focus 在同一 DOM 中放大，不应卸载重建运行中的页面。
+- 对话里的四种结果都可 Pin：Installed Interactive UI、Installed HTML Artifact、Agent Generated Interactive UI 和 Agent Generated HTML Artifact。前两者保留可信 Context/Gateway 权限；后两者只是内容寻址的安全快照，不能获得 Business Bridge 或扩展 Link 权限。
+
+同一扩展的磁贴联动写在顶层 `links[]`：
+
+```json
+{
+  "links": [{
+    "id": "overview-item-to-workspace",
+    "from": "com.acme.operations.overview",
+    "event": "item.selected",
+    "to": "com.acme.operations.workspace",
+    "map": {
+      "scope": "$source.context.scope",
+      "itemId": "$event.payload.itemId"
+    },
+    "relationship": "item",
+    "placement": "adjacent"
+  }]
+}
+```
+
+源 surface 必须声明 `events.emits` 及 payload schema；目标必须在 `events.accepts` 接收同一事件，并在 `inputSchema` 声明每个被映射路径。映射源仅允许 `$event.payload.*`、`$source.context.*`、`$host.*` 或 JSON 标量。跨 OCIX Link、脚本表达式、URL、Token 和任意指令均会被拒绝。
+
+Declarative 表格用 emit row action：
+
+```json
+{
+  "id": "open-item",
+  "label": "Open",
+  "type": "emit",
+  "event": "item.selected",
+  "payload": {
+    "itemId": { "$row": "id" }
+  }
+}
+```
+
+Trusted Native 调用 `props.host.dashboard.emit("item.selected", { itemId })`；已安装 HTML Artifact 调用 `window.openchamber.dashboard.emit("item.selected", { itemId })`。Host 负责校验和选择声明的目标，扩展代码不能直接操作别的磁贴。
+
+### 5.4 Connector
 
 ```json
 {
@@ -261,7 +363,7 @@ OpenChamber Web 在发送用户消息前调用 `GET /api/interactive-ui/capabili
 
 完整 `api-key`、`issued-key` manifest、请求/响应 schema、存储边界和第三方实现要求见 [OCIX Connector Authentication & Credential Provisioning v1](./OCIX_CONNECTOR_AUTHENTICATION_V1.md)。第三方系统决定 Key 的权限、租户、过期、撤销、RBAC/ABAC 和最终业务授权；OpenChamber 不复刻这些规则。
 
-### 5.4 Action
+### 5.5 Action
 
 ```json
 {
@@ -291,7 +393,7 @@ OpenChamber Web 在发送用户消息前调用 `GET /api/interactive-ui/capabili
 
 当前 action 是 extension 级 allowlist，不是单个 View 的独立 allowlist；服务端仍验证发起 action 的 extension 是否拥有当前 View。
 
-### 5.4 View
+### 5.6 View
 
 ```json
 {
@@ -308,7 +410,7 @@ OpenChamber Web 在发送用户消息前调用 `GET /api/interactive-ui/capabili
 - Native `entry` 只能是本地 `.mjs`/`.js`；不能从 manifest dynamic import 任意互联网 URL。
 - 当前对话 Host 实际传入 `display.mode: inline`。workspace/fullscreen 只是 descriptor 能力声明，容器尚未交付。
 
-### 5.5 HTML Artifact
+### 5.7 HTML Artifact
 
 ```json
 {

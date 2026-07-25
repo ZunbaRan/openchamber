@@ -33,9 +33,12 @@ const readJsonResponse = async <T>(response: Response): Promise<T> => {
 
 export const getInteractiveViewDescriptor = async (
   viewId: string,
-  toolName: string,
+  toolName = '',
+  options?: { launchSource?: 'tool' | 'workbench' },
 ): Promise<InteractiveViewDescriptor> => {
-  const query = new URLSearchParams({ tool: toolName });
+  const query = new URLSearchParams();
+  if (toolName) query.set('tool', toolName);
+  if (options?.launchSource === 'workbench') query.set('launch', 'workbench');
   const response = await runtimeFetch(`/api/interactive-ui/views/${encodeURIComponent(viewId)}?${query.toString()}`, {
     headers: { Accept: 'application/json' },
   });
@@ -44,9 +47,12 @@ export const getInteractiveViewDescriptor = async (
 
 export const getInstalledHTMLArtifactDescriptor = async (
   artifactId: string,
-  toolName: string,
+  toolName = '',
+  options?: { launchSource?: 'tool' | 'workbench' },
 ): Promise<InstalledHTMLArtifactDescriptor> => {
-  const query = new URLSearchParams({ tool: toolName });
+  const query = new URLSearchParams();
+  if (toolName) query.set('tool', toolName);
+  if (options?.launchSource === 'workbench') query.set('launch', 'workbench');
   const response = await runtimeFetch(`/api/interactive-ui/installed-artifacts/${encodeURIComponent(artifactId)}?${query.toString()}`, {
     headers: { Accept: 'application/json' },
   });

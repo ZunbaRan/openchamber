@@ -9,6 +9,7 @@ import { promisify } from 'node:util';
 import sharp from 'sharp';
 import {
   HYBRID_CRM_FIXTURE,
+  assertHybridCrmFixtureAvailable,
   createHybridCrmPackage,
   startHybridCrmApi,
 } from '../../../scripts/lib/interactive-ui-hybrid-crm-fixture.mjs';
@@ -18,6 +19,19 @@ const projectRoot = path.resolve(electronRoot, '../..');
 const outputDirectory = path.join(projectRoot, '.tmp', 'interactive-ui-packaged-desktop');
 const reportPath = path.join(outputDirectory, 'report.json');
 const execFileAsync = promisify(execFile);
+
+try {
+  await assertHybridCrmFixtureAvailable();
+} catch (error) {
+  const missingPath = error && typeof error === 'object' && 'path' in error
+    ? ` (${String(error.path)})`
+    : '';
+  console.log(
+    `[electron] skipped packaged Interactive UI CRM fixture verification: `
+      + `the optional workspace fixture is not installed${missingPath}`,
+  );
+  process.exit(0);
+}
 
 const delay = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 

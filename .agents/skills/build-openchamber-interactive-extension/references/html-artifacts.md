@@ -30,6 +30,29 @@ The same `.ocix` can contain both Third-party columns. Package trust decides whe
     "capabilities": {
       "scripts": true,
       "businessActions": ["com.acme.crm.overview.query", "com.acme.crm.item.approve"]
+    },
+    "dashboard": {
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "scope": { "type": "string" }
+        },
+        "required": ["scope"]
+      },
+      "defaultContext": { "scope": "default" },
+      "layout": {
+        "columns": 6,
+        "rows": 7,
+        "minColumns": 4,
+        "maxColumns": 12,
+        "minRows": 4,
+        "maxRows": 18,
+        "overflow": "auto"
+      },
+      "instances": "byContext",
+      "refresh": { "mode": "manual", "minimumIntervalSeconds": 30 },
+      "events": { "emits": [], "accepts": [] },
+      "popout": { "supported": true }
     }
   }]
 }
@@ -75,6 +98,16 @@ await window.openchamber.business.execute(
 
 At most four requests run concurrently per Artifact instance. Do not use the bridge for streaming, arbitrary URLs, file access, Tool calls, or MCP passthrough.
 
+When the Artifact is an installed Workbench surface, it may also emit a manifest-declared event:
+
+```js
+window.openchamber.dashboard.emit('item.selected', {
+  itemId: row.id,
+});
+```
+
+The event is a one-way, bounded Host message. It does not grant direct access to another tile or API. OpenChamber validates the source declaration, payload schema, same-extension Link, target input schema, and mapping before it creates or updates a related tile. This API is absent from Agent Generated HTML Artifacts.
+
 ## Sandbox and content rules
 
 - Runtime nesting is Host page → authenticated broker iframe → opaque-origin `sandbox="allow-scripts"` content iframe.
@@ -95,4 +128,4 @@ node scripts/interactive-ui-extension.mjs validate /absolute/extension
 node scripts/interactive-ui-extension.mjs pack /absolute/extension --out /absolute/dist/extension.ocix --private-key /absolute/keys/publisher.private.pem --publisher-id com.acme.publisher --publisher-name "Acme" --key-id release-2026
 ```
 
-Acceptance must prove: Tool discovery after managed install; exact installed result parsing; inline conversation render; light/dark theme; query data; confirmation before write; rejected undeclared action; no secret in descriptor/document/result/logs; disable/enable; update/rollback; and ordinary text fallback. Use Qwen3.7 Plus as the default model routing gate unless the task explicitly requires a multi-provider comparison.
+Acceptance must prove: Tool discovery after managed install; exact installed result parsing; inline conversation render; light/dark theme; query data; confirmation before write; rejected undeclared action; no secret in descriptor/document/result/logs; Pin to Workbench; manual Catalog launch when defaults are complete; declared event coordination; tile-contained scrolling; Focus/Popout restoration; disable/enable; update/rollback; and ordinary text fallback. Use Qwen3.7 Plus as the default model routing gate unless the task explicitly requires a multi-provider comparison.

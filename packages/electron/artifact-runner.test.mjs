@@ -16,6 +16,7 @@ const createHarness = () => {
   let metrics = [];
   const emitted = [];
   const partitionSessions = [];
+  const browserWindows = [];
   class MockWebContents extends EventEmitter {
     constructor() {
       super();
@@ -35,6 +36,29 @@ const createHarness = () => {
     constructor(options) { this.options = options; this.webContents = new MockWebContents(); this.visible = false; }
     setBounds(bounds) { this.bounds = bounds; }
     setVisible(value) { this.visible = value; }
+  }
+  class MockBrowserWindow extends EventEmitter {
+    constructor(options) {
+      super();
+      browserWindows.push(this);
+      this.options = options;
+      this.destroyed = false;
+      this.shown = false;
+      this.contentView = {
+        children: [],
+        addChildView: (view) => { this.contentView.children.push(view); },
+        removeChildView: (view) => {
+          this.contentView.children = this.contentView.children.filter((entry) => entry !== view);
+        },
+      };
+      this.contentBounds = { x: 0, y: 0, width: options.width, height: options.height };
+    }
+    getContentBounds() { return this.contentBounds; }
+    loadURL(url) { this.url = url; return Promise.resolve(); }
+    setMenuBarVisibility() {}
+    show() { this.shown = true; }
+    isDestroyed() { return this.destroyed; }
+    destroy() { this.destroyed = true; this.emit('closed'); }
   }
   const session = {
     fromPartition(partition, options) {
@@ -60,6 +84,7 @@ const createHarness = () => {
     getContentBounds: () => ({ x: 0, y: 0, width: 1_200, height: 800 }),
   };
   const manager = createArtifactRunnerManager({
+    BrowserWindow: MockBrowserWindow,
     WebContentsView: MockWebContentsView,
     session,
     app: { getAppMetrics: () => metrics },
@@ -73,6 +98,7 @@ const createHarness = () => {
     manager,
     owner,
     emitted,
+    browserWindows,
     partitionSessions,
     setNow(value) { now = value; },
     setMetrics(value) { metrics = value; },
@@ -90,8 +116,9 @@ test('starts a sandboxed runner with denied permissions and destroys it on stop'
   assert.deepEqual(view.bounds, { x: 12, y: 4, width: 640, height: 360 });
   assert.equal(harness.partitionSessions[0].permissionCheck(), false);
   assert.deepEqual(view.webContents.windowOpenHandler(), { action: 'deny' });
+  const messagesBeforePost = view.webContents.sent.length;
   assert.equal(harness.manager.post(state.id, { source: 'openchamber-host' }), true);
-  assert.equal(view.webContents.sent.length, 1);
+  assert.equal(view.webContents.sent.length, messagesBeforePost + 1);
   assert.equal(harness.manager.stop(state.id).stopped, true);
   assert.equal(view.webContents.closed, true);
   assert.equal(harness.owner.contentView.children.length, 0);
@@ -154,4 +181,55 @@ test('enforces memory and sustained CPU limits in the main process', async () =>
   for (let index = 0; index < ARTIFACT_RUNNER_LIMITS.cpuSamples; index += 1) cpuHarness.manager.monitor();
   assert.equal(cpuHarness.manager.get(cpuState.id), null);
   assert.equal(cpuHarness.emitted.at(-1).reason, 'cpu-limit');
+});
+
+test('migrates the same runner view into a system popout and restores it', async () => {
+  const harness = createHarness();
+  const url = `http://127.0.0.1:47832/api/interactive-ui/artifacts/${'e'.repeat(64)}/document`;
+  const state = await harness.manager.start(harness.owner, {
+    url,
+    bounds: { x: 20, y: 40, width: 640, height: 360 },
+    visible: true,
+  });
+  const view = harness.owner.contentView.children[0];
+  view.webContents.emit('did-finish-load');
+  harness.manager.handleLayoutApplied(view.webContents, { revision: 1 });
+
+  const opened = await harness.manager.popout(state.id, {
+    title: 'Artifact popout',
+    width: 900,
+    height: 600,
+  });
+  assert.equal(opened.opened, true);
+  assert.equal(opened.poppedOut, true);
+  const popoutWindow = harness.browserWindows[0];
+  assert.equal(popoutWindow.options.parent, undefined);
+  assert.match(popoutWindow.url, /^http:\/\/127\.0\.0\.1:47832\/artifact-popout-host\.html/);
+  assert.equal(harness.owner.contentView.children.length, 0);
+  assert.equal(view.webContents.closed, false);
+  assert.equal(harness.emitted.at(-1).type, 'popout-opened');
+
+  const restored = harness.manager.restore(state.id);
+  assert.equal(restored.restored, true);
+  assert.equal(restored.poppedOut, false);
+  assert.deepEqual(harness.owner.contentView.children, [view]);
+  assert.equal(view.webContents.closed, false);
+  assert.equal(harness.emitted.at(-1).type, 'popout-closed');
+  harness.manager.handleLayoutApplied(view.webContents, { revision: 3 });
+  assert.deepEqual(view.bounds, { x: 20, y: 40, width: 640, height: 360 });
+});
+
+test('enforces three popout windows per owner without replacing existing runners', async () => {
+  const harness = createHarness();
+  const states = [];
+  for (let index = 0; index < 4; index += 1) {
+    states.push(await harness.manager.start(harness.owner, {
+      url: `http://127.0.0.1:47832/api/interactive-ui/artifacts/${String(index + 1).repeat(64)}/document`,
+      bounds: { x: 0, y: 0, width: 640, height: 360 },
+    }));
+  }
+  for (const state of states.slice(0, 3)) await harness.manager.popout(state.id);
+  await assert.rejects(harness.manager.popout(states[3].id), /popout limit/);
+  assert.equal(harness.manager.get(states[0].id)?.poppedOut, true);
+  assert.equal(harness.manager.get(states[3].id)?.poppedOut, false);
 });

@@ -31,6 +31,8 @@ describe('HTML Artifact store', () => {
     const installed = createInstalledHTMLArtifactDocument('<!doctype html><html><body><script>document.body.dataset.ready="true"</script></body></html>');
     expect(installed).toContain('Object.defineProperty(window,"openchamber"');
     expect(installed).toContain('artifact.businessRequest');
+    expect(installed).toContain('artifact.dashboardEvent');
+    expect(installed).toContain('dashboard:Object.freeze({emit})');
     expect(installed).toContain("connect-src 'none'");
 
     const store = await createStore({ OPENCHAMBER_HTML_ARTIFACTS_SCRIPTS: 'true' });

@@ -112,6 +112,48 @@ describe('OCIX signed package format', () => {
     })).rejects.toMatchObject({ code: 'invalid_agent_routing' });
   });
 
+  it('validates Workbench metadata and local icons before signing', async () => {
+    const directory = await createExtension();
+    const manifestPath = path.join(directory, 'openchamber.extension.json');
+    const manifest = JSON.parse(await fs.readFile(manifestPath, 'utf8'));
+    manifest.shortName = 'Operations';
+    manifest.icon = 'ui/icon.svg';
+    manifest.views[0].title = 'Overview';
+    manifest.views[0].dashboard = {
+      inputSchema: {
+        type: 'object',
+        properties: { scope: { type: 'string' } },
+        required: ['scope'],
+      },
+      defaultContext: { scope: 'default' },
+    };
+    await fs.writeFile(manifestPath, JSON.stringify(manifest));
+    await fs.writeFile(path.join(directory, 'ui', 'icon.svg'), '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><path d="M0 0h1v1z"/></svg>');
+    const keys = generatePublisherKeyPair();
+    await expect(createExtensionPackage({
+      extensionDirectory: directory,
+      privateKey: keys.privateKey,
+      publisherId: 'com.acme.publisher',
+      publisherName: 'Acme',
+      keyId: 'release-2026',
+    })).resolves.toMatchObject({
+      manifest: {
+        shortName: 'Operations',
+        icon: 'ui/icon.svg',
+      },
+    });
+
+    manifest.icon = 'https://attacker.example/icon.svg';
+    await fs.writeFile(manifestPath, JSON.stringify(manifest));
+    await expect(createExtensionPackage({
+      extensionDirectory: directory,
+      privateKey: keys.privateKey,
+      publisherId: 'com.acme.publisher',
+      publisherName: 'Acme',
+      keyId: 'release-2026',
+    })).rejects.toMatchObject({ code: 'invalid_extension_icon' });
+  });
+
   it('packages one OCIX with both Interactive UI and HTML Artifact Agent tools', async () => {
     const directory = await createExtension();
     const manifestPath = path.join(directory, 'openchamber.extension.json');

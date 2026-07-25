@@ -115,6 +115,8 @@ export const settingsDict = {
   'settings.interactiveUI.fields.setupCodePlaceholder': 'Saisissez le code de configuration',
   'settings.interactiveUI.uninstall.title': 'Désinstaller l’extension ?',
   'settings.interactiveUI.uninstall.description': '{name} sera désactivée et déplacée vers un stockage récupérable.',
+  'settings.interactiveUI.uninstall.impact': 'Cela supprime aussi {tiles} tuiles du Workbench dans {projects} projets locaux.',
+  'settings.interactiveUI.uninstall.impactLoading': 'Calcul des tuiles du Workbench concernées…',
   'settings.interactiveUI.toast.loadFailed': 'Impossible de charger les extensions',
   'settings.interactiveUI.toast.actionFailed': 'L’action sur l’extension a échoué',
   'settings.interactiveUI.toast.installed': 'Extension installée',

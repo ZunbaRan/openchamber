@@ -3,6 +3,11 @@ import fsPromises from 'node:fs/promises';
 import nodePath from 'node:path';
 import AdmZip from 'adm-zip';
 import { normalizeInteractiveUIRouting } from './routing.js';
+import {
+  InteractiveUIDashboardContractError,
+  normalizeExtensionDashboardContract,
+  validateExtensionIconAsset,
+} from './dashboard-contract.js';
 
 const EXTENSION_PACKAGE_SCHEMA = 'openchamber://extension-package/v1';
 const EXTENSION_CATALOG_SCHEMA = 'openchamber://extension-catalog/v1';
@@ -183,7 +188,34 @@ const parseManifest = (content) => {
       'invalid_agent_routing',
     );
   }
+  try {
+    normalizeExtensionDashboardContract(manifest);
+  } catch (error) {
+    throw new InteractiveUIPackageError(
+      error instanceof Error ? error.message : 'Extension dashboard metadata is invalid',
+      error instanceof InteractiveUIDashboardContractError ? error.code : 'invalid_dashboard_contract',
+    );
+  }
   return manifest;
+};
+
+const validateDashboardAssets = (manifest, files) => {
+  if (typeof manifest.icon !== 'string') return;
+  const content = files.get(manifest.icon);
+  if (!content) {
+    throw new InteractiveUIPackageError(
+      `Extension icon is missing from the signed package: ${manifest.icon}`,
+      'invalid_extension_icon',
+    );
+  }
+  try {
+    validateExtensionIconAsset(manifest.icon, content);
+  } catch (error) {
+    throw new InteractiveUIPackageError(
+      error instanceof Error ? error.message : 'Extension icon is invalid',
+      error instanceof InteractiveUIDashboardContractError ? error.code : 'invalid_extension_icon',
+    );
+  }
 };
 
 const readSkillFrontmatter = (content, name) => {
@@ -295,7 +327,9 @@ export const createExtensionPackage = async ({
   const manifestFile = files.find((file) => file.path === 'openchamber.extension.json');
   if (!manifestFile) throw new InteractiveUIPackageError('Extension package is missing openchamber.extension.json', 'missing_manifest');
   const manifest = parseManifest(manifestFile.content);
-  const agentRuntime = inspectPackagedAgentRuntime(new Map(files.map((file) => [file.path, file.content])), manifest);
+  const packagedFiles = new Map(files.map((file) => [file.path, file.content]));
+  validateDashboardAssets(manifest, packagedFiles);
+  const agentRuntime = inspectPackagedAgentRuntime(packagedFiles, manifest);
 
   const unsignedIndex = {
     $schema: EXTENSION_PACKAGE_SCHEMA,
@@ -451,6 +485,7 @@ export const verifyExtensionPackage = async ({
   if (archiveFiles.size !== indexedFiles.size) throw new InteractiveUIPackageError('Extension archive is missing signed files', 'missing_package_file');
 
   const manifest = parseManifest(archiveFiles.get('openchamber.extension.json') ?? Buffer.alloc(0));
+  validateDashboardAssets(manifest, archiveFiles);
   if (manifest.id !== packageIndex.extension.id || manifest.version !== packageIndex.extension.version || manifest.name !== packageIndex.extension.name) {
     throw new InteractiveUIPackageError('Manifest identity does not match the signed package index', 'package_identity_mismatch', 403);
   }

@@ -115,6 +115,8 @@ export const settingsDict = {
   'settings.interactiveUI.fields.setupCodePlaceholder': 'Wprowadź kod konfiguracji',
   'settings.interactiveUI.uninstall.title': 'Odinstalować rozszerzenie?',
   'settings.interactiveUI.uninstall.description': '{name} zostanie wyłączone i przeniesione do pamięci umożliwiającej odzyskanie.',
+  'settings.interactiveUI.uninstall.impact': 'Usunie to także {tiles} kafelków Workbench w {projects} lokalnych projektach.',
+  'settings.interactiveUI.uninstall.impactLoading': 'Obliczanie kafelków Workbench objętych zmianą…',
   'settings.interactiveUI.toast.loadFailed': 'Nie udało się wczytać rozszerzeń',
   'settings.interactiveUI.toast.actionFailed': 'Operacja rozszerzenia nie powiodła się',
   'settings.interactiveUI.toast.installed': 'Rozszerzenie zainstalowane',

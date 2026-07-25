@@ -45,6 +45,15 @@
         ],
         "rowActions": [
           {
+            "id": "open-order-detail",
+            "label": "查看详情",
+            "type": "emit",
+            "event": "order.selected",
+            "payload": {
+              "orderId": { "$row": "id" }
+            }
+          },
+          {
             "id": "approve-order",
             "label": "批准",
             "action": "sales.order.approve",
