@@ -1,0 +1,22 @@
+{
+  "type": "design",
+  "designSystems": [],
+  "primaryDesignSystem": null,
+  "assets": {
+    "OpenChamber Codex Shell": {
+      "versions": [
+        {
+          "path": "OpenChamber Codex Shell.html",
+          "createdAt": "2026-07-25T07:21:50.715Z",
+          "status": "needs-review",
+          "viewport": {
+            "width": 1440,
+            "height": 900
+          }
+        }
+      ]
+    }
+  },
+  "createdAt": "2026-07-25T07:21:50.716Z",
+  "updatedAt": "2026-07-25T07:21:50.716Z"
+}

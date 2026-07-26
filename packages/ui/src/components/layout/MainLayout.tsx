@@ -5,8 +5,7 @@ import { BottomTerminalDock } from './BottomTerminalDock';
 import { Sidebar } from './Sidebar';
 import { SidebarTopBar } from './SidebarTopBar';
 import { TitlebarLeftControls } from './TitlebarLeftControls';
-import { RightSidebar } from './RightSidebar';
-import { ProjectContextPanel, RightSidebarTabs } from './RightSidebarTabs';
+import { ProjectContextPanel } from './RightSidebarTabs';
 import { ContextPanel } from './ContextPanel';
 import { ErrorBoundary } from '../ui/ErrorBoundary';
 import { CommandPalette } from '../ui/CommandPalette';
@@ -585,12 +584,6 @@ export const MainLayout: React.FC = () => {
                                         ) : null}
                                     </BottomTerminalDock>
                                 </div>
-                                <RightSidebar
-                                    isOpen={isRightSidebarOpen}
-                                    className="bg-background border-t border-border/50"
-                                >
-                                    <ErrorBoundary><RightSidebarTabs /></ErrorBoundary>
-                                </RightSidebar>
                             </div>
                         </div>
                     </div>

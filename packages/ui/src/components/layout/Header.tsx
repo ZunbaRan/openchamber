@@ -13,6 +13,16 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { Button } from '@/components/ui/button';
+import { toast } from '@/components/ui';
 import { SortableTabsStrip, type SortableTabsStripItem } from '@/components/ui/sortable-tabs-strip';
 
 import { DiffIcon } from '@/components/icons/DiffIcon';
@@ -21,7 +31,12 @@ import { useConfigStore } from '@/stores/useConfigStore';
 import { useSessionUIStore } from '@/sync/session-ui-store';
 import { useSessionWorktreeStore } from '@/sync/session-worktree-store';
 import { formatSessionWorktreeBadge } from '@/sync/session-worktree-contract';
-import { useSessionMessagesResolved } from '@/sync/sync-context';
+import {
+  useDirectorySync,
+  useGlobalSessionStatus,
+  useSessionMessages,
+  useSessionMessagesResolved,
+} from '@/sync/sync-context';
 import { useProjectsStore } from '@/stores/useProjectsStore';
 import { useQuotaAutoRefresh, useQuotaStore } from '@/stores/useQuotaStore';
 import { useGitBranchLabel } from '@/stores/useGitStore';
@@ -34,7 +49,6 @@ import { useRuntimeAPIs } from '@/hooks/useRuntimeAPIs';
 import { useDesktopWindowControlsLayout } from '@/hooks/useDesktopWindowControlsLayout';
 import { ContextUsageDisplay } from '@/components/ui/ContextUsageDisplay';
 import { WindowsWindowControls } from '@/components/desktop/WindowsWindowControls';
-import { UpdateDialog } from '@/components/ui/UpdateDialog';
 import { useDeviceInfo, useTabletStandalonePwaRuntime } from '@/lib/device';
 import { cn, hasModifier } from '@/lib/utils';
 import { McpDropdownContent } from '@/components/mcp/McpDropdown';
@@ -45,8 +59,7 @@ import { UsageProgressBar } from '@/components/sections/usage/UsageProgressBar';
 import { PaceIndicator } from '@/components/sections/usage/PaceIndicator';
 import { updateDesktopSettings } from '@/lib/persistence';
 import { formatTimeForPreference } from '@/lib/timeFormat';
-import { eventMatchesShortcut, formatShortcutForDisplay, getEffectiveShortcutCombo } from '@/lib/shortcuts';
-import type { TimeFormatPreference } from '@/stores/useUIStore';
+import { eventMatchesShortcut, getEffectiveShortcutCombo } from '@/lib/shortcuts';
 import {
   getAllModelFamilies,
   getDisplayModelName,
@@ -62,71 +75,29 @@ import {
 import type { UsageWindow } from '@/types';
 import type { GitHubAuthStatus } from '@/lib/api/types';
 import type { SessionContextUsage } from '@/stores/types/sessionTypes';
-import { DesktopHostSwitcherDialog } from '@/components/desktop/DesktopHostSwitcher';
-import { OpenInAppButton } from '@/components/desktop/OpenInAppButton';
-import { useTerminalStore } from '@/stores/useTerminalStore';
 import { ProjectActionsButton } from '@/components/layout/ProjectActionsButton';
 import { SessionSwitcherDropdown } from '@/components/session/SessionSwitcherDropdown';
-import { canUseElectronDesktopIPC, invokeDesktop, isDesktopLocalOriginActive, isDesktopShell, isVSCodeRuntime, startDesktopWindowDrag, type UpdateInfo } from '@/lib/desktop';
-import { desktopHostsGet, getDesktopHostApiUrl, locationMatchesHost, redactSensitiveUrl } from '@/lib/desktopHosts';
+import { ForkSessionDialog, type ForkSessionExecution } from '@/components/session/ForkSessionDialog';
+import { canUseElectronDesktopIPC, invokeDesktop, isDesktopShell, isVSCodeRuntime, startDesktopWindowDrag } from '@/lib/desktop';
 import { Icon } from "@/components/icon/Icon";
 import { useI18n } from '@/lib/i18n';
 import { runtimeFetch } from '@/lib/runtime-fetch';
 import { getRuntimeBearerTokenSync } from '@/lib/runtime-auth';
-import { getRuntimeApiBaseUrl } from '@/lib/runtime-switch';
+import { getRuntimeApiBaseUrl, getRuntimeKey } from '@/lib/runtime-switch';
 import { useShallow } from 'zustand/react/shallow';
 import type { IconName } from "@/components/icon/icons";
+import { isSessionPinned, useSessionPinnedStore } from '@/stores/useSessionPinnedStore';
+import { getDeferredSafeStorage } from '@/stores/utils/safeStorage';
+import {
+  createEmptyTaskOutputRegistry,
+  observeTaskOutputs,
+  parseTaskOutputRegistry,
+  type TaskOutputRegistry,
+} from '@/lib/taskOutputRegistry';
+import { getFullText } from '@/components/chat/lib/messagePreview';
 
 const DESKTOP_HEADER_ICON_BUTTON_CLASS = 'app-region-no-drag inline-flex h-8 w-8 items-center justify-center gap-2 rounded-md typography-ui-label font-medium text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:pointer-events-none disabled:opacity-50 hover:bg-interactive-hover transition-colors';
 const MOBILE_HEADER_ICON_BUTTON_CLASS = 'app-region-no-drag inline-flex h-9 w-9 items-center justify-center gap-2 p-2 rounded-md typography-ui-label font-medium text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:pointer-events-none disabled:opacity-50 hover:text-foreground hover:bg-interactive-hover transition-colors';
-
-type HeaderIconActionButtonProps = {
-  visible?: boolean;
-  title: string;
-  ariaLabel: string;
-  onClick: React.MouseEventHandler<HTMLButtonElement>;
-  className?: string;
-  Icon: IconName;
-  iconClassName?: string;
-  pressed?: boolean;
-};
-
-const HeaderIconActionButton = React.memo(function HeaderIconActionButton({
-  visible = true,
-  title,
-  ariaLabel,
-  onClick,
-  className,
-  Icon: iconName,
-  iconClassName,
-  pressed = false,
-}: HeaderIconActionButtonProps) {
-  if (!visible) {
-    return null;
-  }
-
-  return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <button
-          type="button"
-          onClick={onClick}
-          aria-label={ariaLabel}
-          aria-pressed={pressed}
-          className={cn(
-            className ?? DESKTOP_HEADER_ICON_BUTTON_CLASS,
-            pressed && 'bg-interactive-selection text-interactive-selection-foreground'
-          )}
-        >
-          <Icon name={iconName} className={iconClassName ?? 'h-[18px] w-[18px]'} />
-        </button>
-      </TooltipTrigger>
-      <TooltipContent>
-        <p>{title}</p>
-      </TooltipContent>
-    </Tooltip>
-  );
-});
 
 type DesktopGitHubControlProps = {
   isMobile: boolean;
@@ -254,364 +225,6 @@ const DesktopGitHubControl = React.memo(function DesktopGitHubControl({
   );
 });
 
-type DesktopServicesMenuProps = {
-  isDesktopApp: boolean;
-  currentInstanceLabel: string;
-  compactCurrentInstanceLabel: string;
-  currentInstanceIsLocal: boolean;
-  isDesktopServicesOpen: boolean;
-  setIsDesktopServicesOpen: React.Dispatch<React.SetStateAction<boolean>>;
-  refreshCurrentInstanceLabel: () => Promise<void>;
-  desktopServicesTab: 'instance' | 'usage' | 'mcp';
-  setDesktopServicesTab: React.Dispatch<React.SetStateAction<'instance' | 'usage' | 'mcp'>>;
-  quotaResultsLength: number;
-  fetchAllQuotas: () => Promise<unknown>;
-  servicesTabItems: SortableTabsStripItem[];
-  quotaLastUpdated: number | null;
-  quotaDisplayMode: 'usage' | 'remaining';
-  quotaDisplayTabItems: SortableTabsStripItem[];
-  handleDisplayModeChange: (mode: 'usage' | 'remaining') => Promise<void>;
-  handleUsageRefresh: () => void;
-  isQuotaLoading: boolean;
-  isUsageRefreshSpinning: boolean;
-  hasRateLimits: boolean;
-  rateLimitGroups: RateLimitGroup[];
-  expandedFamilies: Record<string, string[]>;
-  toggleFamilyExpanded: (providerId: string, familyId: string) => void;
-  shortcutLabel: (actionId: string) => string;
-  showDevShutdown: boolean;
-  isDevShutdownInFlight: boolean;
-  onDevShutdown: () => Promise<void>;
-  remoteUpdateInfo: UpdateInfo | null;
-  remoteUpdateChecking: boolean;
-  remoteUpdateError: string | null;
-  onOpenRemoteUpdate: () => void;
-  showPredValues: boolean;
-  timeFormatPreference: TimeFormatPreference;
-};
-
-const DesktopServicesMenu = React.memo(function DesktopServicesMenu({
-  isDesktopApp,
-  currentInstanceLabel,
-  compactCurrentInstanceLabel,
-  currentInstanceIsLocal,
-  isDesktopServicesOpen,
-  setIsDesktopServicesOpen,
-  refreshCurrentInstanceLabel,
-  desktopServicesTab,
-  setDesktopServicesTab,
-  quotaResultsLength,
-  fetchAllQuotas,
-  servicesTabItems,
-  quotaLastUpdated,
-  quotaDisplayMode,
-  quotaDisplayTabItems,
-  handleDisplayModeChange,
-  handleUsageRefresh,
-  isQuotaLoading,
-  isUsageRefreshSpinning,
-  hasRateLimits,
-  rateLimitGroups,
-  expandedFamilies,
-  toggleFamilyExpanded,
-  shortcutLabel,
-  showDevShutdown,
-  isDevShutdownInFlight,
-  onDevShutdown,
-  remoteUpdateInfo,
-  remoteUpdateChecking,
-  remoteUpdateError,
-  onOpenRemoteUpdate,
-  showPredValues,
-  timeFormatPreference,
-}: DesktopServicesMenuProps) {
-  const { t } = useI18n();
-  return (
-    <DropdownMenu
-      open={isDesktopServicesOpen}
-      onOpenChange={(open) => {
-        setIsDesktopServicesOpen(open);
-        if (open) {
-          void refreshCurrentInstanceLabel();
-          if (desktopServicesTab === 'usage' && quotaResultsLength === 0) {
-            void fetchAllQuotas();
-          }
-        }
-      }}
-    >
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <DropdownMenuTrigger asChild>
-            <button
-              type="button"
-              aria-label={isDesktopApp
-                ? t('header.services.openWithCurrent', { current: currentInstanceLabel })
-                : t('header.services.open')}
-              className={cn(
-                DESKTOP_HEADER_ICON_BUTTON_CLASS,
-                isDesktopApp ? 'w-auto max-w-[14rem] justify-start gap-1.5 px-2.5' : 'h-8 w-8'
-              )}
-            >
-              <Icon name="stack" className="h-[18px] w-[18px]" />
-              {isDesktopApp ? (
-                <span className="truncate typography-ui-label font-medium text-foreground">{compactCurrentInstanceLabel}</span>
-              ) : null}
-            </button>
-          </DropdownMenuTrigger>
-        </TooltipTrigger>
-        <TooltipContent>
-          <p>
-            {isDesktopApp
-              ? t('header.services.tooltip.currentInstanceWithShortcuts', {
-                  current: currentInstanceLabel,
-                  toggle: shortcutLabel('toggle_services_menu'),
-                  nextTab: shortcutLabel('cycle_services_tab'),
-                })
-              : t('header.services.tooltip.servicesWithShortcuts', {
-                  toggle: shortcutLabel('toggle_services_menu'),
-                  nextTab: shortcutLabel('cycle_services_tab'),
-                })}
-          </p>
-        </TooltipContent>
-      </Tooltip>
-      <DropdownMenuContent
-        align="end"
-        className="w-[min(27rem,calc(100vw-2rem))] max-h-[75vh] overflow-y-auto bg-[var(--surface-elevated)] p-0"
-      >
-        <div className="sticky top-0 z-20 px-2 pt-1.5 pb-px">
-          <div className="h-9">
-            <SortableTabsStrip
-              items={servicesTabItems}
-              activeId={desktopServicesTab}
-              onSelect={(tabID) => {
-                const value = tabID as 'instance' | 'usage' | 'mcp';
-                setDesktopServicesTab(value);
-                if (value === 'usage' && quotaResultsLength === 0) {
-                  void fetchAllQuotas();
-                }
-              }}
-              layoutMode="fit"
-              variant="active-pill"
-              activePillInsetClassName="gap-0.5 px-px py-0"
-              activePillButtonClassName="h-8"
-              className="h-full"
-            />
-          </div>
-        </div>
-
-        {isDesktopApp && desktopServicesTab === 'instance' ? (
-          <div>
-            {!currentInstanceIsLocal ? (
-              <div className="border-b border-[var(--interactive-border)] px-4 py-2.5">
-                <div className="flex items-center justify-between gap-3">
-                  <div className="min-w-0">
-                    <div className="typography-ui-label font-medium text-foreground">{t('header.services.remoteUpdate.title')}</div>
-                    <div className="typography-micro text-muted-foreground">
-                      {remoteUpdateInfo?.available
-                        ? t('header.services.remoteUpdate.available', { version: remoteUpdateInfo.version || '' })
-                        : remoteUpdateChecking
-                          ? t('header.services.remoteUpdate.checking')
-                          : remoteUpdateError || t('header.services.remoteUpdate.upToDate')}
-                    </div>
-                  </div>
-                  {remoteUpdateInfo?.available ? (
-                    <button
-                      type="button"
-                      className="shrink-0 rounded-md bg-[var(--primary-base)] px-3 py-1.5 typography-ui-label font-medium text-[var(--primary-foreground)] hover:opacity-90"
-                      onClick={onOpenRemoteUpdate}
-                    >
-                      {t('header.services.remoteUpdate.actions.open')}
-                    </button>
-                  ) : null}
-                </div>
-              </div>
-            ) : null}
-            <DesktopHostSwitcherDialog
-              embedded
-              open={isDesktopServicesOpen && desktopServicesTab === 'instance'}
-              onOpenChange={() => {}}
-              onHostSwitched={() => setIsDesktopServicesOpen(false)}
-            />
-          </div>
-        ) : null}
-
-        {desktopServicesTab === 'mcp' ? (
-          <McpDropdownContent active={isDesktopServicesOpen && desktopServicesTab === 'mcp'} />
-        ) : null}
-
-        {desktopServicesTab === 'usage' ? (
-          <div className="overflow-x-hidden">
-            <div className="flex items-center justify-between gap-3 border-b border-[var(--interactive-border)] px-4 py-2.5">
-              <div className="flex min-w-0 items-baseline gap-2">
-                <span className="typography-ui-header font-semibold text-foreground">{t('header.services.rateLimits')}</span>
-                <span className="truncate typography-micro text-muted-foreground">{formatTime(quotaLastUpdated, timeFormatPreference)}</span>
-              </div>
-              <div className="flex items-center gap-1.5">
-                <div className="h-7 w-[10.5rem]">
-                  <SortableTabsStrip
-                    items={quotaDisplayTabItems}
-                    activeId={quotaDisplayMode}
-                    onSelect={(tabID) => void handleDisplayModeChange(tabID as 'usage' | 'remaining')}
-                    layoutMode="fit"
-                    variant="active-pill"
-                    activePillInsetClassName="gap-0.5 px-px py-0"
-                    className="h-full"
-                  />
-                </div>
-                <button
-                  type="button"
-                  className={cn(
-                    'inline-flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors',
-                    'hover:text-foreground hover:bg-interactive-hover',
-                    'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary'
-                  )}
-                  onClick={handleUsageRefresh}
-                  disabled={isQuotaLoading || isUsageRefreshSpinning}
-                  aria-label={t('header.services.refreshRateLimitsAria')}
-                >
-                  <Icon name="refresh" className={cn('h-4 w-4', isUsageRefreshSpinning && 'animate-spin')} />
-                </button>
-              </div>
-            </div>
-
-            {!hasRateLimits ? (
-              <div className="px-4 py-5 text-center">
-                <span className="typography-ui-label text-muted-foreground">{t('header.services.noRateLimits')}</span>
-              </div>
-            ) : null}
-
-            {/* One elevated card per provider (same card language as the mobile
-                usage popover) instead of a flat run of divider-separated rows. */}
-            <div className="space-y-2 px-3 py-2.5">
-              {rateLimitGroups.map((group) => {
-                const providerExpandedFamilies = expandedFamilies[group.providerId] ?? [];
-                return (
-                  <div key={group.providerId} className="min-w-0 rounded-xl bg-[var(--surface-muted)] p-3">
-                    <div className="flex items-center gap-2 pb-2">
-                      <ProviderLogo providerId={group.providerId} className="h-4 w-4" />
-                      <span className="typography-ui-label font-medium text-foreground">{group.providerName}</span>
-                    </div>
-                    {group.entries.length === 0 && (!group.modelFamilies || group.modelFamilies.length === 0) ? (
-                      <div>
-                        <span className="typography-ui-label text-muted-foreground">{group.error ?? t('header.services.noRateLimitsReported')}</span>
-                      </div>
-                    ) : (
-                      <div className="space-y-3">
-                        {group.entries.map(([label, window]) => {
-                          const displayPercent = quotaDisplayMode === 'remaining' ? window.remainingPercent : window.usedPercent;
-                          const paceInfo = calculatePace(window.usedPercent, window.resetAt, window.windowSeconds, label);
-                          const expectedMarker = paceInfo?.dailyAllocationPercent != null
-                            ? (quotaDisplayMode === 'remaining'
-                                ? 100 - calculateExpectedUsagePercent(paceInfo.elapsedRatio)
-                                : calculateExpectedUsagePercent(paceInfo.elapsedRatio))
-                            : null;
-                          const metricLabel = formatQuotaValueLabel(window.valueLabel, displayPercent);
-                          const resetLabel = formatQuotaResetLabel(window.resetAt, window.resetAfterFormatted ?? window.resetAtFormatted, timeFormatPreference);
-                          return (
-                            <div key={`${group.providerId}-${label}`} className="flex flex-col gap-1.5">
-                              <div className="flex min-w-0 items-center justify-between gap-3">
-                                <div className="min-w-0 flex items-center gap-2">
-                                  <span className="truncate typography-ui-label text-foreground">{formatWindowLabel(label)}</span>
-                                  {resetLabel ? (
-                                    <span className="truncate typography-micro text-muted-foreground">
-                                      {resetLabel}
-                                    </span>
-                                  ) : null}
-                                </div>
-                                <span className="typography-ui-label tabular-nums text-foreground">
-                                  {metricLabel === '-' ? '' : metricLabel}
-                                </span>
-                              </div>
-                              <UsageProgressBar
-                                percent={displayPercent}
-                                tonePercent={window.usedPercent}
-                                className="h-1.5"
-                                expectedMarkerPercent={expectedMarker}
-                              />
-                              {paceInfo && showPredValues ? <PaceIndicator paceInfo={paceInfo} compact /> : null}
-                            </div>
-                          );
-                        })}
-                        {group.modelFamilies && group.modelFamilies.length > 0 ? (
-                          <div className="space-y-0.5">
-                            {group.modelFamilies.map((family) => {
-                              const familyKey = family.familyId ?? 'other';
-                              const isExpanded = providerExpandedFamilies.includes(familyKey);
-                              return (
-                                <Collapsible
-                                  key={familyKey}
-                                  open={isExpanded}
-                                  onOpenChange={() => toggleFamilyExpanded(group.providerId, familyKey)}
-                                >
-                                  <CollapsibleTrigger className="flex w-full items-center justify-between rounded-md px-1 py-1.5 text-left hover:bg-[var(--interactive-hover)]/50 transition-colors">
-                                    <span className="typography-ui-label font-medium text-foreground">{family.familyLabel}</span>
-                                    {isExpanded ? <Icon name="arrow-down-s" className="h-4 w-4 text-muted-foreground" /> : <Icon name="arrow-right-s" className="h-4 w-4 text-muted-foreground" />}
-                                  </CollapsibleTrigger>
-                                  <CollapsibleContent>
-                                    <div className="space-y-2.5 pb-1 pl-1 pt-1">
-                                      {family.models.map(([modelName, window]) => {
-                                        const displayPercent = quotaDisplayMode === 'remaining' ? window.remainingPercent : window.usedPercent;
-                                        const paceInfo = calculatePace(window.usedPercent, window.resetAt, window.windowSeconds);
-                                        const expectedMarker = paceInfo?.dailyAllocationPercent != null
-                                          ? (quotaDisplayMode === 'remaining'
-                                              ? 100 - calculateExpectedUsagePercent(paceInfo.elapsedRatio)
-                                              : calculateExpectedUsagePercent(paceInfo.elapsedRatio))
-                                          : null;
-                                        const metricLabel = formatQuotaValueLabel(window.valueLabel, displayPercent);
-                                        return (
-                                          <div key={`${group.providerId}-${modelName}`} className="flex flex-col gap-1.5">
-                                            <div className="flex min-w-0 items-center justify-between gap-3">
-                                              <span className="truncate typography-micro text-muted-foreground">{getDisplayModelName(modelName)}</span>
-                                              <span className="typography-ui-label tabular-nums text-foreground">
-                                                {metricLabel === '-' ? '' : metricLabel}
-                                              </span>
-                                            </div>
-                                            <UsageProgressBar
-                                              percent={displayPercent}
-                                              tonePercent={window.usedPercent}
-                                              className="h-1.5"
-                                              expectedMarkerPercent={expectedMarker}
-                                            />
-                                            {paceInfo && showPredValues ? <PaceIndicator paceInfo={paceInfo} compact /> : null}
-                                          </div>
-                                        );
-                                      })}
-                                    </div>
-                                  </CollapsibleContent>
-                                </Collapsible>
-                              );
-                            })}
-                          </div>
-                        ) : null}
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        ) : null}
-
-        {showDevShutdown ? (
-          <>
-            <div className="mx-4 my-2 border-t border-[var(--interactive-border)]" />
-            <div className="px-2 pb-2">
-              <DropdownMenuItem
-                disabled={isDevShutdownInFlight}
-                onSelect={() => {
-                  void onDevShutdown();
-                }}
-              >
-                {t('header.services.shutdownDev')}
-              </DropdownMenuItem>
-            </div>
-          </>
-        ) : null}
-      </DropdownMenuContent>
-    </DropdownMenu>
-  );
-});
-
 const isSameContextUsage = (
   a: SessionContextUsage | null,
   b: SessionContextUsage | null,
@@ -626,26 +239,6 @@ const isSameContextUsage = (
     && (a.normalizedOutput ?? 0) === (b.normalizedOutput ?? 0)
     && a.thresholdLimit === b.thresholdLimit
     && (a.lastMessageId ?? '') === (b.lastMessageId ?? '');
-};
-
-const formatCompactHeaderLabel = (value: string): string => {
-  const trimmed = value.trim();
-  if (!trimmed) {
-    return '';
-  }
-
-  const words = trimmed.split(/\s+/).filter(Boolean);
-  if (words.length >= 2) {
-    const first = words[0];
-    const second = words[1].slice(0, 3);
-    const shortTwoWord = `${first} ${second}`.trim();
-    if (words.length > 2 || shortTwoWord.length < trimmed.length) {
-      return `${shortTwoWord}...`;
-    }
-    return shortTwoWord;
-  }
-
-  return trimmed.length > 12 ? `${trimmed.slice(0, 9).trimEnd()}...` : trimmed;
 };
 
 const formatTime = (timestamp: number | null, timeFormatPreference: 'auto' | '12h' | '24h') => {
@@ -719,14 +312,15 @@ export const Header: React.FC<HeaderProps> = ({
   streamPerfCount('ui.header.render');
   const { t } = useI18n();
   const setSessionSwitcherOpen = useUIStore((state) => state.setSessionSwitcherOpen);
+  const openScheduledTaskEditor = useUIStore((state) => state.openScheduledTaskEditor);
   const toggleSidebar = useUIStore((state) => state.toggleSidebar);
   const isSidebarOpen = useUIStore((state) => state.isSidebarOpen);
-  const toggleBottomTerminal = useUIStore((state) => state.toggleBottomTerminal);
+  const isRightSidebarOpen = useUIStore((state) => state.isRightSidebarOpen);
   const toggleRightSidebar = useUIStore((state) => state.toggleRightSidebar);
+  const setRightSidebarOpen = useUIStore((state) => state.setRightSidebarOpen);
+  const openContextFile = useUIStore((state) => state.openContextFile);
   const openContextOverview = useUIStore((state) => state.openContextOverview);
   const openContextPlan = useUIStore((state) => state.openContextPlan);
-  const openContextBrowser = useUIStore((state) => state.openContextBrowser);
-  const openContextPanelTab = useUIStore((state) => state.openContextPanelTab);
   const closeContextPanel = useUIStore((state) => state.closeContextPanel);
   const activeMainTab = useUIStore((state) => state.activeMainTab);
   const setActiveMainTab = useUIStore((state) => state.setActiveMainTab);
@@ -735,12 +329,17 @@ export const Header: React.FC<HeaderProps> = ({
 
   const getCurrentModel = useConfigStore((state) => state.getCurrentModel);
   const runtimeApis = useRuntimeAPIs();
-  const [isDevShutdownInFlight, setIsDevShutdownInFlight] = React.useState(false);
 
   const getContextUsage = useSessionUIStore((state) => state.getContextUsage);
   const isNewSessionDraftOpen = useSessionUIStore((state) => Boolean(state.newSessionDraft?.open));
   const currentSessionId = useSessionUIStore((state) => state.currentSessionId);
   const currentSessionMessagesResolved = useSessionMessagesResolved(currentSessionId ?? '');
+  const currentSessionStatus = useGlobalSessionStatus(currentSessionId ?? '');
+  const updateSessionTitle = useSessionUIStore((state) => state.updateSessionTitle);
+  const archiveSession = useSessionUIStore((state) => state.archiveSession);
+  const createSessionFromAssistantMessage = useSessionUIStore((state) => state.createSessionFromAssistantMessage);
+  const pinnedSessionIds = useSessionPinnedStore((state) => state.ids);
+  const togglePinnedSession = useSessionPinnedStore((state) => state.toggle);
   const currentGlobalSession = useGlobalSessionsStore(useShallow(React.useCallback(
     (state): HeaderSessionSnapshot | null => {
       if (!currentSessionId) return null;
@@ -876,157 +475,14 @@ export const Header: React.FC<HeaderProps> = ({
   const githubAccounts = githubAuthStatus?.accounts ?? [];
   const [isSwitchingGitHubAccount, setIsSwitchingGitHubAccount] = React.useState(false);
   const [isMobileRateLimitsOpen, setIsMobileRateLimitsOpen] = React.useState(false);
-  const [isDesktopServicesOpen, setIsDesktopServicesOpen] = React.useState(false);
   const [isUsageRefreshSpinning, setIsUsageRefreshSpinning] = React.useState(false);
-  const [currentInstanceLabel, setCurrentInstanceLabel] = React.useState('Local');
-  const [currentInstanceIsLocal, setCurrentInstanceIsLocal] = React.useState(true);
-  const [remoteUpdateDialogOpen, setRemoteUpdateDialogOpen] = React.useState(false);
-  const [remoteUpdateInfo, setRemoteUpdateInfo] = React.useState<UpdateInfo | null>(null);
-  const [remoteUpdateChecking, setRemoteUpdateChecking] = React.useState(false);
-  const [remoteUpdateError, setRemoteUpdateError] = React.useState<string | null>(null);
-  const compactCurrentInstanceLabel = React.useMemo(() => formatCompactHeaderLabel(currentInstanceLabel), [currentInstanceLabel]);
-  const [desktopServicesTab, setDesktopServicesTab] = React.useState<'instance' | 'usage' | 'mcp'>(
-    isDesktopApp ? 'instance' : 'usage'
-  );
   const [mobileServicesTab, setMobileServicesTab] = React.useState<'usage' | 'mcp'>('usage');
-  useEffect(() => {
-    if (!isDesktopApp && desktopServicesTab === 'instance') {
-      setDesktopServicesTab('usage');
-    }
-  }, [desktopServicesTab, isDesktopApp]);
 
   const isVSCode = React.useMemo(() => isVSCodeRuntime(), []);
   const showDesktopHeaderContextUsage = !isVSCode && activeMainTab === 'chat' && !!stableDesktopContextUsage && stableDesktopContextUsage.totalTokens > 0;
   const desktopHeaderDisplayPercentage = stableDesktopContextUsage && stableDesktopContextUsage.contextLimit > 0
     ? Math.min(999, (stableDesktopContextUsage.totalTokens / stableDesktopContextUsage.contextLimit) * 100)
     : 0;
-
-  const refreshCurrentInstanceLabel = React.useCallback(async () => {
-    if (typeof window === 'undefined' || !isDesktopApp) {
-      return;
-    }
-
-    try {
-      if (isDesktopLocalOriginActive()) {
-        setCurrentInstanceLabel('Local');
-        setCurrentInstanceIsLocal(true);
-        return;
-      }
-      setCurrentInstanceIsLocal(false);
-
-      const cfg = await desktopHostsGet();
-      const localOrigin = window.__OPENCHAMBER_LOCAL_ORIGIN__ || window.location.origin;
-      const runtimeApiBaseUrl = getRuntimeApiBaseUrl();
-
-      if (runtimeApiBaseUrl && locationMatchesHost(runtimeApiBaseUrl, localOrigin)) {
-        setCurrentInstanceLabel('Local');
-        setCurrentInstanceIsLocal(true);
-        return;
-      }
-
-      const match = cfg.hosts.find((host) => {
-        return runtimeApiBaseUrl ? locationMatchesHost(runtimeApiBaseUrl, getDesktopHostApiUrl(host)) : false;
-      });
-
-      if (match?.label?.trim()) {
-        setCurrentInstanceLabel(redactSensitiveUrl(match.label.trim()));
-        return;
-      }
-
-      setCurrentInstanceLabel('Instance');
-    } catch {
-      setCurrentInstanceLabel('Local');
-      setCurrentInstanceIsLocal(true);
-    }
-  }, [isDesktopApp]);
-
-  useEffect(() => {
-    void refreshCurrentInstanceLabel();
-  }, [refreshCurrentInstanceLabel]);
-
-  const checkRemoteInstanceUpdate = React.useCallback(async () => {
-    if (currentInstanceIsLocal) {
-      setRemoteUpdateInfo(null);
-      setRemoteUpdateError(null);
-      return;
-    }
-
-    setRemoteUpdateChecking(true);
-    setRemoteUpdateError(null);
-    try {
-      const params = new URLSearchParams({ appType: 'web', instanceMode: 'remote' });
-      const response = await runtimeFetch(`/api/openchamber/update-check?${params.toString()}`, {
-        method: 'GET',
-        headers: { Accept: 'application/json' },
-      });
-      if (!response.ok) {
-        throw new Error(`Server responded with ${response.status}`);
-      }
-      const data = await response.json();
-      setRemoteUpdateInfo({
-        available: data.available ?? false,
-        version: data.version,
-        currentVersion: data.currentVersion ?? 'unknown',
-        body: data.body,
-        nextSuggestedCheckInSec: typeof data.nextSuggestedCheckInSec === 'number' ? data.nextSuggestedCheckInSec : undefined,
-        packageManager: data.packageManager,
-        updateCommand: data.updateCommand,
-      });
-    } catch (error) {
-      setRemoteUpdateInfo(null);
-      setRemoteUpdateError(error instanceof Error ? error.message : t('header.services.remoteUpdate.error'));
-    } finally {
-      setRemoteUpdateChecking(false);
-    }
-  }, [currentInstanceIsLocal, t]);
-
-  React.useEffect(() => {
-    setRemoteUpdateInfo(null);
-    setRemoteUpdateError(null);
-    setRemoteUpdateDialogOpen(false);
-  }, [currentInstanceIsLocal, currentInstanceLabel]);
-
-  React.useEffect(() => {
-    if (!isDesktopApp || currentInstanceIsLocal) {
-      return;
-    }
-
-    const initialDelayMs = 3000;
-    const intervalMs = 60 * 60 * 1000;
-    let disposed = false;
-    let timer: number | null = null;
-
-    const schedule = (delayMs: number) => {
-      timer = window.setTimeout(() => {
-        if (disposed || (typeof document !== 'undefined' && document.visibilityState !== 'visible')) {
-          schedule(intervalMs);
-          return;
-        }
-        void checkRemoteInstanceUpdate().finally(() => {
-          if (!disposed) {
-            schedule(intervalMs);
-          }
-        });
-      }, delayMs);
-    };
-
-    schedule(initialDelayMs);
-
-    return () => {
-      disposed = true;
-      if (timer !== null) {
-        window.clearTimeout(timer);
-      }
-    };
-  }, [checkRemoteInstanceUpdate, currentInstanceIsLocal, currentInstanceLabel, isDesktopApp]);
-
-  const openRemoteInstanceUpdate = React.useCallback(() => {
-    if (remoteUpdateInfo?.available) {
-      setRemoteUpdateDialogOpen(true);
-      return;
-    }
-    void checkRemoteInstanceUpdate();
-  }, [checkRemoteInstanceUpdate, remoteUpdateInfo?.available]);
 
   useQuotaAutoRefresh();
   const selectedModels = useQuotaStore((state) => state.selectedModels);
@@ -1271,6 +727,28 @@ export const Header: React.FC<HeaderProps> = ({
   const openDirectory = React.useMemo(() => {
     return worktreeDirectory || sessionDirectory || draftDirectory;
   }, [draftDirectory, sessionDirectory, worktreeDirectory]);
+  const currentSessionMessages = useSessionMessages(currentSessionId ?? '', openDirectory || undefined);
+  const partsByMessage = useDirectorySync(
+    React.useCallback((state) => state.part, []),
+    openDirectory || undefined,
+  );
+  const latestCompletedAssistantMessageId = React.useMemo(() => {
+    if (currentSessionStatus?.type === 'busy' || currentSessionStatus?.type === 'retry') return null;
+    for (let index = currentSessionMessages.length - 1; index >= 0; index -= 1) {
+      const message = currentSessionMessages[index];
+      if (message.role === 'assistant') return message.id;
+    }
+    return null;
+  }, [currentSessionMessages, currentSessionStatus?.type]);
+  const latestUserRequest = React.useMemo(() => {
+    for (let index = currentSessionMessages.length - 1; index >= 0; index -= 1) {
+      const message = currentSessionMessages[index];
+      if (message.role !== 'user') continue;
+      const text = getFullText(partsByMessage[message.id] ?? []).trim();
+      if (text) return text;
+    }
+    return '';
+  }, [currentSessionMessages, partsByMessage]);
   const activeContextMode = useUIStore(React.useCallback((state) => {
     const directory = normalize(openDirectory || '');
     return directory ? getActiveContextMode(state.contextPanelByDirectory[directory]) : null;
@@ -1303,6 +781,69 @@ export const Header: React.FC<HeaderProps> = ({
     const trimmedTitle = currentSession?.title?.trim();
     return trimmedTitle && trimmedTitle.length > 0 ? trimmedTitle : 'Untitled Session';
   }, [activeProjectLabel, currentSession?.title, currentSessionId]);
+  const isCurrentSessionPinned = currentSessionId
+    ? isSessionPinned(pinnedSessionIds, openDirectory, currentSessionId)
+    : false;
+  const [renameDialogOpen, setRenameDialogOpen] = React.useState(false);
+  const [renameDraft, setRenameDraft] = React.useState('');
+  const [forkDialogOpen, setForkDialogOpen] = React.useState(false);
+  const [forkSubmitting, setForkSubmitting] = React.useState(false);
+  const outputRegistryStorage = React.useMemo(() => getDeferredSafeStorage(), []);
+  const outputRegistryKey = React.useMemo(() => (
+    currentSessionId && openDirectory
+      ? `oc.task-output-registry.v1:${JSON.stringify([getRuntimeKey(), openDirectory, currentSessionId])}`
+      : ''
+  ), [currentSessionId, openDirectory]);
+  const readOutputRegistry = React.useCallback((key: string): TaskOutputRegistry => {
+    if (!key) return createEmptyTaskOutputRegistry();
+    const raw = outputRegistryStorage.getItem(key);
+    if (!raw) return createEmptyTaskOutputRegistry();
+    try {
+      return parseTaskOutputRegistry(JSON.parse(raw));
+    } catch {
+      outputRegistryStorage.removeItem(key);
+      return createEmptyTaskOutputRegistry();
+    }
+  }, [outputRegistryStorage]);
+  const [outputRegistryState, setOutputRegistryState] = React.useState<{
+    key: string;
+    registry: TaskOutputRegistry;
+  }>(() => ({ key: '', registry: createEmptyTaskOutputRegistry() }));
+  const outputRegistry = outputRegistryState.key === outputRegistryKey
+    ? outputRegistryState.registry
+    : readOutputRegistry(outputRegistryKey);
+  const [showAllTaskOutputs, setShowAllTaskOutputs] = React.useState(false);
+
+  React.useEffect(() => {
+    if (!outputRegistryKey || !currentSessionId || !openDirectory) return;
+    const next = observeTaskOutputs(
+      outputRegistry,
+      currentSessionMessages,
+      partsByMessage,
+      openDirectory,
+    );
+    if (JSON.stringify(next) === JSON.stringify(outputRegistry)) {
+      if (outputRegistryState.key !== outputRegistryKey) {
+        setOutputRegistryState({ key: outputRegistryKey, registry: next });
+      }
+      return;
+    }
+    outputRegistryStorage.setItem(outputRegistryKey, JSON.stringify(next));
+    setOutputRegistryState({ key: outputRegistryKey, registry: next });
+  }, [
+    currentSessionId,
+    currentSessionMessages,
+    openDirectory,
+    outputRegistry,
+    outputRegistryKey,
+    outputRegistryState.key,
+    outputRegistryStorage,
+    partsByMessage,
+  ]);
+
+  React.useEffect(() => {
+    setShowAllTaskOutputs(false);
+  }, [currentSessionId]);
 
 
   const actionDirectory = React.useMemo(() => {
@@ -1432,35 +973,67 @@ export const Header: React.FC<HeaderProps> = ({
     toggleSidebar();
   }, [blurActiveElement, isMobile, isSessionSwitcherOpen, setSessionSwitcherOpen, toggleSidebar]);
 
-  const handleOpenDraftMiniChat = React.useCallback(() => {
-    void invokeDesktop('desktop_open_draft_mini_chat_window', {
-      directory: normalize(openDirectory || activeProject?.path || ''),
-      projectId: activeProject?.id ?? null,
-      apiBaseUrl: getRuntimeApiBaseUrl(),
-      clientToken: getRuntimeBearerTokenSync(),
-    }).catch((error) => {
-      console.warn('[header] failed to open draft mini chat window', error);
-    });
-  }, [activeProject?.id, activeProject?.path, openDirectory]);
+  const handleOpenRenameDialog = React.useCallback(() => {
+    if (!currentSessionId) return;
+    setRenameDraft(currentSessionTitle);
+    setRenameDialogOpen(true);
+  }, [currentSessionId, currentSessionTitle]);
 
-  const handleOpenCurrentMiniChat = React.useCallback(() => {
-    if (isNewSessionDraftOpen) {
-      handleOpenDraftMiniChat();
-      return;
+  const handleRenameSession = React.useCallback(async () => {
+    if (!currentSessionId) return;
+    const nextTitle = renameDraft.trim();
+    if (!nextTitle) return;
+    try {
+      await updateSessionTitle(currentSessionId, nextTitle);
+      setRenameDialogOpen(false);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : t('sessions.sidebar.session.rename.save'));
     }
+  }, [currentSessionId, renameDraft, t, updateSessionTitle]);
 
-    if (!currentSessionId) {
-      return;
+  const handleArchiveCurrentSession = React.useCallback(async () => {
+    if (!currentSessionId) return;
+    const archived = await archiveSession(currentSessionId);
+    if (archived) {
+      toast.success(t('sessions.sidebar.bulkActions.archivedSingle', { count: 1 }));
+    } else {
+      toast.error(t('sessions.sidebar.session.archive.error'));
     }
-    void invokeDesktop('desktop_open_session_mini_chat_window', {
+  }, [archiveSession, currentSessionId, t]);
+
+  const handleToggleCurrentSessionPin = React.useCallback(() => {
+    if (!currentSessionId || !openDirectory) return;
+    togglePinnedSession({ directory: openDirectory, sessionId: currentSessionId });
+  }, [currentSessionId, openDirectory, togglePinnedSession]);
+
+  const handleConfirmFork = React.useCallback(async (execution: ForkSessionExecution) => {
+    if (!latestCompletedAssistantMessageId) return;
+    setForkSubmitting(true);
+    try {
+      await createSessionFromAssistantMessage(latestCompletedAssistantMessageId, execution);
+      setForkDialogOpen(false);
+    } finally {
+      setForkSubmitting(false);
+    }
+  }, [createSessionFromAssistantMessage, latestCompletedAssistantMessageId]);
+
+  const handleOpenCurrentSessionWindow = React.useCallback(() => {
+    if (!currentSessionId) return;
+    void invokeDesktop('desktop_open_session_window', {
       sessionId: currentSessionId,
-      directory: normalize(openDirectory || activeProject?.path || ''),
+      directory: openDirectory,
       apiBaseUrl: getRuntimeApiBaseUrl(),
       clientToken: getRuntimeBearerTokenSync(),
     }).catch((error) => {
-      console.warn('[header] failed to open session mini chat window', error);
+      toast.error(error instanceof Error ? error.message : t('desktopHostSwitcher.error.failedToOpenNewWindow'));
     });
-  }, [activeProject?.path, currentSessionId, handleOpenDraftMiniChat, isNewSessionDraftOpen, openDirectory]);
+  }, [currentSessionId, openDirectory, t]);
+
+  const handleOpenTaskOutput = React.useCallback((path: string) => {
+    if (!openDirectory || !path) return;
+    openContextFile(openDirectory, path);
+    setRightSidebarOpen(true);
+  }, [openContextFile, openDirectory, setRightSidebarOpen]);
 
   const handleOpenContextPanel = React.useCallback(() => {
     const directory = normalize(openDirectory || '');
@@ -1494,41 +1067,6 @@ export const Header: React.FC<HeaderProps> = ({
     openContextPlan(directory);
   }, [closeContextPanel, openContextPlan, openDirectory]);
 
-  const handleOpenContextChanges = React.useCallback(() => {
-    const directory = normalize(openDirectory || '');
-    if (!directory) {
-      return;
-    }
-
-    const panelState = useUIStore.getState().contextPanelByDirectory[directory];
-    if (getActiveContextMode(panelState) === 'diff') {
-      closeContextPanel(directory);
-      return;
-    }
-
-    openContextPanelTab(directory, { mode: 'diff', stagedDiff: false });
-  }, [closeContextPanel, openContextPanelTab, openDirectory]);
-
-  const handleOpenContextBrowser = React.useCallback(() => {
-    const directory = normalize(openDirectory || '');
-    if (!directory) {
-      return;
-    }
-
-    const panelState = useUIStore.getState().contextPanelByDirectory[directory];
-    if (getActiveContextMode(panelState) === 'browser') {
-      closeContextPanel(directory);
-      return;
-    }
-
-    openContextBrowser(directory);
-  }, [closeContextPanel, openContextBrowser, openDirectory]);
-
-  const isContextPlanActive = activeContextMode === 'plan';
-  const isContextChangesActive = activeContextMode === 'diff';
-  const isContextBrowserActive = activeContextMode === 'browser';
-
-  const desktopHeaderIconButtonClass = DESKTOP_HEADER_ICON_BUTTON_CLASS;
   const mobileHeaderIconButtonClass = MOBILE_HEADER_ICON_BUTTON_CLASS;
   const mobileActiveHeaderItem = React.useMemo(() => {
     if (isMobileRateLimitsOpen) {
@@ -1735,128 +1273,30 @@ export const Header: React.FC<HeaderProps> = ({
   }, [isDesktopApp]);
 
   const tabs: TabConfig[] = React.useMemo(() => {
+    const base: TabConfig[] = [
+      { id: 'chat', label: t('layout.mainTab.chat'), icon: 'chat-4' },
+    ];
+
+    if (showPlanTab) {
+      base.push({ id: 'plan', label: t('layout.mainTab.plan'), icon: 'file-text' });
+    }
+
+    base.push(
+      { id: 'git', label: t('layout.rightSidebar.git'), icon: 'git-branch' },
+      { id: 'diff', label: t('layout.mainTab.diff'), icon: 'diff' },
+      { id: 'files', label: t('layout.mainTab.files'), icon: 'folder-6' },
+      { id: 'terminal', label: t('layout.mainTab.terminal'), icon: 'terminal-box' },
+      { id: 'context', label: t('layout.mainTab.context'), icon: 'file-list-2' },
+      { id: 'diagram', label: t('layout.mainTab.diagram'), icon: 'file' },
+    );
+
     if (isMobile) {
-      const base: TabConfig[] = [
-        { id: 'chat', label: t('layout.mainTab.chat'), icon: "chat-4" },
-      ];
-
-      if (showPlanTab) {
-        base.push({ id: 'plan', label: t('layout.mainTab.plan'), icon: "file-text" });
-      }
-
-      base.push(
-        { id: 'diff', label: t('layout.mainTab.diff'), icon: 'diff' },
-        { id: 'files', label: t('layout.mainTab.files'), icon: "folder-6" },
-        { id: 'terminal', label: t('layout.mainTab.terminal'), icon: "terminal-box" },
-        { id: 'context', label: t('layout.mainTab.context'), icon: "file-list-2" },
-        { id: 'diagram', label: t('layout.mainTab.diagram'), icon: 'file' },
-      );
-
       return base;
     }
 
-    // Desktop: no tabs in header
-    return [];
-  }, [isMobile, showPlanTab, t]);
-
-  const shortcutLabel = React.useCallback((actionId: string) => {
-    return formatShortcutForDisplay(getEffectiveShortcutCombo(actionId, shortcutOverrides));
-  }, [shortcutOverrides]);
-
-  useEffect(() => {
-    // Project actions may intentionally promote the terminal to the desktop main view.
-    if (!isMobile && (activeMainTab === 'git' || activeMainTab === 'diff' || activeMainTab === 'files' || activeMainTab === 'context')) {
-      setActiveMainTab('chat');
-    }
-  }, [activeMainTab, isMobile, setActiveMainTab]);
-
-  const servicesTabs = React.useMemo(() => {
-    const base: Array<{ value: 'instance' | 'usage' | 'mcp'; label: string; icon: React.ReactNode }> = [];
-    if (isDesktopApp) {
-      base.push({ value: 'instance', label: t('layout.services.instance'), icon: <Icon name="server" className="h-3.5 w-3.5" /> });
-    }
-    base.push(
-      { value: 'usage', label: t('layout.services.usage'), icon: <Icon name="timer" className="h-3.5 w-3.5" /> },
-      { value: 'mcp', label: 'MCP', icon: <McpIcon className="h-3.5 w-3.5" /> }
-    );
-    return base;
-  }, [isDesktopApp, t]);
-
-  const servicesTabItems = React.useMemo(() => {
-    return servicesTabs.map((tab) => ({
-      id: tab.value,
-      label: tab.label,
-      icon: tab.icon,
-    }));
-  }, [servicesTabs]);
-
-  const showDevShutdown = React.useMemo(() => {
-    if (typeof window === 'undefined') return false;
-    if (isDesktopApp) return false;
-    if (isVSCode) return false;
-    const host = window.location.hostname;
-    return host === 'localhost' || host === '127.0.0.1' || host === '::1';
-  }, [isDesktopApp, isVSCode]);
-
-  const handleDevShutdown = React.useCallback(async () => {
-    if (isDevShutdownInFlight) return;
-    setIsDevShutdownInFlight(true);
-    setIsDesktopServicesOpen(false);
-
-    const previewUrls: string[] = [];
-    let shutdownRequested = false;
-    try {
-      try {
-        for (const [, dirState] of useTerminalStore.getState().sessions.entries()) {
-          for (const tab of dirState.tabs) {
-            if (tab.previewUrl) {
-              previewUrls.push(tab.previewUrl);
-            }
-          }
-        }
-      } catch {
-        // ignore
-      }
-
-      try {
-        // Ensure preview/dev terminals don't linger.
-        await runtimeApis.terminal.forceKill?.({});
-      } catch {
-        // ignore
-      }
-
-      try {
-        const devRes = await runtimeFetch('/api/system/dev-shutdown', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ previewUrls }),
-        });
-        if (devRes.ok) {
-          shutdownRequested = true;
-        } else {
-          const shutdownRes = await runtimeFetch('/api/system/shutdown', { method: 'POST' });
-          shutdownRequested = shutdownRes.ok;
-        }
-      } catch {
-        // ignore
-      }
-    } finally {
-      if (!shutdownRequested) {
-        setIsDevShutdownInFlight(false);
-      }
-    }
-  }, [isDevShutdownInFlight, runtimeApis.terminal, setIsDesktopServicesOpen]);
-
-  const quotaDisplayTabs = React.useMemo(() => {
-    return [
-      { value: 'usage' as const, label: t('header.services.used') },
-      { value: 'remaining' as const, label: t('header.services.remaining') },
-    ];
-  }, [t]);
-
-  const quotaDisplayTabItems = React.useMemo(() => {
-    return quotaDisplayTabs.map((tab) => ({ id: tab.value, label: tab.label }));
-  }, [quotaDisplayTabs]);
+    const active = base.find((tab) => tab.id === activeMainTab);
+    return active && active.id !== 'chat' ? [base[0], active] : [base[0]];
+  }, [activeMainTab, isMobile, showPlanTab, t]);
 
   const mobileServicesTabItems = React.useMemo<SortableTabsStripItem[]>(() => {
     return [
@@ -1885,43 +1325,6 @@ export const Header: React.FC<HeaderProps> = ({
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      const toggleServicesCombo = getEffectiveShortcutCombo('toggle_services_menu', shortcutOverrides);
-      if (eventMatchesShortcut(e, toggleServicesCombo)) {
-        e.preventDefault();
-
-        if (isDesktopServicesOpen) {
-          setIsDesktopServicesOpen(false);
-        } else {
-          setIsDesktopServicesOpen(true);
-          void refreshCurrentInstanceLabel();
-          if (desktopServicesTab === 'usage' && quotaResults.length === 0) {
-            void fetchAllQuotas();
-          }
-        }
-        return;
-      }
-
-      const cycleServicesCombo = getEffectiveShortcutCombo('cycle_services_tab', shortcutOverrides);
-      if (eventMatchesShortcut(e, cycleServicesCombo)) {
-        e.preventDefault();
-
-        const tabValues = servicesTabs.map((tab) => tab.value) as Array<'instance' | 'usage' | 'mcp'>;
-        if (tabValues.length === 0) {
-          return;
-        }
-
-        const currentIndex = tabValues.indexOf(desktopServicesTab);
-        const nextIndex = currentIndex === -1 ? 0 : (currentIndex + 1) % tabValues.length;
-        const nextTab = tabValues[nextIndex];
-        setDesktopServicesTab(nextTab);
-        setIsDesktopServicesOpen(true);
-        void refreshCurrentInstanceLabel();
-        if (nextTab === 'usage' && quotaResults.length === 0) {
-          void fetchAllQuotas();
-        }
-        return;
-      }
-
       const toggleContextPlanCombo = getEffectiveShortcutCombo('toggle_context_plan', shortcutOverrides);
       if (eventMatchesShortcut(e, toggleContextPlanCombo)) {
         e.preventDefault();
@@ -1933,12 +1336,6 @@ export const Header: React.FC<HeaderProps> = ({
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [
     shortcutOverrides,
-    isDesktopServicesOpen,
-    desktopServicesTab,
-    servicesTabs,
-    quotaResults.length,
-    fetchAllQuotas,
-    refreshCurrentInstanceLabel,
     handleOpenContextPlan,
   ]);
 
@@ -1988,119 +1385,24 @@ export const Header: React.FC<HeaderProps> = ({
       </button>
     );
 
-    return <React.Fragment key={tab.id}>{tabButton}</React.Fragment>;
-  };
+    if (isMobile || isChatTab) {
+      return <React.Fragment key={tab.id}>{tabButton}</React.Fragment>;
+    }
 
-  const desktopChangesPanelAction = !isVSCode ? (
-    <Tooltip>
-      <TooltipTrigger asChild>
+    return (
+      <div key={tab.id} className="group/tab relative flex items-center">
+        {tabButton}
         <button
           type="button"
-          aria-label={t('header.actions.toggleChangesPanelAria')}
-          aria-pressed={isContextChangesActive}
-          onClick={handleOpenContextChanges}
-          className={desktopHeaderIconButtonClass}
+          onClick={() => setActiveMainTab('chat')}
+          className="app-region-no-drag -ml-1 mr-1 inline-flex size-6 items-center justify-center rounded-md text-muted-foreground opacity-70 hover:bg-interactive-hover hover:text-foreground focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 group-hover/tab:opacity-100"
+          aria-label={t('contextPanel.tab.closeTabAria', { label: tab.label })}
         >
-          <span className="relative h-5 w-5 overflow-hidden rounded-[2px]">
-            <span className="absolute left-[4px] top-[4px] h-3 w-[5px] bg-[var(--status-error)]/25" />
-            <span className="absolute right-[4px] top-[4px] h-3 w-[5px] bg-[var(--status-success)]/25" />
-            <Icon name="layout-column" className="absolute inset-0 h-5 w-5" />
-          </span>
+          <Icon name="close" className="size-3.5" />
         </button>
-      </TooltipTrigger>
-      <TooltipContent>
-        <p>{t('header.actions.toggleChangesPanel')}</p>
-      </TooltipContent>
-    </Tooltip>
-  ) : null;
-
-  const desktopSidebarActions = (
-    <>
-      {showPlanTab && (
-        <Tooltip>
-          <TooltipTrigger asChild>
-              <button
-                type="button"
-                aria-label={t('header.actions.openPlanAria')}
-                onClick={handleOpenContextPlan}
-                className={cn(desktopHeaderIconButtonClass, isContextPlanActive && 'bg-[var(--interactive-hover)]')}
-              >
-              <Icon name="file-text" className="h-[18px] w-[18px]" />
-            </button>
-          </TooltipTrigger>
-          <TooltipContent>
-            <p>{t('header.actions.planWithShortcut', { shortcut: shortcutLabel('toggle_context_plan') })}</p>
-          </TooltipContent>
-          </Tooltip>
-      )}
-      <OpenInAppButton directory={actionDirectory} className="mr-1" />
-      <DesktopServicesMenu
-        isDesktopApp={isDesktopApp}
-        currentInstanceLabel={currentInstanceLabel}
-        compactCurrentInstanceLabel={compactCurrentInstanceLabel}
-        currentInstanceIsLocal={currentInstanceIsLocal}
-        isDesktopServicesOpen={isDesktopServicesOpen}
-        setIsDesktopServicesOpen={setIsDesktopServicesOpen}
-        refreshCurrentInstanceLabel={refreshCurrentInstanceLabel}
-        desktopServicesTab={desktopServicesTab}
-        setDesktopServicesTab={setDesktopServicesTab}
-        quotaResultsLength={quotaResults.length}
-        fetchAllQuotas={fetchAllQuotas}
-        servicesTabItems={servicesTabItems}
-        quotaLastUpdated={quotaLastUpdated}
-        quotaDisplayMode={quotaDisplayMode}
-        showPredValues={showPredValues}
-        quotaDisplayTabItems={quotaDisplayTabItems}
-        handleDisplayModeChange={handleDisplayModeChange}
-        handleUsageRefresh={handleUsageRefresh}
-        isQuotaLoading={isQuotaLoading}
-        isUsageRefreshSpinning={isUsageRefreshSpinning}
-        hasRateLimits={hasRateLimits}
-        rateLimitGroups={rateLimitGroups}
-        expandedFamilies={expandedFamilies}
-        toggleFamilyExpanded={toggleFamilyExpanded}
-        shortcutLabel={shortcutLabel}
-        showDevShutdown={showDevShutdown}
-        isDevShutdownInFlight={isDevShutdownInFlight}
-        onDevShutdown={handleDevShutdown}
-        remoteUpdateInfo={remoteUpdateInfo}
-        remoteUpdateChecking={remoteUpdateChecking}
-        remoteUpdateError={remoteUpdateError}
-        onOpenRemoteUpdate={openRemoteInstanceUpdate}
-        timeFormatPreference={timeFormatPreference}
-      />
-      <HeaderIconActionButton
-        title={t('header.actions.terminalPanelWithShortcut', { shortcut: shortcutLabel('toggle_terminal') })}
-        ariaLabel={t('header.actions.toggleTerminalPanelAria')}
-        onClick={toggleBottomTerminal}
-        Icon={'terminal-box'}
-      />
-      {!isMobile ? (
-        <HeaderIconActionButton
-          title={t('contextPanel.browser.open')}
-          ariaLabel={t('contextPanel.browser.open')}
-          onClick={handleOpenContextBrowser}
-          pressed={isContextBrowserActive}
-          Icon={'global'}
-        />
-      ) : null}
-      <HeaderIconActionButton
-        title={t('header.actions.rightSidebarWithShortcut', { shortcut: shortcutLabel('toggle_right_sidebar') })}
-        ariaLabel={t('header.actions.toggleRightSidebarAria')}
-        onClick={toggleRightSidebar}
-        Icon={'layout-right'}
-      />
-      <DesktopGitHubControl
-        isMobile={isMobile}
-        githubAuthStatus={githubAuthStatus}
-        githubAccounts={githubAccounts}
-        githubAvatarUrl={githubAvatarUrl}
-        githubLogin={githubLogin}
-        isSwitchingGitHubAccount={isSwitchingGitHubAccount}
-        handleGitHubAccountSwitch={handleGitHubAccountSwitch}
-      />
-    </>
-  );
+      </div>
+    );
+  };
 
   const showMiniChatHeaderAction = hasElectronDesktopIPC && (isNewSessionDraftOpen || Boolean(currentSessionId));
 
@@ -2134,37 +1436,93 @@ export const Header: React.FC<HeaderProps> = ({
           TitlebarLeftControls overlay; the header reserves matching left space
           via padding (see headerStyle) when the sidebar is collapsed. */}
       <div className="flex min-w-0 flex-1 items-center">
-        <SessionSwitcherDropdown>
-          <button
-            type="button"
-            aria-label={t('sessions.switcher.openAria')}
-            className="app-region-no-drag mr-3 flex min-w-0 flex-col items-start rounded-md px-1 py-0.5 -my-0.5 text-left transition-colors hover:bg-interactive-hover/60 focus-visible:outline-none focus-visible:bg-interactive-hover/60"
-          >
-            <span className="truncate typography-ui-label text-[14px] font-normal leading-tight text-foreground max-w-full">
-              {isNewSessionDraftOpen ? t('sessions.switcher.draftTitle') : currentSessionTitle}
-            </span>
-            {(activeProjectLabel || currentBranchLabel || (!isNewSessionDraftOpen && worktreeBadgeKind)) ? (
-              <span className="flex min-w-0 max-w-full items-center gap-1.5 truncate typography-micro text-[10.5px] font-normal leading-tight text-muted-foreground/75">
-                {activeProjectLabel ? <span className="truncate">{activeProjectLabel}</span> : null}
-                {currentBranchLabel ? (
-                  <span className="inline-flex min-w-0 items-center gap-0.5">
-                    <Icon name="git-branch" className="h-3 w-3 flex-shrink-0 text-muted-foreground/70" />
-                    <span className="truncate">{currentBranchLabel}</span>
-                  </span>
-                ) : null}
-                {!isNewSessionDraftOpen && worktreeBadgeKind ? (
-                  <span className={cn(
-                    "inline-flex min-w-0 items-center gap-0.5",
-                    worktreeBadgeKind === 'attention' || worktreeBadgeKind === 'invalid' || worktreeBadgeKind === 'missing' ? 'text-status-warning' : 'text-muted-foreground/60'
-                  )}>
-                    <Icon name="alert" className="h-3 w-3 flex-shrink-0" />
-                    <span className="truncate">{worktreeBadge}</span>
+        <div className="app-region-no-drag mr-2 flex min-w-0 items-center gap-1">
+          <SessionSwitcherDropdown>
+            <button
+              type="button"
+              aria-label={t('sessions.switcher.openAria')}
+              className="flex min-w-0 items-center gap-2 rounded-md px-1.5 py-0.5 text-left transition-colors hover:bg-interactive-hover/60 focus-visible:outline-none focus-visible:bg-interactive-hover/60"
+            >
+              <Icon name="folder-3" className="size-4 shrink-0 text-muted-foreground" />
+              <span className="flex min-w-0 flex-col items-start">
+                <span className="max-w-full truncate typography-ui-label text-[14px] font-normal leading-tight text-foreground">
+                  {isNewSessionDraftOpen ? t('sessions.switcher.draftTitle') : currentSessionTitle}
+                </span>
+                {(activeProjectLabel || currentBranchLabel || (!isNewSessionDraftOpen && worktreeBadgeKind)) ? (
+                  <span className="flex min-w-0 max-w-full items-center gap-1.5 truncate typography-micro text-[10.5px] font-normal leading-tight text-muted-foreground/75">
+                    {activeProjectLabel ? <span className="truncate">{activeProjectLabel}</span> : null}
+                    {currentBranchLabel ? (
+                      <span className="inline-flex min-w-0 items-center gap-0.5">
+                        <Icon name="git-branch" className="h-3 w-3 shrink-0 text-muted-foreground/70" />
+                        <span className="truncate">{currentBranchLabel}</span>
+                      </span>
+                    ) : null}
+                    {!isNewSessionDraftOpen && worktreeBadgeKind ? (
+                      <span className={cn(
+                        'inline-flex min-w-0 items-center gap-0.5',
+                        worktreeBadgeKind === 'attention' || worktreeBadgeKind === 'invalid' || worktreeBadgeKind === 'missing'
+                          ? 'text-status-warning'
+                          : 'text-muted-foreground/60',
+                      )}>
+                        <Icon name="alert" className="h-3 w-3 shrink-0" />
+                        <span className="truncate">{worktreeBadge}</span>
+                      </span>
+                    ) : null}
                   </span>
                 ) : null}
               </span>
-            ) : null}
-          </button>
-        </SessionSwitcherDropdown>
+            </button>
+          </SessionSwitcherDropdown>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button
+                type="button"
+                disabled={!currentSessionId}
+                className="inline-flex size-8 shrink-0 items-center justify-center rounded-lg text-muted-foreground hover:bg-interactive-hover/60 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 disabled:opacity-40"
+                aria-label={t('sessions.sidebar.session.menu.label')}
+              >
+                <Icon name="more" className="size-4" />
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" side="bottom" sideOffset={8} className="min-w-[230px] rounded-xl p-1.5">
+              <DropdownMenuItem onSelect={handleToggleCurrentSessionPin}>
+                <Icon name={isCurrentSessionPinned ? 'unpin' : 'pushpin'} className="size-4" />
+                {isCurrentSessionPinned
+                  ? t('sessions.sidebar.session.menu.unpin')
+                  : t('sessions.sidebar.session.menu.pin')}
+              </DropdownMenuItem>
+              <DropdownMenuItem onSelect={handleOpenRenameDialog}>
+                <Icon name="pencil-ai" className="size-4" />
+                {t('sessions.sidebar.session.menu.rename')}
+              </DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => setForkDialogOpen(true)} disabled={!latestCompletedAssistantMessageId}>
+                <Icon name="git-branch" className="size-4" />
+                {t('chat.messageBody.actions.fork')}
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onSelect={() => openScheduledTaskEditor({
+                  prompt: latestUserRequest,
+                  projectId: activeProject?.id ?? null,
+                })}
+                disabled={!activeProject?.id}
+              >
+                <Icon name="calendar-schedule" className="size-4" />
+                {t('sessions.scheduledTasks.editor.title.new')}
+              </DropdownMenuItem>
+              {hasElectronDesktopIPC ? (
+                <DropdownMenuItem onSelect={handleOpenCurrentSessionWindow}>
+                  <Icon name="window" className="size-4" />
+                  {t('desktopHostSwitcher.actions.openInNewWindow')}
+                </DropdownMenuItem>
+              ) : null}
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onSelect={() => void handleArchiveCurrentSession()}>
+                <Icon name="inbox-archive" className="size-4" />
+                {t('sessions.sidebar.bulkActions.archive')}
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
 
         {tabs.length > 0 && (
           <div className="flex items-center gap-1 rounded-lg bg-[var(--surface-muted)]/50 p-1">
@@ -2175,6 +1533,87 @@ export const Header: React.FC<HeaderProps> = ({
         <div className="flex-1" />
 
         <div className="flex shrink-0 items-center gap-1">
+          <DropdownMenu onOpenChange={(open) => !open && setShowAllTaskOutputs(false)}>
+            <Tooltip delayDuration={400}>
+              <TooltipTrigger asChild>
+                <DropdownMenuTrigger asChild>
+                  <button
+                    type="button"
+                    className={cn(DESKTOP_HEADER_ICON_BUTTON_CLASS, 'relative')}
+                    aria-label={t('shell.outputs.label')}
+                  >
+                    <Icon name="file-list-2" className="size-5" />
+                    {outputRegistry.outputs.length > 0 ? (
+                      <span className="absolute -right-0.5 -top-0.5 inline-flex min-w-3.5 items-center justify-center rounded-full bg-primary px-1 text-[9px] font-semibold leading-3.5 text-primary-foreground">
+                        {Math.min(99, outputRegistry.outputs.length)}
+                      </span>
+                    ) : null}
+                  </button>
+                </DropdownMenuTrigger>
+              </TooltipTrigger>
+              <TooltipContent side="bottom" sideOffset={8}>
+                <p>{t('shell.outputs.label')}</p>
+              </TooltipContent>
+            </Tooltip>
+            <DropdownMenuContent align="end" side="bottom" sideOffset={8} className="w-[380px] max-w-[calc(100vw-2rem)] rounded-xl p-2">
+              <DropdownMenuLabel className="flex items-center justify-between gap-3">
+                <span>{t('shell.outputs.label')}</span>
+                <span className="typography-micro font-normal text-muted-foreground">
+                  {outputRegistry.outputs.length}
+                </span>
+              </DropdownMenuLabel>
+              <DropdownMenuSeparator />
+              {outputRegistry.outputs.length === 0 ? (
+                <p className="px-2 py-6 text-center typography-ui-caption text-muted-foreground">
+                  {t('shell.outputs.empty')}
+                </p>
+              ) : (
+                <div className="max-h-[min(520px,70vh)] overflow-y-auto">
+                  {outputRegistry.outputs
+                    .slice(0, showAllTaskOutputs ? outputRegistry.outputs.length : 6)
+                    .map((output) => {
+                      const normalized = output.path.replace(/\\/g, '/');
+                      const fileName = normalized.split('/').filter(Boolean).at(-1) ?? output.path;
+                      const directoryLabel = normalized.includes('/')
+                        ? normalized.slice(0, normalized.lastIndexOf('/'))
+                        : '';
+                      return (
+                        <DropdownMenuItem
+                          key={output.path}
+                          onSelect={() => handleOpenTaskOutput(output.path)}
+                          className="min-h-11 items-start gap-2"
+                        >
+                          <Icon name={output.kind === 'attachment' ? 'attachment-2' : 'file-text'} className="mt-0.5 size-4 shrink-0" />
+                          <span className="min-w-0 flex-1">
+                            <span className="block truncate typography-ui-label text-foreground">{fileName}</span>
+                            <span className="block truncate typography-micro text-muted-foreground">{directoryLabel}</span>
+                          </span>
+                          {output.modifications > 1 ? (
+                            <span className="shrink-0 typography-micro text-muted-foreground">×{output.modifications}</span>
+                          ) : null}
+                        </DropdownMenuItem>
+                      );
+                    })}
+                </div>
+              )}
+              {outputRegistry.outputs.length > 6 ? (
+                <>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem
+                    onSelect={(event) => {
+                      event.preventDefault();
+                      setShowAllTaskOutputs((value) => !value);
+                    }}
+                  >
+                    <Icon name={showAllTaskOutputs ? 'arrow-up-s' : 'arrow-down-s'} className="size-4" />
+                    {showAllTaskOutputs
+                      ? t('inlineComment.actions.showLess')
+                      : t('inlineComment.actions.showMore')}
+                  </DropdownMenuItem>
+                </>
+              ) : null}
+            </DropdownMenuContent>
+          </DropdownMenu>
           {showDesktopHeaderContextUsage && stableDesktopContextUsage ? (
             <ContextUsageDisplay
               totalTokens={stableDesktopContextUsage.totalTokens}
@@ -2192,16 +1631,34 @@ export const Header: React.FC<HeaderProps> = ({
               percentIconClassName="h-4.5 w-4.5"
             />
           ) : null}
-          {desktopChangesPanelAction}
-          <HeaderIconActionButton
-            visible={showMiniChatHeaderAction}
-            title={isNewSessionDraftOpen ? t('header.actions.newMiniChat') : t('header.actions.openSessionMiniChat')}
-            ariaLabel={isNewSessionDraftOpen ? t('header.actions.newMiniChatAria') : t('header.actions.openSessionMiniChatAria')}
-            onClick={handleOpenCurrentMiniChat}
-            className={cn(desktopHeaderIconButtonClass, 'mr-1')}
-            Icon={'picture-in-picture-2'}
+          <DesktopGitHubControl
+            isMobile={isMobile}
+            githubAuthStatus={githubAuthStatus}
+            githubAccounts={githubAccounts}
+            githubAvatarUrl={githubAvatarUrl}
+            githubLogin={githubLogin}
+            isSwitchingGitHubAccount={isSwitchingGitHubAccount}
+            handleGitHubAccountSwitch={handleGitHubAccountSwitch}
           />
-          {desktopSidebarActions}
+          <Tooltip delayDuration={400}>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
+                onClick={toggleRightSidebar}
+                className={cn(
+                  DESKTOP_HEADER_ICON_BUTTON_CLASS,
+                  isRightSidebarOpen && 'bg-interactive-selection text-interactive-selection-foreground',
+                )}
+                aria-label={t('header.actions.toggleRightSidebarAria')}
+                aria-pressed={isRightSidebarOpen}
+              >
+                <Icon name="layout-right" className="size-5" />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom" sideOffset={8}>
+              <p>{t('header.actions.toggleRightSidebarAria')}</p>
+            </TooltipContent>
+          </Tooltip>
           <WindowsWindowControls visible={usesFramelessChrome && windowControlsSide === 'right'} position="right" />
         </div>
       </div>
@@ -2639,6 +2096,44 @@ export const Header: React.FC<HeaderProps> = ({
 
   return (
     <>
+      <Dialog open={renameDialogOpen} onOpenChange={setRenameDialogOpen}>
+        <DialogContent className="sm:max-w-[420px]">
+          <DialogHeader>
+            <DialogTitle>{t('sessions.sidebar.session.menu.rename')}</DialogTitle>
+            <DialogDescription>{currentSessionTitle}</DialogDescription>
+          </DialogHeader>
+          <form
+            className="space-y-4"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void handleRenameSession();
+            }}
+          >
+            <input
+              value={renameDraft}
+              onChange={(event) => setRenameDraft(event.target.value)}
+              autoFocus
+              className="h-10 w-full rounded-lg border border-border bg-background px-3 typography-ui-label text-foreground outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
+              aria-label={t('sessions.sidebar.session.menu.rename')}
+            />
+            <DialogFooter>
+              <Button type="button" variant="ghost" onClick={() => setRenameDialogOpen(false)}>
+                {t('sessions.sidebar.session.rename.cancel')}
+              </Button>
+              <Button type="submit" disabled={!renameDraft.trim()}>
+                {t('sessions.sidebar.session.rename.save')}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+      <ForkSessionDialog
+        open={forkDialogOpen}
+        onOpenChange={setForkDialogOpen}
+        projectDirectory={openDirectory || null}
+        submitting={forkSubmitting}
+        onConfirm={handleConfirmFork}
+      />
       <header
         ref={headerRef}
         className={headerClassName}
@@ -2646,18 +2141,6 @@ export const Header: React.FC<HeaderProps> = ({
       >
         {isMobile ? renderMobile() : renderDesktop()}
       </header>
-      <UpdateDialog
-        open={remoteUpdateDialogOpen}
-        onOpenChange={setRemoteUpdateDialogOpen}
-        info={remoteUpdateInfo}
-        downloading={false}
-        downloaded={false}
-        progress={null}
-        error={remoteUpdateError}
-        onDownload={() => {}}
-        onRestart={() => {}}
-        runtimeType="web"
-      />
     </>
   );
 };

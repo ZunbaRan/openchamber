@@ -5,7 +5,10 @@ import { Button } from '@/components/ui/button';
 import { SortableTabsStrip } from '@/components/ui/sortable-tabs-strip';
 import { DiffView } from '@/components/views/DiffView';
 import { FilesView } from '@/components/views/FilesView';
+import { GitView } from '@/components/views/GitView';
 import { PlanView } from '@/components/views/PlanView';
+import { TerminalView } from '@/components/views/TerminalView';
+import { ExtensionWorkbench } from '@/components/interactive-ui/workbench/ExtensionWorkbench';
 import { useThemeSystem } from '@/contexts/useThemeSystem';
 import { openExternalUrl } from '@/lib/url';
 import { copyTextToClipboard } from '@/lib/clipboard';
@@ -13,7 +16,15 @@ import { useEffectiveDirectory } from '@/hooks/useEffectiveDirectory';
 import { cn } from '@/lib/utils';
 import { useI18n } from '@/lib/i18n';
 import { useFilesViewTabsStore } from '@/stores/useFilesViewTabsStore';
-import { useUIStore, type ContextPanelMode, type PendingDiffScope } from '@/stores/useUIStore';
+import { useTerminalStore } from '@/stores/useTerminalStore';
+import {
+  CONTEXT_PANEL_DEFAULT_WIDTH,
+  CONTEXT_PANEL_MAX_WIDTH,
+  CONTEXT_PANEL_MIN_WIDTH,
+  useUIStore,
+  type ContextPanelMode,
+  type PendingDiffScope,
+} from '@/stores/useUIStore';
 import { useInlineCommentDraftStore } from '@/stores/useInlineCommentDraftStore';
 import { useSessionUIStore } from '@/sync/session-ui-store';
 import { useInputStore } from '@/sync/input-store';
@@ -28,6 +39,13 @@ import { getRuntimeApiBaseUrl } from '@/lib/runtime-switch';
 import { getPreviewTargetRecoveryAction } from '@/lib/preview/proxy-response';
 import { Icon } from "@/components/icon/Icon";
 import { OpenChamberLogo } from "@/components/ui/OpenChamberLogo";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import { SidebarFilesTree } from './SidebarFilesTree';
 import { invokeDesktopCommand } from '@/lib/desktopNative';
 import { getOrCreateEmbeddedSessionChatURL, type EmbeddedSessionChatURLCacheEntry } from './contextPanelEmbeddedChat';
 import {
@@ -41,9 +59,6 @@ import {
   previewProxyTargetCache,
 } from '@/lib/preview/screenshot-capture';
 
-const CONTEXT_PANEL_MIN_WIDTH = 380;
-const CONTEXT_PANEL_MAX_WIDTH = 1400;
-const CONTEXT_PANEL_DEFAULT_WIDTH = 600;
 const CONTEXT_TAB_LABEL_MAX_CHARS = 24;
 type TranslateFn = ReturnType<typeof useI18n>['t'];
 const EMPTY_SESSION_TITLE_MAP = new Map<string, string>();
@@ -157,6 +172,10 @@ const getModeLabel = (
   if (mode === 'plan') return t('contextPanel.mode.plan');
   if (mode === 'preview') return t('contextPanel.mode.preview');
   if (mode === 'browser') return t('contextPanel.mode.browser');
+  if (mode === 'files-root') return t('layout.mainTab.files');
+  if (mode === 'git') return t('layout.rightSidebar.git');
+  if (mode === 'terminal') return t('layout.mainTab.terminal');
+  if (mode === 'extensions') return t('shell.navigation.applications');
   return t('contextPanel.mode.context');
 };
 
@@ -257,6 +276,22 @@ const getTabIcon = (tab: { mode: ContextPanelMode; targetPath: string | null }):
 
   if (tab.mode === 'browser') {
     return <Icon name="global" className="h-3.5 w-3.5" />;
+  }
+
+  if (tab.mode === 'files-root') {
+    return <Icon name="folder-3" className="h-3.5 w-3.5" />;
+  }
+
+  if (tab.mode === 'git') {
+    return <Icon name="git-branch" className="h-3.5 w-3.5" />;
+  }
+
+  if (tab.mode === 'terminal') {
+    return <Icon name="terminal-box" className="h-3.5 w-3.5" />;
+  }
+
+  if (tab.mode === 'extensions') {
+    return <Icon name="apps-2-ai" className="h-3.5 w-3.5" />;
   }
 
   return undefined;
@@ -2082,21 +2117,23 @@ export const ContextPanel: React.FC = () => {
   const directoryKey = React.useMemo(() => normalizeDirectoryKey(effectiveDirectory), [effectiveDirectory]);
 
   const panelState = useUIStore((state) => (directoryKey ? state.contextPanelByDirectory[directoryKey] : undefined));
-  const closeContextPanel = useUIStore((state) => state.closeContextPanel);
   const closeContextPanelTab = useUIStore((state) => state.closeContextPanelTab);
   const openContextPanelTab = useUIStore((state) => state.openContextPanelTab);
+  const isRightSidebarOpen = useUIStore((state) => state.isRightSidebarOpen);
+  const setRightSidebarOpen = useUIStore((state) => state.setRightSidebarOpen);
   const toggleContextPanelExpanded = useUIStore((state) => state.toggleContextPanelExpanded);
   const setContextPanelWidth = useUIStore((state) => state.setContextPanelWidth);
   const setActiveContextPanelTab = useUIStore((state) => state.setActiveContextPanelTab);
   const reorderContextPanelTabs = useUIStore((state) => state.reorderContextPanelTabs);
   const setSelectedFilePath = useFilesViewTabsStore((state) => state.setSelectedPath);
   const openContextPreview = useUIStore((state) => state.openContextPreview);
+  const createTerminalTab = useTerminalStore((state) => state.createTab);
   const allowPromptingSubagentSessions = useUIStore((state) => state.allowPromptingSubagentSessions);
   const { themeMode, setThemeMode, lightThemeId, darkThemeId, currentTheme } = useThemeSystem();
 
   const tabs = React.useMemo(() => panelState?.tabs ?? [], [panelState?.tabs]);
   const activeTab = tabs.find((tab) => tab.id === panelState?.activeTabId) ?? tabs[tabs.length - 1] ?? null;
-  const isOpen = Boolean(panelState?.isOpen && activeTab);
+  const isOpen = isRightSidebarOpen;
   const isExpanded = Boolean(isOpen && panelState?.expanded);
   const width = clampWidth(panelState?.width ?? CONTEXT_PANEL_DEFAULT_WIDTH);
   const chatSessionIDs = React.useMemo(() => {
@@ -2241,11 +2278,39 @@ export const ContextPanel: React.FC = () => {
   }, [isResizing]);
 
   const handleClose = React.useCallback(() => {
-    if (!directoryKey) {
-      return;
-    }
-    closeContextPanel(directoryKey);
-  }, [closeContextPanel, directoryKey]);
+    setRightSidebarOpen(false);
+  }, [setRightSidebarOpen]);
+
+  const openResource = React.useCallback((mode: 'files-root' | 'git' | 'browser' | 'terminal' | 'extensions') => {
+    if (!directoryKey) return;
+    const multiple = mode === 'browser' || mode === 'terminal';
+    const terminalTabId = mode === 'terminal' ? createTerminalTab(directoryKey) : null;
+    openContextPanelTab(directoryKey, {
+      mode,
+      targetPath: terminalTabId,
+      dedupeKey: multiple
+        ? `${mode}:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`
+        : mode,
+      label: mode === 'files-root'
+        ? t('layout.mainTab.files')
+        : mode === 'git'
+          ? t('layout.rightSidebar.git')
+          : mode === 'browser'
+            ? t('contextPanel.mode.browser')
+            : mode === 'terminal'
+              ? t('layout.mainTab.terminal')
+              : t('shell.navigation.applications'),
+    });
+    setRightSidebarOpen(true);
+  }, [createTerminalTab, directoryKey, openContextPanelTab, setRightSidebarOpen, t]);
+
+  const resourceLauncher = React.useMemo(() => ([
+    { mode: 'files-root' as const, icon: 'folder-3' as const, label: t('layout.mainTab.files') },
+    { mode: 'git' as const, icon: 'git-branch' as const, label: t('layout.rightSidebar.git') },
+    { mode: 'browser' as const, icon: 'global' as const, label: t('contextPanel.mode.browser') },
+    { mode: 'terminal' as const, icon: 'terminal-box' as const, label: t('layout.mainTab.terminal') },
+    { mode: 'extensions' as const, icon: 'apps-2-ai' as const, label: t('shell.navigation.applications') },
+  ]), [t]);
 
   const handleToggleExpanded = React.useCallback(() => {
     if (!directoryKey) {
@@ -2256,6 +2321,9 @@ export const ContextPanel: React.FC = () => {
 
   const handlePanelKeyDownCapture = React.useCallback((event: React.KeyboardEvent<HTMLElement>) => {
     if (event.key !== 'Escape') {
+      return;
+    }
+    if (event.target instanceof HTMLElement && event.target.closest('[role="dialog"]')) {
       return;
     }
 
@@ -2532,6 +2600,10 @@ export const ContextPanel: React.FC = () => {
   );
 
   const isFileTabActive = activeTab?.mode === 'file';
+  const isFilesRootActive = activeTab?.mode === 'files-root';
+  const isGitActive = activeTab?.mode === 'git';
+  const isTerminalActive = activeTab?.mode === 'terminal';
+  const isExtensionsActive = activeTab?.mode === 'extensions';
 
   const header = (
     <header className="flex h-10 items-stretch border-b border-transparent">
@@ -2560,6 +2632,34 @@ export const ContextPanel: React.FC = () => {
         variant="default"
       />
       <div className="flex items-center gap-1 px-1.5">
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-7 w-7 shrink-0 p-0"
+              title={t('shell.resources.add')}
+              aria-label={t('shell.resources.addAria')}
+            >
+              <Icon name="add" className="h-4 w-4" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="min-w-[220px]">
+            {resourceLauncher.map((item) => {
+              const singletonOpen = item.mode !== 'browser'
+                && item.mode !== 'terminal'
+                && tabs.some((tab) => tab.mode === item.mode);
+              return (
+                <DropdownMenuItem key={item.mode} onClick={() => openResource(item.mode)}>
+                  <Icon name={item.icon} className="size-4" />
+                  <span>{item.label}</span>
+                  {singletonOpen ? <Icon name="check" className="ml-auto size-4 text-primary" /> : null}
+                </DropdownMenuItem>
+              );
+            })}
+          </DropdownMenuContent>
+        </DropdownMenu>
         <Button
           type="button"
           variant="ghost"
@@ -2645,6 +2745,43 @@ export const ContextPanel: React.FC = () => {
       )}
       {header}
       <div className={cn('relative min-h-0 flex-1 overflow-hidden', isResizing && 'pointer-events-none')}>
+        {!activeTab ? (
+          <div className="absolute inset-0 overflow-auto p-4">
+            <div className="grid gap-2">
+              {resourceLauncher.map((item) => (
+                <button
+                  key={item.mode}
+                  type="button"
+                  onClick={() => openResource(item.mode)}
+                  className="flex min-h-14 items-center gap-3 rounded-xl border border-border/50 bg-[var(--surface-muted)]/45 px-4 text-left text-foreground transition-colors hover:bg-interactive-hover/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
+                >
+                  <Icon name={item.icon} className="size-5 text-muted-foreground" />
+                  <span className="typography-ui-label">{item.label}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : null}
+        {tabs.some((tab) => tab.mode === 'files-root') ? (
+          <div className={cn('absolute inset-0', isFilesRootActive ? 'block' : 'hidden')}>
+            <SidebarFilesTree />
+          </div>
+        ) : null}
+        {tabs.some((tab) => tab.mode === 'git') ? (
+          <div className={cn('absolute inset-0', isGitActive ? 'block' : 'hidden')}>
+            <GitView isActive={isOpen && isGitActive} />
+          </div>
+        ) : null}
+        {tabs.some((tab) => tab.mode === 'extensions') ? (
+          <div className={cn('absolute inset-0', isExtensionsActive ? 'block' : 'hidden')}>
+            <ExtensionWorkbench />
+          </div>
+        ) : null}
+        {isTerminalActive ? (
+          <div className="absolute inset-0">
+            <TerminalView visible preferredTabId={activeTab?.targetPath ?? null} />
+          </div>
+        ) : null}
         {hasFileTabs ? (
           <div className={cn('absolute inset-0', isFileTabActive ? 'block' : 'hidden')}>
             <FilesView mode="editor-only" />
@@ -2716,7 +2853,17 @@ export const ContextPanel: React.FC = () => {
             />
           </div>
         ))}
-        {activeTab?.mode !== 'chat' && !isFileTabActive && activeTab?.mode !== 'browser' && activeTab?.mode !== 'diff' ? activeNonChatContent : null}
+        {activeTab
+          && activeTab.mode !== 'chat'
+          && !isFileTabActive
+          && !isFilesRootActive
+          && !isGitActive
+          && !isTerminalActive
+          && !isExtensionsActive
+          && activeTab?.mode !== 'browser'
+          && activeTab?.mode !== 'diff'
+            ? activeNonChatContent
+            : null}
       </div>
     </aside>
   );

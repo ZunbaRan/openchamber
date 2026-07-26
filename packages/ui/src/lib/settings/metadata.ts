@@ -132,7 +132,7 @@ export const SETTINGS_PAGE_METADATA: readonly SettingsPageMeta[] = [
   },
   {
     slug: 'interactive-ui.extensions',
-    title: 'Interactive UI Extensions',
+    title: 'Applications',
     group: 'content',
     kind: 'single',
     keywords: ['interactive ui', 'ocix', 'extensions', 'marketplace', 'publisher', 'signature', 'native'],

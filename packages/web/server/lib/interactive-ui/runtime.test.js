@@ -26,6 +26,8 @@ const createFixture = async (fetchImpl, {
   views = true,
   dashboard = false,
   version = '1.0.0',
+  baseUrl = 'https://crm.example.com/api/',
+  environment = undefined,
 } = {}) => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ocix-runtime-auth-'));
   const dataDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'ocix-runtime-auth-data-'));
@@ -48,7 +50,7 @@ const createFixture = async (fetchImpl, {
     connectors: [{
       id: 'crm-api',
       type: 'http',
-      baseUrl: 'https://crm.example.com/api/',
+      baseUrl,
       auth: authType === 'issued-key'
         ? {
             type: 'issued-key',
@@ -160,12 +162,51 @@ const createFixture = async (fetchImpl, {
     fetchImpl,
     extensionRoots: [root],
     connectionStore,
+    ...(environment ? { environment } : {}),
     logger: { info() {}, warn() {} },
   });
   return { runtime };
 };
 
 describe('Interactive UI connector authentication', () => {
+  it('keeps an extension catalogued when its endpoint environment variable is unset and activates a user endpoint without restart', async () => {
+    const upstream = [];
+    const { runtime } = await createFixture(async (url, init) => {
+      upstream.push({ url: String(url), init });
+      return new Response(JSON.stringify({ ok: true }), { status: 200 });
+    }, {
+      baseUrl: '${OCIX_CRM_API_URL}',
+      networkPermissions: ['${OCIX_CRM_API_URL}'],
+      environment: {},
+    });
+
+    expect((await runtime.getWorkbenchCatalog()).extensions).toHaveLength(1);
+    expect((await runtime.listConnections()).connections[0]).toMatchObject({
+      credential: {
+        configured: false,
+        endpointConfigured: false,
+        endpoint: null,
+      },
+    });
+
+    await runtime.configureConnection('com.acme.crm', 'crm-api', {
+      accessKey: 'crm-secret',
+      endpoint: 'http://127.0.0.1:51810/api/',
+      headers: { 'X-Tenant-ID': 'acme' },
+    });
+    await expect(runtime.testConnection('com.acme.crm', 'crm-api')).resolves.toMatchObject({ ok: true });
+    expect(upstream[0].url).toBe('http://127.0.0.1:51810/api/health');
+    expect(upstream[0].init.headers.get('X-Tenant-ID')).toBe('acme');
+    expect(upstream[0].init.headers.get('X-API-Key')).toBe('crm-secret');
+    expect((await runtime.listConnections()).connections[0]).toMatchObject({
+      credential: {
+        configured: true,
+        endpointSource: 'user',
+        endpoint: 'http://127.0.0.1:51810/api/',
+      },
+    });
+  });
+
   it('publishes a redacted routing context and updates connector availability', async () => {
     const { runtime } = await createFixture(async () => new Response(JSON.stringify({ ok: true })), { routing: true });
     const before = await runtime.getRoutingCapabilities();

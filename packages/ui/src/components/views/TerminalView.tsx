@@ -24,9 +24,10 @@ import { applyTerminalModifier, terminalControlCharacter, terminalSequenceForKey
 
 type TerminalViewProps = {
     visible?: boolean;
+    preferredTabId?: string | null;
 };
 
-export const TerminalView: React.FC<TerminalViewProps> = ({ visible }) => {
+export const TerminalView: React.FC<TerminalViewProps> = ({ visible, preferredTabId = null }) => {
     const { t } = useI18n();
     const { terminal, runtime } = useRuntimeAPIs();
     const { currentTheme } = useThemeSystem();
@@ -83,6 +84,22 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ visible }) => {
             directoryTerminalState.tabs[0]
         );
     }, [directoryTerminalState, activeTabId]);
+
+    React.useEffect(() => {
+        if (!visible || !effectiveDirectory || !preferredTabId || activeTabId === preferredTabId) {
+            return;
+        }
+        if (directoryTerminalState?.tabs.some((tab) => tab.id === preferredTabId)) {
+            setActiveTab(effectiveDirectory, preferredTabId);
+        }
+    }, [
+        activeTabId,
+        directoryTerminalState?.tabs,
+        effectiveDirectory,
+        preferredTabId,
+        setActiveTab,
+        visible,
+    ]);
 
     const terminalTabItems = React.useMemo(() => {
         return (directoryTerminalState?.tabs ?? []).map((tab) => ({

@@ -176,6 +176,8 @@ export function ScheduledTasksDialog() {
   const { t } = useI18n();
   const open = useUIStore((state) => state.isScheduledTasksDialogOpen);
   const setOpen = useUIStore((state) => state.setScheduledTasksDialogOpen);
+  const scheduledTaskPrefill = useUIStore((state) => state.scheduledTaskPrefill);
+  const clearScheduledTaskPrefill = useUIStore((state) => state.clearScheduledTaskPrefill);
   const isMobile = useUIStore((state) => state.isMobile);
   const timeFormatPreference = useUIStore((state) => state.timeFormatPreference);
   const projects = useProjectsStore((state) => state.projects);
@@ -190,6 +192,7 @@ export function ScheduledTasksDialog() {
   const [loading, setLoading] = React.useState(true);
   const [editorOpen, setEditorOpen] = React.useState(false);
   const [editorTask, setEditorTask] = React.useState<ScheduledTask | null>(null);
+  const [editorPrefillPrompt, setEditorPrefillPrompt] = React.useState('');
   const [mutatingTaskID, setMutatingTaskID] = React.useState<string | null>(null);
 
   const selectedProject = React.useMemo(
@@ -276,6 +279,33 @@ export function ScheduledTasksDialog() {
       setLoading(false);
     }
   }, [open, activeProject, projects, reloadTasks]);
+
+  React.useEffect(() => {
+    if (!open || !scheduledTaskPrefill) {
+      return;
+    }
+    const requestedProjectID = scheduledTaskPrefill.projectId;
+    const preferredProjectID = (
+      requestedProjectID && projects.some((project) => project.id === requestedProjectID)
+        ? requestedProjectID
+        : (activeProject?.id || projects[0]?.id || '')
+    );
+    setSelectedProjectID(preferredProjectID);
+    if (preferredProjectID) {
+      void reloadTasks(preferredProjectID);
+    }
+    setEditorTask(null);
+    setEditorPrefillPrompt(scheduledTaskPrefill.prompt);
+    setEditorOpen(true);
+    clearScheduledTaskPrefill();
+  }, [
+    activeProject?.id,
+    clearScheduledTaskPrefill,
+    open,
+    projects,
+    reloadTasks,
+    scheduledTaskPrefill,
+  ]);
 
   React.useEffect(() => {
     if (!open) {
@@ -409,6 +439,7 @@ export function ScheduledTasksDialog() {
 
   const openNewTaskEditor = () => {
     setEditorTask(null);
+    setEditorPrefillPrompt('');
     setEditorOpen(true);
   };
 
@@ -555,6 +586,7 @@ export function ScheduledTasksDialog() {
                       size="sm"
                       onClick={() => {
                         setEditorTask(task);
+                        setEditorPrefillPrompt('');
                         setEditorOpen(true);
                       }}
                       disabled={isBusy}
@@ -629,6 +661,7 @@ export function ScheduledTasksDialog() {
       <ScheduledTaskEditorDialog
         open={editorOpen}
         task={editorTask}
+        prefillPrompt={editorPrefillPrompt}
         onOpenChange={setEditorOpen}
         onSave={handleSaveTask}
       />

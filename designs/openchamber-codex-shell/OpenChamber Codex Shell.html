@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>OpenChamber Codex-style Shell</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #141313;
+      --sidebar: #1b1a1a;
+      --surface: #201f1f;
+      --surface-2: #292727;
+      --text: #f4f1ee;
+      --muted: #a9a4a0;
+      --line: rgba(255,255,255,.08);
+      --accent: #d66b2b;
+      --hover: rgba(255,255,255,.07);
+      --selected: rgba(255,255,255,.1);
+    }
+    :root.light {
+      color-scheme: light;
+      --bg: #f8f6f2;
+      --sidebar: #efede8;
+      --surface: #fffdf9;
+      --surface-2: #e7e3dc;
+      --text: #24211f;
+      --muted: #706a65;
+      --line: rgba(30,24,20,.1);
+      --accent: #bf5418;
+      --hover: rgba(30,24,20,.06);
+      --selected: rgba(30,24,20,.09);
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; font: 14px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; background: var(--bg); color: var(--text); }
+    button { color: inherit; font: inherit; }
+    .app { height: 100vh; min-height: 680px; display: grid; grid-template-columns: 280px minmax(520px,1fr) 360px 48px; overflow: hidden; }
+    .app.left-closed { grid-template-columns: 0 minmax(520px,1fr) 360px 48px; }
+    .app.right-closed { grid-template-columns: 280px minmax(520px,1fr) 0 48px; }
+    .app.left-closed.right-closed { grid-template-columns: 0 minmax(520px,1fr) 0 48px; }
+    .left,.right { min-width: 0; overflow: hidden; background: var(--sidebar); transition: width .18s ease; border-color: var(--line); }
+    .left { border-right: 1px solid var(--line); padding: 52px 14px 12px; display: flex; flex-direction: column; }
+    .brand { display:flex; align-items:center; justify-content:space-between; margin-bottom: 14px; }
+    .brand button { border:0; background:transparent; border-radius:10px; padding:8px; }
+    .brand button:hover,.nav button:hover,.rail button:hover,.tab:hover,.icon:hover { background:var(--hover); }
+    .brand-name { font-size:20px; font-weight:650; letter-spacing:-.02em; }
+    .nav { display:flex; flex-direction:column; gap:3px; }
+    .nav button { height:40px; border:0; background:transparent; border-radius:10px; display:flex; align-items:center; gap:12px; padding:0 12px; text-align:left; }
+    .nav button.active { background:var(--selected); }
+    .glyph { width:20px; height:20px; display:grid; place-items:center; font-size:17px; }
+    .tasks-title { margin:26px 8px 8px; color:var(--muted); display:flex; justify-content:space-between; text-transform:uppercase; font-size:12px; font-weight:600; letter-spacing:.08em; }
+    .project { margin:2px 4px; padding:8px; border-radius:10px; }
+    .project.selected { background:var(--selected); }
+    .task { margin:3px 0 0 30px; padding:8px 10px; border-radius:8px; color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    .task.active { color:var(--text); background:var(--selected); }
+    .footer { margin-top:auto; display:flex; align-items:center; gap:4px; color:var(--muted); }
+    .footer button,.icon { border:0; background:transparent; width:34px; height:34px; border-radius:8px; }
+    .update { margin-left:auto!important; width:auto!important; padding:0 10px; color:var(--accent); border:1px solid color-mix(in srgb,var(--accent) 50%,transparent)!important; }
+    .center { min-width:0; display:flex; flex-direction:column; background:var(--bg); }
+    .titlebar { height:52px; border-bottom:1px solid var(--line); padding:8px 16px; display:flex; align-items:center; gap:12px; }
+    .session { min-width:0; }
+    .session strong,.session small { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .session small { color:var(--muted); font-size:11px; }
+    .spacer { flex:1; }
+    .usage { color:var(--muted); }
+    .tabs { height:44px; border-bottom:1px solid var(--line); padding:6px 12px; display:flex; align-items:center; gap:6px; }
+    .tab { height:32px; border:0; border-radius:9px; background:transparent; padding:0 12px; }
+    .tab.active { background:var(--selected); }
+    .plus { width:32px; padding:0; font-size:20px; }
+    .canvas { flex:1; padding:40px max(24px,8vw); overflow:auto; }
+    .message { max-width:780px; margin:0 auto 18px; color:var(--muted); }
+    .bubble { max-width:680px; margin:24px 0 34px auto; padding:14px 18px; border:1px solid color-mix(in srgb,var(--accent) 25%,transparent); background:color-mix(in srgb,var(--accent) 10%,transparent); border-radius:16px 16px 4px 16px; }
+    .artifact { max-width:860px; margin:auto; border:1px solid var(--line); border-radius:16px; overflow:hidden; background:var(--surface); }
+    .artifact-head { padding:16px 18px; border-bottom:1px solid var(--line); display:flex; align-items:center; gap:10px; }
+    .artifact-body { padding:18px; display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; }
+    .metric { padding:16px; min-height:110px; border-radius:12px; background:var(--surface-2); }
+    .metric small { color:var(--muted); }
+    .metric b { display:block; margin-top:16px; font-size:26px; }
+    .right { border-left:1px solid var(--line); display:flex; flex-direction:column; }
+    .right-head { height:52px; padding:0 16px; display:flex; align-items:center; justify-content:space-between; border-bottom:1px solid var(--line); }
+    .right-content { padding:18px; overflow:auto; }
+    .file { padding:10px; border-radius:8px; color:var(--muted); }
+    .file:hover { background:var(--hover); color:var(--text); }
+    .rail { border-left:1px solid var(--line); background:var(--sidebar); padding:58px 7px 8px; display:flex; flex-direction:column; gap:7px; }
+    .rail button { height:36px; border:0; border-radius:9px; background:transparent; }
+    .rail button.active { background:var(--selected); color:var(--accent); }
+    .menu { position:fixed; z-index:20; width:330px; padding:10px; border:1px solid var(--line); border-radius:14px; background:var(--surface-2); box-shadow:0 24px 70px rgba(0,0,0,.35); display:none; }
+    .menu.open { display:block; }
+    .menu button { width:100%; border:0; background:transparent; height:42px; border-radius:9px; display:flex; align-items:center; justify-content:space-between; padding:0 12px; }
+    .menu button:hover { background:var(--hover); }
+    .menu .hint { color:var(--muted); }
+    @media (max-width:1150px) { .app { grid-template-columns:280px minmax(520px,1fr) 0 48px; } .right{display:none;} }
+    @media (max-width:850px) { .app { grid-template-columns:0 minmax(480px,1fr) 0 48px; } .left{display:none;} }
+  </style>
+</head>
+<body>
+  <div class="app" id="app">
+    <aside class="left">
+      <div class="brand"><button class="brand-name" id="brand">OpenChamber⌄</button><button aria-label="搜索">⌕</button></div>
+      <nav class="nav">
+        <button class="active"><span class="glyph">✎</span>新建任务</button>
+        <button><span class="glyph">▱</span>项目</button>
+        <button><span class="glyph">⑂</span>Git</button>
+        <button><span class="glyph">◷</span>已安排</button>
+        <button><span class="glyph">▦</span>应用</button>
+        <button><span class="glyph">◉</span>插件</button>
+      </nav>
+      <div class="tasks-title"><span>任务</span><span>•••</span></div>
+      <div class="project selected">▾ openchamber<div class="task active">Codex 风格 GUI</div><div class="task">HTML Artifact 验收</div></div>
+      <div class="project">▸ service quality check</div>
+      <div class="footer"><button>⚙</button><button>?</button><button>ⓘ</button><button class="update">update</button></div>
+    </aside>
+    <section class="center">
+      <header class="titlebar">
+        <button class="icon" id="leftToggle">◧</button>
+        <div class="session"><strong>Codex 风格 GUI</strong><small>OpenChamber · docs/interactive-ui-mcp-apps</small></div>
+        <div class="spacer"></div><span class="usage">7.3%</span><button class="icon" id="theme">◐</button>
+      </header>
+      <div class="tabs"><button class="tab active">Chat</button><button class="tab">Files ×</button><button class="tab plus" id="plus">＋</button></div>
+      <main class="canvas">
+        <div class="bubble">按 Codex 的信息架构重构 OpenChamber 外层 GUI，并保留现有功能。</div>
+        <div class="message">已把应用与插件拆分为两个明确入口，并将右侧上下文改为固定图标轨道。</div>
+        <div class="artifact">
+          <div class="artifact-head"><strong>应用看板验收</strong><span class="spacer"></span><button class="icon">⌖</button></div>
+          <div class="artifact-body"><div class="metric"><small>Installed applications</small><b>3</b></div><div class="metric"><small>Pinned surfaces</small><b>8</b></div></div>
+        </div>
+      </main>
+    </section>
+    <aside class="right" id="right">
+      <div class="right-head"><strong id="rightTitle">Files</strong><span>⌕</span></div>
+      <div class="right-content"><div class="file">▸ packages</div><div class="file">▸ docs</div><div class="file">▸ examples</div><div class="file">◇ AGENTS.md</div></div>
+    </aside>
+    <nav class="rail" aria-label="右侧面板">
+      <button class="active" data-panel="Files">▱</button>
+      <button data-panel="Git">⑂</button>
+      <button data-panel="Context">▤</button>
+      <button data-panel="App board">▦</button>
+    </nav>
+  </div>
+  <div class="menu" id="plusMenu">
+    <button><span>▱　文件</span><span class="hint">⌘P</span></button>
+    <button><span>⊕　侧边任务</span><span class="hint">⌥⌘S</span></button>
+    <button><span>◎　浏览器</span><span class="hint">⌘T</span></button>
+    <button><span>▣　终端</span></button>
+    <hr style="border:0;border-top:1px solid var(--line)">
+    <button><span>最近：AGENTS.md</span></button>
+  </div>
+  <div class="menu" id="brandMenu">
+    <button><span>设置</span><span class="hint">⌘,</span></button>
+    <button><span>键盘快捷键</span></button>
+    <button><span>关于 OpenChamber</span></button>
+    <button><span>退出</span></button>
+  </div>
+  <script>
+    const app = document.getElementById('app');
+    const menu = document.getElementById('plusMenu');
+    const brandMenu = document.getElementById('brandMenu');
+    document.getElementById('leftToggle').onclick = () => app.classList.toggle('left-closed');
+    document.getElementById('theme').onclick = () => document.documentElement.classList.toggle('light');
+    document.getElementById('plus').onclick = (event) => {
+      const rect = event.currentTarget.getBoundingClientRect();
+      menu.style.left = `${rect.left}px`; menu.style.top = `${rect.bottom + 8}px`; menu.classList.toggle('open');
+      brandMenu.classList.remove('open');
+    };
+    document.getElementById('brand').onclick = (event) => {
+      const rect = event.currentTarget.getBoundingClientRect();
+      brandMenu.style.left = `${rect.left}px`; brandMenu.style.top = `${rect.bottom + 8}px`; brandMenu.classList.toggle('open');
+      menu.classList.remove('open');
+    };
+    document.querySelectorAll('.rail button').forEach((button) => button.onclick = () => {
+      const wasActive = button.classList.contains('active') && !app.classList.contains('right-closed');
+      document.querySelectorAll('.rail button').forEach((item) => item.classList.remove('active'));
+      if (wasActive) { app.classList.add('right-closed'); return; }
+      app.classList.remove('right-closed'); button.classList.add('active');
+      document.getElementById('rightTitle').textContent = button.dataset.panel;
+    });
+    document.addEventListener('click', (event) => {
+      if (!event.target.closest('#plus,#plusMenu')) menu.classList.remove('open');
+      if (!event.target.closest('#brand,#brandMenu')) brandMenu.classList.remove('open');
+    });
+  </script>
+</body>
+</html>

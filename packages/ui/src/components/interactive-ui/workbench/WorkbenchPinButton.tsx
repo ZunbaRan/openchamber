@@ -77,8 +77,9 @@ export const WorkbenchPinButton: React.FC<WorkbenchPinButtonProps> = ({
   const activeProjectId = useProjectsStore((state) => state.activeProjectId);
   const projects = useProjectsStore((state) => state.projects);
   const projectId = activeProjectId || projects[0]?.id || null;
+  const projectDirectory = projects.find((project) => project.id === projectId)?.path ?? '';
   const setRightSidebarOpen = useUIStore((state) => state.setRightSidebarOpen);
-  const setRightSidebarTab = useUIStore((state) => state.setRightSidebarTab);
+  const openContextPanelTab = useUIStore((state) => state.openContextPanelTab);
 
   const handlePin = async () => {
     if (!projectId || pending) {
@@ -143,9 +144,15 @@ export const WorkbenchPinButton: React.FC<WorkbenchPinButtonProps> = ({
       }
 
       const result = await useExtensionWorkbenchStore.getState().pin(projectId, tile);
-      setRightSidebarTab('extensions');
+      if (projectDirectory) {
+        openContextPanelTab(projectDirectory, {
+          mode: 'extensions',
+          dedupeKey: 'extensions',
+          label: t('shell.navigation.applications'),
+        });
+      }
       setRightSidebarOpen(true);
-      focusWorkbenchTile(result.tile.tileId);
+      window.setTimeout(() => focusWorkbenchTile(result.tile.tileId), 0);
       toast.success(result.created ? t('workbench.pin.added') : t('workbench.pin.focused'));
     } catch (error) {
       toast.error(error instanceof Error ? error.message : t('workbench.pin.failed'));

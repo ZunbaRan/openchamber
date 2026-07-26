@@ -5,6 +5,7 @@ import { useUIStore } from '@/stores/useUIStore';
 import { ProjectSettingsPanel } from '@/components/sections/projects/ProjectSettingsPanel';
 import type { ProjectIdentitySaveData } from '@/components/sections/projects/useProjectIdentityForm';
 import { useI18n } from '@/lib/i18n';
+import { ProjectActionsButton } from '@/components/layout/ProjectActionsButton';
 
 export const ProjectsPage: React.FC = () => {
   const { t } = useI18n();
@@ -54,6 +55,12 @@ export const ProjectsPage: React.FC = () => {
     <SettingsPageLayout
       title={headerLabel}
       description={selectedProject.path}
+      headerEnd={(
+        <ProjectActionsButton
+          projectRef={{ id: selectedProject.id, path: selectedProject.path }}
+          directory={selectedProject.path}
+        />
+      )}
       showSaveStatus
       outerClassName="bg-background"
     >

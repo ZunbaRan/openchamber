@@ -39,6 +39,7 @@ import { ProjectEditDialog } from '@/components/layout/ProjectEditDialog';
 import { UpdateDialog } from '@/components/ui/UpdateDialog';
 import { SessionGroupSection } from './sidebar/SessionGroupSection';
 import { SidebarHeader } from './sidebar/SidebarHeader';
+import { SidebarNavigation } from './sidebar/SidebarNavigation';
 import { SidebarActivitySections } from './sidebar/SidebarActivitySections';
 import { SidebarFooter } from './sidebar/SidebarFooter';
 import { SidebarProjectsList } from './sidebar/SidebarProjectsList';
@@ -1722,28 +1723,53 @@ const SessionSidebarComponent: React.FC<SessionSidebarProps> = ({
         recentSessions={activeNowSessions}
         prefetchSession={sync.prefetchSession}
       />
-      <SidebarHeader
-        hideDirectoryControls={hideDirectoryControls}
-        showRecentControls={!isVSCode}
-        handleOpenDirectoryDialog={handleOpenDirectoryDialog}
-        openNewSessionDraft={handleOpenNewSessionDraftFromHeader}
-        canOpenMultiRun={projects.length > 0}
-        openMultiRunLauncher={handleOpenMultiRunFromHeader}
-        headerActionIconClass={headerActionIconClass}
-        headerActionButtonClass={headerActionButtonClass}
-        isSessionSearchOpen={isSessionSearchOpen}
-        setIsSessionSearchOpen={setIsSessionSearchOpen}
-        sessionSearchInputRef={sessionSearchInputRef}
-        sessionSearchQuery={sessionSearchQuery}
-        setSessionSearchQuery={setSessionSearchQuery}
-        hasSessionSearchQuery={hasSessionSearchQuery}
-        searchMatchCount={searchMatchCount}
-        collapseAllProjects={collapseAllProjects}
-        expandAllProjects={expandAllProjects}
-        openScheduledTasksDialog={() => setScheduledTasksDialogOpen(true)}
-        selectionModeEnabled={selectionModeEnabled}
-        onToggleSelectionMode={handleToggleSelectionMode}
-      />
+      {mobileVariant ? (
+        <SidebarHeader
+          hideDirectoryControls={hideDirectoryControls}
+          showRecentControls={!isVSCode}
+          handleOpenDirectoryDialog={handleOpenDirectoryDialog}
+          openNewSessionDraft={handleOpenNewSessionDraftFromHeader}
+          canOpenMultiRun={projects.length > 0}
+          openMultiRunLauncher={handleOpenMultiRunFromHeader}
+          headerActionIconClass={headerActionIconClass}
+          headerActionButtonClass={headerActionButtonClass}
+          isSessionSearchOpen={isSessionSearchOpen}
+          setIsSessionSearchOpen={setIsSessionSearchOpen}
+          sessionSearchInputRef={sessionSearchInputRef}
+          sessionSearchQuery={sessionSearchQuery}
+          setSessionSearchQuery={setSessionSearchQuery}
+          hasSessionSearchQuery={hasSessionSearchQuery}
+          searchMatchCount={searchMatchCount}
+          collapseAllProjects={collapseAllProjects}
+          expandAllProjects={expandAllProjects}
+          openScheduledTasksDialog={() => setScheduledTasksDialogOpen(true)}
+          selectionModeEnabled={selectionModeEnabled}
+          onToggleSelectionMode={handleToggleSelectionMode}
+        />
+      ) : (
+        <SidebarNavigation
+          hideDirectoryControls={hideDirectoryControls}
+          showRecentControls={!isVSCode}
+          openNewSessionDraft={handleOpenNewSessionDraftFromHeader}
+          canOpenMultiRun={projects.length > 0}
+          openMultiRunLauncher={handleOpenMultiRunFromHeader}
+          isSessionSearchOpen={isSessionSearchOpen}
+          setIsSessionSearchOpen={setIsSessionSearchOpen}
+          sessionSearchInputRef={sessionSearchInputRef}
+          sessionSearchQuery={sessionSearchQuery}
+          setSessionSearchQuery={setSessionSearchQuery}
+          hasSessionSearchQuery={hasSessionSearchQuery}
+          searchMatchCount={searchMatchCount}
+          collapseAllProjects={collapseAllProjects}
+          expandAllProjects={expandAllProjects}
+          openScheduledTasksDialog={() => setScheduledTasksDialogOpen(true)}
+          selectionModeEnabled={selectionModeEnabled}
+          onToggleSelectionMode={handleToggleSelectionMode}
+          onOpenSettings={handleOpenSettings}
+          onOpenShortcuts={toggleHelpDialog}
+          onOpenAbout={() => setAboutDialogOpen(true)}
+        />
+      )}
 
       {isVisible ? <SidebarProjectsList
         topContent={topContent}

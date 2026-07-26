@@ -98,6 +98,20 @@ const resolveEnvReference = (value, environment, label) => {
   return resolved.trim();
 };
 
+const resolveOptionalEnvReference = (value, environment, label) => {
+  if (typeof value !== 'string' || !value.trim()) {
+    throw new InteractiveUIRuntimeError(`${label} is required`, 400, 'invalid_manifest');
+  }
+  const trimmed = value.trim();
+  const match = trimmed.match(ENV_REFERENCE_PATTERN);
+  if (!match) return { value: trimmed, environmentVariable: null };
+  const resolved = environment[match[1]];
+  return {
+    value: typeof resolved === 'string' && resolved.trim() ? resolved.trim() : null,
+    environmentVariable: match[1],
+  };
+};
+
 const resolveEntryPath = (path, extensionDirectory, entry, allowedExtensions) => {
   if (typeof entry !== 'string' || !entry.trim()) {
     throw new InteractiveUIRuntimeError('Extension entry path is required', 400, 'invalid_manifest');
@@ -149,26 +163,29 @@ const normalizeConnector = (connector, manifest, environment) => {
   if (!isRecord(connector) || typeof connector.id !== 'string' || connector.type !== 'http') {
     throw new InteractiveUIRuntimeError('Only named HTTP connectors are supported in OCIX v1', 400, 'invalid_manifest');
   }
-  const baseUrlValue = resolveEnvReference(connector.baseUrl, environment, `Connector ${connector.id} baseUrl`);
-  let baseUrl;
-  try {
-    baseUrl = new URL(baseUrlValue);
-  } catch {
-    throw new InteractiveUIRuntimeError(`Connector ${connector.id} has an invalid baseUrl`, 400, 'invalid_manifest');
-  }
-  if (!['http:', 'https:'].includes(baseUrl.protocol) || baseUrl.username || baseUrl.password) {
-    throw new InteractiveUIRuntimeError(`Connector ${connector.id} must use an HTTP(S) URL without embedded credentials`, 400, 'invalid_manifest');
+  const resolvedBaseUrl = resolveOptionalEnvReference(connector.baseUrl, environment, `Connector ${connector.id} baseUrl`);
+  let baseUrl = null;
+  if (resolvedBaseUrl.value) {
+    try {
+      baseUrl = new URL(resolvedBaseUrl.value);
+    } catch {
+      throw new InteractiveUIRuntimeError(`Connector ${connector.id} has an invalid baseUrl`, 400, 'invalid_manifest');
+    }
+    if (!['http:', 'https:'].includes(baseUrl.protocol) || baseUrl.username || baseUrl.password) {
+      throw new InteractiveUIRuntimeError(`Connector ${connector.id} must use an HTTP(S) URL without embedded credentials`, 400, 'invalid_manifest');
+    }
   }
   const networkPermissions = Array.isArray(manifest.permissions?.network) ? manifest.permissions.network : [];
-  const allowedOrigins = networkPermissions.map((value) => {
-    const resolved = resolveEnvReference(value, environment, 'Network permission');
+  const allowedOrigins = networkPermissions.flatMap((value) => {
+    const resolved = resolveOptionalEnvReference(value, environment, 'Network permission');
+    if (!resolved.value) return [];
     try {
-      return new URL(resolved).origin;
+      return [new URL(resolved.value).origin];
     } catch {
       throw new InteractiveUIRuntimeError('Network permission must be an absolute HTTP(S) URL', 400, 'invalid_manifest');
     }
   });
-  if (!allowedOrigins.includes(baseUrl.origin)) {
+  if (baseUrl && !allowedOrigins.includes(baseUrl.origin)) {
     throw new InteractiveUIRuntimeError(`Connector ${connector.id} origin is not declared in permissions.network`, 400, 'network_not_allowed');
   }
   const auth = isRecord(connector.auth) ? connector.auth : { type: 'none' };
@@ -209,8 +226,9 @@ const normalizeConnector = (connector, manifest, environment) => {
   return {
     id: connector.id,
     type: 'http',
-    baseUrl: baseUrl.toString(),
-    origin: baseUrl.origin,
+    baseUrl: baseUrl?.toString() ?? null,
+    origin: baseUrl?.origin ?? null,
+    environmentVariable: resolvedBaseUrl.environmentVariable,
     auth: normalizedAuth,
     test: normalizeSafeRequest(connector.test, connector.id, 'test request', ['GET', 'HEAD']),
   };
@@ -578,16 +596,90 @@ export const createInteractiveUIRuntime = ({
   };
 
   const getConnectionStatus = async (extensionId, connector) => {
-    if (connector.auth.type === 'none') return { configured: true, expired: false, source: 'none' };
-    if (connector.auth.type === 'env-bearer') {
-      const configured = typeof environment[connector.auth.env] === 'string' && Boolean(environment[connector.auth.env].trim());
-      return { configured, expired: false, source: 'environment' };
+    const endpointConfiguredByManifest = typeof connector.baseUrl === 'string' && Boolean(connector.baseUrl);
+    if (connector.auth.type === 'none') {
+      return {
+        configured: endpointConfiguredByManifest,
+        expired: false,
+        source: 'none',
+        endpoint: connector.baseUrl,
+        endpointConfigured: endpointConfiguredByManifest,
+        endpointSource: endpointConfiguredByManifest
+          ? connector.environmentVariable ? 'environment' : 'manifest'
+          : null,
+      };
     }
-    if (!connectionStore?.getStatus) return { configured: false, expired: false };
-    return connectionStore.getStatus(extensionId, connector.id);
+    if (connector.auth.type === 'env-bearer') {
+      const credentialConfigured = typeof environment[connector.auth.env] === 'string' && Boolean(environment[connector.auth.env].trim());
+      return {
+        configured: credentialConfigured && endpointConfiguredByManifest,
+        credentialConfigured,
+        expired: false,
+        source: 'environment',
+        endpoint: connector.baseUrl,
+        endpointConfigured: endpointConfiguredByManifest,
+        endpointSource: endpointConfiguredByManifest
+          ? connector.environmentVariable ? 'environment' : 'manifest'
+          : null,
+      };
+    }
+    if (!connectionStore?.getStatus) {
+      return {
+        configured: false,
+        expired: false,
+        endpoint: connector.baseUrl,
+        endpointConfigured: endpointConfiguredByManifest,
+        endpointSource: endpointConfiguredByManifest
+          ? connector.environmentVariable ? 'environment' : 'manifest'
+          : null,
+      };
+    }
+    const stored = await connectionStore.getStatus(extensionId, connector.id);
+    const endpoint = stored.endpoint || connector.baseUrl;
+    const endpointConfigured = typeof endpoint === 'string' && Boolean(endpoint);
+    return {
+      ...stored,
+      credentialConfigured: stored.configured,
+      configured: Boolean(stored.configured && endpointConfigured),
+      endpoint,
+      endpointConfigured,
+      endpointSource: stored.endpoint
+        ? 'user'
+        : endpointConfiguredByManifest
+          ? connector.environmentVariable ? 'environment' : 'manifest'
+          : null,
+    };
+  };
+
+  const resolveEffectiveConnector = async (extensionId, connector) => {
+    const configuration = connectionStore?.getConfiguration
+      ? await connectionStore.getConfiguration(extensionId, connector.id)
+      : null;
+    const endpoint = configuration?.endpoint || connector.baseUrl;
+    if (!endpoint) {
+      throw new InteractiveUIRuntimeError('Connector endpoint is not configured', 503, 'connector_unconfigured');
+    }
+    let baseUrl;
+    try {
+      baseUrl = new URL(endpoint);
+    } catch {
+      throw new InteractiveUIRuntimeError('Connector endpoint is invalid', 503, 'connector_unconfigured');
+    }
+    if (!['http:', 'https:'].includes(baseUrl.protocol) || baseUrl.username || baseUrl.password) {
+      throw new InteractiveUIRuntimeError('Connector endpoint must use HTTP(S) without embedded credentials', 503, 'connector_unconfigured');
+    }
+    return {
+      ...connector,
+      baseUrl: baseUrl.toString(),
+      origin: baseUrl.origin,
+      configuration,
+    };
   };
 
   const applyConnectorAuthentication = async (extensionId, connector, headers) => {
+    for (const [name, value] of Object.entries(connector.configuration?.headers ?? {})) {
+      headers.set(name, value);
+    }
     if (connector.auth.type === 'none') return;
     if (connector.auth.type === 'env-bearer') {
       const token = environment[connector.auth.env];
@@ -600,7 +692,8 @@ export const createInteractiveUIRuntime = ({
     if (!connectionStore?.resolveCredential) {
       throw new InteractiveUIRuntimeError('Connector credentials are not configured', 503, 'connector_unconfigured');
     }
-    const credential = await connectionStore.resolveCredential(extensionId, connector.id);
+    const credential = connector.configuration
+      ?? await connectionStore.resolveCredential(extensionId, connector.id);
     if (!credential?.accessKey) {
       throw new InteractiveUIRuntimeError('Connector credentials are not configured', 503, 'connector_unconfigured');
     }
@@ -619,6 +712,7 @@ export const createInteractiveUIRuntime = ({
         connector: {
           id: connector.id,
           origin: connector.origin,
+          endpoint: (await getConnectionStatus(extension.id, connector)).endpoint,
           authType: connector.auth.type,
           testable: Boolean(connector.test),
           configurable: connector.auth.type === 'api-key',
@@ -636,7 +730,12 @@ export const createInteractiveUIRuntime = ({
     if (connector.auth.type !== 'api-key' || !connectionStore?.setManualCredential) {
       throw new InteractiveUIRuntimeError('Connector does not accept a manually configured access key', 409, 'manual_configuration_unsupported');
     }
-    const credential = await connectionStore.setManualCredential(extensionId, connectorId, input?.accessKey);
+    const credential = await connectionStore.setManualCredential(extensionId, connectorId, {
+      accessKey: input?.accessKey,
+      endpoint: input?.endpoint,
+      name: input?.name,
+      headers: input?.headers,
+    });
     resetConnectionHealth(extensionId, connectorId);
     return { extensionId, connectorId, credential };
   };
@@ -667,7 +766,8 @@ export const createInteractiveUIRuntime = ({
   };
 
   const testConnection = async (extensionId, connectorId) => {
-    const { connector } = await findConnector(extensionId, connectorId);
+    const found = await findConnector(extensionId, connectorId);
+    const connector = await resolveEffectiveConnector(extensionId, found.connector);
     if (!connector.test) throw new InteractiveUIRuntimeError('Connector does not declare a safe test request', 409, 'connection_test_unsupported');
     const target = new URL(connector.test.path.slice(1), connector.baseUrl.endsWith('/') ? connector.baseUrl : `${connector.baseUrl}/`);
     if (target.origin !== connector.origin) throw new InteractiveUIRuntimeError('Connection test escaped the connector origin', 403, 'network_not_allowed');
@@ -1051,8 +1151,9 @@ export const createInteractiveUIRuntime = ({
         });
       }
     }
-    const connector = extension.connectors.find((candidate) => candidate.id === action.connector);
-    if (!connector) throw new InteractiveUIRuntimeError('Action connector is unavailable', 503, 'connector_unavailable');
+    const declaredConnector = extension.connectors.find((candidate) => candidate.id === action.connector);
+    if (!declaredConnector) throw new InteractiveUIRuntimeError('Action connector is unavailable', 503, 'connector_unavailable');
+    const connector = await resolveEffectiveConnector(extension.id, declaredConnector);
     const target = new URL(action.request.path.slice(1), connector.baseUrl.endsWith('/') ? connector.baseUrl : `${connector.baseUrl}/`);
     if (target.origin !== connector.origin) throw new InteractiveUIRuntimeError('Action target escaped the connector origin', 403, 'network_not_allowed');
 

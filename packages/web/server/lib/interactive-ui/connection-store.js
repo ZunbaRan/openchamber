@@ -1,4 +1,5 @@
-const STORE_SCHEMA = 'openchamber://connection-secret-store/v1';
+const STORE_SCHEMA = 'openchamber://connection-store/v2';
+const LEGACY_STORE_SCHEMA = 'openchamber://connection-secret-store/v1';
 const PROVISION_REQUEST_SCHEMA = 'openchamber://credential-request/v1';
 const PROVISION_RESPONSE_SCHEMA = 'openchamber://credential-response/v1';
 const MAX_ACCESS_KEY_LENGTH = 16 * 1024;
@@ -7,6 +8,21 @@ const MAX_PROVISION_RESPONSE_BYTES = 64 * 1024;
 const PROVISION_TIMEOUT_MS = 15_000;
 const ID_PATTERN = /^[a-z0-9]+(?:[._-][a-z0-9]+)+$/i;
 const CONNECTOR_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+const MAX_CONNECTION_NAME_LENGTH = 200;
+const MAX_ENDPOINT_LENGTH = 4 * 1024;
+const MAX_HEADER_COUNT = 32;
+const MAX_HEADER_VALUE_LENGTH = 8 * 1024;
+const HEADER_NAME_PATTERN = /^[A-Za-z][A-Za-z0-9-]{0,63}$/;
+const BLOCKED_HEADERS = new Set([
+  'connection',
+  'content-length',
+  'cookie',
+  'host',
+  'origin',
+  'proxy-authorization',
+  'set-cookie',
+  'transfer-encoding',
+]);
 
 export class InteractiveUIConnectionError extends Error {
   constructor(message, status = 400, code = 'connection_error', details = undefined) {
@@ -54,6 +70,52 @@ const normalizeExpiresAt = (value) => {
   return new Date(timestamp).toISOString();
 };
 
+const normalizeOptionalName = (value) => {
+  if (value === undefined || value === null || value === '') return undefined;
+  if (typeof value !== 'string' || !value.trim() || value.trim().length > MAX_CONNECTION_NAME_LENGTH) {
+    throw new InteractiveUIConnectionError('Connection name is invalid', 400, 'invalid_connection_name');
+  }
+  return value.trim();
+};
+
+const normalizeOptionalEndpoint = (value) => {
+  if (value === undefined || value === null || value === '') return undefined;
+  if (typeof value !== 'string' || !value.trim() || value.trim().length > MAX_ENDPOINT_LENGTH) {
+    throw new InteractiveUIConnectionError('Connection endpoint is invalid', 400, 'invalid_connection_endpoint');
+  }
+  let endpoint;
+  try {
+    endpoint = new URL(value.trim());
+  } catch {
+    throw new InteractiveUIConnectionError('Connection endpoint must be an absolute HTTP(S) URL', 400, 'invalid_connection_endpoint');
+  }
+  if (!['http:', 'https:'].includes(endpoint.protocol) || endpoint.username || endpoint.password) {
+    throw new InteractiveUIConnectionError('Connection endpoint must use HTTP(S) without embedded credentials', 400, 'invalid_connection_endpoint');
+  }
+  return endpoint.toString();
+};
+
+const normalizeOptionalHeaders = (value) => {
+  if (value === undefined || value === null) return undefined;
+  if (!isRecord(value) || Object.keys(value).length > MAX_HEADER_COUNT) {
+    throw new InteractiveUIConnectionError('Connection headers are invalid', 400, 'invalid_connection_headers');
+  }
+  const headers = {};
+  for (const [rawName, rawValue] of Object.entries(value)) {
+    const name = rawName.trim();
+    if (!HEADER_NAME_PATTERN.test(name)
+      || BLOCKED_HEADERS.has(name.toLowerCase())
+      || name.toLowerCase().startsWith('x-openchamber-')
+      || typeof rawValue !== 'string'
+      || rawValue.length > MAX_HEADER_VALUE_LENGTH
+      || /[\r\n\0]/.test(rawValue)) {
+      throw new InteractiveUIConnectionError('Connection headers are invalid', 400, 'invalid_connection_headers');
+    }
+    headers[name] = rawValue;
+  }
+  return headers;
+};
+
 const validateStoredRecord = (record, key) => {
   if (!isRecord(record) || recordKey(record.extensionId, record.connectorId) !== key
     || typeof record.accessKey !== 'string' || !record.accessKey
@@ -61,6 +123,9 @@ const validateStoredRecord = (record, key) => {
     || typeof record.configuredAt !== 'string' || typeof record.installationId !== 'string') {
     throw new InteractiveUIConnectionError('Connection secret store is invalid', 500, 'connection_store_corrupt');
   }
+  normalizeOptionalName(record.name);
+  normalizeOptionalEndpoint(record.endpoint);
+  normalizeOptionalHeaders(record.headers);
 };
 
 const responseBytes = async (response) => {
@@ -103,11 +168,11 @@ export const createInteractiveUIConnectionStore = ({
       if (error?.code === 'ENOENT') return emptyStore();
       throw new InteractiveUIConnectionError('Connection secret store is unreadable', 500, 'connection_store_corrupt');
     }
-    if (!isRecord(store) || store.$schema !== STORE_SCHEMA || !isRecord(store.connections)) {
+    if (!isRecord(store) || ![STORE_SCHEMA, LEGACY_STORE_SCHEMA].includes(store.$schema) || !isRecord(store.connections)) {
       throw new InteractiveUIConnectionError('Connection secret store is invalid', 500, 'connection_store_corrupt');
     }
     for (const [key, record] of Object.entries(store.connections)) validateStoredRecord(record, key);
-    return store;
+    return store.$schema === STORE_SCHEMA ? store : { ...store, $schema: STORE_SCHEMA };
   };
 
   const writeStore = async (store) => {
@@ -137,6 +202,9 @@ export const createInteractiveUIConnectionStore = ({
       configuredAt: record.configuredAt,
       expiresAt: record.expiresAt ?? null,
       displayName: record.displayName ?? null,
+      name: record.name ?? null,
+      endpoint: record.endpoint ?? null,
+      headerNames: Object.keys(record.headers ?? {}),
     };
   };
 
@@ -151,18 +219,45 @@ export const createInteractiveUIConnectionStore = ({
     return { accessKey: record.accessKey };
   };
 
-  const setManualCredential = (extensionId, connectorId, accessKey) => mutate(async () => {
+  const getConfiguration = async (extensionId, connectorId) => {
+    const record = await getRecord(extensionId, connectorId);
+    if (!record) return null;
+    if (typeof record.expiresAt === 'string' && Date.parse(record.expiresAt) <= Date.now()) {
+      throw new InteractiveUIConnectionError('Connector credential is expired', 503, 'credential_expired');
+    }
+    return {
+      accessKey: record.accessKey,
+      endpoint: record.endpoint ?? null,
+      name: record.name ?? null,
+      headers: { ...(record.headers ?? {}) },
+    };
+  };
+
+  const setManualCredential = (extensionId, connectorId, input) => mutate(async () => {
     assertIdentity(extensionId, connectorId);
     const store = await readStore();
     const key = recordKey(extensionId, connectorId);
     const existing = store.connections[key];
+    const options = isRecord(input) ? input : { accessKey: input };
+    const rawAccessKey = options.accessKey === undefined || options.accessKey === null || options.accessKey === ''
+      ? existing?.accessKey
+      : options.accessKey;
     const record = {
       extensionId,
       connectorId,
-      accessKey: normalizeSecret(accessKey, 'Access key', MAX_ACCESS_KEY_LENGTH),
+      accessKey: normalizeSecret(rawAccessKey, 'Access key', MAX_ACCESS_KEY_LENGTH),
       source: 'manual',
       configuredAt: new Date().toISOString(),
       installationId: existing?.installationId ?? cryptoImpl.randomUUID(),
+      ...(options.name === undefined && existing?.name
+        ? { name: existing.name }
+        : normalizeOptionalName(options.name) ? { name: normalizeOptionalName(options.name) } : {}),
+      ...(options.endpoint === undefined && existing?.endpoint
+        ? { endpoint: existing.endpoint }
+        : normalizeOptionalEndpoint(options.endpoint) ? { endpoint: normalizeOptionalEndpoint(options.endpoint) } : {}),
+      ...(options.headers === undefined && existing?.headers
+        ? { headers: existing.headers }
+        : normalizeOptionalHeaders(options.headers) ? { headers: normalizeOptionalHeaders(options.headers) } : {}),
     };
     store.connections[key] = record;
     await writeStore(store);
@@ -263,6 +358,7 @@ export const createInteractiveUIConnectionStore = ({
 
   return {
     getStatus,
+    getConfiguration,
     resolveCredential,
     setManualCredential,
     provisionCredential,

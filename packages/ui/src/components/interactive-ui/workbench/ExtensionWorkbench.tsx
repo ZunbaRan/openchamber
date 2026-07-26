@@ -41,6 +41,7 @@ import {
 import { cn } from '@/lib/utils';
 import { useExtensionWorkbenchStore } from '@/stores/useExtensionWorkbenchStore';
 import { useProjectsStore } from '@/stores/useProjectsStore';
+import { useUIStore } from '@/stores/useUIStore';
 import { InteractiveUIView } from '@/components/interactive-ui/InteractiveUIView';
 import {
   HTMLArtifactView,
@@ -364,7 +365,6 @@ const WorkbenchTileCard: React.FC<WorkbenchTileCardProps> = ({
     if (initialDisplayModeRef.current === 'popout') onDisplayModeChangeRef.current('tile');
     // A native system window does not survive an app restart. Reconcile a
     // stale persisted Popout marker once, without touching live transitions.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const finishInteractivePopout = React.useCallback((closeWindow: boolean) => {
@@ -565,11 +565,12 @@ const WorkbenchTileCard: React.FC<WorkbenchTileCardProps> = ({
       }}
     >
       <header
-        {...attributes}
-        {...listeners}
+        {...(focused ? {} : attributes)}
+        {...(focused ? {} : listeners)}
         className={cn(
           'flex h-10 touch-none select-none items-center gap-2 border-b border-border/50 px-2.5',
-          'cursor-grab bg-[var(--surface-secondary)] active:cursor-grabbing',
+          'bg-[var(--surface-secondary)]',
+          !focused && 'cursor-grab active:cursor-grabbing',
         )}
       >
         <Icon name="draggable" className="size-4 shrink-0 text-muted-foreground" />
@@ -593,7 +594,7 @@ const WorkbenchTileCard: React.FC<WorkbenchTileCardProps> = ({
           size="icon"
           variant="ghost"
           className="size-7"
-          disabled={poppedOut}
+          disabled={poppedOut && !focused}
           onPointerDown={(event) => event.stopPropagation()}
           onClick={focused ? onExitFocus : onFocus}
           aria-label={focused ? t('workbench.tile.exitFocus') : t('workbench.tile.focus')}
@@ -745,6 +746,7 @@ export const ExtensionWorkbench: React.FC = () => {
   const projects = useProjectsStore((state) => state.projects);
   const activeProjectId = useProjectsStore((state) => state.activeProjectId);
   const projectId = getActiveProjectId(activeProjectId, projects);
+  const isRightSidebarOpen = useUIStore((state) => state.isRightSidebarOpen);
   const catalog = useExtensionWorkbenchStore((state) => state.catalog);
   const snapshot = useExtensionWorkbenchStore((state) => state.snapshot);
   const loadState = useExtensionWorkbenchStore((state) => state.loadState);
@@ -770,10 +772,16 @@ export const ExtensionWorkbench: React.FC = () => {
     if (projectId) void load(projectId);
   }, [load, projectId]);
 
-  const extensions = catalog?.extensions ?? [];
+  React.useEffect(() => {
+    if (!isRightSidebarOpen) {
+      setFocusedTileId(null);
+    }
+  }, [isRightSidebarOpen]);
+
+  const extensions = React.useMemo(() => catalog?.extensions ?? [], [catalog?.extensions]);
   const surfaceIndex = useSurfaceIndex(extensions);
   const board = getActiveWorkbenchBoard(snapshot);
-  const tiles = board?.tiles ?? [];
+  const tiles = React.useMemo(() => board?.tiles ?? [], [board?.tiles]);
   const layoutByTile = React.useMemo(() => compactWorkbenchLayouts(tiles), [tiles]);
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),

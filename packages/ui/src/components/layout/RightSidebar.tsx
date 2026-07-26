@@ -3,12 +3,13 @@ import { cn } from '@/lib/utils';
 import {
   useUIStore,
   RIGHT_SIDEBAR_MIN_WIDTH,
+  RIGHT_SIDEBAR_DEFAULT_WIDTH,
   RIGHT_SIDEBAR_MAX_WIDTH,
   RIGHT_SIDEBAR_WORKBENCH_MIN_WIDTH,
 } from '@/stores/useUIStore';
 import { useI18n } from '@/lib/i18n';
 
-const RIGHT_SIDEBAR_CONTENT_WIDTH = 420;
+const RIGHT_SIDEBAR_CONTENT_WIDTH = RIGHT_SIDEBAR_DEFAULT_WIDTH;
 
 interface RightSidebarProps {
   isOpen: boolean;
@@ -167,7 +168,7 @@ export const RightSidebar: React.FC<RightSidebarProps> = ({ isOpen, children, cl
         ['--oc-right-sidebar-width' as string]: `${isResizing ? currentWidth : openWidth}px`,
         overflowX: 'clip',
         transitionProperty: isResizing ? 'none' : 'width',
-        transitionDuration: '200ms',
+        transitionDuration: '150ms',
         transitionTimingFunction: 'cubic-bezier(0.22, 1, 0.36, 1)',
       }}
       aria-hidden={!isOpen || appliedWidth === 0}
@@ -189,7 +190,7 @@ export const RightSidebar: React.FC<RightSidebarProps> = ({ isOpen, children, cl
       )}
       <div
         className={cn(
-          'relative z-10 flex h-full min-h-0 shrink-0 flex-col pt-2 transition-opacity duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none',
+          'relative z-10 flex h-full min-h-0 shrink-0 flex-col transition-opacity duration-150 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none',
           isResizing && 'pointer-events-none',
           !isOpen && 'pointer-events-none select-none opacity-0'
         )}

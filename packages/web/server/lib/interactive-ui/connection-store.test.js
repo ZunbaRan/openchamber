@@ -43,6 +43,29 @@ describe('Interactive UI connection secret store', () => {
     expect(await store.resolveCredential('com.acme.crm', 'crm-api')).toBeNull();
   });
 
+  it('stores a user endpoint and optional headers beside the key without exposing their values in status', async () => {
+    const { store } = await createStore();
+    const status = await store.setManualCredential('com.acme.crm', 'crm-api', {
+      accessKey: 'top-secret-key',
+      endpoint: 'http://127.0.0.1:51810/api/',
+      headers: { 'X-Tenant-ID': 'acme' },
+    });
+
+    expect(status).toMatchObject({
+      configured: true,
+      endpoint: 'http://127.0.0.1:51810/api/',
+      headerNames: ['X-Tenant-ID'],
+    });
+    expect(JSON.stringify(status)).not.toContain('top-secret-key');
+    expect(JSON.stringify(status)).not.toContain('"acme"');
+    expect(await store.getConfiguration('com.acme.crm', 'crm-api')).toEqual({
+      accessKey: 'top-secret-key',
+      endpoint: 'http://127.0.0.1:51810/api/',
+      name: null,
+      headers: { 'X-Tenant-ID': 'acme' },
+    });
+  });
+
   it('provisions a scoped key with the v1 server contract and preserves the old key on failure', async () => {
     const requests = [];
     let validResponse = true;

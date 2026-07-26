@@ -13,7 +13,18 @@ import type { TerminalShell } from '@/lib/api/types';
 export type MainTab = 'chat' | 'plan' | 'git' | 'diff' | 'terminal' | 'files' | 'context' | 'diagram';
 export type PendingDiffScope = 'working' | 'staged' | 'turn';
 export type RightSidebarTab = 'git' | 'files' | 'context' | 'extensions';
-export type ContextPanelMode = 'diff' | 'file' | 'context' | 'plan' | 'chat' | 'preview' | 'browser';
+export type ContextPanelMode =
+  | 'diff'
+  | 'file'
+  | 'context'
+  | 'plan'
+  | 'chat'
+  | 'preview'
+  | 'browser'
+  | 'files-root'
+  | 'git'
+  | 'terminal'
+  | 'extensions';
 export type MermaidRenderingMode = 'svg' | 'ascii';
 export type UserMessageRenderingMode = 'markdown' | 'plain';
 export type ChatRenderMode = 'sorted' | 'live';
@@ -58,6 +69,7 @@ type ContextPanelDirectoryState = {
   tabs: ContextPanelTab[];
   activeTabId: string | null;
   width: number;
+  widthByMode: Partial<Record<ContextPanelMode, number>>;
   touchedAt: number;
 };
 
@@ -112,14 +124,17 @@ const isLegacyDefaultTemplates = (value: unknown): boolean => {
   );
 };
 
-const CONTEXT_PANEL_DEFAULT_WIDTH = 380;
-const CONTEXT_PANEL_MIN_WIDTH = 380;
-const CONTEXT_PANEL_MAX_WIDTH = 1400;
+export const CONTEXT_PANEL_DEFAULT_WIDTH = 420;
+export const CONTEXT_PANEL_MIN_WIDTH = 320;
+export const CONTEXT_PANEL_MAX_WIDTH = 960;
 const CONTEXT_PANEL_MAX_TABS = 12;
 const CONTEXT_PANEL_MAX_LABEL_LENGTH = 120;
-const LEFT_SIDEBAR_MIN_WIDTH = 280;
-export const RIGHT_SIDEBAR_MIN_WIDTH = 360;
-export const RIGHT_SIDEBAR_MAX_WIDTH = 860;
+export const LEFT_SIDEBAR_DEFAULT_WIDTH = 280;
+export const LEFT_SIDEBAR_MIN_WIDTH = 240;
+export const LEFT_SIDEBAR_MAX_WIDTH = 420;
+export const RIGHT_SIDEBAR_MIN_WIDTH = 300;
+export const RIGHT_SIDEBAR_DEFAULT_WIDTH = 360;
+export const RIGHT_SIDEBAR_MAX_WIDTH = 720;
 export const RIGHT_SIDEBAR_WORKBENCH_MIN_WIDTH = 620;
 export const RIGHT_SIDEBAR_WORKBENCH_MAX_WIDTH = 2400;
 const activeMainTabByRuntime = new Map<string, MainTab>();
@@ -154,6 +169,13 @@ const clampContextPanelWidth = (width: number): number => {
   }
 
   return Math.min(CONTEXT_PANEL_MAX_WIDTH, Math.max(CONTEXT_PANEL_MIN_WIDTH, Math.round(width)));
+};
+
+const getDefaultContextPanelWidthForMode = (mode: ContextPanelMode): number => {
+  if (mode === 'extensions' && typeof window !== 'undefined') {
+    return clampContextPanelWidth(Math.round(window.innerWidth * 0.5));
+  }
+  return CONTEXT_PANEL_DEFAULT_WIDTH;
 };
 
 const normalizeContextTargetPath = (value: string | null | undefined): string | null => {
@@ -285,7 +307,17 @@ const sanitizeContextPanelTabs = (tabs: unknown): ContextPanelTab[] => {
       touchedAt?: unknown;
     };
 
-    if (candidate.mode !== 'diff' && candidate.mode !== 'file' && candidate.mode !== 'context' && candidate.mode !== 'plan' && candidate.mode !== 'chat' && candidate.mode !== 'preview' && candidate.mode !== 'browser') {
+    if (candidate.mode !== 'diff'
+      && candidate.mode !== 'file'
+      && candidate.mode !== 'context'
+      && candidate.mode !== 'plan'
+      && candidate.mode !== 'chat'
+      && candidate.mode !== 'preview'
+      && candidate.mode !== 'browser'
+      && candidate.mode !== 'files-root'
+      && candidate.mode !== 'git'
+      && candidate.mode !== 'terminal'
+      && candidate.mode !== 'extensions') {
       continue;
     }
 
@@ -340,6 +372,7 @@ const touchContextPanelState = (prev?: ContextPanelDirectoryState): ContextPanel
       ...prev,
       tabs,
       activeTabId,
+      widthByMode: prev.widthByMode ?? {},
       touchedAt: Date.now(),
     };
   }
@@ -350,6 +383,7 @@ const touchContextPanelState = (prev?: ContextPanelDirectoryState): ContextPanel
     tabs: [],
     activeTabId: null,
     width: CONTEXT_PANEL_DEFAULT_WIDTH,
+    widthByMode: {},
     touchedAt: Date.now(),
   };
 };
@@ -385,6 +419,8 @@ const upsertContextPanelTab = (
     isOpen: true,
     tabs: clampedTabs,
     activeTabId: resolveActiveContextPanelTabID(clampedTabs, activeTabId),
+    width: current.widthByMode[nextTab.mode]
+      ?? getDefaultContextPanelWidthForMode(nextTab.mode),
     touchedAt: Date.now(),
   };
 };
@@ -403,6 +439,10 @@ const closeContextPanelTab = (
     tabs: nextTabs,
     activeTabId: nextActiveTabId,
     isOpen: nextTabs.length > 0 ? current.isOpen : false,
+    width: nextActiveTabId
+      ? current.widthByMode[nextTabs.find((tab) => tab.id === nextActiveTabId)?.mode ?? 'context']
+        ?? getDefaultContextPanelWidthForMode(nextTabs.find((tab) => tab.id === nextActiveTabId)?.mode ?? 'context')
+      : current.width,
     touchedAt: Date.now(),
   };
 };
@@ -470,6 +510,7 @@ const sanitizeContextPanelByDirectory = (
       tabs?: unknown;
       activeTabId?: unknown;
       width?: unknown;
+      widthByMode?: unknown;
       touchedAt?: unknown;
       mode?: unknown;
       targetPath?: unknown;
@@ -493,12 +534,24 @@ const sanitizeContextPanelByDirectory = (
     const resolvedActiveTabId = resolveActiveContextPanelTabID(tabs, activeTabId);
     const clampedTabs = clampContextPanelTabs(tabs, CONTEXT_PANEL_MAX_TABS, resolvedActiveTabId);
 
+    const widthByMode = candidate.widthByMode && typeof candidate.widthByMode === 'object'
+      ? Object.fromEntries(
+          Object.entries(candidate.widthByMode as Record<string, unknown>)
+            .filter(([mode, width]) => (
+              sanitizeContextPanelTabs([{ mode, dedupeKey: mode }]).length === 1
+              && typeof width === 'number'
+            ))
+            .map(([mode, width]) => [mode, clampContextPanelWidth(width as number)]),
+        ) as Partial<Record<ContextPanelMode, number>>
+      : {};
+
     next[directory] = {
       isOpen: candidate.isOpen === true,
       expanded: candidate.expanded === true,
       tabs: clampedTabs,
       activeTabId: resolveActiveContextPanelTabID(clampedTabs, resolvedActiveTabId),
       width: clampContextPanelWidth(typeof candidate.width === 'number' ? candidate.width : CONTEXT_PANEL_DEFAULT_WIDTH),
+      widthByMode,
       touchedAt: typeof candidate.touchedAt === 'number' && Number.isFinite(candidate.touchedAt)
         ? candidate.touchedAt
         : Date.now(),
@@ -565,6 +618,11 @@ interface UIStore {
   openCodeStatusText: string;
   isSessionCreateDialogOpen: boolean;
   isScheduledTasksDialogOpen: boolean;
+  scheduledTaskPrefill: {
+    prompt: string;
+    projectId: string | null;
+    requestId: number;
+  } | null;
   isSettingsDialogOpen: boolean;
   isNewWorktreeDialogOpen: boolean;
   isModelSelectorOpen: boolean;
@@ -729,6 +787,8 @@ interface UIStore {
   setOpenCodeStatusText: (text: string) => void;
   setSessionCreateDialogOpen: (open: boolean) => void;
   setScheduledTasksDialogOpen: (open: boolean) => void;
+  openScheduledTaskEditor: (prefill: { prompt: string; projectId?: string | null }) => void;
+  clearScheduledTaskPrefill: () => void;
   setSettingsDialogOpen: (open: boolean) => void;
   setNewWorktreeDialogOpen: (open: boolean) => void;
   setModelSelectorOpen: (open: boolean) => void;
@@ -854,10 +914,10 @@ export const useUIStore = create<UIStore>()(
         isMultiRunLauncherOpen: false,
         multiRunLauncherPrefillPrompt: '',
         isSidebarOpen: true,
-        sidebarWidth: LEFT_SIDEBAR_MIN_WIDTH,
+        sidebarWidth: LEFT_SIDEBAR_DEFAULT_WIDTH,
         hasManuallyResizedLeftSidebar: false,
         isRightSidebarOpen: false,
-        rightSidebarWidth: RIGHT_SIDEBAR_MIN_WIDTH,
+        rightSidebarWidth: RIGHT_SIDEBAR_DEFAULT_WIDTH,
         hasManuallyResizedRightSidebar: false,
         rightSidebarWorkbenchWidth: 960,
         hasManuallyResizedRightSidebarWorkbench: false,
@@ -888,6 +948,7 @@ export const useUIStore = create<UIStore>()(
         openCodeStatusText: '',
         isSessionCreateDialogOpen: false,
         isScheduledTasksDialogOpen: false,
+        scheduledTaskPrefill: null,
         isSettingsDialogOpen: false,
         isNewWorktreeDialogOpen: false,
         isModelSelectorOpen: false,
@@ -1002,7 +1063,7 @@ export const useUIStore = create<UIStore>()(
             if (newOpen && !state.hasManuallyResizedLeftSidebar) {
               return {
                 isSidebarOpen: newOpen,
-                sidebarWidth: LEFT_SIDEBAR_MIN_WIDTH,
+                sidebarWidth: LEFT_SIDEBAR_DEFAULT_WIDTH,
               };
             }
             return { isSidebarOpen: newOpen };
@@ -1015,10 +1076,10 @@ export const useUIStore = create<UIStore>()(
               if (!open) {
                 return state;
               }
-              if (!state.hasManuallyResizedLeftSidebar && state.sidebarWidth !== LEFT_SIDEBAR_MIN_WIDTH) {
+              if (!state.hasManuallyResizedLeftSidebar && state.sidebarWidth !== LEFT_SIDEBAR_DEFAULT_WIDTH) {
                 return {
                   isSidebarOpen: open,
-                  sidebarWidth: LEFT_SIDEBAR_MIN_WIDTH,
+                  sidebarWidth: LEFT_SIDEBAR_DEFAULT_WIDTH,
                 };
               }
               return state;
@@ -1026,7 +1087,7 @@ export const useUIStore = create<UIStore>()(
             if (open && !state.hasManuallyResizedLeftSidebar) {
               return {
                 isSidebarOpen: open,
-                sidebarWidth: LEFT_SIDEBAR_MIN_WIDTH,
+                sidebarWidth: LEFT_SIDEBAR_DEFAULT_WIDTH,
               };
             }
             return { isSidebarOpen: open };
@@ -1034,7 +1095,11 @@ export const useUIStore = create<UIStore>()(
         },
 
         setSidebarWidth: (width) => {
-          set({ sidebarWidth: width, hasManuallyResizedLeftSidebar: true });
+          const clamped = Math.min(
+            LEFT_SIDEBAR_MAX_WIDTH,
+            Math.max(LEFT_SIDEBAR_MIN_WIDTH, width),
+          );
+          set({ sidebarWidth: clamped, hasManuallyResizedLeftSidebar: true });
         },
 
         toggleRightSidebar: () => {
@@ -1044,7 +1109,7 @@ export const useUIStore = create<UIStore>()(
             if (newOpen && !state.hasManuallyResizedRightSidebar) {
               return {
                 isRightSidebarOpen: newOpen,
-                rightSidebarWidth: RIGHT_SIDEBAR_MIN_WIDTH,
+                rightSidebarWidth: RIGHT_SIDEBAR_DEFAULT_WIDTH,
               };
             }
             return { isRightSidebarOpen: newOpen };
@@ -1058,10 +1123,10 @@ export const useUIStore = create<UIStore>()(
             }
             const shouldResetWidth = open
               && !state.hasManuallyResizedRightSidebar
-              && state.rightSidebarWidth !== RIGHT_SIDEBAR_MIN_WIDTH;
+              && state.rightSidebarWidth !== RIGHT_SIDEBAR_DEFAULT_WIDTH;
             return {
               isRightSidebarOpen: open,
-              rightSidebarWidth: shouldResetWidth ? RIGHT_SIDEBAR_MIN_WIDTH : state.rightSidebarWidth,
+              rightSidebarWidth: shouldResetWidth ? RIGHT_SIDEBAR_DEFAULT_WIDTH : state.rightSidebarWidth,
             };
           });
         },
@@ -1203,7 +1268,7 @@ export const useUIStore = create<UIStore>()(
           get().openContextPanelTab(normalizedDirectory, {
             mode: 'browser',
             targetPath: targetUrl,
-            dedupeKey: 'desktop-browser',
+            dedupeKey: `desktop-browser:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`,
             label: 'Browser',
           });
         },
@@ -1248,6 +1313,11 @@ export const useUIStore = create<UIStore>()(
                 ...current,
                 isOpen: true,
                 activeTabId: normalizedTabID,
+                width: current.widthByMode[
+                  current.tabs.find((tab) => tab.id === normalizedTabID)?.mode ?? 'context'
+                ] ?? getDefaultContextPanelWidthForMode(
+                  current.tabs.find((tab) => tab.id === normalizedTabID)?.mode ?? 'context',
+                ),
                 touchedAt: Date.now(),
                 tabs: current.tabs.map((tab) => (tab.id === normalizedTabID
                   ? { ...tab, touchedAt: Date.now() }
@@ -1370,6 +1440,13 @@ export const useUIStore = create<UIStore>()(
               [normalizedDirectory]: {
                 ...current,
                 width: clampContextPanelWidth(width),
+                widthByMode: current.activeTabId
+                  ? {
+                      ...current.widthByMode,
+                      [current.tabs.find((tab) => tab.id === current.activeTabId)?.mode ?? 'context']:
+                        clampContextPanelWidth(width),
+                    }
+                  : current.widthByMode,
               },
             };
 
@@ -1572,6 +1649,22 @@ export const useUIStore = create<UIStore>()(
 
         setScheduledTasksDialogOpen: (open) => {
           set({ isScheduledTasksDialogOpen: open });
+        },
+
+        openScheduledTaskEditor: (prefill) => {
+          const prompt = prefill.prompt.trim();
+          set({
+            isScheduledTasksDialogOpen: true,
+            scheduledTaskPrefill: {
+              prompt,
+              projectId: prefill.projectId ?? null,
+              requestId: Date.now(),
+            },
+          });
+        },
+
+        clearScheduledTaskPrefill: () => {
+          set({ scheduledTaskPrefill: null });
         },
 
         setSettingsDialogOpen: (open) => {

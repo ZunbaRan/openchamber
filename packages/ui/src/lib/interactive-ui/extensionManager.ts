@@ -120,6 +120,7 @@ export interface ManagedConnection {
   connector: {
     id: string;
     origin: string;
+    endpoint?: string | null;
     authType: ConnectionAuthType;
     testable: boolean;
     configurable: boolean;
@@ -132,6 +133,11 @@ export interface ManagedConnection {
     configuredAt?: string;
     expiresAt?: string | null;
     displayName?: string | null;
+    name?: string | null;
+    endpoint?: string | null;
+    endpointConfigured?: boolean;
+    endpointSource?: 'user' | 'environment' | 'manifest' | null;
+    headerNames?: string[];
   };
   health: {
     status: ConnectionHealthStatus;
@@ -395,6 +401,9 @@ export const normalizeConnectionSnapshot = (value: unknown): ConnectionSnapshot 
         connector: {
           id: connectorId,
           origin: stringValue(entry.connector.origin),
+          ...(typeof entry.connector.endpoint === 'string' || entry.connector.endpoint === null
+            ? { endpoint: entry.connector.endpoint }
+            : {}),
           authType: authType as ConnectionAuthType,
           testable: entry.connector.testable === true,
           configurable: entry.connector.configurable === true,
@@ -407,6 +416,15 @@ export const normalizeConnectionSnapshot = (value: unknown): ConnectionSnapshot 
           ...(typeof entry.credential.configuredAt === 'string' ? { configuredAt: entry.credential.configuredAt } : {}),
           ...(typeof entry.credential.expiresAt === 'string' || entry.credential.expiresAt === null ? { expiresAt: entry.credential.expiresAt } : {}),
           ...(typeof entry.credential.displayName === 'string' || entry.credential.displayName === null ? { displayName: entry.credential.displayName } : {}),
+          ...(typeof entry.credential.name === 'string' || entry.credential.name === null ? { name: entry.credential.name } : {}),
+          ...(typeof entry.credential.endpoint === 'string' || entry.credential.endpoint === null ? { endpoint: entry.credential.endpoint } : {}),
+          ...(typeof entry.credential.endpointConfigured === 'boolean' ? { endpointConfigured: entry.credential.endpointConfigured } : {}),
+          ...(['user', 'environment', 'manifest'].includes(String(entry.credential.endpointSource)) || entry.credential.endpointSource === null
+            ? { endpointSource: entry.credential.endpointSource as 'user' | 'environment' | 'manifest' | null }
+            : {}),
+          ...(Array.isArray(entry.credential.headerNames)
+            ? { headerNames: entry.credential.headerNames.filter((name): name is string => typeof name === 'string') }
+            : {}),
         },
         health: (() => {
           const value = isRecord(entry.health) ? entry.health : {};

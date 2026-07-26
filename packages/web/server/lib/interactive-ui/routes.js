@@ -344,11 +344,14 @@ export const registerInteractiveUIRoutes = (app, {
     try {
       const result = await manager.uninstall(req.params.extensionId);
       try {
-        const credentials = await runtime.removeExtensionConnections(req.params.extensionId);
         const workbench = workbenchStore
           ? await workbenchStore.removeExtensionTiles(req.params.extensionId)
           : { removed: 0, projects: 0 };
-        res.json({ ...result, credentials, workbench });
+        res.json({
+          ...result,
+          credentials: { removed: 0, retained: true },
+          workbench,
+        });
       } catch (error) {
         error.details = { ...(error.details ?? {}), extensionRemoved: true, recoveryPath: result.recoveryPath ?? null };
         sendError(res, error);

@@ -5,8 +5,8 @@ import { useI18n } from '@/lib/i18n';
 import { useUIStore } from '@/stores/useUIStore';
 
 const SIDEBAR_CONTENT_WIDTH = 280;
-const SIDEBAR_MIN_WIDTH = 280;
-const SIDEBAR_MAX_WIDTH = 500;
+const SIDEBAR_MIN_WIDTH = 240;
+const SIDEBAR_MAX_WIDTH = 420;
 
 interface SidebarProps {
     isOpen: boolean;
@@ -139,7 +139,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, isMobile, children, cl
                 ['--oc-left-sidebar-width' as string]: `${isResizing ? currentWidth : openWidth}px`,
                 overflowX: 'clip',
                 transitionProperty: isResizing ? 'none' : 'width, min-width, max-width',
-                transitionDuration: '200ms',
+                transitionDuration: '180ms',
                 transitionTimingFunction: 'cubic-bezier(0.22, 1, 0.36, 1)',
             }}
             aria-hidden={!isOpen || appliedWidth === 0}
@@ -161,7 +161,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, isMobile, children, cl
             )}
             <div
                 className={cn(
-                    'relative z-10 flex h-full shrink-0 flex-col transition-opacity duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none',
+                    'relative z-10 flex h-full shrink-0 flex-col transition-opacity duration-180 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none',
                     isResizing && 'pointer-events-none',
                     !isOpen && 'pointer-events-none select-none opacity-0'
                 )}

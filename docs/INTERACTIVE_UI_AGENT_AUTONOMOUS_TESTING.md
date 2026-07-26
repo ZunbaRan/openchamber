@@ -37,7 +37,7 @@
 
 1. 读取根 `AGENTS.md`、匹配 Skill、最近的 `DOCUMENTATION.md` 和 package README；
 2. 记录本次改动的最高风险、实际消费者和需要支持的 Runtime；
-3. 检查所需 fixture、签名测试包和本次明确要求的 Provider 是否可用；普通开发默认只要求 Qwen3.7 Plus，额外 Provider 不可用不构成阻断；
+3. 检查所需 fixture、签名测试包和本次明确要求的 Provider 是否可用；普通开发默认只要求 Qwen3.7 Plus，额外 Provider 不可用不构成阻断。验收脚本不得把会被清理或替换的 `extension/<demo-name>` 开发目录当成永久依赖；必须自带不可变 fixture、从当前测试扩展生成，或在预检阶段明确报告 `blocked`；
 4. 使用固定语料 `examples/interactive-ui/unified-acceptance-corpus.json`；除非任务本身是修改协议/语料，不在验收失败后临时改 prompt、acceptable tools、viewport 或阈值；
 5. 明确是否需要重新构建 Web 或 Electron 产物，不能复用来源不明的旧产物。
 
@@ -72,6 +72,8 @@ bun run type-check:electron
 ```bash
 bun run test:interactive-ui-functional
 ```
+
+如果脚本因旧 `simple-crm-*` 或其他已被清理的外部 fixture 缺失而在启动前退出，这既不是产品回归，也不是通过。Agent 必须把结果记录为“测试基础设施阻塞”，继续运行不依赖该 fixture 的 manager/runtime/Workbench 与 packaged gates，并在后续把脚本迁移到仓库内不可变 fixture 或当前验收扩展；禁止为了让脚本变绿而恢复已废弃扩展目录。
 
 验收器应使用独立临时 OpenChamber data、OpenCode config、Artifact cache、bundled OpenCode 和动态 CRM API。它必须验证：
 

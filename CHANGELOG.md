@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.16.4] - 2026-07-26
+
+- **Interactive surfaces:** added Agent-generated Interactive UI and isolated HTML Artifacts directly in the conversation stream, including declarative charts, metrics, tables, flows, local scripted simulators, safe pop-out/fullscreen modes, and pinning into the application workspace.
+- **OCIX applications:** added signed third-party application packages that can ship Interactive UI, HTML Artifacts, OpenCode tools, skills, and business-connection declarations together. Installation verifies file integrity, manages trusted publishers, installs Agent runtime files into the shared OpenCode discovery directories, and removes them cleanly on uninstall.
+- **Business gateway:** installed applications can call real HTTP APIs through host-managed connections without exposing access keys to extension UI or Agent output. Credentials, headers, connection tests, confirmed writes, retained-credential cleanup, and runtime routing diagnostics are supported.
+- **Applications workspace:** added a persistent right-side tile board for installed and conversation-generated surfaces. Tiles support drag ordering, resizing, focus mode, internal scrolling, linked-surface colors, parameter-aware launches, inter-surface navigation, refresh, and state restoration.
+- **Desktop Artifact Runner:** scripted HTML runs in a separate isolated Electron surface with explicit capability contracts, lifecycle controls, clipping and modal-occlusion guarantees, and safe recovery when generated markup is rejected.
+- **Codex-style shell:** redesigned the desktop navigation and task header around New task, Projects, Git, Scheduled, Applications, Plugins, task actions, recent outputs, and a unified right workspace for Files, Git, Browser, Terminal, and Applications. Browser and terminal tabs support multiple persistent instances while singleton tools reuse their existing tab.
+- **Extension developer experience:** added OCIX development contracts, application workbench guidance, autonomous Agent test procedures, packaging lessons, security checks, and deterministic unit/packaged acceptance gates.
+- **Updates:** desktop update metadata now targets releases from the `ZunbaRan/openchamber` fork.
+
 ## [1.16.3] - 2026-07-22
 
 - **Chat attachments:** added Office and OpenDocument files (`.docx`, `.pptx`, `.xlsx`, `.odt`, `.odp`, and `.ods`), with readable text and supported embedded images extracted before sending. Attachments also support more source-code formats, notebooks, HAR files with credentials and cookies removed, SVG and Draw.io files, and HEIC/HEIF images; the composer warns when the selected model may ignore an attachment type.

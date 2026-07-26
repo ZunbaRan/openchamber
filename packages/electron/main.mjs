@@ -4225,6 +4225,22 @@ const handleInvoke = async (browserWindow, command, args = {}) => {
       return null;
     }
 
+    case 'desktop_open_session_window': {
+      const sessionId = typeof args.sessionId === 'string' ? args.sessionId.trim() : '';
+      if (!sessionId) throw new Error('Session id is required');
+      const directory = typeof args.directory === 'string' ? args.directory.trim() : '';
+      const runtimeConfig = resolveMiniChatRuntimeConfig(browserWindow, args);
+      const windowUrl = shouldUsePackagedUi()
+        ? buildPackagedUiUrl('/index.html')
+        : (state.localOrigin || state.sidecarUrl);
+      const targetWindow = await createAdditionalWindow(windowUrl, runtimeConfig);
+      if (!targetWindow) throw new Error('Could not create a new window');
+      targetWindow.webContents.once('did-finish-load', () => {
+        emitToWindow(targetWindow, 'openchamber:open-session', { sessionId, directory });
+      });
+      return null;
+    }
+
     case 'desktop_open_draft_mini_chat_window': {
       const directory = typeof args.directory === 'string' ? args.directory.trim() : '';
       const projectId = typeof args.projectId === 'string' ? args.projectId.trim() : '';
@@ -4634,6 +4650,7 @@ const COMMANDS_SAFE_FOR_REMOTE = new Set([
   'desktop_hosts_get',
   'desktop_host_probe',
   'desktop_new_window',
+  'desktop_open_session_window',
   'desktop_new_window_at_url',
   'desktop_new_window_for_host',
   'desktop_set_window_title',

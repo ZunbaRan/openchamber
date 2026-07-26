@@ -726,10 +726,11 @@ const CronScheduleSection: React.FC<{
 export function ScheduledTaskEditorDialog(props: {
   open: boolean;
   task: ScheduledTask | null;
+  prefillPrompt?: string;
   onOpenChange: (open: boolean) => void;
   onSave: (draft: Partial<ScheduledTask>) => Promise<void>;
 }) {
-  const { open, task, onOpenChange, onSave } = props;
+  const { open, task, prefillPrompt = '', onOpenChange, onSave } = props;
   const { t, locale } = useI18n();
   const loadProviders = useConfigStore((state) => state.loadProviders);
   const loadAgents = useConfigStore((state) => state.loadAgents);
@@ -742,14 +743,19 @@ export function ScheduledTaskEditorDialog(props: {
   const weekStartPreference = useUIStore((state) => state.weekStartPreference);
   const isMobile = useUIStore((state) => state.isMobile);
 
-  const [draft, setDraft] = React.useState<ScheduledTaskDraft>(() =>
-    toDraft(task, {
+  const [draft, setDraft] = React.useState<ScheduledTaskDraft>(() => {
+    const initial = toDraft(task, {
       providerID: currentProviderID,
       modelID: currentModelID,
       variant: currentVariant,
       agent: currentAgentName,
-    })
-  );
+    });
+    if (!task && prefillPrompt.trim()) {
+      initial.execution.prompt = prefillPrompt.trim();
+      initial.name = prefillPrompt.trim().replace(/\s+/g, ' ').slice(0, 64);
+    }
+    return initial;
+  });
   const [saving, setSaving] = React.useState(false);
   const [isDatePickerOpen, setIsDatePickerOpen] = React.useState(false);
   const [showFileMention, setShowFileMention] = React.useState(false);
@@ -807,14 +813,17 @@ export function ScheduledTaskEditorDialog(props: {
     if (!open) {
       return;
     }
-    setDraft(
-      toDraft(task, {
-        providerID: currentProviderID,
-        modelID: currentModelID,
-        variant: currentVariant,
-        agent: currentAgentName,
-      })
-    );
+    const nextDraft = toDraft(task, {
+      providerID: currentProviderID,
+      modelID: currentModelID,
+      variant: currentVariant,
+      agent: currentAgentName,
+    });
+    if (!task && prefillPrompt.trim()) {
+      nextDraft.execution.prompt = prefillPrompt.trim();
+      nextDraft.name = prefillPrompt.trim().replace(/\s+/g, ' ').slice(0, 64);
+    }
+    setDraft(nextDraft);
     const sourceDate = parseISODateToLocal(task?.schedule?.date || '') || new Date();
     setCalendarMonth(new Date(sourceDate.getFullYear(), sourceDate.getMonth(), 1));
     setIsDatePickerOpen(false);
@@ -822,7 +831,7 @@ export function ScheduledTaskEditorDialog(props: {
     setShowFileMention(false);
     setCommandQuery('');
     setMentionQuery('');
-  }, [open, task, currentProviderID, currentModelID, currentVariant, currentAgentName]);
+  }, [open, task, prefillPrompt, currentProviderID, currentModelID, currentVariant, currentAgentName]);
 
   React.useEffect(() => {
     if (!isDatePickerOpen) {
