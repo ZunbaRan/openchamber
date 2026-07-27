@@ -503,6 +503,23 @@ export const registerInteractiveUIRoutes = (app, {
     }
   });
 
+  app.patch('/api/interactive-ui/workbench/boards/:projectId/layouts', express.json({ limit: '64kb' }), async (req, res) => {
+    try {
+      if (!workbenchStore) {
+        throw new InteractiveUIRuntimeError('Extension Workbench is unavailable in this runtime', 501, 'workbench_unsupported');
+      }
+      const result = await workbenchStore.updateTileLayouts(
+        req.params.projectId,
+        req.body?.expectedRevision,
+        req.body?.layouts,
+      );
+      res.setHeader('Cache-Control', 'no-store');
+      res.json(result);
+    } catch (error) {
+      sendError(res, error);
+    }
+  });
+
   app.post('/api/interactive-ui/workbench/boards/:projectId/tiles/:tileId/migrate', express.json({ limit: '64kb' }), async (req, res) => {
     try {
       if (!workbenchStore || typeof runtime.migrateWorkbenchTile !== 'function') {

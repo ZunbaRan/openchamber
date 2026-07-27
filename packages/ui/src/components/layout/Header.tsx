@@ -1272,7 +1272,7 @@ export const Header: React.FC<HeaderProps> = ({
     }
   }, [isDesktopApp]);
 
-  const tabs: TabConfig[] = React.useMemo(() => {
+  const navigationTabs: TabConfig[] = React.useMemo(() => {
     const base: TabConfig[] = [
       { id: 'chat', label: t('layout.mainTab.chat'), icon: 'chat-4' },
     ];
@@ -1290,13 +1290,13 @@ export const Header: React.FC<HeaderProps> = ({
       { id: 'diagram', label: t('layout.mainTab.diagram'), icon: 'file' },
     );
 
-    if (isMobile) {
-      return base;
-    }
+    return base;
+  }, [showPlanTab, t]);
 
-    const active = base.find((tab) => tab.id === activeMainTab);
-    return active && active.id !== 'chat' ? [base[0], active] : [base[0]];
-  }, [activeMainTab, isMobile, showPlanTab, t]);
+  const desktopTabs = React.useMemo(() => {
+    const active = navigationTabs.find((tab) => tab.id === activeMainTab);
+    return active && active.id !== 'chat' ? [active] : [];
+  }, [activeMainTab, navigationTabs]);
 
   const mobileServicesTabItems = React.useMemo<SortableTabsStripItem[]>(() => {
     return [
@@ -1309,19 +1309,19 @@ export const Header: React.FC<HeaderProps> = ({
     const handleKeyDown = (e: KeyboardEvent) => {
       if (hasModifier(e) && !e.shiftKey && !e.altKey) {
         const num = parseInt(e.key, 10);
-        if (num >= 1 && num <= tabs.length) {
+        if (num >= 1 && num <= navigationTabs.length) {
           e.preventDefault();
           if (isMobile) {
             blurActiveElement();
             closeMobileHeaderPanels();
           }
-          setActiveMainTab(tabs[num - 1].id);
+          setActiveMainTab(navigationTabs[num - 1].id);
         }
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [blurActiveElement, closeMobileHeaderPanels, isMobile, setActiveMainTab, tabs]);
+  }, [blurActiveElement, closeMobileHeaderPanels, isMobile, navigationTabs, setActiveMainTab]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -1524,9 +1524,9 @@ export const Header: React.FC<HeaderProps> = ({
           </DropdownMenu>
         </div>
 
-        {tabs.length > 0 && (
+        {desktopTabs.length > 0 && (
           <div className="flex items-center gap-1 rounded-lg bg-[var(--surface-muted)]/50 p-1">
-            {tabs.map((tab) => renderTab(tab))}
+            {desktopTabs.map((tab) => renderTab(tab))}
           </div>
         )}
 
@@ -1600,8 +1600,10 @@ export const Header: React.FC<HeaderProps> = ({
                 <>
                   <DropdownMenuSeparator />
                   <DropdownMenuItem
-                    onSelect={(event) => {
+                    closeOnClick={false}
+                    onClick={(event) => {
                       event.preventDefault();
+                      event.stopPropagation();
                       setShowAllTaskOutputs((value) => !value);
                     }}
                   >
@@ -1716,7 +1718,7 @@ export const Header: React.FC<HeaderProps> = ({
                   role="tablist"
                   aria-label={t('header.navigation.mainAria')}
                 >
-                  {tabs.map((tab) => {
+                  {navigationTabs.map((tab) => {
                     const isActive = activeMainTab === tab.id;
                     const isDiffTab = tab.icon === 'diff';
                     const tabIconName = isDiffTab ? null : (tab.icon as IconName);

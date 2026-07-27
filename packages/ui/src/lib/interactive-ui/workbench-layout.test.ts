@@ -5,6 +5,7 @@ import {
   findNearestWorkbenchSlot,
   getWorkbenchGridHeight,
   layoutsOverlap,
+  planWorkbenchTileSwap,
 } from './workbench-layout';
 
 describe('Extension Workbench layout', () => {
@@ -66,5 +67,28 @@ describe('Extension Workbench layout', () => {
     expect(layouts.get('two')).toEqual({ column: 6, row: 0, columns: 6, rows: 4 });
     expect(layouts.get('three')).toEqual({ column: 0, row: 4, columns: 6, rows: 4 });
     expect(getWorkbenchGridHeight(layouts.values(), 48, 12)).toBe(468);
+  });
+
+  test('swaps equal-size tiles into each other exact positions', () => {
+    expect(planWorkbenchTileSwap(
+      { column: 0, row: 0, columns: 6, rows: 4 },
+      { column: 6, row: 4, columns: 6, rows: 4 },
+      [],
+    )).toEqual({
+      active: { column: 6, row: 4, columns: 6, rows: 4 },
+      target: { column: 0, row: 0, columns: 6, rows: 4 },
+    });
+  });
+
+  test('keeps unequal-size swaps clear of third-party occupied layouts', () => {
+    const occupied = [{ column: 0, row: 5, columns: 6, rows: 4 }];
+    const result = planWorkbenchTileSwap(
+      { column: 0, row: 0, columns: 6, rows: 5 },
+      { column: 6, row: 0, columns: 6, rows: 3 },
+      occupied,
+    );
+    expect(layoutsOverlap(result.active, result.target)).toBe(false);
+    expect(occupied.every((layout) => !layoutsOverlap(result.active, layout))).toBe(true);
+    expect(occupied.every((layout) => !layoutsOverlap(result.target, layout))).toBe(true);
   });
 });

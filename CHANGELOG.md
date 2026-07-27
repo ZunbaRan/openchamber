@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.16.5] - 2026-07-27
+
+- **Applications workspace:** refined the application board with a collapsible, resizable catalog, reliable tile controls, clearer focus behavior, and persistent board layout updates.
+- **Artifact containment:** kept HTML Artifact content and native controls below the application header and modal layers, stopped stale Runner surfaces during navigation, and prevented focused views from leaking over Settings or other workspaces.
+- **Desktop interaction:** fixed fullscreen and pop-out hit targets so their complete button areas retain hover and pointer focus in both regular tiles and focused views.
+- **Packaged acceptance:** expanded the macOS release gate with signed OCIX fixtures, multi-tile scrolling, header hit-testing, modal occlusion, navigation cleanup, and real system-pointer hover verification.
+- **Developer guidance:** documented the native Runner clipping, lifecycle, z-order, and packaged-testing pitfalls discovered while hardening the application board.
+
 ## [1.16.4] - 2026-07-26
 
 - **Interactive surfaces:** added Agent-generated Interactive UI and isolated HTML Artifacts directly in the conversation stream, including declarative charts, metrics, tables, flows, local scripted simulators, safe pop-out/fullscreen modes, and pinning into the application workspace.

@@ -11,6 +11,7 @@ import sharp from 'sharp';
 const execFileAsync = promisify(execFile);
 const electronRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const projectRoot = path.resolve(electronRoot, '../..');
+const workspaceRoot = path.dirname(projectRoot);
 const outputDirectory = path.join(projectRoot, '.tmp', 'artifact-runner-clipping-packaged');
 const screenshotPath = path.join(outputDirectory, 'artifact-runner-scroll-clip-macos.png');
 const dialogScreenshotPath = path.join(outputDirectory, 'artifact-runner-dialog-overlay-macos.png');
@@ -18,6 +19,13 @@ const dialogRestoredScreenshotPath = path.join(outputDirectory, 'artifact-runner
 const workspaceScreenshotPath = path.join(outputDirectory, 'artifact-runner-workspace-mode-macos.png');
 const fullscreenScreenshotPath = path.join(outputDirectory, 'artifact-runner-fullscreen-mode-macos.png');
 const restoredInlineScreenshotPath = path.join(outputDirectory, 'artifact-runner-restored-inline-macos.png');
+const workbenchScreenshotPath = path.join(outputDirectory, 'artifact-runner-workbench-header-clip-macos.png');
+const workbenchPackagePath = path.join(
+  workspaceRoot,
+  'extension',
+  'dist',
+  'com.openchamber.lab.ops-1.0.2.ocix',
+);
 const reportPath = path.join(outputDirectory, 'report.json');
 const delay = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 
@@ -157,16 +165,79 @@ for entry in entries {
 }
 print(bestID)
 `;
-  const { stdout } = await execFileAsync('/usr/bin/swift', ['-e', source], { timeout: 30_000 });
-  const windowId = Number(stdout.trim());
-  assert.equal(Number.isInteger(windowId) && windowId > 0, true, `Could not resolve window id for pid ${pid}`);
-  return windowId;
+  const deadline = Date.now() + 15_000;
+  let lastOutput = '';
+  while (Date.now() < deadline) {
+    const { stdout } = await execFileAsync('/usr/bin/swift', ['-e', source], { timeout: 30_000 });
+    lastOutput = stdout.trim();
+    const windowId = Number(lastOutput);
+    if (Number.isInteger(windowId) && windowId > 0) return windowId;
+    // Electron can expose DevTools and finish navigation just before WindowServer
+    // publishes the native window. Treat that hand-off as eventual, not a failure.
+    await delay(250);
+  }
+  assert.fail(`Could not resolve window id for pid ${pid}; last WindowServer result: ${lastOutput || '<empty>'}`);
 };
 
 const captureMacWindow = async ({ pid, outputPath }) => {
   const windowId = await resolveMacWindowId(pid);
   await execFileAsync('/usr/sbin/screencapture', ['-x', '-o', '-l', String(windowId), outputPath], { timeout: 30_000 });
   await fs.access(outputPath);
+};
+
+const postMacMouseEvent = async ({ pid, x, y, click = false }) => {
+  const source = `
+import CoreGraphics
+import Foundation
+let targetPID = ${Number(pid)}
+let pointX: Double = ${Number(x)}
+let pointY: Double = ${Number(y)}
+let entries = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
+let entry = entries
+  .filter { (($0[kCGWindowOwnerPID as String] as? NSNumber)?.intValue ?? -1) == targetPID
+    && (($0[kCGWindowLayer as String] as? NSNumber)?.intValue ?? -1) == 0 }
+  .max { left, right in
+    let leftBounds = left[kCGWindowBounds as String] as? NSDictionary
+    let rightBounds = right[kCGWindowBounds as String] as? NSDictionary
+    let leftArea = ((leftBounds?["Width"] as? NSNumber)?.doubleValue ?? 0)
+      * ((leftBounds?["Height"] as? NSNumber)?.doubleValue ?? 0)
+    let rightArea = ((rightBounds?["Width"] as? NSNumber)?.doubleValue ?? 0)
+      * ((rightBounds?["Height"] as? NSNumber)?.doubleValue ?? 0)
+    return leftArea < rightArea
+  }
+guard let bounds = entry?[kCGWindowBounds as String] as? NSDictionary,
+      let originX = (bounds["X"] as? NSNumber)?.doubleValue,
+      let originY = (bounds["Y"] as? NSNumber)?.doubleValue else {
+  exit(2)
+}
+let location = CGPoint(x: originX + pointX, y: originY + pointY)
+CGEvent(mouseEventSource: nil, mouseType: .mouseMoved, mouseCursorPosition: location, mouseButton: .left)?.post(tap: .cghidEventTap)
+${click ? `
+usleep(60_000)
+CGEvent(mouseEventSource: nil, mouseType: .leftMouseDown, mouseCursorPosition: location, mouseButton: .left)?.post(tap: .cghidEventTap)
+usleep(60_000)
+CGEvent(mouseEventSource: nil, mouseType: .leftMouseUp, mouseCursorPosition: location, mouseButton: .left)?.post(tap: .cghidEventTap)
+` : ''}
+`;
+  await execFileAsync('/usr/bin/swift', ['-e', source], { timeout: 30_000 });
+};
+
+const requestJson = async (port, pathname, { method = 'GET', body, timeoutMs = 30_000 } = {}) => {
+  const response = await fetch(`http://127.0.0.1:${port}${pathname}`, {
+    method,
+    headers: {
+      Accept: 'application/json',
+      ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
+    },
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    signal: AbortSignal.timeout(timeoutMs),
+  });
+  const text = await response.text();
+  const payload = text.trim() ? JSON.parse(text) : null;
+  if (!response.ok) {
+    throw new Error(`${method} ${pathname} failed (${response.status}): ${payload?.code || payload?.error || 'unknown'}`);
+  }
+  return payload;
 };
 
 const inspectClipGuard = async (metrics) => {
@@ -245,9 +316,19 @@ const executablePath = path.join(appPath, 'Contents', 'MacOS', 'OpenChamber');
 const temporaryRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'openchamber-artifact-clipping-'));
 const dataDirectory = path.join(temporaryRoot, 'data');
 const userDataDirectory = path.join(temporaryRoot, 'electron-user-data');
+const homeDirectory = path.join(temporaryRoot, 'home');
+const xdgConfigDirectory = path.join(temporaryRoot, 'xdg-config');
+const xdgDataDirectory = path.join(temporaryRoot, 'xdg-data');
+const xdgCacheDirectory = path.join(temporaryRoot, 'xdg-cache');
+const openCodeConfigDirectory = path.join(temporaryRoot, 'opencode-config');
 const settingsPath = path.join(dataDirectory, 'settings.json');
 await fs.mkdir(dataDirectory, { recursive: true });
 await fs.mkdir(userDataDirectory, { recursive: true });
+await fs.mkdir(homeDirectory, { recursive: true });
+await fs.mkdir(xdgConfigDirectory, { recursive: true });
+await fs.mkdir(xdgDataDirectory, { recursive: true });
+await fs.mkdir(xdgCacheDirectory, { recursive: true });
+await fs.mkdir(openCodeConfigDirectory, { recursive: true });
 await fs.rm(outputDirectory, { recursive: true, force: true });
 await fs.mkdir(outputDirectory, { recursive: true });
 
@@ -269,9 +350,14 @@ try {
       ...process.env,
       OPENCHAMBER_DATA_DIR: dataDirectory,
       OPENCHAMBER_HTML_ARTIFACTS_STATIC: 'true',
+      OPENCHAMBER_TEST_OPENCODE_CONFIG_DIR: openCodeConfigDirectory,
       OPENCODE_HOST: '127.0.0.1',
       OPENCODE_PORT: '9',
       OPENCODE_SKIP_START: 'true',
+      HOME: homeDirectory,
+      XDG_CONFIG_HOME: xdgConfigDirectory,
+      XDG_DATA_HOME: xdgDataDirectory,
+      XDG_CACHE_HOME: xdgCacheDirectory,
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
@@ -280,7 +366,7 @@ try {
   appProcess.stderr?.on('data', appendOutput);
   appProcess.once('exit', () => { processExited = true; });
 
-  const [, target] = await Promise.all([
+  const [serverPort, target] = await Promise.all([
     waitForServer({ settingsPath, processExited: () => processExited, processOutput: () => processOutput }),
     waitForDebuggerTarget({ debugPort, processExited: () => processExited, processOutput: () => processOutput }),
   ]);
@@ -299,6 +385,13 @@ try {
   });
   assert.equal(Boolean(navigation.result?.errorText), false, navigation.result?.errorText || 'navigation failed');
   await waitFor(browser, `document.readyState === 'complete'`, 'clip fixture document');
+  const initialFocusReply = await browser.send('Runtime.evaluate', {
+    expression: `window.__OPENCHAMBER_DESKTOP__.invoke('desktop_focus_main_window')`,
+    awaitPromise: true,
+    returnByValue: true,
+  });
+  assert.equal(Boolean(initialFocusReply.result?.exceptionDetails), false);
+  await delay(250);
   const updaterPolicy = await browser.evaluate(`(() => ({
     exposed: typeof window.__OPENCHAMBER_DESKTOP__ === 'object',
     enabled: window.__OPENCHAMBER_DESKTOP__?.updatesEnabled,
@@ -354,6 +447,7 @@ try {
     if (!(runner instanceof HTMLElement)) return null;
     const overlay = document.createElement('div');
     overlay.setAttribute('data-ocix-test-dialog-overlay', '');
+    overlay.setAttribute('data-oc-native-surface-occluder', 'true');
     Object.assign(overlay.style, {
       position: 'fixed',
       inset: '0',
@@ -361,7 +455,6 @@ try {
       background: '#00e5ff',
     });
     document.body.append(overlay);
-    document.documentElement.classList.add('oc-dialog-open');
     const rect = runner.getBoundingClientRect();
     return {
       innerWidth: window.innerWidth,
@@ -379,12 +472,19 @@ try {
   assert.equal(dialogInspection.magentaRatio < 0.05, true, `Native Runner remained visible over the dialog: ${JSON.stringify(dialogInspection)}`);
 
   await browser.evaluate(`(() => {
-    document.documentElement.classList.remove('oc-dialog-open');
     document.querySelector('[data-ocix-test-dialog-overlay]')?.remove();
   })()`);
-  await delay(750);
-  await captureMacWindow({ pid: appProcess.pid, outputPath: dialogRestoredScreenshotPath });
-  const dialogRestoredInspection = await inspectDialogRegion({ imagePath: dialogRestoredScreenshotPath, metrics: dialogMetrics });
+  let dialogRestoredInspection = null;
+  for (let attempt = 0; attempt < 16; attempt += 1) {
+    await delay(250);
+    await captureMacWindow({ pid: appProcess.pid, outputPath: dialogRestoredScreenshotPath });
+    dialogRestoredInspection = await inspectDialogRegion({
+      imagePath: dialogRestoredScreenshotPath,
+      metrics: dialogMetrics,
+    });
+    if (dialogRestoredInspection.magentaRatio > 0.7) break;
+  }
+  assert.notEqual(dialogRestoredInspection, null);
   assert.equal(dialogRestoredInspection.magentaRatio > 0.7, true, `Native Runner did not return after the dialog closed: ${JSON.stringify(dialogRestoredInspection)}`);
 
   artifactBrowser.socket.close();
@@ -465,6 +565,222 @@ try {
     && state.sameRunnerElement
     && state.stopPresent
     && !state.failurePresent);
+
+  await browser.evaluate(`document.querySelector('[data-ocix-artifact-action="stop"]')?.click()`);
+  await waitFor(
+    browser,
+    `document.querySelector('[data-ocix-artifact-backend="desktop-runner"]') === null`,
+    'mode fixture Runner cleanup',
+  );
+  await delay(500);
+
+  await fs.access(workbenchPackagePath);
+  const packageBase64 = (await fs.readFile(workbenchPackagePath)).toString('base64');
+  const packageInspection = await requestJson(serverPort, '/api/interactive-ui/manager/packages/inspect', {
+    method: 'POST',
+    body: { packageBase64 },
+    timeoutMs: 60_000,
+  });
+  const installedPackage = await requestJson(serverPort, '/api/interactive-ui/manager/packages', {
+    method: 'POST',
+    body: {
+      packageBase64,
+      confirmedPublisherFingerprint: packageInspection.publisher.fingerprint,
+    },
+    timeoutMs: 60_000,
+  });
+  assert.equal(installedPackage.installed, true);
+
+  const workbenchProjectId = 'packaged-workbench-shell-acceptance';
+  let workbenchSnapshot = await requestJson(
+    serverPort,
+    `/api/interactive-ui/workbench/boards/${encodeURIComponent(workbenchProjectId)}`,
+  );
+  const revisionOf = (snapshot) => snapshot.boards
+    .find((board) => board.id === snapshot.activeBoardId)?.revision ?? 0;
+  const tileDrafts = Array.from({ length: 6 }, (_, index) => ({
+    source: {
+      kind: 'third-party-extension',
+      extensionId: 'com.openchamber.lab.ops',
+      surfaceId: index === 0
+        ? 'com.openchamber.lab.ops.topology'
+        : 'com.openchamber.lab.ops.overview',
+    },
+    form: index === 0 ? 'html-artifact' : 'interactive-ui',
+    context: { environment: `acceptance-${index + 1}` },
+    displayMode: 'tile',
+  }));
+  for (const tile of tileDrafts) {
+    const result = await requestJson(
+      serverPort,
+      `/api/interactive-ui/workbench/boards/${encodeURIComponent(workbenchProjectId)}/tiles`,
+      {
+        method: 'POST',
+        body: { expectedRevision: revisionOf(workbenchSnapshot), tile },
+      },
+    );
+    workbenchSnapshot = result.snapshot;
+  }
+
+  const workbenchQuery = new URLSearchParams({
+    runtime: 'workbench',
+    project: workbenchProjectId,
+    dragRegionTest: 'true',
+    theme: 'dark',
+    locale: 'zh-CN',
+  });
+  const workbenchNavigation = await browser.send('Page.navigate', {
+    url: `openchamber-ui://app/interactive-ui-demo.html?${workbenchQuery}`,
+  });
+  assert.equal(
+    Boolean(workbenchNavigation.result?.errorText),
+    false,
+    workbenchNavigation.result?.errorText || 'workbench fixture navigation failed',
+  );
+  await waitFor(browser, `document.readyState === 'complete'`, 'workbench fixture document');
+  await waitFor(
+    browser,
+    `document.querySelectorAll('[data-workbench-tile]').length === 6`,
+    'six Workbench tiles',
+  );
+  try {
+    await waitFor(
+      browser,
+      `document.querySelector('[data-workbench-tile] [data-ocix-artifact-state="ready"] [data-ocix-artifact-backend="desktop-runner"]') !== null`,
+      'Workbench Scripts Artifact Runner',
+    );
+  } catch (error) {
+    const diagnostic = await browser.evaluate(`Array.from(document.querySelectorAll('[data-workbench-tile]')).map((tile) => ({
+      title: tile.querySelector('h3')?.textContent?.trim() || '',
+      artifactState: tile.querySelector('[data-ocix-artifact-state]')?.getAttribute('data-ocix-artifact-state') || '',
+      artifactBackend: tile.querySelector('[data-ocix-artifact-backend]')?.getAttribute('data-ocix-artifact-backend') || '',
+      text: tile.textContent?.replace(/\\s+/g, ' ').trim().slice(0, 500) || '',
+    }))`);
+    await captureMacWindow({ pid: appProcess.pid, outputPath: workbenchScreenshotPath });
+    throw new Error(`${error.message}: ${JSON.stringify(diagnostic)}`);
+  }
+
+  const workbenchScrollMetrics = await browser.evaluate(`(() => {
+    const header = document.querySelector('[data-workbench-board-header]');
+    const scroller = document.querySelector('[data-workbench-board-scroller]');
+    if (!(header instanceof HTMLElement) || !(scroller instanceof HTMLElement)) return null;
+    scroller.scrollTop = Math.min(300, scroller.scrollHeight - scroller.clientHeight);
+    const rect = (node) => {
+      const value = node.getBoundingClientRect();
+      return { left:value.left,top:value.top,right:value.right,bottom:value.bottom,width:value.width,height:value.height };
+    };
+    return {
+      header: rect(header),
+      scroller: rect(scroller),
+      scrollTop: scroller.scrollTop,
+      scrollHeight: scroller.scrollHeight,
+      clientHeight: scroller.clientHeight,
+    };
+  })()`);
+  assert.notEqual(workbenchScrollMetrics, null);
+  assert.equal(workbenchScrollMetrics.scrollTop > 0, true, 'Workbench fixture must produce a scrolling board');
+  assert.equal(
+    Math.abs(workbenchScrollMetrics.header.bottom - workbenchScrollMetrics.scroller.top) <= 1,
+    true,
+    `Workbench header and scroller must be adjacent: ${JSON.stringify(workbenchScrollMetrics)}`,
+  );
+  await delay(750);
+  const workbenchHeaderHit = await browser.evaluate(`(() => {
+    const header = document.querySelector('[data-workbench-board-header]');
+    if (!(header instanceof HTMLElement)) return null;
+    const rect = header.getBoundingClientRect();
+    const hit = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
+    return {
+      headerOwnsPoint: Boolean(hit?.closest('[data-workbench-board-header]')),
+      tileOwnsPoint: Boolean(hit?.closest('[data-workbench-tile]')),
+    };
+  })()`);
+  assert.deepEqual(workbenchHeaderHit, { headerOwnsPoint: true, tileOwnsPoint: false });
+  await captureMacWindow({ pid: appProcess.pid, outputPath: workbenchScreenshotPath });
+
+  await browser.evaluate(`(() => {
+    const scroller = document.querySelector('[data-workbench-board-scroller]');
+    if (scroller instanceof HTMLElement) scroller.scrollTop = 0;
+  })()`);
+  await delay(250);
+  await browser.evaluate(`(() => {
+    const tile = Array.from(document.querySelectorAll('[data-workbench-tile]'))
+      .find((candidate) => candidate.querySelector('[data-ocix-artifact-source="third-party-extension"]'));
+    tile?.querySelector('[data-workbench-tile-controls] button')?.click();
+  })()`);
+  await waitFor(
+    browser,
+    `document.querySelector('[data-workbench-tile][aria-modal="true"]') !== null`,
+    'focused Workbench tile',
+  );
+  await waitFor(
+    browser,
+    `document.querySelector('[data-workbench-tile][aria-modal="true"] [data-ocix-artifact-state="ready"]') !== null`,
+    'focused Workbench Artifact ready',
+  );
+  const focusReply = await browser.send('Runtime.evaluate', {
+    expression: `window.__OPENCHAMBER_DESKTOP__.invoke('desktop_focus_main_window')`,
+    awaitPromise: true,
+    returnByValue: true,
+  });
+  assert.equal(Boolean(focusReply.result?.exceptionDetails), false);
+  const focusedControls = await browser.evaluate(`(() => {
+    const tile = document.querySelector('[data-workbench-tile][aria-modal="true"]');
+    const controls = tile?.querySelector('[data-workbench-tile-controls]');
+    if (!(tile instanceof HTMLElement) || !(controls instanceof HTMLElement)) return null;
+    const buttons = Array.from(controls.querySelectorAll('button'));
+    return {
+      tileAppRegion: getComputedStyle(tile).getPropertyValue('-webkit-app-region'),
+      controlsAppRegion: getComputedStyle(controls).getPropertyValue('-webkit-app-region'),
+      points: buttons.map((button) => {
+        const rect = button.getBoundingClientRect();
+        return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+      }),
+    };
+  })()`);
+  assert.notEqual(focusedControls, null);
+  assert.equal(focusedControls.tileAppRegion, 'no-drag');
+  assert.equal(focusedControls.controlsAppRegion, 'no-drag');
+  assert.equal(focusedControls.points.length, 3);
+
+  const actualMouseHover = [];
+  for (let index = 0; index < focusedControls.points.length; index += 1) {
+    const point = focusedControls.points[index];
+    await postMacMouseEvent({ pid: appProcess.pid, x: point.x, y: point.y });
+    await delay(180);
+    actualMouseHover.push(await browser.evaluate(`(() => {
+      const controls = document.querySelector('[data-workbench-tile][aria-modal="true"] [data-workbench-tile-controls]');
+      const buttons = Array.from(controls?.querySelectorAll('button') ?? []);
+      const button = buttons[${index}];
+      if (!(button instanceof HTMLButtonElement)) return {
+        buttonCount: buttons.length,
+        labels: buttons.map((candidate) => candidate.getAttribute('aria-label') || ''),
+        missing: true,
+      };
+      const rect = button.getBoundingClientRect();
+      const hit = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
+      return {
+        label: button.getAttribute('aria-label') || '',
+        hovered: button.matches(':hover'),
+        centerHit: hit === button || Boolean(hit?.closest('button') === button),
+        hitLabel: hit?.closest('button')?.getAttribute('aria-label') || '',
+      };
+    })()`));
+  }
+  assert.equal(
+    actualMouseHover.every((entry) => entry?.hovered && entry.centerHit),
+    true,
+    `Focused Workbench controls lost actual macOS pointer hover: ${JSON.stringify(actualMouseHover)}`,
+  );
+  await browser.evaluate(`document.querySelector(
+    '[data-workbench-tile][aria-modal="true"] [data-workbench-tile-controls] button',
+  )?.click()`);
+  await waitFor(
+    browser,
+    `document.querySelector('[data-workbench-tile][aria-modal="true"]') === null`,
+    'actual macOS pointer exits Workbench focus',
+  );
+
   const report = {
     $schema: 'openchamber://artifact-runner-clipping-acceptance/v1',
     generatedAt: new Date().toISOString(),
@@ -494,12 +810,23 @@ try {
       fullscreenScreenshotPath,
       restoredInlineScreenshotPath,
     },
+    workbench: {
+      package: `${packageInspection.extension.id}@${packageInspection.extension.version}`,
+      tiles: tileDrafts.length,
+      headerScrollerBoundary: workbenchScrollMetrics,
+      headerHit: workbenchHeaderHit,
+      actualMouseHover,
+      actualMouseExitFocus: true,
+      screenshotPath: workbenchScreenshotPath,
+    },
     ok: inspection.magentaPixels === 0
       && inspection.greenRatio > 0.7
       && dialogInspection.cyanRatio > 0.7
       && dialogInspection.magentaRatio < 0.05
       && dialogRestoredInspection.magentaRatio > 0.7
-      && modeLifecycleOk,
+      && modeLifecycleOk
+      && workbenchHeaderHit.headerOwnsPoint
+      && actualMouseHover.every((entry) => entry?.hovered && entry.centerHit),
   };
   await fs.writeFile(reportPath, `${JSON.stringify(report, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
   console.log(JSON.stringify({ ...report, reportPath }, null, 2));

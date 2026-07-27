@@ -1,16 +1,20 @@
 import React from 'react';
 import {
   DndContext,
+  DragOverlay,
   KeyboardSensor,
   PointerSensor,
   TouchSensor,
   closestCenter,
+  pointerWithin,
   useDraggable,
+  useDroppable,
   useSensor,
   useSensors,
+  type CollisionDetection,
   type DragEndEvent,
+  type DragStartEvent,
 } from '@dnd-kit/core';
-import { CSS } from '@dnd-kit/utilities';
 
 import { Icon } from '@/components/icon/Icon';
 import { toast } from '@/components/ui';
@@ -37,6 +41,7 @@ import {
   compactWorkbenchLayouts,
   findNearestWorkbenchSlot,
   getWorkbenchGridHeight,
+  planWorkbenchTileSwap,
 } from '@/lib/interactive-ui/workbench-layout';
 import { cn } from '@/lib/utils';
 import { useExtensionWorkbenchStore } from '@/stores/useExtensionWorkbenchStore';
@@ -48,7 +53,10 @@ import {
   type HTMLArtifactViewHandle,
 } from '@/components/interactive-ui/HTMLArtifactView';
 import { INTERACTIVE_RESULT_SCHEMA } from '@/lib/interactive-ui/types';
-import { INSTALLED_HTML_ARTIFACT_RESULT_SCHEMA } from '@/lib/interactive-ui/installedArtifactResult';
+import {
+  INSTALLED_HTML_ARTIFACT_RESULT_SCHEMA,
+  type InstalledHTMLArtifactResultEnvelope,
+} from '@/lib/interactive-ui/installedArtifactResult';
 import {
   advanceWorkbenchEventTrace,
   createWorkbenchEventTrace,
@@ -65,6 +73,11 @@ import {
 
 const BOARD_GAP = 12;
 const BOARD_ROW_HEIGHT = 48;
+const BUILT_IN_INTERACTIVE_UI_EXTENSION_ID = 'com.openchamber.builtin.interactive-ui';
+const CATALOG_DEFAULT_WIDTH = 240;
+const CATALOG_MIN_WIDTH = 200;
+const CATALOG_MAX_WIDTH = 480;
+const CATALOG_WIDTH_STORAGE_KEY = 'openchamber.workbench.catalogWidth';
 const RELATIONSHIP_COLORS = [
   'var(--ocix-chart-1)',
   'var(--ocix-chart-2)',
@@ -72,6 +85,11 @@ const RELATIONSHIP_COLORS = [
   'var(--ocix-chart-4)',
   'var(--ocix-chart-5)',
 ];
+
+const workbenchCollisionDetection: CollisionDetection = (args) => {
+  if (args.pointerCoordinates) return pointerWithin(args);
+  return closestCenter(args);
+};
 
 const surfaceKey = (extensionId: string, surfaceId: string): string => (
   `${extensionId}:${surfaceId}`
@@ -94,6 +112,20 @@ const getActiveProjectId = (
 const getSurfaceLabel = (surface: WorkbenchSurfaceDescriptor): string => (
   surface.form === 'html-artifact' ? 'HTML Artifact' : 'Interactive UI'
 );
+
+const clampCatalogWidth = (width: number): number => (
+  Math.min(CATALOG_MAX_WIDTH, Math.max(CATALOG_MIN_WIDTH, Math.round(width)))
+);
+
+const getStoredCatalogWidth = (): number => {
+  if (typeof window === 'undefined') return CATALOG_DEFAULT_WIDTH;
+  try {
+    const stored = Number.parseInt(window.localStorage.getItem(CATALOG_WIDTH_STORAGE_KEY) ?? '', 10);
+    return Number.isFinite(stored) ? clampCatalogWidth(stored) : CATALOG_DEFAULT_WIDTH;
+  } catch {
+    return CATALOG_DEFAULT_WIDTH;
+  }
+};
 
 const isTileCompatibleWithSurface = (
   tile: WorkbenchTile,
@@ -133,100 +165,171 @@ const useSurfaceIndex = (
 
 interface WorkbenchCatalogProps {
   extensions: WorkbenchExtensionDescriptor[];
-  collapsed: boolean;
-  onToggleCollapsed: () => void;
   onLaunch: (extension: WorkbenchExtensionDescriptor, surface: WorkbenchSurfaceDescriptor) => void;
 }
 
 const WorkbenchCatalog: React.FC<WorkbenchCatalogProps> = ({
   extensions,
-  collapsed,
-  onToggleCollapsed,
   onLaunch,
 }) => {
   const { t } = useI18n();
+  const [width, setWidth] = React.useState(getStoredCatalogWidth);
+  const [isResizing, setIsResizing] = React.useState(false);
+  const resizeStartRef = React.useRef<{ x: number; width: number } | null>(null);
+  const widthRef = React.useRef(width);
+
+  React.useEffect(() => {
+    widthRef.current = width;
+  }, [width]);
+
+  const persistWidth = React.useCallback((nextWidth: number) => {
+    if (typeof window === 'undefined') return;
+    try {
+      window.localStorage.setItem(CATALOG_WIDTH_STORAGE_KEY, String(clampCatalogWidth(nextWidth)));
+    } catch {
+      // Persistence is optional in restricted browser storage contexts.
+    }
+  }, []);
+
+  const handleResizeStart = (event: React.PointerEvent<HTMLDivElement>) => {
+    try {
+      event.currentTarget.setPointerCapture(event.pointerId);
+    } catch {
+      // Pointer capture is best-effort across browser and Electron runtimes.
+    }
+    resizeStartRef.current = { x: event.clientX, width };
+    setIsResizing(true);
+    event.preventDefault();
+    event.stopPropagation();
+  };
+
+  const handleResizeMove = (event: React.PointerEvent<HTMLDivElement>) => {
+    const start = resizeStartRef.current;
+    if (!start) return;
+    const nextWidth = clampCatalogWidth(start.width + event.clientX - start.x);
+    widthRef.current = nextWidth;
+    setWidth(nextWidth);
+  };
+
+  const handleResizeEnd = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (!resizeStartRef.current) return;
+    resizeStartRef.current = null;
+    try {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    } catch {
+      // The platform may have already released the pointer.
+    }
+    setIsResizing(false);
+    persistWidth(widthRef.current);
+  };
+
+  const handleResizeKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+    event.preventDefault();
+    const nextWidth = clampCatalogWidth(widthRef.current + (event.key === 'ArrowRight' ? 16 : -16));
+    widthRef.current = nextWidth;
+    setWidth(nextWidth);
+    persistWidth(nextWidth);
+  };
+
+  const resetWidth = () => {
+    widthRef.current = CATALOG_DEFAULT_WIDTH;
+    setWidth(CATALOG_DEFAULT_WIDTH);
+    persistWidth(CATALOG_DEFAULT_WIDTH);
+  };
+
   return (
     <aside
       className={cn(
-        'relative min-h-0 shrink-0 border-r border-border/50 bg-[var(--surface-sidebar)] transition-[width] duration-200',
-        collapsed ? 'w-11' : 'w-[240px]',
+        'relative min-h-0 shrink-0 border-r border-border/50 bg-[var(--surface-sidebar)]',
+        !isResizing && 'transition-[width] duration-200',
       )}
+      style={{ width: `${width}px` }}
       aria-label={t('workbench.catalog.aria')}
     >
       <div className="flex h-11 items-center justify-between border-b border-border/50 px-2">
-        {!collapsed && (
-          <span className="truncate typography-ui-label font-semibold">
-            {t('workbench.catalog.title')}
-          </span>
-        )}
-        <Button
-          size="icon"
-          variant="ghost"
-          className="size-7"
-          onClick={onToggleCollapsed}
-          aria-label={collapsed ? t('workbench.catalog.expand') : t('workbench.catalog.collapse')}
-        >
-          <Icon name={collapsed ? 'arrow-right-s' : 'arrow-left-s'} className="size-4" />
-        </Button>
+        <span className="truncate typography-ui-label font-semibold">
+          {t('workbench.catalog.title')}
+        </span>
       </div>
-      {!collapsed && (
-        <div className="h-[calc(100%-2.75rem)] overflow-y-auto p-2">
-          {extensions.length === 0 ? (
-            <p className="px-2 py-5 typography-ui-caption text-muted-foreground">
-              {t('workbench.catalog.empty')}
-            </p>
-          ) : extensions.map((extension) => (
-            <section key={extension.id} className="mb-4">
-              <div className="flex items-center gap-2 px-2 py-1.5">
-                <div
-                  className="flex size-7 shrink-0 items-center justify-center rounded-lg border border-border/60 bg-[var(--surface-elevated)] typography-micro font-semibold"
-                  aria-hidden
-                >
-                  {extension.shortName.slice(0, 2).toUpperCase()}
-                </div>
-                <div className="min-w-0">
-                  <h3 className="truncate typography-ui-label font-semibold">{extension.shortName}</h3>
-                  <p className="truncate typography-micro text-muted-foreground">{extension.name}</p>
-                </div>
+      <div className="h-[calc(100%-2.75rem)] overflow-y-auto p-2">
+        {extensions.length === 0 ? (
+          <p className="px-2 py-5 typography-ui-caption text-muted-foreground">
+            {t('workbench.catalog.empty')}
+          </p>
+        ) : extensions.map((extension) => (
+          <section key={extension.id} className="mb-4">
+            <div className="flex items-center gap-2 px-2 py-1.5">
+              <div
+                className="flex size-7 shrink-0 items-center justify-center rounded-lg border border-border/60 bg-[var(--surface-elevated)] typography-micro font-semibold"
+                aria-hidden
+              >
+                {extension.shortName.slice(0, 2).toUpperCase()}
               </div>
-              <div className="space-y-1">
-                {extension.surfaces.map((surface) => {
-                  const disabled = !surface.manualLaunch.enabled;
-                  const reason = surface.manualLaunch.reason
-                    || (disabled ? t('workbench.catalog.requiresContext') : undefined);
-                  return (
-                    <button
-                      key={surface.surfaceId}
-                      type="button"
-                      disabled={disabled}
-                      title={reason}
-                      aria-describedby={disabled ? `${surface.surfaceId}-reason` : undefined}
-                      onClick={() => onLaunch(extension, surface)}
-                      className={cn(
-                        'group w-full rounded-lg px-2 py-2 text-left transition-colors',
-                        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60',
-                        disabled
-                          ? 'cursor-not-allowed opacity-50'
-                          : 'hover:bg-interactive-hover active:bg-interactive-active',
+              <div className="min-w-0">
+                <h3 className="truncate typography-ui-label font-semibold">{extension.shortName}</h3>
+                <p className="truncate typography-micro text-muted-foreground">{extension.name}</p>
+              </div>
+            </div>
+            <div className="space-y-1">
+              {extension.surfaces.map((surface) => {
+                const disabled = !surface.manualLaunch.enabled;
+                const reason = surface.manualLaunch.reason
+                  || (disabled ? t('workbench.catalog.requiresContext') : undefined);
+                return (
+                  <button
+                    key={surface.surfaceId}
+                    type="button"
+                    disabled={disabled}
+                    title={reason}
+                    aria-describedby={disabled ? `${surface.surfaceId}-reason` : undefined}
+                    onClick={() => onLaunch(extension, surface)}
+                    className={cn(
+                      'group w-full rounded-lg px-2 py-2 text-left transition-colors',
+                      'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60',
+                      disabled
+                        ? 'cursor-not-allowed opacity-50'
+                        : 'hover:bg-interactive-hover active:bg-interactive-active',
+                    )}
+                  >
+                    <span className="block truncate typography-ui-caption font-medium">{surface.title}</span>
+                    <span className="mt-0.5 flex items-center gap-1.5 typography-micro text-muted-foreground">
+                      <span>{getSurfaceLabel(surface)}</span>
+                      {disabled && (
+                        <span id={`${surface.surfaceId}-reason`} className="truncate">
+                          · {reason}
+                        </span>
                       )}
-                    >
-                      <span className="block truncate typography-ui-caption font-medium">{surface.title}</span>
-                      <span className="mt-0.5 flex items-center gap-1.5 typography-micro text-muted-foreground">
-                        <span>{getSurfaceLabel(surface)}</span>
-                        {disabled && (
-                          <span id={`${surface.surfaceId}-reason`} className="truncate">
-                            · {reason}
-                          </span>
-                        )}
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
-            </section>
-          ))}
-        </div>
-      )}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </section>
+        ))}
+      </div>
+      <div
+        className={cn(
+          'absolute -right-1 top-0 z-50 h-full w-2 cursor-col-resize touch-none',
+          'after:absolute after:inset-y-0 after:left-1/2 after:w-px after:-translate-x-1/2',
+          'after:bg-transparent after:transition-colors hover:after:bg-[var(--interactive-border)]',
+          'focus-visible:outline-none focus-visible:after:bg-[var(--interactive-border)]',
+          isResizing && 'after:bg-[var(--interactive-border)]',
+        )}
+        onPointerDown={handleResizeStart}
+        onPointerMove={handleResizeMove}
+        onPointerUp={handleResizeEnd}
+        onPointerCancel={handleResizeEnd}
+        onDoubleClick={resetWidth}
+        onKeyDown={handleResizeKeyDown}
+        role="separator"
+        aria-orientation="vertical"
+        aria-label={t('workbench.catalog.aria')}
+        aria-valuemin={CATALOG_MIN_WIDTH}
+        aria-valuemax={CATALOG_MAX_WIDTH}
+        aria-valuenow={width}
+        tabIndex={0}
+      />
     </aside>
   );
 };
@@ -294,6 +397,7 @@ const GeneratedWorkbenchSurface: React.FC<{
           </pre>
         )}
         toolPartId={tile.tileId}
+        presentation="workbench"
       />
     );
   }
@@ -320,6 +424,25 @@ interface WorkbenchTileCardProps {
   onMigrate: () => void;
 }
 
+const WorkbenchDragPreview: React.FC<{
+  title: string;
+  subtitle: string;
+}> = ({ title, subtitle }) => (
+  <div
+    data-workbench-drag-overlay
+    className={cn(
+      'pointer-events-none flex h-14 w-[min(360px,72vw)] items-center gap-3 overflow-hidden rounded-xl',
+      'border border-border bg-[var(--surface-elevated)] px-3 shadow-2xl',
+    )}
+  >
+    <Icon name="draggable" className="size-4 shrink-0 text-muted-foreground" />
+    <div className="min-w-0">
+      <div className="truncate typography-ui-caption font-semibold">{title}</div>
+      <div className="truncate typography-micro text-muted-foreground">{subtitle}</div>
+    </div>
+  </div>
+);
+
 const WorkbenchTileCard: React.FC<WorkbenchTileCardProps> = ({
   projectId,
   tile,
@@ -339,10 +462,13 @@ const WorkbenchTileCard: React.FC<WorkbenchTileCardProps> = ({
   const {
     attributes,
     listeners,
-    setNodeRef,
-    transform,
+    setNodeRef: setDraggableNodeRef,
     isDragging,
   } = useDraggable({ id: tile.tileId, disabled: focused });
+  const {
+    setNodeRef: setDroppableNodeRef,
+    isOver,
+  } = useDroppable({ id: tile.tileId, disabled: focused });
   const cardRef = React.useRef<HTMLElement | null>(null);
   const focusButtonRef = React.useRef<HTMLButtonElement | null>(null);
   const wasFocusedRef = React.useRef(false);
@@ -417,8 +543,9 @@ const WorkbenchTileCard: React.FC<WorkbenchTileCardProps> = ({
 
   const setCardNode = React.useCallback((node: HTMLElement | null) => {
     cardRef.current = node;
-    setNodeRef(node);
-  }, [setNodeRef]);
+    setDraggableNodeRef(node);
+    setDroppableNodeRef(node);
+  }, [setDraggableNodeRef, setDroppableNodeRef]);
 
   const trapFocusedTab = (event: React.KeyboardEvent<HTMLElement>) => {
     if (!focused || event.key !== 'Tab' || !cardRef.current) return;
@@ -486,6 +613,21 @@ const WorkbenchTileCard: React.FC<WorkbenchTileCardProps> = ({
 
   const title = surface?.title
     || (tile.source.kind === 'agent-generated' ? t('workbench.tile.generated') : tile.source.surfaceId);
+  const workbenchContext = React.useMemo(() => ({
+    projectId,
+    tileId: tile.tileId,
+  }), [projectId, tile.tileId]);
+  const installedArtifactEnvelope = React.useMemo<InstalledHTMLArtifactResultEnvelope | null>(() => {
+    if (tile.source.kind !== 'third-party-extension' || tile.form !== 'html-artifact') return null;
+    return {
+      $schema: INSTALLED_HTML_ARTIFACT_RESULT_SCHEMA,
+      schemaVersion: 1,
+      artifact: tile.source.surfaceId,
+      mode: 'live',
+      summary: surface?.description ?? undefined,
+      context: tile.context,
+    };
+  }, [surface?.description, tile.context, tile.form, tile.source]);
 
   const groupColor = relationshipColor(tile.relationship?.groupId);
   const popoutDeclared = surface?.dashboard?.popout.supported === true;
@@ -547,6 +689,8 @@ const WorkbenchTileCard: React.FC<WorkbenchTileCardProps> = ({
     <article
       ref={setCardNode}
       data-workbench-tile={tile.tileId}
+      data-workbench-dragging={isDragging || undefined}
+      data-workbench-drop-target={(isOver && !isDragging) || undefined}
       role={focused ? 'dialog' : undefined}
       aria-modal={focused || undefined}
       tabIndex={focused ? -1 : undefined}
@@ -554,85 +698,106 @@ const WorkbenchTileCard: React.FC<WorkbenchTileCardProps> = ({
       className={cn(
         'group relative min-h-0 overflow-hidden rounded-xl border border-border/70 bg-[var(--surface-elevated)]',
         'shadow-[0_1px_0_color-mix(in_srgb,var(--border)_45%,transparent)]',
-        isDragging && 'z-30 opacity-80 shadow-xl',
-        focused && 'fixed inset-6 z-[2147483001] shadow-2xl',
+        isDragging && 'ring-2 ring-ring/55',
+        isOver && !isDragging && 'ring-2 ring-ring shadow-lg',
+        focused && [
+          'app-region-no-drag fixed inset-x-6 bottom-6 top-[var(--oc-header-height,3rem)]',
+          'z-[2147483001] shadow-2xl',
+        ],
       )}
       style={{
         gridColumn: focused ? undefined : `${previewLayout.column + 1} / span ${previewLayout.columns}`,
         gridRow: focused ? undefined : `${previewLayout.row + 1} / span ${previewLayout.rows}`,
-        transform: focused ? undefined : CSS.Translate.toString(transform),
         ...(groupColor ? { borderColor: groupColor } : {}),
       }}
     >
       <header
-        {...(focused ? {} : attributes)}
-        {...(focused ? {} : listeners)}
         className={cn(
-          'flex h-10 touch-none select-none items-center gap-2 border-b border-border/50 px-2.5',
+          'flex h-10 select-none items-center gap-2 border-b border-border/50 px-2.5',
           'bg-[var(--surface-secondary)]',
-          !focused && 'cursor-grab active:cursor-grabbing',
         )}
       >
-        <Icon name="draggable" className="size-4 shrink-0 text-muted-foreground" />
-        <div className="min-w-0 flex-1">
-          <h3 className="flex min-w-0 items-center gap-1.5 truncate typography-ui-caption font-semibold">
-            {groupColor && (
-              <span
-                className="size-2 shrink-0 rounded-full"
-                style={{ backgroundColor: groupColor }}
-                aria-hidden
-              />
-            )}
-            <span className="truncate">{title}</span>
-          </h3>
-        </div>
-        <span className="hidden truncate typography-micro text-muted-foreground @xl:block">
-          {surface ? getSurfaceLabel(surface) : tile.form}
-        </span>
-        <Button
-          ref={focusButtonRef}
-          size="icon"
-          variant="ghost"
-          className="size-7"
-          disabled={poppedOut && !focused}
-          onPointerDown={(event) => event.stopPropagation()}
-          onClick={focused ? onExitFocus : onFocus}
-          aria-label={focused ? t('workbench.tile.exitFocus') : t('workbench.tile.focus')}
+        <div
+          {...(focused ? {} : attributes)}
+          {...(focused ? {} : listeners)}
+          className={cn(
+            'flex min-w-0 flex-1 touch-none items-center gap-2 self-stretch',
+            !focused && 'cursor-grab active:cursor-grabbing',
+          )}
         >
-          <Icon name={focused ? 'fullscreen-exit' : 'fullscreen'} className="size-4" />
-        </Button>
-        {surface?.dashboard && (popoutDeclared || surface.runtime === 'native') ? (
+          <Icon name="draggable" className="pointer-events-none size-4 shrink-0 text-muted-foreground" />
+          <div className="min-w-0 flex-1">
+            <h3 className="flex min-w-0 items-center gap-1.5 truncate typography-ui-caption font-semibold">
+              {groupColor && (
+                <span
+                  className="size-2 shrink-0 rounded-full"
+                  style={{ backgroundColor: groupColor }}
+                  aria-hidden
+                />
+              )}
+              <span className="truncate">{title}</span>
+            </h3>
+          </div>
+          <span className="hidden truncate typography-micro text-muted-foreground @xl:block">
+            {surface ? getSurfaceLabel(surface) : tile.form}
+          </span>
+        </div>
+        <div
+          className="app-region-no-drag -mr-1 isolate z-30 flex shrink-0 items-center gap-0.5"
+          data-workbench-tile-controls
+          onPointerDown={(event) => event.stopPropagation()}
+        >
           <Button
+            ref={focusButtonRef}
             size="icon"
             variant="ghost"
-            className="size-7"
-            disabled={!systemPopoutSupported}
-            title={!systemPopoutSupported ? t('workbench.tile.popoutUnavailable') : undefined}
+            className="relative z-20 size-9 shrink-0"
+            disabled={poppedOut && !focused}
             onPointerDown={(event) => event.stopPropagation()}
-            onClick={() => void handlePopoutToggle()}
-            aria-label={poppedOut ? t('workbench.tile.restorePopout') : t('workbench.tile.popout')}
+            onClick={focused ? onExitFocus : onFocus}
+            aria-label={focused ? t('workbench.tile.exitFocus') : t('workbench.tile.focus')}
           >
-            <Icon name={poppedOut ? 'window' : 'external-link'} className="size-4" />
+            <Icon
+              name={focused ? 'fullscreen-exit' : 'fullscreen'}
+              className="pointer-events-none size-4"
+            />
           </Button>
-        ) : null}
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
+          {surface?.dashboard && (popoutDeclared || surface.runtime === 'native') ? (
             <Button
               size="icon"
               variant="ghost"
-              className="size-7"
+              className="relative z-20 size-9 shrink-0"
+              disabled={!systemPopoutSupported}
+              title={!systemPopoutSupported ? t('workbench.tile.popoutUnavailable') : undefined}
               onPointerDown={(event) => event.stopPropagation()}
-              aria-label={t('workbench.tile.more')}
+              onClick={() => void handlePopoutToggle()}
+              aria-label={poppedOut ? t('workbench.tile.restorePopout') : t('workbench.tile.popout')}
             >
-              <Icon name="more-2" className="size-4" />
+              <Icon
+                name={poppedOut ? 'window' : 'external-link'}
+                className="pointer-events-none size-4"
+              />
             </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end">
-            <DropdownMenuItem onSelect={onRemove}>
-              {t('workbench.tile.remove')}
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
+          ) : null}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                size="icon"
+                variant="ghost"
+                className="relative z-20 size-9 shrink-0"
+                onPointerDown={(event) => event.stopPropagation()}
+                aria-label={t('workbench.tile.more')}
+              >
+                <Icon name="more-2" className="pointer-events-none size-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem onSelect={onRemove}>
+                {t('workbench.tile.remove')}
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
       </header>
       <div className="h-[calc(100%-2.5rem)] min-h-0 overflow-auto overscroll-contain p-3">
         {poppedOut ? (
@@ -690,15 +855,8 @@ const WorkbenchTileCard: React.FC<WorkbenchTileCardProps> = ({
         ) : (
           <HTMLArtifactView
             ref={artifactViewRef}
-            envelope={{
-              $schema: INSTALLED_HTML_ARTIFACT_RESULT_SCHEMA,
-              schemaVersion: 1,
-              artifact: tile.source.surfaceId,
-              mode: 'live',
-              summary: surface.description ?? undefined,
-              context: tile.context,
-            }}
-            workbench={{ projectId, tileId: tile.tileId }}
+            envelope={installedArtifactEnvelope!}
+            workbench={workbenchContext}
             fallback={(
               <pre className="whitespace-pre-wrap typography-micro">
                 {JSON.stringify(tile.context, null, 2)}
@@ -706,6 +864,7 @@ const WorkbenchTileCard: React.FC<WorkbenchTileCardProps> = ({
             )}
             toolPartId={tile.tileId}
             layoutEpoch={`${focused ? 'focused' : 'tile'}:${previewLayout.columns}:${previewLayout.rows}`}
+            presentation="workbench"
             onDashboardEmit={onDashboardEmit}
             onPopoutChange={(nextPoppedOut) => {
               if (nextPoppedOut) {
@@ -755,10 +914,15 @@ export const ExtensionWorkbench: React.FC = () => {
   const load = useExtensionWorkbenchStore((state) => state.load);
   const pin = useExtensionWorkbenchStore((state) => state.pin);
   const updateTile = useExtensionWorkbenchStore((state) => state.updateTile);
+  const updateTileLayouts = useExtensionWorkbenchStore((state) => state.updateTileLayouts);
   const migrateTile = useExtensionWorkbenchStore((state) => state.migrateTile);
   const removeTile = useExtensionWorkbenchStore((state) => state.removeTile);
   const [catalogCollapsed, setCatalogCollapsed] = React.useState(false);
   const [focusedTileId, setFocusedTileId] = React.useState<string | null>(null);
+  const [activeDragTileId, setActiveDragTileId] = React.useState<string | null>(null);
+  const [layoutOverrides, setLayoutOverrides] = React.useState<Map<string, WorkbenchTileLayout>>(
+    () => new Map(),
+  );
   const boardRef = React.useRef<HTMLDivElement | null>(null);
   const recentEventsRef = React.useRef(new Map<string, number>());
   const eventTraceByTileRef = React.useRef(new Map<string, WorkbenchEventTrace>());
@@ -779,10 +943,22 @@ export const ExtensionWorkbench: React.FC = () => {
   }, [isRightSidebarOpen]);
 
   const extensions = React.useMemo(() => catalog?.extensions ?? [], [catalog?.extensions]);
+  const applicationExtensions = React.useMemo(
+    () => extensions.filter((extension) => extension.id !== BUILT_IN_INTERACTIVE_UI_EXTENSION_ID),
+    [extensions],
+  );
   const surfaceIndex = useSurfaceIndex(extensions);
   const board = getActiveWorkbenchBoard(snapshot);
   const tiles = React.useMemo(() => board?.tiles ?? [], [board?.tiles]);
-  const layoutByTile = React.useMemo(() => compactWorkbenchLayouts(tiles), [tiles]);
+  const compactedLayoutByTile = React.useMemo(() => compactWorkbenchLayouts(tiles), [tiles]);
+  const layoutByTile = React.useMemo(() => {
+    if (layoutOverrides.size === 0) return compactedLayoutByTile;
+    const result = new Map(compactedLayoutByTile);
+    for (const [tileId, layout] of layoutOverrides) {
+      if (result.has(tileId)) result.set(tileId, layout);
+    }
+    return result;
+  }, [compactedLayoutByTile, layoutOverrides]);
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
     useSensor(TouchSensor, { activationConstraint: { delay: 220, tolerance: 8 } }),
@@ -813,29 +989,66 @@ export const ExtensionWorkbench: React.FC = () => {
     setFocusedTileId(result.created ? null : result.tile.tileId);
   }, [layoutByTile, pin, projectId]);
 
-  const handleDragEnd = React.useCallback((event: DragEndEvent) => {
+  const handleDragStart = React.useCallback((event: DragStartEvent) => {
+    setActiveDragTileId(String(event.active.id));
+  }, []);
+
+  const handleDragCancel = React.useCallback(() => {
+    setActiveDragTileId(null);
+  }, []);
+
+  const handleDragEnd = React.useCallback(async (event: DragEndEvent) => {
+    setActiveDragTileId(null);
     if (!projectId || !event.active || !boardRef.current) return;
     const tile = tiles.find((entry) => entry.tileId === event.active.id);
     if (!tile) return;
     const current = layoutByTile.get(tile.tileId) || tile.layout;
-    const width = boardRef.current.clientWidth;
-    const columnWidth = (width - (WORKBENCH_GRID_COLUMNS - 1) * BOARD_GAP) / WORKBENCH_GRID_COLUMNS;
-    const target = clampWorkbenchLayout({
-      ...current,
-      column: current.column + Math.round(event.delta.x / (columnWidth + BOARD_GAP)),
-      row: current.row + Math.round(event.delta.y / (BOARD_ROW_HEIGHT + BOARD_GAP)),
-    });
-    const next = findNearestWorkbenchSlot(
-      target,
-      tiles
-        .filter((entry) => entry.tileId !== tile.tileId)
-        .map((entry) => layoutByTile.get(entry.tileId) || entry.layout),
-      target,
-    );
-    if (JSON.stringify(next) !== JSON.stringify(tile.layout)) {
-      void updateTile(projectId, tile.tileId, { layout: next });
+    const targetTile = event.over && event.over.id !== event.active.id
+      ? tiles.find((entry) => entry.tileId === event.over?.id)
+      : null;
+    let updates: Array<{ tileId: string; layout: WorkbenchTileLayout }>;
+    if (targetTile) {
+      const targetCurrent = layoutByTile.get(targetTile.tileId) || targetTile.layout;
+      const occupied = tiles
+        .filter((entry) => entry.tileId !== tile.tileId && entry.tileId !== targetTile.tileId)
+        .map((entry) => layoutByTile.get(entry.tileId) || entry.layout);
+      const swapped = planWorkbenchTileSwap(current, targetCurrent, occupied);
+      updates = [
+        { tileId: tile.tileId, layout: swapped.active },
+        { tileId: targetTile.tileId, layout: swapped.target },
+      ];
+    } else {
+      const width = boardRef.current.clientWidth;
+      const columnWidth = (width - (WORKBENCH_GRID_COLUMNS - 1) * BOARD_GAP) / WORKBENCH_GRID_COLUMNS;
+      const target = clampWorkbenchLayout({
+        ...current,
+        column: current.column + Math.round(event.delta.x / (columnWidth + BOARD_GAP)),
+        row: current.row + Math.round(event.delta.y / (BOARD_ROW_HEIGHT + BOARD_GAP)),
+      });
+      const next = findNearestWorkbenchSlot(
+        target,
+        tiles
+          .filter((entry) => entry.tileId !== tile.tileId)
+          .map((entry) => layoutByTile.get(entry.tileId) || entry.layout),
+        target,
+      );
+      updates = [{ tileId: tile.tileId, layout: next }];
     }
-  }, [layoutByTile, projectId, tiles, updateTile]);
+
+    const hasChange = updates.some(({ tileId, layout }) => {
+      const persisted = tiles.find((entry) => entry.tileId === tileId)?.layout;
+      return persisted && JSON.stringify(layout) !== JSON.stringify(persisted);
+    });
+    if (!hasChange) return;
+    setLayoutOverrides(new Map(updates.map((entry) => [entry.tileId, entry.layout])));
+    try {
+      await updateTileLayouts(projectId, updates);
+    } catch (nextError) {
+      toast.error(nextError instanceof Error ? nextError.message : 'Workbench tile layout could not be saved');
+    } finally {
+      setLayoutOverrides(new Map());
+    }
+  }, [layoutByTile, projectId, tiles, updateTileLayouts]);
 
   const handleResize = React.useCallback((tile: WorkbenchTile, layout: WorkbenchTileLayout) => {
     if (!projectId || JSON.stringify(layout) === JSON.stringify(tile.layout)) return;
@@ -968,6 +1181,22 @@ export const ExtensionWorkbench: React.FC = () => {
   }, [extensions, layoutByTile, pin, projectId, tiles, updateTile]);
 
   const gridHeight = getWorkbenchGridHeight(layoutByTile.values(), BOARD_ROW_HEIGHT, BOARD_GAP);
+  const activeDragTile = activeDragTileId
+    ? tiles.find((tile) => tile.tileId === activeDragTileId) ?? null
+    : null;
+  const activeDragSurface = activeDragTile?.source.kind === 'third-party-extension'
+    ? surfaceIndex.get(surfaceKey(activeDragTile.source.extensionId, activeDragTile.source.surfaceId)) ?? null
+    : null;
+  const activeDragTitle = activeDragSurface?.title
+    || (activeDragTile?.source.kind === 'agent-generated'
+      ? t('workbench.tile.generated')
+      : activeDragTile?.source.surfaceId)
+    || '';
+  const activeDragSubtitle = activeDragSurface
+    ? getSurfaceLabel(activeDragSurface)
+    : activeDragTile?.form === 'html-artifact'
+      ? 'HTML Artifact'
+      : 'Interactive UI';
 
   React.useEffect(() => {
     if (!focusedTileId) return;
@@ -999,19 +1228,33 @@ export const ExtensionWorkbench: React.FC = () => {
 
   return (
     <div className="ocix-scope flex h-full min-h-0 overflow-hidden bg-background">
-      <WorkbenchCatalog
-        extensions={extensions}
-        collapsed={catalogCollapsed}
-        onToggleCollapsed={() => setCatalogCollapsed((value) => !value)}
-        onLaunch={(extension, surface) => void handleLaunch(extension, surface)}
-      />
-      <main className="min-w-0 flex-1 overflow-auto">
-        <div className="sticky top-0 z-20 flex h-11 items-center justify-between border-b border-border/50 bg-background/95 px-3 backdrop-blur">
-          <div className="min-w-0">
-            <h2 className="truncate typography-ui-label font-semibold">{t('workbench.board.title')}</h2>
-            <p className="truncate typography-micro text-muted-foreground">
-              {t('workbench.board.subtitle', { count: tiles.length })}
-            </p>
+      {!catalogCollapsed && (
+        <WorkbenchCatalog
+          extensions={applicationExtensions}
+          onLaunch={(extension, surface) => void handleLaunch(extension, surface)}
+        />
+      )}
+      <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+        <div
+          className="relative z-20 flex h-11 shrink-0 items-center justify-between border-b border-border/50 bg-background/95 px-3 backdrop-blur"
+          data-workbench-board-header
+        >
+          <div className="flex min-w-0 items-center gap-2">
+            <Button
+              size="icon"
+              variant="ghost"
+              className="size-7 shrink-0"
+              onClick={() => setCatalogCollapsed((value) => !value)}
+              aria-label={catalogCollapsed ? t('workbench.catalog.expand') : t('workbench.catalog.collapse')}
+            >
+              <Icon name={catalogCollapsed ? 'arrow-right-s' : 'arrow-left-s'} className="size-4" />
+            </Button>
+            <div className="min-w-0">
+              <h2 className="truncate typography-ui-label font-semibold">{t('workbench.board.title')}</h2>
+              <p className="truncate typography-micro text-muted-foreground">
+                {t('workbench.board.subtitle', { count: tiles.length })}
+              </p>
+            </div>
           </div>
           <Button
             size="sm"
@@ -1024,90 +1267,102 @@ export const ExtensionWorkbench: React.FC = () => {
           </Button>
         </div>
 
-        {error && (
-          <div className="m-3 rounded-lg border border-[var(--status-error)]/30 bg-[var(--status-error)]/5 p-3 typography-ui-caption text-[var(--status-error)]">
-            {error}
-          </div>
-        )}
-
-        {loadState === 'loading' && !snapshot ? (
-          <div className="p-6 typography-ui-caption text-muted-foreground">{t('workbench.loading')}</div>
-        ) : tiles.length === 0 ? (
-          <div className="flex min-h-[280px] items-center justify-center p-8 text-center">
-            <div className="max-w-sm">
-              <Icon name="apps-2-ai" className="mx-auto size-8 text-muted-foreground" />
-              <h3 className="mt-3 typography-ui-label font-semibold">{t('workbench.board.emptyTitle')}</h3>
-              <p className="mt-1 typography-ui-caption text-muted-foreground">
-                {t('workbench.board.emptyDescription')}
-              </p>
+        <div className="min-h-0 flex-1 overflow-auto" data-workbench-board-scroller>
+          {error && (
+            <div className="m-3 rounded-lg border border-[var(--status-error)]/30 bg-[var(--status-error)]/5 p-3 typography-ui-caption text-[var(--status-error)]">
+              {error}
             </div>
-          </div>
-        ) : (
-          <>
-            {focusedTileId && (
-              <button
-                type="button"
-                className="fixed inset-0 z-[2147483000] cursor-default bg-black/65"
-                onClick={() => setFocusedTileId(null)}
-                aria-label={t('workbench.tile.exitFocus')}
-              />
-            )}
-            <DndContext
-              sensors={sensors}
-              collisionDetection={closestCenter}
-              onDragEnd={handleDragEnd}
-            >
-              <div
-                ref={boardRef}
-                className="grid grid-cols-12 gap-3 p-3"
-                style={{
-                  gridAutoRows: `${BOARD_ROW_HEIGHT}px`,
-                  minHeight: `${gridHeight + 24}px`,
-                }}
-              >
-                {tiles.map((tile) => {
-                  const surface = tile.source.kind === 'third-party-extension'
-                    ? surfaceIndex.get(surfaceKey(tile.source.extensionId, tile.source.surfaceId)) || null
-                    : null;
-                  const surfaceCompatible = tile.source.kind === 'agent-generated'
-                    || (surface !== null && isTileCompatibleWithSurface(tile, surface));
-                  const layout = layoutByTile.get(tile.tileId) || tile.layout;
-                  return (
-                    <WorkbenchTileCard
-                      key={tile.tileId}
-                      projectId={projectId}
-                      tile={tile}
-                      surface={surface}
-                      surfaceCompatible={surfaceCompatible}
-                      layout={layout}
-                      onResize={(next) => handleResize(tile, next)}
-                      onRemove={() => void removeTile(projectId, tile.tileId)}
-                      onFocus={() => setFocusedTileId(tile.tileId)}
-                      focused={focusedTileId === tile.tileId}
-                      onExitFocus={() => setFocusedTileId(null)}
-                      onDashboardEmit={(eventId, payload) => handleDashboardEmit(tile, eventId, payload)}
-                      onDisplayModeChange={(displayMode) => {
-                        if (tile.displayMode !== displayMode) {
-                          void updateTile(projectId, tile.tileId, { displayMode });
-                        }
-                      }}
-                      onMigrate={() => {
-                        void migrateTile(projectId, tile.tileId)
-                          .catch((nextError) => {
-                            toast.error(
-                              nextError instanceof Error
-                                ? nextError.message
-                                : t('workbench.tile.surfaceUnavailable'),
-                            );
-                          });
-                      }}
-                    />
-                  );
-                })}
+          )}
+
+          {loadState === 'loading' && !snapshot ? (
+            <div className="p-6 typography-ui-caption text-muted-foreground">{t('workbench.loading')}</div>
+          ) : tiles.length === 0 ? (
+            <div className="flex min-h-[280px] items-center justify-center p-8 text-center">
+              <div className="max-w-sm">
+                <Icon name="apps-2-ai" className="mx-auto size-8 text-muted-foreground" />
+                <h3 className="mt-3 typography-ui-label font-semibold">{t('workbench.board.emptyTitle')}</h3>
+                <p className="mt-1 typography-ui-caption text-muted-foreground">
+                  {t('workbench.board.emptyDescription')}
+                </p>
               </div>
-            </DndContext>
-          </>
-        )}
+            </div>
+          ) : (
+            <>
+              {focusedTileId && (
+                <button
+                  type="button"
+                  className="app-region-no-drag fixed inset-0 z-[2147483000] cursor-default bg-black/65"
+                  onClick={() => setFocusedTileId(null)}
+                  aria-label={t('workbench.tile.exitFocus')}
+                />
+              )}
+              <DndContext
+                sensors={sensors}
+                collisionDetection={workbenchCollisionDetection}
+                onDragStart={handleDragStart}
+                onDragCancel={handleDragCancel}
+                onDragEnd={(event) => void handleDragEnd(event)}
+              >
+                <div
+                  ref={boardRef}
+                  className="grid grid-cols-12 gap-3 p-3"
+                  style={{
+                    gridAutoRows: `${BOARD_ROW_HEIGHT}px`,
+                    minHeight: `${gridHeight + 24}px`,
+                  }}
+                >
+                  {tiles.map((tile) => {
+                    const surface = tile.source.kind === 'third-party-extension'
+                      ? surfaceIndex.get(surfaceKey(tile.source.extensionId, tile.source.surfaceId)) || null
+                      : null;
+                    const surfaceCompatible = tile.source.kind === 'agent-generated'
+                      || (surface !== null && isTileCompatibleWithSurface(tile, surface));
+                    const layout = layoutByTile.get(tile.tileId) || tile.layout;
+                    return (
+                      <WorkbenchTileCard
+                        key={tile.tileId}
+                        projectId={projectId}
+                        tile={tile}
+                        surface={surface}
+                        surfaceCompatible={surfaceCompatible}
+                        layout={layout}
+                        onResize={(next) => handleResize(tile, next)}
+                        onRemove={() => void removeTile(projectId, tile.tileId)}
+                        onFocus={() => setFocusedTileId(tile.tileId)}
+                        focused={focusedTileId === tile.tileId}
+                        onExitFocus={() => setFocusedTileId(null)}
+                        onDashboardEmit={(eventId, payload) => handleDashboardEmit(tile, eventId, payload)}
+                        onDisplayModeChange={(displayMode) => {
+                          if (tile.displayMode !== displayMode) {
+                            void updateTile(projectId, tile.tileId, { displayMode });
+                          }
+                        }}
+                        onMigrate={() => {
+                          void migrateTile(projectId, tile.tileId)
+                            .catch((nextError) => {
+                              toast.error(
+                                nextError instanceof Error
+                                  ? nextError.message
+                                  : t('workbench.tile.surfaceUnavailable'),
+                              );
+                            });
+                        }}
+                      />
+                    );
+                  })}
+                </div>
+                <DragOverlay dropAnimation={null} zIndex={2147482990}>
+                  {activeDragTile && (
+                    <WorkbenchDragPreview
+                      title={activeDragTitle}
+                      subtitle={activeDragSubtitle}
+                    />
+                  )}
+                </DragOverlay>
+              </DndContext>
+            </>
+          )}
+        </div>
       </main>
     </div>
   );

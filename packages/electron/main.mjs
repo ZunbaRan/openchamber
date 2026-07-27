@@ -2490,6 +2490,15 @@ const createBrowserWindow = ({ label, restoreGeometry, url, runtimeConfig = {} }
     event.preventDefault();
     void shell.openExternal(url).catch(() => {});
   });
+  // Renderer cleanup cannot reliably finish an asynchronous IPC stop once a
+  // full navigation has started. Reclaim every native Artifact View owned by
+  // this window in the main process so a stale WebContentsView can never float
+  // above the next route, settings dialog, or Workbench board.
+  browserWindow.webContents.on('did-start-navigation', (_event, _url, isInPlace, isMainFrame) => {
+    if (isMainFrame && !isInPlace) {
+      artifactRunnerManager.stopForOwner(browserWindow, 'owner-navigated');
+    }
+  });
 
   browserWindow.webContents.setZoomFactor(1);
   browserWindow.webContents.on('zoom-changed', () => {

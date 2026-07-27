@@ -124,6 +124,42 @@ test('starts a sandboxed runner with denied permissions and destroys it on stop'
   assert.equal(harness.owner.contentView.children.length, 0);
 });
 
+test('stops every native runner owned by a window when that owner navigates', async () => {
+  const harness = createHarness();
+  const otherOwner = {
+    ...harness.owner,
+    contentView: {
+      children: [],
+      addChildView(view) { this.children.push(view); },
+      removeChildView(view) { this.children = this.children.filter((entry) => entry !== view); },
+    },
+  };
+  const first = await harness.manager.start(harness.owner, {
+    url: `http://127.0.0.1:47832/api/interactive-ui/artifacts/${'1'.repeat(64)}/document`,
+    bounds: { x: 0, y: 0, width: 640, height: 360 },
+  });
+  const second = await harness.manager.start(harness.owner, {
+    url: `http://127.0.0.1:47832/api/interactive-ui/artifacts/${'2'.repeat(64)}/document`,
+    bounds: { x: 0, y: 0, width: 640, height: 360 },
+  });
+  const unrelated = await harness.manager.start(otherOwner, {
+    url: `http://127.0.0.1:47832/api/interactive-ui/artifacts/${'3'.repeat(64)}/document`,
+    bounds: { x: 0, y: 0, width: 640, height: 360 },
+  });
+
+  harness.manager.stopForOwner(harness.owner, 'owner-navigated');
+
+  assert.equal(harness.manager.get(first.id), null);
+  assert.equal(harness.manager.get(second.id), null);
+  assert.notEqual(harness.manager.get(unrelated.id), null);
+  assert.equal(harness.owner.contentView.children.length, 0);
+  assert.equal(otherOwner.contentView.children.length, 1);
+  assert.deepEqual(
+    harness.emitted.slice(-2).map((event) => event.reason),
+    ['owner-navigated', 'owner-navigated'],
+  );
+});
+
 test('clips the native view and offsets the full-size broker iframe without reflowing its document', async () => {
   const harness = createHarness();
   const url = `http://127.0.0.1:47832/api/interactive-ui/artifacts/${'d'.repeat(64)}/document`;

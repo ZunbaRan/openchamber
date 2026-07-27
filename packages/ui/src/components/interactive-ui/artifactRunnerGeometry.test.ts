@@ -49,11 +49,19 @@ describe('resolveArtifactRunnerVisibility', () => {
       documentVisible: true,
       baseDialogOpen: true,
       blockingNativeDialogOpen: false,
+      blockingNativeSurfaceOccluder: false,
     })).toBe(false);
     expect(resolveArtifactRunnerVisibility({
       documentVisible: true,
       baseDialogOpen: false,
       blockingNativeDialogOpen: true,
+      blockingNativeSurfaceOccluder: false,
+    })).toBe(false);
+    expect(resolveArtifactRunnerVisibility({
+      documentVisible: true,
+      baseDialogOpen: false,
+      blockingNativeDialogOpen: false,
+      blockingNativeSurfaceOccluder: true,
     })).toBe(false);
   });
 
@@ -62,6 +70,7 @@ describe('resolveArtifactRunnerVisibility', () => {
       documentVisible: true,
       baseDialogOpen: false,
       blockingNativeDialogOpen: false,
+      blockingNativeSurfaceOccluder: false,
     })).toBe(true);
   });
 });

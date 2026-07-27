@@ -420,6 +420,44 @@ export const createInteractiveUIWorkbenchStore = ({
     return { snapshot, tile: next };
   });
 
+  const updateTileLayouts = async (
+    projectId,
+    expectedRevision,
+    layoutUpdates,
+  ) => withLock(projectId, async (normalizedProjectId) => {
+    if (!Array.isArray(layoutUpdates) || layoutUpdates.length < 1 || layoutUpdates.length > MAX_TILES) {
+      fail('layout updates must contain between 1 and the maximum number of tiles');
+    }
+    const document = await read(normalizedProjectId);
+    const board = activeBoard(document);
+    assertRevision(board, expectedRevision);
+    const updates = new Map();
+    for (const entry of layoutUpdates) {
+      if (!isRecord(entry)) fail('layout update must be an object');
+      const tileId = boundedString(entry.tileId, 'tileId', { max: 128, pattern: TILE_ID_PATTERN });
+      if (updates.has(tileId)) fail('layout updates cannot contain duplicate tile IDs');
+      updates.set(tileId, normalizeLayout(entry.layout));
+    }
+    const missing = Array.from(updates.keys()).filter(
+      (tileId) => !board.tiles.some((tile) => tile.tileId === tileId),
+    );
+    if (missing.length > 0) {
+      fail('Workbench tile was not found', 'workbench_tile_not_found', 404);
+    }
+    const updatedAt = new Date(dependencies.now()).toISOString();
+    const tiles = [];
+    board.tiles = board.tiles.map((tile) => {
+      const layout = updates.get(tile.tileId);
+      if (!layout) return tile;
+      const next = { ...tile, layout, updatedAt };
+      tiles.push(next);
+      return next;
+    });
+    board.revision += 1;
+    const snapshot = await write(normalizedProjectId, document);
+    return { snapshot, tiles };
+  });
+
   const migrateTile = async (
     projectId,
     tileIdValue,
@@ -674,6 +712,7 @@ export const createInteractiveUIWorkbenchStore = ({
     writeSnapshot,
     upsertTile,
     updateTile,
+    updateTileLayouts,
     migrateTile,
     removeTile,
     getExtensionTileImpact,

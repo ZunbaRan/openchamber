@@ -50,6 +50,7 @@ const asRunnerEvent = (value: unknown): RunnerEvent | null => {
 };
 
 const CLIPPING_OVERFLOW = new Set(['auto', 'clip', 'hidden', 'scroll']);
+const NATIVE_SURFACE_OCCLUDER_SELECTOR = '[data-oc-native-surface-occluder="true"]';
 
 const asRect = (rect: Pick<DOMRect, 'left' | 'top' | 'right' | 'bottom'>): ArtifactRunnerRect => ({
   left: rect.left,
@@ -103,6 +104,10 @@ const isElementAllowedVisible = (element: HTMLElement): boolean => {
   const ownDialog = element.closest('dialog');
   const blockingNativeDialogOpen = Array.from(document.querySelectorAll<HTMLDialogElement>('dialog[open][aria-modal="true"]'))
     .some((dialog) => dialog !== ownDialog);
+  const ownNativeSurfaceOccluder = element.closest(NATIVE_SURFACE_OCCLUDER_SELECTOR);
+  const blockingNativeSurfaceOccluder = Array.from(
+    document.querySelectorAll<HTMLElement>(NATIVE_SURFACE_OCCLUDER_SELECTOR),
+  ).some((occluder) => occluder !== ownNativeSurfaceOccluder && !occluder.contains(element));
   const focusedWorkbenchTile = document.querySelector<HTMLElement>(
     '[data-workbench-tile][aria-modal="true"]',
   );
@@ -113,6 +118,7 @@ const isElementAllowedVisible = (element: HTMLElement): boolean => {
     documentVisible: document.visibilityState === 'visible',
     baseDialogOpen: document.documentElement.classList.contains('oc-dialog-open'),
     blockingNativeDialogOpen: blockingNativeDialogOpen || obscuredByFocusedWorkbenchTile,
+    blockingNativeSurfaceOccluder,
   });
 };
 
@@ -161,7 +167,9 @@ export const ArtifactExecutionSurface = React.forwardRef<ArtifactExecutionSurfac
       bounds: geometry.bounds,
       clipBounds: geometry.clipBounds,
       visible,
-    }).catch(() => undefined);
+    }).catch(() => {
+      if (lastNativeUpdateRef.current === updateKey) lastNativeUpdateRef.current = '';
+    });
   }, []);
 
   React.useImperativeHandle(ref, () => ({
@@ -272,6 +280,10 @@ export const ArtifactExecutionSurface = React.forwardRef<ArtifactExecutionSurfac
         postNativeUpdate();
       });
     };
+    const scheduleSettledLayout = () => {
+      lastNativeUpdateRef.current = '';
+      schedule();
+    };
     const observer = new ResizeObserver(schedule);
     observer.observe(elementRef.current);
     const clippingAncestors = collectClippingAncestors(elementRef.current);
@@ -282,7 +294,7 @@ export const ArtifactExecutionSurface = React.forwardRef<ArtifactExecutionSurfac
       attributes: true,
       childList: true,
       subtree: true,
-      attributeFilter: ['open', 'aria-modal'],
+      attributeFilter: ['open', 'aria-modal', 'data-oc-native-surface-occluder'],
     });
     const layoutObserver = new MutationObserver(schedule);
     const scrollContainer = clippingAncestors.at(0);
@@ -295,7 +307,9 @@ export const ArtifactExecutionSurface = React.forwardRef<ArtifactExecutionSurfac
     window.addEventListener('blur', schedule);
     document.addEventListener('visibilitychange', schedule);
     schedule();
+    const settleTimer = window.setTimeout(scheduleSettledLayout, 180);
     return () => {
+      window.clearTimeout(settleTimer);
       cancelAnimationFrame(frame);
       observer.disconnect();
       modalObserver.disconnect();

@@ -294,6 +294,21 @@ export const patchWorkbenchTile = (
   )
 );
 
+export const patchWorkbenchTileLayouts = (
+  projectId: string,
+  expectedRevision: number,
+  layouts: Array<{ tileId: string; layout: WorkbenchTileLayout }>,
+): Promise<{ snapshot: WorkbenchSnapshot; tiles: WorkbenchTile[] }> => (
+  requestJSON(
+    `/api/interactive-ui/workbench/boards/${encodeURIComponent(projectId)}/layouts`,
+    {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ expectedRevision, layouts }),
+    },
+  )
+);
+
 export const migrateWorkbenchTile = (
   projectId: string,
   tileId: string,

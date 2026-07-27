@@ -221,9 +221,25 @@ OpenChamber 安装器统一协调所有已启用扩展的 Tool/Skill，并在 Op
 
 **根因**：Base UI 的 Dialog 通过 `div` Portal 渲染，不是原生 `<dialog open aria-modal="true">`。`WebContentsView` 又不属于 DOM stacking context，所以同时存在两个错误假设：提高 Portal 的 z-index 可以盖住原生 View，以及只查询 `dialog[open]` 就能发现全部模态层。
 
-**修正原则**：共享 Dialog Host 在第一个 Base UI 遮罩挂载时给 `documentElement` 设置 `oc-dialog-open`，最后一个关闭时清除；Artifact Host 同时观察这个权威信号和原生 `<dialog>`，只把 Runner 设为不可见，不 stop/restart。关闭弹窗后重新计算几何并恢复同一个 Runner。
+**修正原则**：共享 Dialog Host 在第一个 Base UI 遮罩挂载时给 `documentElement` 设置 `oc-dialog-open`，最后一个关闭时清除；没有经过共享 Dialog Host 的全局窗口（例如独立的 `SettingsWindow`）必须在覆盖层上声明 `data-oc-native-surface-occluder="true"`。Artifact Host 同时观察这两个权威信号和原生 `<dialog>`，只把 Runner 设为不可见，不 stop/restart。关闭弹窗后重新计算几何并恢复同一个 Runner。
 
-**验收要求**：打包态测试必须使用系统级窗口截图，在 Runner 区域放置不透明 Portal 遮罩并验证遮罩像素不被 Artifact 覆盖；移除遮罩后再次截图，证明原 Runner 像素恢复。识别色必须放在 Artifact 的内部内容层，不能放在 `html/body` 背景上，因为安全基线会强制根页面透明；否则像素断言会把已经恢复的 Runner 误判为缺失。只断言 DOM 中的遮罩存在或 z-index 更高不算通过。
+**验收要求**：打包态测试必须使用系统级窗口截图，在 Runner 区域放置不透明 Portal 遮罩并验证遮罩像素不被 Artifact 覆盖；还必须在真实应用看板上打开 Settings，确认所有磁贴 Runner 都被隐藏。移除遮罩或关闭 Settings 后再次截图，证明原 Runner 像素恢复。识别色必须放在 Artifact 的内部内容层，不能放在 `html/body` 背景上，因为安全基线会强制根页面透明；否则像素断言会把已经恢复的 Runner 误判为缺失。只断言 DOM 中的遮罩存在或 z-index 更高不算通过。
+
+### 2.21 Workbench 放大不能重新 materialize Artifact
+
+**症状**：HTML Artifact 磁贴同时出现外层 Tile 和内层 Artifact 两套放大按钮；点击外层放大时偶发只剩空白执行区，刷新页面后恢复。磁贴标题区启用了拖拽后，鼠标位于操作图标边缘可以点击，移动到图标中心却丢失 hover 或被拖拽层抢走事件。
+
+**根因**：
+
+- 对话流的独立 Artifact Host 和 Workbench Tile 都在渲染自己的标题与显示模式控件；
+- Workbench render 中内联创建 `envelope={{...}}`、`workbench={{...}}`，焦点状态每次变化都会产生新的对象身份；`HTMLArtifactView` 的 materialization effect 因此把布局变化误判为新 Artifact，清空 `ready` 并重启加载；
+- 把 DnD listeners/attributes 放在整个 Header 上，会让操作按钮和 SVG 命中区域参与拖拽激活。
+- macOS 聚焦磁贴使用靠近窗口顶部的 `fixed` 布局后，按钮中心会落入 Electron 主标题栏的 `-webkit-app-region: drag` 范围；DOM 看似在最上层也不能覆盖原生拖窗命中区；
+- 把 App board 标题做成同一个滚动容器内的 `sticky` 层，只能制造视觉遮挡。原生 `WebContentsView` 不参与 CSS stacking context，仍会穿过 sticky 标题；磁贴 DOM 控件也可能因更高的 z-index 穿过标题。
+
+**修正原则**：Workbench 使用专门的嵌入 presentation，由 Tile 独占标题、聚焦、Popout 和删除控件，内层 Artifact 只渲染内容。对相同磁贴 memoize installed Envelope 和 Workbench context；焦点/尺寸只通过 `layoutEpoch` 重发 viewport 与同步 Runner geometry，不得重新 materialize。拖拽句柄只覆盖标题区域，操作区独立于拖拽层并阻止 `pointerdown` 冒泡；按钮保持完整的 36×36 命中盒，内部 Icon 使用 `pointer-events: none`。聚焦磁贴、遮罩和操作区必须显式使用 `app-region-no-drag`。App board 标题必须是滚动区之外的 `shrink-0` 兄弟节点，磁贴放入独立的 `min-h-0 flex-1 overflow-auto` 区域，让 DOM 与原生 Runner 共用同一条真实裁剪边界，不依赖 z-index 遮住 Runner。
+
+**验收要求**：选取真实 Scripts HTML Artifact 磁贴，至少连续执行十轮 `tile → focus → tile`。每次在切换后立即断言 `data-ocix-artifact-state="ready"`、execution surface 可见、内层 `data-ocix-artifact-action` 数量为 0；用真实系统鼠标移动到聚焦、Popout 和更多按钮中心，确认 `:hover` 与点击均保持，不得只调用 DOM `.click()`。滚动看板使 Artifact 穿过 App board 标题时，必须用系统窗口截图确认标题区域没有 Runner 像素或磁贴控件。Managed Desktop 还要验证同一 Runner 在 settling geometry update 后仍可见。
 
 ## 3. 推荐的开发闭环
 

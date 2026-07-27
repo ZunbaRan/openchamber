@@ -112,6 +112,39 @@ describe('Extension Workbench store', () => {
     expect(incompatible.snapshot.boards[0].tiles).toHaveLength(2);
   });
 
+  it('updates multiple tile layouts atomically with one board revision', async () => {
+    const { store } = await createStore();
+    const first = await store.upsertTile('project-a', 0, installedTile());
+    const second = await store.upsertTile('project-a', 1, installedTile({
+      source: {
+        kind: 'third-party-extension',
+        extensionId: 'com.acme.crm',
+        surfaceId: 'com.acme.crm.pipeline',
+        compatibleVersion: '^2.0.0',
+      },
+      contextDigest: 'sha256-context-pipeline',
+      layout: { column: 6, row: 0, columns: 6, rows: 4 },
+    }));
+
+    const swapped = await store.updateTileLayouts('project-a', 2, [
+      {
+        tileId: first.tile.tileId,
+        layout: { column: 6, row: 0, columns: 6, rows: 4 },
+      },
+      {
+        tileId: second.tile.tileId,
+        layout: { column: 0, row: 0, columns: 6, rows: 4 },
+      },
+    ]);
+
+    expect(swapped.snapshot.boards[0].revision).toBe(3);
+    expect(swapped.tiles).toHaveLength(2);
+    expect(swapped.snapshot.boards[0].tiles.map((tile) => tile.layout)).toEqual([
+      { column: 6, row: 0, columns: 6, rows: 4 },
+      { column: 0, row: 0, columns: 6, rows: 4 },
+    ]);
+  });
+
   it('round-trips across a new store instance and isolates projects', async () => {
     const { dataDirectory, store } = await createStore();
     await store.upsertTile('project-a', 0, installedTile());

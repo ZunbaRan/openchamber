@@ -8,6 +8,7 @@ import {
   getActiveWorkbenchBoard,
   migrateWorkbenchTile as requestWorkbenchTileMigration,
   patchWorkbenchTile,
+  patchWorkbenchTileLayouts,
   WorkbenchRequestError,
   type WorkbenchCatalog,
   type WorkbenchDisplayMode,
@@ -39,6 +40,10 @@ interface ExtensionWorkbenchStore {
       relationship?: WorkbenchTileRelationship | null;
     },
   ) => Promise<WorkbenchTile>;
+  updateTileLayouts: (
+    projectId: string,
+    layouts: Array<{ tileId: string; layout: WorkbenchTileLayout }>,
+  ) => Promise<WorkbenchTile[]>;
   migrateTile: (projectId: string, tileId: string) => Promise<WorkbenchTile>;
   removeTile: (projectId: string, tileId: string) => Promise<void>;
   resetForRuntimeSwitch: () => void;
@@ -177,6 +182,35 @@ export const useExtensionWorkbenchStore = create<ExtensionWorkbenchStore>((set, 
       set({
         mutationPending: false,
         error: error instanceof Error ? error.message : 'Workbench tile could not be updated',
+      });
+      if (error instanceof WorkbenchRequestError && error.code === 'workbench_revision_conflict') {
+        await get().load(normalizedProjectId, { force: true });
+      }
+      throw error;
+    }
+  }),
+
+  updateTileLayouts: async (projectId, layouts) => serializeMutation(async () => {
+    const normalizedProjectId = projectId.trim();
+    const snapshot = get().projectId === normalizedProjectId ? get().snapshot : null;
+    if (!snapshot) throw new Error('Extension Workbench is not loaded for this project');
+    const currentRuntime = runtimeIdentity();
+    set({ mutationPending: true, error: null });
+    try {
+      const result = await patchWorkbenchTileLayouts(
+        normalizedProjectId,
+        activeRevision(snapshot),
+        layouts,
+      );
+      mutationRevision += 1;
+      if (currentRuntime === runtimeIdentity() && get().projectId === normalizedProjectId) {
+        set({ snapshot: result.snapshot, loadState: 'ready', mutationPending: false });
+      }
+      return result.tiles;
+    } catch (error) {
+      set({
+        mutationPending: false,
+        error: error instanceof Error ? error.message : 'Workbench tile layouts could not be updated',
       });
       if (error instanceof WorkbenchRequestError && error.code === 'workbench_revision_conflict') {
         await get().load(normalizedProjectId, { force: true });

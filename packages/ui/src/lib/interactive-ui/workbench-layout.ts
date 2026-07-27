@@ -121,6 +121,42 @@ export const compactWorkbenchLayouts = (
   return result;
 };
 
+export const planWorkbenchTileSwap = (
+  active: WorkbenchTileLayout,
+  target: WorkbenchTileLayout,
+  occupied: WorkbenchTileLayout[],
+): { active: WorkbenchTileLayout; target: WorkbenchTileLayout } => {
+  const normalizedActive = clampWorkbenchLayout(active);
+  const normalizedTarget = clampWorkbenchLayout(target);
+  if (normalizedActive.columns === normalizedTarget.columns
+    && normalizedActive.rows === normalizedTarget.rows) {
+    return {
+      active: {
+        ...normalizedActive,
+        column: normalizedTarget.column,
+        row: normalizedTarget.row,
+      },
+      target: {
+        ...normalizedTarget,
+        column: normalizedActive.column,
+        row: normalizedActive.row,
+      },
+    };
+  }
+
+  const nextActive = findNearestWorkbenchSlot(
+    normalizedActive,
+    occupied,
+    { column: normalizedTarget.column, row: normalizedTarget.row },
+  );
+  const nextTarget = findNearestWorkbenchSlot(
+    normalizedTarget,
+    [...occupied, nextActive],
+    { column: normalizedActive.column, row: normalizedActive.row },
+  );
+  return { active: nextActive, target: nextTarget };
+};
+
 export const getWorkbenchGridHeight = (
   layouts: Iterable<WorkbenchTileLayout>,
   rowHeight: number,

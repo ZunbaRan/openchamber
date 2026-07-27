@@ -53,6 +53,7 @@ interface HTMLArtifactViewProps {
   onDashboardEmit?: (eventId: string, payload: Record<string, unknown>) => Promise<void>;
   onPopoutChange?: (poppedOut: boolean) => void;
   layoutEpoch?: string | number;
+  presentation?: 'standalone' | 'workbench';
 }
 
 export interface HTMLArtifactViewHandle {
@@ -145,6 +146,7 @@ export const HTMLArtifactView = React.forwardRef<HTMLArtifactViewHandle, HTMLArt
   onDashboardEmit,
   onPopoutChange,
   layoutEpoch,
+  presentation = 'standalone',
 }, forwardedRef) => {
   const { t, locale } = useI18n();
   const runtime = React.useContext(RuntimeAPIContext);
@@ -161,12 +163,15 @@ export const HTMLArtifactView = React.forwardRef<HTMLArtifactViewHandle, HTMLArt
   const [bridgeRateLimiter] = React.useState(createHTMLArtifactBridgeRateLimiter);
   const businessRequestsRef = React.useRef(new Set<string>());
   const installed = envelope.$schema === INSTALLED_HTML_ARTIFACT_RESULT_SCHEMA;
+  const embeddedInWorkbench = presentation === 'workbench';
   const generatedEnvelope = installed ? null : envelope;
   const [materialization, setMaterialization] = React.useState<ResolvedHTMLArtifact | null>(null);
   const [failure, setFailure] = React.useState<HTMLArtifactFailureState | null>(null);
   const [ready, setReady] = React.useState(false);
   const [attempt, setAttempt] = React.useState(0);
-  const [mode, setMode] = React.useState<HTMLArtifactDisplayMode>(installed ? 'inline' : envelope.display.preferred);
+  const [mode, setMode] = React.useState<HTMLArtifactDisplayMode>(
+    embeddedInWorkbench || installed ? 'inline' : envelope.display.preferred,
+  );
   const [height, setHeight] = React.useState(installed ? 420 : envelope.display.inlineHeight);
   const [poppedOut, setPoppedOut] = React.useState(false);
   const handlePopoutChange = React.useCallback((nextPoppedOut: boolean) => {
@@ -199,6 +204,7 @@ export const HTMLArtifactView = React.forwardRef<HTMLArtifactViewHandle, HTMLArt
     setFailure(null);
     setReady(false);
     setPoppedOut(false);
+    setMode(embeddedInWorkbench || installed ? 'inline' : envelope.display.preferred);
     lastSequenceRef.current = 0;
     lastHeartbeatRef.current = Date.now();
     executionLeaseRef.current = {
@@ -261,6 +267,7 @@ export const HTMLArtifactView = React.forwardRef<HTMLArtifactViewHandle, HTMLArt
     attempt,
     bridgeRateLimiter,
     envelope,
+    embeddedInWorkbench,
     installed,
     mobileSurface,
     runtime?.runtime.isVSCode,
@@ -329,10 +336,13 @@ export const HTMLArtifactView = React.forwardRef<HTMLArtifactViewHandle, HTMLArt
       }
       if (message.type === 'artifact.resize') {
         if (!bridgeRateLimiter.allowResize(now)) return;
-        setHeight(Math.max(120, Math.min(900, message.payload.height)));
+        if (!embeddedInWorkbench) {
+          setHeight(Math.max(120, Math.min(900, message.payload.height)));
+        }
         return;
       }
       if (message.type === 'artifact.requestExpand' && materialization.allowExpand) {
+        if (embeddedInWorkbench) return;
         if (!metadata.userActivated && !hasRecentUserActivation()) return;
         if (!materialization.displayModes.includes(message.payload.mode)) return;
         setMode(message.payload.mode);
@@ -419,6 +429,7 @@ export const HTMLArtifactView = React.forwardRef<HTMLArtifactViewHandle, HTMLArt
   }, [
     bridgeRateLimiter,
     channelId,
+    embeddedInWorkbench,
     installed,
     materialization,
     onDashboardEmit,
@@ -471,11 +482,13 @@ export const HTMLArtifactView = React.forwardRef<HTMLArtifactViewHandle, HTMLArt
   }, [failure, materialization?.scripts, sessionId, toolPartId]);
 
   React.useEffect(() => {
-    if (materialization?.scripts && ready) sendHostInit();
-  }, [materialization?.scripts, mode, ready, sendHostInit]);
+    if (!materialization?.scripts || !ready) return;
+    const frame = window.requestAnimationFrame(sendHostInit);
+    return () => window.cancelAnimationFrame(frame);
+  }, [layoutEpoch, materialization?.scripts, mode, ready, sendHostInit]);
 
-  const expanded = mode !== 'inline';
-  const frameHeight = expanded ? '100%' : `${height}px`;
+  const expanded = !embeddedInWorkbench && mode !== 'inline';
+  const frameHeight = embeddedInWorkbench || expanded ? '100%' : `${height}px`;
   const state = failure ?? (ready ? 'ready' : materialization ? 'loading' : 'materializing');
 
   React.useLayoutEffect(() => {
@@ -496,6 +509,7 @@ export const HTMLArtifactView = React.forwardRef<HTMLArtifactViewHandle, HTMLArt
       aria-modal={expanded || undefined}
       data-ocix-artifact-host
       data-ocix-artifact-mode={mode}
+      data-ocix-artifact-presentation={presentation}
       data-ocix-artifact-state={state}
       data-ocix-artifact-scripts={String(materialization?.scripts ?? generatedEnvelope?.capabilities.scripts ?? true)}
       data-ocix-artifact-source={installed ? 'third-party-extension' : 'agent-generated'}
@@ -505,10 +519,12 @@ export const HTMLArtifactView = React.forwardRef<HTMLArtifactViewHandle, HTMLArt
       }}
       className={cn(
         'ocix-artifact-dialog ocix-scope tool-output-surface relative m-0 min-w-0 w-full max-w-none overflow-hidden rounded-xl border border-[var(--ocix-border)] bg-[var(--ocix-surface)] p-0 text-inherit',
+        embeddedInWorkbench && 'h-full rounded-none border-0',
         mode === 'workspace' && 'fixed left-[5vw] top-[8vh] flex h-[84vh] max-h-none w-[90vw] flex-col shadow-2xl',
         mode === 'fullscreen' && 'fixed inset-0 flex h-[100dvh] max-h-none w-screen flex-col rounded-none',
       )}
     >
+      {!embeddedInWorkbench ? (
       <div className="flex min-h-12 items-start justify-between gap-3 border-b border-[var(--ocix-border)] px-3 py-2.5">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
@@ -589,8 +605,13 @@ export const HTMLArtifactView = React.forwardRef<HTMLArtifactViewHandle, HTMLArt
           </div>
         ) : null}
       </div>
+      ) : null}
 
-      <div className={cn('relative min-h-[120px] bg-transparent', expanded && 'min-h-0 flex-1')}>
+      <div className={cn(
+        'relative min-h-[120px] bg-transparent',
+        expanded && 'min-h-0 flex-1',
+        embeddedInWorkbench && 'h-full min-h-0',
+      )}>
         {!materialization && !failure ? (
           <div className="space-y-3 p-4" aria-label={t('common.loading')} aria-busy="true">
             <Skeleton className="h-5 w-2/5" />

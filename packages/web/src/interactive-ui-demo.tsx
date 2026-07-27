@@ -6,7 +6,9 @@ import { ThemeSystemProvider } from '@openchamber/ui/contexts/ThemeSystemContext
 import { ThemeProvider } from '@openchamber/ui/components/providers/ThemeProvider';
 import { InteractiveUIView } from '@openchamber/ui/components/interactive-ui/InteractiveUIView';
 import { HTMLArtifactView } from '@openchamber/ui/components/interactive-ui/HTMLArtifactView';
+import { ExtensionWorkbench } from '@openchamber/ui/components/interactive-ui/workbench/ExtensionWorkbench';
 import { I18nProvider, initializeLocale, useI18nStore } from '@openchamber/ui/lib/i18n';
+import { useProjectsStore } from '@openchamber/ui/stores/useProjectsStore';
 import type { RuntimeAPIs } from '@openchamber/ui/lib/api/types';
 import type { HTMLArtifactResultEnvelope } from '@openchamber/ui/lib/interactive-ui/artifactResult';
 import type { InstalledHTMLArtifactResultEnvelope } from '@openchamber/ui/lib/interactive-ui/installedArtifactResult';
@@ -41,6 +43,7 @@ const runtime = requestedRuntime === 'generated'
   || requestedRuntime === 'artifact-installed'
   || requestedRuntime === 'artifact-blocked'
   || requestedRuntime === 'artifact-crashed'
+  || requestedRuntime === 'workbench'
   ? requestedRuntime
   : 'native';
 const theme = params.get('theme') === 'dark' ? 'dark' : 'light';
@@ -54,7 +57,20 @@ const isInteractiveArtifact = runtime === 'artifact-interactive';
 const isInstalledArtifact = runtime === 'artifact-installed';
 const isBlockedArtifact = runtime === 'artifact-blocked';
 const isCrashedArtifact = runtime === 'artifact-crashed';
+const isWorkbench = runtime === 'workbench';
+const workbenchDragRegionTest = params.get('dragRegionTest') === 'true';
 const isArtifact = isStaticArtifact || isInteractiveArtifact || isInstalledArtifact || isBlockedArtifact || isCrashedArtifact;
+const workbenchProjectId = params.get('project') || 'interactive-ui-demo-workbench';
+if (isWorkbench) {
+  useProjectsStore.setState({
+    projects: [{
+      id: workbenchProjectId,
+      path: `/tmp/${workbenchProjectId}`,
+      label: 'Interactive UI Workbench fixture',
+    }],
+    activeProjectId: workbenchProjectId,
+  });
+}
 const fixedUpdatedAt = '2026-07-21T09:30:00.000Z';
 const installedEnvelope: InteractiveResultEnvelope = {
   $schema: 'openchamber://interactive-result/v1',
@@ -206,8 +222,50 @@ const ClipTestDemo = () => (
   </main>
 );
 
+// Keep the deterministic fixture project selected even when the desktop
+// settings bootstrap synchronizes the persisted project list after mount.
+// eslint-disable-next-line react-refresh/only-export-components
+const WorkbenchFixture = () => {
+  const activeProjectId = useProjectsStore((state) => state.activeProjectId);
+  const fixtureProjectPresent = useProjectsStore((state) => (
+    state.projects.some((project) => project.id === workbenchProjectId)
+  ));
+
+  React.useLayoutEffect(() => {
+    if (activeProjectId === workbenchProjectId && fixtureProjectPresent) return;
+    useProjectsStore.setState({
+      projects: [{
+        id: workbenchProjectId,
+        path: `/tmp/${workbenchProjectId}`,
+        label: 'Interactive UI Workbench fixture',
+      }],
+      activeProjectId: workbenchProjectId,
+    });
+  }, [activeProjectId, fixtureProjectPresent]);
+
+  return (
+    <>
+      {workbenchDragRegionTest && (
+        <div
+          className="app-region-drag pointer-events-none fixed inset-x-0 top-0 h-12"
+          data-workbench-drag-region-fixture
+          aria-hidden
+        />
+      )}
+      <ExtensionWorkbench />
+    </>
+  );
+};
+
 // eslint-disable-next-line react-refresh/only-export-components
 const Demo = () => (
+  isWorkbench
+    ? (
+      <main className={`${theme === 'dark' ? 'dark ' : ''}h-screen min-h-0 bg-background text-foreground`}>
+        <WorkbenchFixture />
+      </main>
+    )
+    :
   artifactClipTest ? <ClipTestDemo /> :
   <main className={`${theme === 'dark' ? 'dark ' : ''}min-h-screen bg-background p-4 text-foreground sm:p-8`} data-visual-theme={theme}>
     <div className="mx-auto w-full max-w-5xl rounded-2xl border border-border bg-[var(--surface-muted)] p-3 shadow-sm sm:p-5">

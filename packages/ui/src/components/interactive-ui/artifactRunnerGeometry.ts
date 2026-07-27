@@ -21,6 +21,7 @@ export interface ArtifactRunnerVisibilityInput {
   documentVisible: boolean;
   baseDialogOpen: boolean;
   blockingNativeDialogOpen: boolean;
+  blockingNativeSurfaceOccluder: boolean;
 }
 
 const finite = (value: number, fallback = 0): number => Number.isFinite(value) ? value : fallback;
@@ -29,8 +30,12 @@ export const resolveArtifactRunnerVisibility = ({
   documentVisible,
   baseDialogOpen,
   blockingNativeDialogOpen,
+  blockingNativeSurfaceOccluder,
 }: ArtifactRunnerVisibilityInput): boolean => (
-  documentVisible && !baseDialogOpen && !blockingNativeDialogOpen
+  documentVisible
+  && !baseDialogOpen
+  && !blockingNativeDialogOpen
+  && !blockingNativeSurfaceOccluder
 );
 
 export const resolveArtifactRunnerGeometry = (

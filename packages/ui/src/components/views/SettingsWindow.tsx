@@ -43,7 +43,10 @@ export const SettingsWindow: React.FC<SettingsWindowProps> = ({ open, onOpenChan
             'data-[starting-style]:opacity-0 data-[ending-style]:opacity-0',
           )}
         />
-        <div className="fixed inset-0 z-50 flex items-center justify-center pointer-events-none">
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center pointer-events-none"
+          data-oc-native-surface-occluder={open ? 'true' : undefined}
+        >
           <Dialog.Popup
             aria-describedby={descriptionId}
             className={cn(
