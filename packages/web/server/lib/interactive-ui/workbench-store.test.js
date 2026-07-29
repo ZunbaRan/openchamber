@@ -315,6 +315,37 @@ describe('Extension Workbench store', () => {
     expect(await fs.readdir(snapshotDirectory)).toEqual([`${first.snapshotRef}.json`]);
   });
 
+  it('stores MCP App snapshots with their protocol source identity', async () => {
+    const { store } = await createStore();
+    const envelope = {
+      $schema: 'openchamber://mcp-app-result/v1',
+      schemaVersion: 1,
+      source: 'mcp-app',
+      title: 'Sales dashboard',
+      binding: {
+        server: 'sales',
+        tool: 'open_dashboard',
+        toolKey: 'sales_open_dashboard',
+        resourceUri: 'ui://sales/dashboard',
+        meta: { resourceUri: 'ui://sales/dashboard', visibility: ['model', 'app'] },
+      },
+      arguments: { region: 'apac' },
+      result: {
+        content: [{ type: 'text', text: 'ready' }],
+        structuredContent: { total: 42 },
+      },
+    };
+
+    const snapshot = await store.writeSnapshot('mcp-app', envelope);
+    expect(await store.readSnapshot(snapshot.snapshotRef)).toMatchObject({
+      form: 'mcp-app',
+      envelope: {
+        source: 'mcp-app',
+        binding: { server: 'sales', resourceUri: 'ui://sales/dashboard' },
+      },
+    });
+  });
+
   it('rejects malformed or mismatched generated snapshots', async () => {
     const { store } = await createStore();
     await expect(store.writeSnapshot('interactive-ui', {

@@ -16,6 +16,13 @@ on:
         required: false
         default: ""
 
+env:
+  GITHUB_PACKAGES_TOKEN: ${{ secrets.OPENCODE_PACKAGES_TOKEN || github.token }}
+
+permissions:
+  contents: read
+  packages: read
+
 jobs:
   build-macos-dmg-arm64-electron:
     name: Build Electron DMG (arm64, ${{ inputs.macos_version }})
@@ -40,7 +47,7 @@ jobs:
       - name: Get bundled OpenCode CLI version
         id: opencode_cli_version
         run: |
-          VERSION=$(node -p "require('./package.json').dependencies['@opencode-ai/sdk']")
+          VERSION=$(node -p "require('./packages/electron/opencode-cli.lock.json').version")
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Cache bundled OpenCode CLI artifact

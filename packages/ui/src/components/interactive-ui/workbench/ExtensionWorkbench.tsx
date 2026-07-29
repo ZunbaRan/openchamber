@@ -48,6 +48,7 @@ import { useExtensionWorkbenchStore } from '@/stores/useExtensionWorkbenchStore'
 import { useProjectsStore } from '@/stores/useProjectsStore';
 import { useUIStore } from '@/stores/useUIStore';
 import { InteractiveUIView } from '@/components/interactive-ui/InteractiveUIView';
+import { McpAppRenderer } from '@/components/interactive-ui/McpAppRenderer';
 import {
   HTMLArtifactView,
   type HTMLArtifactViewHandle,
@@ -339,6 +340,8 @@ const GeneratedWorkbenchSurface: React.FC<{
   tile: WorkbenchTile & { source: { kind: 'agent-generated'; snapshotRef: string } };
 }> = ({ projectId, tile }) => {
   const { t } = useI18n();
+  const projects = useProjectsStore((state) => state.projects);
+  const directory = projects.find((project) => project.id === projectId)?.path ?? '';
   const [snapshot, setSnapshot] = React.useState<WorkbenchGeneratedSnapshot | null>(null);
   const [error, setError] = React.useState<string | null>(null);
 
@@ -398,6 +401,30 @@ const GeneratedWorkbenchSurface: React.FC<{
         )}
         toolPartId={tile.tileId}
         presentation="workbench"
+      />
+    );
+  }
+  if (snapshot.form === 'mcp-app'
+    && snapshot.envelope.$schema === 'openchamber://mcp-app-result/v1') {
+    if (!directory || !tile.origin?.sessionId || !tile.origin?.messageId) {
+      return (
+        <div className="typography-ui-caption text-[var(--status-error)]">
+          {t('workbench.tile.generatedSnapshotUnavailable')}
+        </div>
+      );
+    }
+    return (
+      <McpAppRenderer
+        envelope={snapshot.envelope}
+        directory={directory}
+        sessionId={tile.origin.sessionId}
+        messageId={tile.origin.messageId}
+        className="min-h-full"
+        fallback={(
+          <pre className="whitespace-pre-wrap typography-micro">
+            {JSON.stringify(snapshot.envelope.result, null, 2)}
+          </pre>
+        )}
       />
     );
   }
@@ -1196,7 +1223,9 @@ export const ExtensionWorkbench: React.FC = () => {
     ? getSurfaceLabel(activeDragSurface)
     : activeDragTile?.form === 'html-artifact'
       ? 'HTML Artifact'
-      : 'Interactive UI';
+      : activeDragTile?.form === 'mcp-app'
+        ? 'MCP App'
+        : 'Interactive UI';
 
   React.useEffect(() => {
     if (!focusedTileId) return;

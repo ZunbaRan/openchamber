@@ -299,6 +299,7 @@ export const registerInteractiveUIRoutes = (app, {
       res.status(201).json(await manager.installPackage(decodePackage(req.body?.packageBase64), {
         source: { type: 'file' },
         confirmedPublisherFingerprint: req.body?.confirmedPublisherFingerprint,
+        confirmedHostedManifestHash: req.body?.confirmedHostedManifestHash,
       }));
     } catch (error) {
       sendError(res, error);
@@ -316,6 +317,17 @@ export const registerInteractiveUIRoutes = (app, {
   app.patch('/api/interactive-ui/manager/extensions/:extensionId', express.json({ limit: '16kb' }), async (req, res) => {
     try {
       res.json(await manager.setEnabled(req.params.extensionId, req.body?.enabled));
+    } catch (error) {
+      sendError(res, error);
+    }
+  });
+
+  app.post('/api/interactive-ui/manager/extensions/:extensionId/hosted/refresh', express.json({ limit: '16kb' }), async (req, res) => {
+    try {
+      res.setHeader('Cache-Control', 'no-store');
+      res.json(await manager.refreshHosted(req.params.extensionId, {
+        confirmedManifestHash: req.body?.confirmedManifestHash,
+      }));
     } catch (error) {
       sendError(res, error);
     }

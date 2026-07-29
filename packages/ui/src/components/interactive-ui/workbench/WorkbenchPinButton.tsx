@@ -6,6 +6,7 @@ import { toast } from '@/components/ui';
 import { useI18n } from '@/lib/i18n';
 import type { HTMLArtifactResultEnvelope } from '@/lib/interactive-ui/artifactResult';
 import type { InstalledHTMLArtifactResultEnvelope } from '@/lib/interactive-ui/installedArtifactResult';
+import type { McpAppResultEnvelope } from '@/lib/interactive-ui/mcpApp';
 import type { InteractiveResultEnvelope } from '@/lib/interactive-ui/types';
 import {
   createWorkbenchGeneratedSnapshot,
@@ -23,11 +24,13 @@ import { useUIStore } from '@/stores/useUIStore';
 type PinEnvelope =
   | InteractiveResultEnvelope
   | HTMLArtifactResultEnvelope
-  | InstalledHTMLArtifactResultEnvelope;
+  | InstalledHTMLArtifactResultEnvelope
+  | McpAppResultEnvelope;
 
 interface WorkbenchPinButtonProps {
   envelope: PinEnvelope;
   sessionId?: string;
+  messageId?: string;
   toolPartId: string;
 }
 
@@ -70,6 +73,7 @@ const focusWorkbenchTile = (tileId: string) => {
 export const WorkbenchPinButton: React.FC<WorkbenchPinButtonProps> = ({
   envelope,
   sessionId,
+  messageId,
   toolPartId,
 }) => {
   const { t } = useI18n();
@@ -118,14 +122,20 @@ export const WorkbenchPinButton: React.FC<WorkbenchPinButtonProps> = ({
           layout,
           origin: {
             ...(sessionId ? { sessionId } : {}),
+            ...(messageId ? { messageId } : {}),
             toolCallId: toolPartId,
           },
         };
       } else {
-        if (!isInteractive(envelope) && !isGeneratedArtifact(envelope)) {
+        const mcpApp = envelope.$schema === 'openchamber://mcp-app-result/v1';
+        if (!isInteractive(envelope) && !isGeneratedArtifact(envelope) && !mcpApp) {
           throw new Error(t('workbench.pin.installedSurfaceMissing'));
         }
-        const form = isInteractive(envelope) ? 'interactive-ui' : 'html-artifact';
+        const form = isInteractive(envelope)
+          ? 'interactive-ui'
+          : mcpApp
+            ? 'mcp-app'
+            : 'html-artifact';
         const snapshot = await createWorkbenchGeneratedSnapshot(form, envelope);
         tile = {
           source: { kind: 'agent-generated', snapshotRef: snapshot.snapshotRef },
@@ -138,6 +148,7 @@ export const WorkbenchPinButton: React.FC<WorkbenchPinButtonProps> = ({
           ),
           origin: {
             ...(sessionId ? { sessionId } : {}),
+            ...(messageId ? { messageId } : {}),
             toolCallId: toolPartId,
           },
         };

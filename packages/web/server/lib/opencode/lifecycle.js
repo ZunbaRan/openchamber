@@ -276,7 +276,12 @@ export const createOpenCodeLifecycleRuntime = (deps) => {
 
     const child = spawn(binary, args, {
       cwd,
-      env: processEnv,
+      env: {
+        ...processEnv,
+        // OpenChamber and official OpenCode deliberately share the canonical
+        // opencode.db. The fork must never create a channel-specific sibling.
+        OPENCODE_DISABLE_CHANNEL_DB: 'true',
+      },
       detached: process.platform !== 'win32',
       windowsHide: true,
       stdio: ['ignore', 'pipe', 'pipe'],

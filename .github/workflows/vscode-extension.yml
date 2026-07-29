@@ -6,8 +6,12 @@ on:
       - 'v*'
   workflow_dispatch:
 
+env:
+  GITHUB_PACKAGES_TOKEN: ${{ secrets.OPENCODE_PACKAGES_TOKEN || github.token }}
+
 permissions:
   contents: write
+  packages: read
 
 jobs:
   publish:

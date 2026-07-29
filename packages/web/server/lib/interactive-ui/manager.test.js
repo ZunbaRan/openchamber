@@ -6,6 +6,7 @@ import crypto from 'node:crypto';
 import { createInteractiveUIExtensionManager } from './manager.js';
 import { createExtensionPackage, createSignedExtensionCatalog, generatePublisherKeyPair } from './package-format.js';
 import { createBuiltInInteractiveUIRuntime } from './builtin-runtime.js';
+import { HOSTED_OCIX_MANIFEST_SCHEMA } from './hosted-ocix.js';
 
 const temporaryDirectories = [];
 
@@ -94,6 +95,126 @@ const trustPublisher = (manager, publicKey) => manager.trustPublisher({
   keyId: 'release-2026',
   publicKey,
 });
+
+const canonicalize = (value) => {
+  if (Array.isArray(value)) return value.map(canonicalize);
+  if (!value || typeof value !== 'object') return value;
+  return Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonicalize(value[key])]));
+};
+
+const hostedSha256 = (value) => `sha256-${crypto.createHash('sha256').update(value).digest('base64')}`;
+
+const createHostedRemote = ({
+  keys,
+  version,
+  extraTool = false,
+  resourceIntegrityOverride,
+}) => {
+  const view = Buffer.from(JSON.stringify({
+    $schema: 'openchamber://declarative-view/v1',
+    id: 'com.acme.hosted.overview',
+    layout: { type: 'text', value: `Hosted ${version}` },
+  }));
+  const resources = [{
+    path: 'ui/overview.view.json',
+    url: 'https://apps.example.com/ui/overview.view.json',
+    mimeType: 'application/json',
+    sha256: resourceIntegrityOverride ?? hostedSha256(view),
+  }];
+  const permissions = {
+    resourceOrigins: ['https://apps.example.com'],
+    networkOrigins: extraTool ? ['https://api.example.com'] : [],
+    externalLinkOrigins: [],
+    credentialScopes: extraTool ? ['crm.write'] : [],
+    actionIds: extraTool ? ['com.acme.hosted.update'] : [],
+    agentToolNames: extraTool ? ['hosted_detail', 'hosted_open'] : ['hosted_open'],
+    clipboard: false,
+    popups: false,
+  };
+  const unsigned = {
+    $schema: HOSTED_OCIX_MANIFEST_SCHEMA,
+    app: {
+      id: 'com.acme.hosted',
+      version,
+      publishedAt: `2026-07-${version === '2.0.0' ? '28' : '29'}T00:00:00.000Z`,
+    },
+    permissions,
+    extension: {
+      $schema: 'openchamber://extension/v1',
+      id: 'com.acme.hosted',
+      name: 'Acme Hosted',
+      version,
+      agentRouting: {
+        domain: 'hosted',
+        intents: ['hosted.overview'],
+        examples: { en: ['Open Acme Hosted'] },
+        dataAuthority: 'user-provided',
+      },
+      connectors: extraTool ? [{
+        id: 'crm',
+        type: 'http',
+        baseUrl: 'https://api.example.com',
+        auth: { type: 'api-key' },
+      }] : [],
+      views: [{
+        id: 'com.acme.hosted.overview',
+        runtime: 'declarative',
+        entry: 'ui/overview.view.json',
+        tools: extraTool ? ['hosted_open', 'hosted_detail'] : ['hosted_open'],
+        routing: { intents: ['hosted.overview'], priority: 80, operation: 'read' },
+        displayModes: ['inline', 'workspace'],
+      }],
+      actions: extraTool ? [{
+        id: 'com.acme.hosted.update',
+        connector: 'crm',
+        risk: 'write',
+        request: { method: 'POST', path: '/crm/update' },
+      }] : [],
+      permissions: { network: extraTool ? ['https://api.example.com'] : [] },
+      trust: { mode: 'declarative', signature: 'production' },
+    },
+    resources,
+  };
+  const signature = crypto.sign(
+    null,
+    Buffer.from(JSON.stringify(canonicalize(unsigned))),
+    crypto.createPrivateKey(keys.privateKey),
+  ).toString('base64');
+  return {
+    document: {
+      ...unsigned,
+      signature: { algorithm: 'ed25519', keyId: 'release-2026', value: signature },
+    },
+    permissions,
+    view,
+  };
+};
+
+const createHostedThinPackage = async ({ keys, initialPermissions }) => {
+  const directory = await createTemporaryDirectory('ocix-manager-hosted-thin-');
+  await fs.writeFile(path.join(directory, 'openchamber.extension.json'), JSON.stringify({
+    $schema: 'openchamber://extension/v1',
+    id: 'com.acme.hosted',
+    name: 'Acme Hosted',
+    version: '1.0.0',
+    delivery: {
+      type: 'hosted',
+      manifestUrl: 'https://apps.example.com/manifest.json',
+      ttlSeconds: 60,
+      minimumRuntimeVersion: '1.16.3',
+      initialPermissions,
+    },
+    permissions: { network: [] },
+  }, null, 2));
+  return createExtensionPackage({
+    extensionDirectory: directory,
+    privateKey: keys.privateKey,
+    publisherId: 'com.acme.publisher',
+    publisherName: 'Acme',
+    keyId: 'release-2026',
+    createdAt: '2026-07-29T00:00:00.000Z',
+  });
+};
 
 describe('Interactive UI extension manager', () => {
   it('installs the production built-in Tools and Skill idempotently before OpenCode starts', async () => {
@@ -242,8 +363,16 @@ describe('Interactive UI extension manager', () => {
     expect((await manager.installPackage(versionOne.buffer, { confirmedPublisherFingerprint: inspection.publisher.fingerprint })).installed).toBe(true);
     expect(await fs.readFile(path.join(opencodeConfigDirectory, 'tools', 'operations_open.ts'), 'utf8')).toContain('1.0.0');
     expect(await fs.readFile(path.join(opencodeConfigDirectory, 'skills', 'acme-operations', 'SKILL.md'), 'utf8')).toContain('Use operations_open');
+    const ownershipPath = path.join(opencodeConfigDirectory, 'openchamber', 'com.acme.operations.agent-runtime.v1.json');
+    expect(JSON.parse(await fs.readFile(ownershipPath, 'utf8'))).toMatchObject({
+      schemaVersion: 1,
+      managedBy: 'openchamber',
+      extensionId: 'com.acme.operations',
+      versions: ['1.0.0'],
+    });
     expect((await manager.installPackage(versionTwo.buffer)).installed).toBe(true);
     expect(await fs.readFile(path.join(opencodeConfigDirectory, 'tools', 'operations_open.ts'), 'utf8')).toContain('1.1.0');
+    expect(JSON.parse(await fs.readFile(ownershipPath, 'utf8'))).toMatchObject({ versions: ['1.1.0'] });
     expect((await manager.getEnabledExtensionRoots())[0]).toEndWith(path.join('com.acme.operations', '1.1.0'));
 
     const rolledBack = await manager.rollback('com.acme.operations');
@@ -253,6 +382,7 @@ describe('Interactive UI extension manager', () => {
     expect(await manager.getEnabledExtensionRoots()).toEqual([]);
     await expect(fs.stat(path.join(opencodeConfigDirectory, 'tools', 'operations_open.ts'))).rejects.toMatchObject({ code: 'ENOENT' });
     await expect(fs.stat(path.join(opencodeConfigDirectory, 'skills', 'acme-operations', 'SKILL.md'))).rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(fs.stat(ownershipPath)).rejects.toMatchObject({ code: 'ENOENT' });
 
     const removed = await manager.uninstall('com.acme.operations');
     expect(removed.recoveryPath).toBeTruthy();
@@ -299,6 +429,122 @@ describe('Interactive UI extension manager', () => {
     })).resolves.toMatchObject({ installed: true });
     expect(await fs.readFile(path.join(opencodeConfigDirectory, 'tools', 'operations_open_explore.ts'), 'utf8'))
       .toContain('Explore Acme Operations');
+  });
+
+  it('installs a thin Hosted OCIX, confirms permission expansion, and falls back after resource tampering', async () => {
+    const dataDirectory = await createTemporaryDirectory('ocix-manager-hosted-data-');
+    const opencodeConfigDirectory = await createTemporaryDirectory('ocix-manager-hosted-opencode-');
+    const keys = generatePublisherKeyPair();
+    let remote = createHostedRemote({ keys, version: '2.0.0' });
+    const thin = await createHostedThinPackage({ keys, initialPermissions: remote.permissions });
+    let resourceBody = remote.view;
+    const fetchImpl = async (url) => {
+      const value = String(url);
+      if (value === 'https://apps.example.com/manifest.json') {
+        return new Response(JSON.stringify(remote.document), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      if (value === 'https://apps.example.com/ui/overview.view.json') {
+        return new Response(resourceBody, {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      return new Response('not found', { status: 404 });
+    };
+    const manager = createInteractiveUIExtensionManager({
+      dataDirectory,
+      opencodeConfigDirectory,
+      fetchImpl,
+      runtimeVersion: '1.16.5',
+    });
+
+    const inspection = await manager.inspectPackage(thin.buffer);
+    expect(inspection).toMatchObject({
+      delivery: 'hosted',
+      hosted: { version: '2.0.0', permissions: { agentToolNames: ['hosted_open'] } },
+    });
+    await expect(manager.installPackage(thin.buffer, {
+      confirmedPublisherFingerprint: inspection.publisher.fingerprint,
+    })).rejects.toMatchObject({ code: 'hosted_manifest_confirmation_required' });
+    await manager.installPackage(thin.buffer, {
+      confirmedPublisherFingerprint: inspection.publisher.fingerprint,
+      confirmedHostedManifestHash: inspection.hosted.manifestHash,
+    });
+    expect((await manager.getEnabledExtensionRoots())[0]).toEndWith(path.join('com.acme.hosted', '2.0.0'));
+    expect(await fs.readFile(path.join(opencodeConfigDirectory, 'tools', 'hosted_open.ts'), 'utf8'))
+      .toContain('openchamber://interactive-result/v1');
+
+    remote = createHostedRemote({ keys, version: '2.1.0', extraTool: true });
+    resourceBody = remote.view;
+    let confirmation;
+    try {
+      await manager.refreshHosted('com.acme.hosted');
+    } catch (error) {
+      confirmation = error;
+    }
+    expect(confirmation).toMatchObject({
+      code: 'hosted_permission_confirmation_required',
+      details: {
+        version: '2.1.0',
+        addedPermissions: {
+          networkOrigins: ['https://api.example.com'],
+          credentialScopes: ['crm.write'],
+          actionIds: ['com.acme.hosted.update'],
+          agentToolNames: ['hosted_detail'],
+        },
+      },
+    });
+    expect((await manager.getEnabledExtensionRoots())[0]).toEndWith(path.join('com.acme.hosted', '2.0.0'));
+    await expect(fs.stat(path.join(opencodeConfigDirectory, 'tools', 'hosted_detail.ts')))
+      .rejects.toMatchObject({ code: 'ENOENT' });
+
+    await manager.refreshHosted('com.acme.hosted', {
+      confirmedManifestHash: confirmation.details.manifestHash,
+    });
+    expect((await manager.getEnabledExtensionRoots())[0]).toEndWith(path.join('com.acme.hosted', '2.1.0'));
+    expect(await fs.readFile(path.join(opencodeConfigDirectory, 'tools', 'hosted_detail.ts'), 'utf8'))
+      .toContain('com.acme.hosted.overview');
+
+    remote = createHostedRemote({
+      keys,
+      version: '2.2.0',
+      extraTool: true,
+      resourceIntegrityOverride: hostedSha256(Buffer.from('expected bytes')),
+    });
+    resourceBody = Buffer.from('tampered bytes');
+    await expect(manager.refreshHosted('com.acme.hosted')).resolves.toMatchObject({ fallback: true });
+    expect((await manager.getEnabledExtensionRoots())[0]).toEndWith(path.join('com.acme.hosted', '2.1.0'));
+    expect((await manager.list()).extensions[0].versions['1.0.0'].hosted).toMatchObject({
+      lastGood: { version: '2.1.0' },
+      lastError: { code: 'hosted_resource_integrity_failed' },
+    });
+  });
+
+  it('rejects Hosted OCIX packages that require a newer OpenChamber runtime', async () => {
+    const dataDirectory = await createTemporaryDirectory('ocix-manager-hosted-runtime-');
+    const keys = generatePublisherKeyPair();
+    const remote = createHostedRemote({ keys, version: '2.0.0' });
+    const thin = await createHostedThinPackage({ keys, initialPermissions: remote.permissions });
+    const manager = createInteractiveUIExtensionManager({
+      dataDirectory,
+      runtimeVersion: '1.16.2',
+      fetchImpl: async () => new Response(JSON.stringify(remote.document), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    });
+
+    await expect(manager.inspectPackage(thin.buffer)).rejects.toMatchObject({
+      code: 'hosted_runtime_incompatible',
+      status: 409,
+      details: {
+        minimumRuntimeVersion: '1.16.3',
+        runtimeVersion: '1.16.2',
+      },
+    });
   });
 
   it('refuses to overwrite an unmanaged global OpenCode Tool', async () => {

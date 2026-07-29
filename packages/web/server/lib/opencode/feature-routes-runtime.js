@@ -110,6 +110,7 @@ export const createFeatureRoutesRuntime = (dependencies) => {
       express,
       processLike,
       uiAuthController,
+      openchamberVersion,
     } = routeDependencies;
 
     const configuredInteractiveUIRoots = typeof processLike.env.OPENCHAMBER_INTERACTIVE_UI_EXTENSIONS_DIR === 'string'
@@ -139,6 +140,7 @@ export const createFeatureRoutesRuntime = (dependencies) => {
       logger: console,
       refreshOpenCode: () => refreshOpenCodeAfterConfigChange('Interactive UI extension Agent Runtime changed'),
       builtInRuntime: builtInInteractiveUIRuntime,
+      runtimeVersion: openchamberVersion,
     });
     try {
       await interactiveUIExtensionManager.initialize();

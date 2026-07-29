@@ -71,6 +71,75 @@ type SdkResult<T> = {
   response?: { status?: number };
 };
 
+type OpenCodeDistributionCapabilities = {
+  distribution: string;
+  version: string;
+  upstreamVersion: string;
+  upstreamCommit: string;
+  forkCommit: string;
+  apiVersion: number;
+  managedUpdate: boolean;
+  features: {
+    mcpLegacy: boolean;
+    mcp20260728: boolean;
+    mcpApps: boolean;
+    mcpAppToolCall: boolean;
+  };
+};
+
+export type OpenCodeMcpAppResource = {
+  server: string;
+  resourceUri: string;
+  mimeType: string;
+  html: string;
+  sha256: string;
+  meta?: {
+    csp?: {
+      [key: string]: unknown;
+    };
+    permissions?: {
+      [key: string]: unknown;
+    };
+    domain?: string;
+    prefersBorder?: boolean;
+  };
+};
+
+type OpenCodeMcpAppSdk = {
+  global?: {
+    capabilities?: (
+      options?: { signal?: AbortSignal },
+    ) => Promise<SdkResult<OpenCodeDistributionCapabilities>>;
+  };
+  mcp?: {
+    app?: {
+      resource?: (
+        parameters: {
+          directory?: string;
+          sessionID: string;
+          messageID: string;
+          server: string;
+          resourceUri: string;
+          force?: 'true' | 'false';
+        },
+        options?: { signal?: AbortSignal },
+      ) => Promise<SdkResult<OpenCodeMcpAppResource>>;
+      toolCall?: (
+        parameters: {
+          directory?: string;
+          sessionID: string;
+          messageID: string;
+          server: string;
+          resourceUri: string;
+          name: string;
+          arguments?: Record<string, unknown>;
+        },
+        options?: { signal?: AbortSignal },
+      ) => Promise<SdkResult<unknown>>;
+    };
+  };
+};
+
 function unwrapSdkData<T>(result: SdkResult<T>, operation: string): T {
   if (result.error) {
     const status = result.response?.status;
@@ -429,6 +498,71 @@ class OpencodeService {
   // Get the raw API client for direct access
   getApiClient(): OpencodeClient {
     return this.client;
+  }
+
+  async getDistributionCapabilities(signal?: AbortSignal): Promise<OpenCodeDistributionCapabilities> {
+    const sdk = this.client as OpencodeClient & OpenCodeMcpAppSdk;
+    if (typeof sdk.global?.capabilities !== 'function') {
+      throw new Error('The selected OpenCode CLI does not expose OpenChamber distribution capabilities');
+    }
+    return unwrapSdkData(
+      await sdk.global.capabilities({ signal }),
+      'Get OpenCode distribution capabilities',
+    );
+  }
+
+  async getMcpAppResource(input: {
+    directory: string;
+    sessionId: string;
+    messageId: string;
+    server: string;
+    resourceUri: string;
+    force?: boolean;
+    signal?: AbortSignal;
+  }): Promise<OpenCodeMcpAppResource> {
+    const scoped = this.getScopedApiClient(input.directory) as OpencodeClient & OpenCodeMcpAppSdk;
+    if (typeof scoped.mcp?.app?.resource !== 'function') {
+      throw new Error('The selected OpenCode CLI does not support MCP Apps');
+    }
+    return unwrapSdkData(
+      await scoped.mcp.app.resource({
+        directory: input.directory,
+        sessionID: input.sessionId,
+        messageID: input.messageId,
+        server: input.server,
+        resourceUri: input.resourceUri,
+        force: input.force ? 'true' : 'false',
+      }, { signal: input.signal }),
+      'Load MCP App resource',
+    );
+  }
+
+  async callMcpAppTool(input: {
+    directory: string;
+    sessionId: string;
+    messageId: string;
+    server: string;
+    resourceUri: string;
+    name: string;
+    arguments?: Record<string, unknown>;
+    signal?: AbortSignal;
+  }): Promise<unknown> {
+    const scoped = this.getScopedApiClient(input.directory) as OpencodeClient & OpenCodeMcpAppSdk;
+    if (typeof scoped.mcp?.app?.toolCall !== 'function') {
+      throw new Error('The selected OpenCode CLI does not support MCP App tool calls');
+    }
+    return unwrapSdkData(
+      await scoped.mcp.app.toolCall({
+        directory: input.directory,
+        sessionID: input.sessionId,
+        messageID: input.messageId,
+        server: input.server,
+        resourceUri: input.resourceUri,
+        name: input.name,
+        arguments: input.arguments ?? {},
+      }, { signal: input.signal }),
+      'Call MCP App tool',
+    );
   }
 
   // Get system information including home directory

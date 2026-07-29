@@ -1,0 +1,45 @@
+{
+  "schema": "com.openchamber.opencode-cli-lock.v1",
+  "repository": "ZunbaRan/opencode",
+  "releaseTag": "v1.18.9-oc.2",
+  "version": "1.18.9-oc.2",
+  "upstreamCommit": "7565e03536d19e850f9996c407f9bf5e932b5f7a",
+  "forkCommit": "4d9d138e9daf23f207aea130eaf94223278cc219",
+  "sdk": {
+    "package": "@zunbaran/opencode-sdk",
+    "version": "1.18.9-oc.2",
+    "sha256": "3756ed405c4eca869d95ef9b2ca5741011d519a08f82390525200468ade40094"
+  },
+  "artifacts": {
+    "darwin-arm64": {
+      "file": "opencode-darwin-arm64.zip",
+      "url": "https://github.com/ZunbaRan/opencode/releases/download/v1.18.9-oc.2/opencode-darwin-arm64.zip",
+      "sha256": "248ad282d7f3e0bd3319090b876348d1b10a5cd193e811efdf25b46b0325b161"
+    },
+    "darwin-x64": {
+      "file": "opencode-darwin-x64.zip",
+      "url": "https://github.com/ZunbaRan/opencode/releases/download/v1.18.9-oc.2/opencode-darwin-x64.zip",
+      "sha256": "40d09b3f31224940237d56742e793d875c2b601c5de5b489079574f1b751ef1d"
+    },
+    "windows-arm64": {
+      "file": "opencode-windows-arm64.zip",
+      "url": "https://github.com/ZunbaRan/opencode/releases/download/v1.18.9-oc.2/opencode-windows-arm64.zip",
+      "sha256": "64f08087bea5fa2823c4b7e126e2dc87ba9448d42391412a6c88c9553d69d9bb"
+    },
+    "windows-x64": {
+      "file": "opencode-windows-x64.zip",
+      "url": "https://github.com/ZunbaRan/opencode/releases/download/v1.18.9-oc.2/opencode-windows-x64.zip",
+      "sha256": "3d8eecdcf0822d3dd36c616b0b84f344e506d3ad919ca92dec52d71d6ce5072d"
+    },
+    "linux-arm64": {
+      "file": "opencode-linux-arm64.tar.gz",
+      "url": "https://github.com/ZunbaRan/opencode/releases/download/v1.18.9-oc.2/opencode-linux-arm64.tar.gz",
+      "sha256": "39944843b30aa4a4b0b32ea9ce1fa7749b4a322276f5529c40290700af32b7b7"
+    },
+    "linux-x64": {
+      "file": "opencode-linux-x64.tar.gz",
+      "url": "https://github.com/ZunbaRan/opencode/releases/download/v1.18.9-oc.2/opencode-linux-x64.tar.gz",
+      "sha256": "65e38930ed819ba9997864d2bbc66129144093119c91c2097c402e13cced9c67"
+    }
+  }
+}

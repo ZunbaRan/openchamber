@@ -75,13 +75,15 @@ This module provides OpenCode server integration utilities for the web server ru
   - `GET /api/config/settings`
   - `PUT /api/config/settings`
   - `GET /api/config/opencode-resolution`
-  - `POST /api/opencode/upgrade` (proxies OpenCode upgrade, then restarts managed OpenCode so the new binary is active)
-  - `GET /api/opencode/upgrade-status`
+  - `GET /api/opencode/capabilities` (reads the fork distribution handshake; an external legacy CLI receives an explicit reduced capability document)
+  - `POST /api/opencode/upgrade` (always refuses independent CLI upgrades; the bundled fork is upgraded only with OpenChamber)
+  - `GET /api/opencode/upgrade-status` (reports ownership/current version without querying npm or the upstream OpenCode release feed)
   - `POST /api/opencode/directory`
   - `GET /api/provider/:providerId/source`
   - `DELETE /api/provider/:providerId/auth`
 - Owns lazy auth library loading for provider auth checks/removal.
 - Keeps route behavior independent from composition root; `index.js` now supplies dependencies only.
+- The generic `/api` OpenCode proxy carries fork SDK requests such as `/global/capabilities` and `/mcp/app/*`; shared UI code must use the runtime-aware SDK client instead of hard-coding these paths.
 
 ## Public exports (session-runtime.js)
 - `createSessionRuntime({ writeSseEvent, getNotificationClients, broadcastEvent? })`: creates runtime-owned state machine and APIs for session status.
@@ -113,6 +115,7 @@ The runtime maintains active-session count incrementally from idempotent activit
   - `startHealthMonitoring(healthCheckIntervalMs)`
   - `waitForPortRelease(port, timeoutMs, hostname?)`
   - `killProcessOnPort(port)`
+- Managed OpenCode launches set `OPENCODE_DISABLE_CHANNEL_DB=true` so the fork and official-compatible CLI continue to use the existing `opencode.db` identity rather than producing a channel-specific second database.
 
 ## Public exports (env-runtime.js)
 - `createOpenCodeEnvRuntime(dependencies)`: creates runtime that owns OpenCode CLI environment and binary discovery state.

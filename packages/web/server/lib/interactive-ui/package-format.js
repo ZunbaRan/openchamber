@@ -8,6 +8,7 @@ import {
   normalizeExtensionDashboardContract,
   validateExtensionIconAsset,
 } from './dashboard-contract.js';
+import { normalizeHostedDelivery } from './hosted-ocix.js';
 
 const EXTENSION_PACKAGE_SCHEMA = 'openchamber://extension-package/v1';
 const EXTENSION_CATALOG_SCHEMA = 'openchamber://extension-catalog/v1';
@@ -180,21 +181,43 @@ const parseManifest = (content) => {
   if (typeof manifest.version !== 'string' || !SEMVER_PATTERN.test(manifest.version)) {
     throw new InteractiveUIPackageError('Extension manifest version must use semantic versioning', 'invalid_manifest');
   }
+  let hostedDelivery;
   try {
-    normalizeInteractiveUIRouting(manifest);
+    hostedDelivery = normalizeHostedDelivery(manifest);
   } catch (error) {
     throw new InteractiveUIPackageError(
-      error instanceof Error ? error.message : 'Extension Agent routing metadata is invalid',
-      'invalid_agent_routing',
+      error instanceof Error ? error.message : 'Hosted OCIX delivery metadata is invalid',
+      typeof error?.code === 'string' ? error.code : 'invalid_hosted_delivery',
     );
   }
-  try {
-    normalizeExtensionDashboardContract(manifest);
-  } catch (error) {
-    throw new InteractiveUIPackageError(
-      error instanceof Error ? error.message : 'Extension dashboard metadata is invalid',
-      error instanceof InteractiveUIDashboardContractError ? error.code : 'invalid_dashboard_contract',
+  if (hostedDelivery) {
+    const forbidden = ['views', 'artifacts', 'connectors', 'actions'].some(
+      (key) => Array.isArray(manifest[key]) && manifest[key].length > 0,
     );
+    if (forbidden || manifest.icon !== undefined || manifest.agentRouting !== undefined) {
+      throw new InteractiveUIPackageError(
+        'Hosted OCIX thin packages cannot embed surfaces, connectors, actions, icons, or Agent routing',
+        'invalid_hosted_delivery',
+      );
+    }
+    manifest.delivery = hostedDelivery;
+  } else {
+    try {
+      normalizeInteractiveUIRouting(manifest);
+    } catch (error) {
+      throw new InteractiveUIPackageError(
+        error instanceof Error ? error.message : 'Extension Agent routing metadata is invalid',
+        'invalid_agent_routing',
+      );
+    }
+    try {
+      normalizeExtensionDashboardContract(manifest);
+    } catch (error) {
+      throw new InteractiveUIPackageError(
+        error instanceof Error ? error.message : 'Extension dashboard metadata is invalid',
+        error instanceof InteractiveUIDashboardContractError ? error.code : 'invalid_dashboard_contract',
+      );
+    }
   }
   return manifest;
 };

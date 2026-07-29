@@ -1540,6 +1540,7 @@ async function main(options = {}) {
     express,
     processLike: process,
     uiAuthController,
+    openchamberVersion: OPENCHAMBER_VERSION,
   });
 
   const previewProxyRuntime = createPreviewProxyRuntime({

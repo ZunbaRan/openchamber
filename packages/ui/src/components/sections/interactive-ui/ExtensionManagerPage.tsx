@@ -37,13 +37,28 @@ import {
   type ManagerSnapshot,
   type MarketplaceInspection,
   type PackageInspection,
+  type HostedPermissions,
 } from '@/lib/interactive-ui/extensionManager';
 import { RoutingInspectorSection } from './RoutingInspectorSection';
 
+class RequestError extends Error {
+  readonly status: number;
+  readonly code?: string;
+  readonly body: Record<string, unknown>;
+
+  constructor(status: number, body: Record<string, unknown>) {
+    super(typeof body.error === 'string' ? body.error : String(status));
+    this.name = 'RequestError';
+    this.status = status;
+    this.code = typeof body.code === 'string' ? body.code : undefined;
+    this.body = body;
+  }
+}
+
 const requestJson = async <T,>(url: string, init?: RequestInit): Promise<T> => {
   const response = await runtimeFetch(url, init);
-  const body = await response.json().catch(() => ({})) as { error?: string } & T;
-  if (!response.ok) throw new Error(body.error || String(response.status));
+  const body = await response.json().catch(() => ({})) as Record<string, unknown> & T;
+  if (!response.ok) throw new RequestError(response.status, body);
   return body;
 };
 
@@ -74,6 +89,12 @@ export const ExtensionManagerPage: React.FC = () => {
   const [pendingPackage, setPendingPackage] = React.useState<{ packageBase64: string; inspection: PackageInspection } | null>(null);
   const [marketplaceUrl, setMarketplaceUrl] = React.useState('');
   const [pendingMarketplace, setPendingMarketplace] = React.useState<MarketplaceInspection | null>(null);
+  const [pendingHostedUpdate, setPendingHostedUpdate] = React.useState<{
+    extension: InstalledExtension;
+    manifestHash: string;
+    version: string;
+    addedPermissions: Partial<HostedPermissions>;
+  } | null>(null);
   const [catalogs, setCatalogs] = React.useState<Record<string, CatalogEntry[]>>({});
 
   const refresh = React.useCallback(async () => {
@@ -245,6 +266,49 @@ export const ExtensionManagerPage: React.FC = () => {
     }, 'settings.interactiveUI.toast.connectionEndpointCleared');
   }, [connectionKey, runMutation]);
 
+  const refreshHosted = React.useCallback(async (
+    extension: InstalledExtension,
+    confirmedManifestHash?: string,
+  ) => {
+    const key = `hosted-refresh:${extension.id}`;
+    setBusy(key);
+    try {
+      await requestJson(`/api/interactive-ui/manager/extensions/${encodeURIComponent(extension.id)}/hosted/refresh`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ...(confirmedManifestHash ? { confirmedManifestHash } : {}),
+        }),
+      });
+      setPendingHostedUpdate(null);
+      clearInteractiveUIRoutingCache();
+      toast.success(t('settings.interactiveUI.toast.hostedRefreshed'));
+      await refresh();
+    } catch (error) {
+      if (error instanceof RequestError
+        && error.code === 'hosted_permission_confirmation_required'
+        && typeof error.body.manifestHash === 'string'
+        && typeof error.body.version === 'string') {
+        setPendingHostedUpdate({
+          extension,
+          manifestHash: error.body.manifestHash,
+          version: error.body.version,
+          addedPermissions: (error.body.addedPermissions && typeof error.body.addedPermissions === 'object')
+            ? error.body.addedPermissions as Partial<HostedPermissions>
+            : {},
+        });
+        await refresh().catch(() => undefined);
+      } else {
+        toast.error(t('settings.interactiveUI.toast.actionFailed'), {
+          description: error instanceof Error ? error.message : undefined,
+        });
+        await refresh().catch(() => undefined);
+      }
+    } finally {
+      setBusy(null);
+    }
+  }, [refresh, t]);
+
   return (
     <SettingsPageLayout
       title={t('settings.page.interactiveUI.title')}
@@ -281,6 +345,12 @@ export const ExtensionManagerPage: React.FC = () => {
                 <div className="min-w-0">
                   <div className={SETTINGS_FIELD_LABEL_CLASS}>{extension.name}</div>
                   <div className={SETTINGS_HELPER_CLASS}>{extension.id} · {extension.activeVersion}</div>
+                  <div className={SETTINGS_HELPER_CLASS}>
+                    {extension.versions[extension.activeVersion]?.delivery === 'hosted' ? 'Hosted OCIX' : 'Local OCIX'}
+                    {extension.versions[extension.activeVersion]?.hosted?.lastGoodVersion
+                      ? ` · remote ${extension.versions[extension.activeVersion]?.hosted?.lastGoodVersion}`
+                      : ''}
+                  </div>
                   <div className={SETTINGS_HELPER_CLASS}>
                     {t('settings.interactiveUI.installed.publisher', { publisher: extension.versions[extension.activeVersion]?.publisher.name ?? '—' })}
                   </div>
@@ -336,6 +406,16 @@ export const ExtensionManagerPage: React.FC = () => {
                       body: JSON.stringify({ enabled }),
                     }), enabled ? 'settings.interactiveUI.toast.enabled' : 'settings.interactiveUI.toast.disabled')}
                   />
+                  {extension.versions[extension.activeVersion]?.delivery === 'hosted' && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={busy === `hosted-refresh:${extension.id}`}
+                      onClick={() => void refreshHosted(extension)}
+                    >
+                      {t('settings.interactiveUI.actions.refreshHosted')}
+                    </Button>
+                  )}
                   <Button
                     variant="outline"
                     size="sm"
@@ -654,6 +734,26 @@ export const ExtensionManagerPage: React.FC = () => {
                     : t('settings.interactiveUI.packageReview.nativeNo'),
                 })}
               </div>
+              {pendingPackage.inspection.hosted && (
+                <div className="space-y-1 rounded-lg border border-border/60 p-3">
+                  <div className={SETTINGS_FIELD_LABEL_CLASS}>Hosted OCIX</div>
+                  <div className={`${SETTINGS_HELPER_CLASS} break-all`}>
+                    {pendingPackage.inspection.hosted.manifestUrl}
+                  </div>
+                  <div className={SETTINGS_HELPER_CLASS}>
+                    Remote version {pendingPackage.inspection.hosted.version} · TTL {pendingPackage.inspection.hosted.ttlSeconds}s
+                  </div>
+                  <div className={SETTINGS_HELPER_CLASS}>
+                    Network: {pendingPackage.inspection.hosted.permissions.networkOrigins.join(', ') || '—'}
+                  </div>
+                  <div className={SETTINGS_HELPER_CLASS}>
+                    Actions: {pendingPackage.inspection.hosted.permissions.actionIds.join(', ') || '—'}
+                  </div>
+                  <div className={SETTINGS_HELPER_CLASS}>
+                    Credentials: {pendingPackage.inspection.hosted.permissions.credentialScopes.join(', ') || '—'}
+                  </div>
+                </div>
+              )}
             </div>
           )}
           <DialogFooter>
@@ -668,6 +768,7 @@ export const ExtensionManagerPage: React.FC = () => {
                   body: JSON.stringify({
                     packageBase64: pending.packageBase64,
                     confirmedPublisherFingerprint: pending.inspection.publisher.fingerprint,
+                    confirmedHostedManifestHash: pending.inspection.hosted?.manifestHash,
                   }),
                 }), 'settings.interactiveUI.toast.installed');
                 if (succeeded) setPendingPackage(null);
@@ -712,6 +813,49 @@ export const ExtensionManagerPage: React.FC = () => {
                 }
               })();
             }}>{t('settings.interactiveUI.actions.trustMarketplace')}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={pendingHostedUpdate !== null}
+        onOpenChange={(open) => { if (!open) setPendingHostedUpdate(null); }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{t('settings.interactiveUI.hostedUpdate.title')}</DialogTitle>
+            <DialogDescription>
+              {t('settings.interactiveUI.hostedUpdate.description', {
+                name: pendingHostedUpdate?.extension.name ?? '',
+                version: pendingHostedUpdate?.version ?? '',
+              })}
+            </DialogDescription>
+          </DialogHeader>
+          {pendingHostedUpdate && (
+            <div className="space-y-2 rounded-lg border border-border/60 p-3 text-sm">
+              {Object.entries(pendingHostedUpdate.addedPermissions).map(([key, value]) => (
+                <div key={key} className="grid gap-1 @xl:grid-cols-[12rem_minmax(0,1fr)]">
+                  <span className={SETTINGS_FIELD_LABEL_CLASS}>{key}</span>
+                  <span className={`${SETTINGS_HELPER_CLASS} break-all`}>
+                    {Array.isArray(value) ? value.join(', ') : String(value)}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setPendingHostedUpdate(null)}>
+              {t('settings.interactiveUI.actions.cancel')}
+            </Button>
+            <Button
+              disabled={!pendingHostedUpdate || busy === `hosted-refresh:${pendingHostedUpdate.extension.id}`}
+              onClick={() => {
+                if (!pendingHostedUpdate) return;
+                void refreshHosted(pendingHostedUpdate.extension, pendingHostedUpdate.manifestHash);
+              }}
+            >
+              {t('settings.interactiveUI.actions.approveHostedUpdate')}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

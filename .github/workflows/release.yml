@@ -19,9 +19,11 @@ on:
 env:
   CARGO_INCREMENTAL: 0
   RUST_BACKTRACE: short
+  GITHUB_PACKAGES_TOKEN: ${{ secrets.OPENCODE_PACKAGES_TOKEN || github.token }}
 
 permissions:
   contents: write
+  packages: read
 
 jobs:
   create-release:
@@ -155,7 +157,7 @@ jobs:
         id: opencode_cli_version
         shell: bash
         run: |
-          VERSION=$(node -p "require('./package.json').dependencies['@opencode-ai/sdk']")
+          VERSION=$(node -p "require('./packages/electron/opencode-cli.lock.json').version")
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Cache bundled OpenCode CLI artifact
@@ -302,7 +304,7 @@ jobs:
         id: opencode_cli_version
         shell: bash
         run: |
-          VERSION=$(node -p "require('./package.json').dependencies['@opencode-ai/sdk']")
+          VERSION=$(node -p "require('./packages/electron/opencode-cli.lock.json').version")
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Cache bundled OpenCode CLI artifact
@@ -406,7 +408,7 @@ jobs:
         id: opencode_cli_version
         shell: bash
         run: |
-          VERSION=$(node -p "require('./package.json').dependencies['@opencode-ai/sdk']")
+          VERSION=$(node -p "require('./packages/electron/opencode-cli.lock.json').version")
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Cache bundled OpenCode CLI artifact

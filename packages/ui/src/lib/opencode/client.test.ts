@@ -8,7 +8,50 @@ const configResolvers: Array<(response: ConfigResponse) => void> = [];
 let configCalls = 0;
 const promptAsyncCalls: unknown[][] = [];
 const promptAsyncResults: Array<unknown> = [];
+const capabilitiesCalls: unknown[][] = [];
+const mcpResourceCalls: unknown[][] = [];
+const mcpToolCallCalls: unknown[][] = [];
 let routingPayload: unknown = [];
+const capabilitiesMock = mock(async (...args: unknown[]) => {
+  capabilitiesCalls.push(args);
+  return {
+  data: {
+    distribution: 'ZunbaRan/opencode',
+    version: '1.18.9-oc.1',
+    upstreamVersion: '1.18.9',
+    upstreamCommit: 'upstream-sha',
+    forkCommit: 'fork-sha',
+    apiVersion: 2,
+    managedUpdate: true,
+    features: {
+      mcpLegacy: true,
+      mcp20260728: true,
+      mcpApps: true,
+      mcpAppToolCall: true,
+    },
+  },
+  };
+});
+const mcpResourceMock = mock(async (parameters: Record<string, unknown>, ...args: unknown[]) => {
+  mcpResourceCalls.push([parameters, ...args]);
+  return {
+  data: {
+    server: parameters.server,
+    resourceUri: parameters.resourceUri,
+    mimeType: 'text/html;profile=mcp-app',
+    html: '<!doctype html><title>MCP App</title>',
+    sha256: 'sha256-test',
+  },
+  };
+});
+const mcpToolCallMock = mock(async (parameters: Record<string, unknown>, ...args: unknown[]) => {
+  mcpToolCallCalls.push([parameters, ...args]);
+  return {
+  data: {
+    content: [{ type: 'text', text: String(parameters.name) }],
+  },
+  };
+});
 
 const promptAsyncMock = mock(async (...args: unknown[]) => {
   promptAsyncCalls.push(args);
@@ -29,6 +72,15 @@ mock.module('@opencode-ai/sdk/v2', () => ({
     },
     session: {
       promptAsync: promptAsyncMock,
+    },
+    global: {
+      capabilities: capabilitiesMock,
+    },
+    mcp: {
+      app: {
+        resource: mcpResourceMock,
+        toolCall: mcpToolCallMock,
+      },
     },
   })),
 }));
@@ -65,9 +117,63 @@ const { getRoutingInspectionSnapshot, resetRoutingInspectorForTests } = await im
 beforeEach(() => {
   promptAsyncCalls.length = 0;
   promptAsyncResults.length = 0;
+  capabilitiesCalls.length = 0;
+  mcpResourceCalls.length = 0;
+  mcpToolCallCalls.length = 0;
   routingPayload = [];
   clearInteractiveUIRoutingCache();
   resetRoutingInspectorForTests();
+});
+
+describe('opencodeClient MCP App SDK routing', () => {
+  test('loads bound resources and tool calls through the directory-scoped SDK', async () => {
+    const resource = await opencodeClient.getMcpAppResource({
+      directory: '/workspace/mcp-app',
+      sessionId: 'ses_1',
+      messageId: 'msg_1',
+      server: 'weather',
+      resourceUri: 'ui://weather/current',
+      force: true,
+    });
+    expect(resource.html).toContain('MCP App');
+    expect(mcpResourceCalls).toEqual([[{
+      directory: '/workspace/mcp-app',
+      sessionID: 'ses_1',
+      messageID: 'msg_1',
+      server: 'weather',
+      resourceUri: 'ui://weather/current',
+      force: 'true',
+    }, { signal: undefined }]]);
+
+    const result = await opencodeClient.callMcpAppTool({
+      directory: '/workspace/mcp-app',
+      sessionId: 'ses_1',
+      messageId: 'msg_1',
+      server: 'weather',
+      resourceUri: 'ui://weather/current',
+      name: 'weather.refresh',
+      arguments: { city: 'Singapore' },
+    });
+    expect(result).toEqual({
+      content: [{ type: 'text', text: 'weather.refresh' }],
+    });
+    expect(mcpToolCallCalls).toEqual([[{
+      directory: '/workspace/mcp-app',
+      sessionID: 'ses_1',
+      messageID: 'msg_1',
+      server: 'weather',
+      resourceUri: 'ui://weather/current',
+      name: 'weather.refresh',
+      arguments: { city: 'Singapore' },
+    }, { signal: undefined }]]);
+  });
+
+  test('reads fork distribution capabilities through the SDK', async () => {
+    const capabilities = await opencodeClient.getDistributionCapabilities();
+    expect(capabilities.distribution).toBe('ZunbaRan/opencode');
+    expect(capabilities.features.mcpApps).toBe(true);
+    expect(capabilitiesCalls).toEqual([[{ signal: undefined }]]);
+  });
 });
 
 describe('opencodeClient getConfig cache', () => {

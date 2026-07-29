@@ -5,6 +5,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { normalizeTargetArchitecture } from './target-architecture.mjs';
+import { readOpenCodeCliLock } from './opencode-cli-lock.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const electronRoot = path.resolve(__dirname, '..');
@@ -145,7 +146,7 @@ const main = () => {
     const result = verifyExtractedPayload({
       root: extractAppImage(appImagePath, temporaryDirectory),
       targetArchitecture: target,
-      expectedOpenCodeVersion: rootPackage.dependencies?.['@opencode-ai/sdk'],
+      expectedOpenCodeVersion: readOpenCodeCliLock().version,
     });
     console.log(`[electron] verified Linux ${target} AppImage: ${appImagePath}`);
     console.log(`[electron] verified OpenCode CLI ${result.openCodeVersion} and ${result.nativeModuleCount} native modules`);

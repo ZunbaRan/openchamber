@@ -1,6 +1,7 @@
 import { parseHTMLArtifactResultEnvelope } from '@/lib/interactive-ui/artifactResult';
 import { parseInstalledHTMLArtifactResultEnvelope } from '@/lib/interactive-ui/installedArtifactResult';
 import { parseInteractiveResultEnvelope } from '@/lib/interactive-ui/result';
+import { parseMcpAppBinding } from '@/lib/interactive-ui/mcpApp';
 import { ACTIVITY_STANDALONE_TOOL_NAMES } from '../../lib/turns/constants';
 
 // Keep only tools with a direct in-app navigation destination compact. Every
@@ -46,6 +47,16 @@ const readCompletedToolOutput = (part: unknown): string | null => {
 };
 
 export const hasRichToolResult = (part: unknown): boolean => {
+    if (part && typeof part === 'object') {
+        const state = (part as { state?: unknown }).state;
+        if (state && typeof state === 'object') {
+            const status = (state as { status?: unknown }).status;
+            const metadata = (state as { metadata?: unknown }).metadata;
+            if (status === 'completed' && parseMcpAppBinding(metadata)) {
+                return true;
+            }
+        }
+    }
     const output = readCompletedToolOutput(part);
     if (!output) return false;
     return parseInteractiveResultEnvelope(output) !== null

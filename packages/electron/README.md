@@ -34,9 +34,16 @@ The preload bridge exposes desktop-only APIs to the web UI through `window.__OPE
 From the repo root:
 
 ```bash
+export GITHUB_PACKAGES_TOKEN="$(gh auth token)"
 bun install
 bun run electron:dev
 ```
+
+OpenChamber consumes the fork-matched SDK from GitHub Packages. The token needs
+read access to packages in `ZunbaRan/opencode`; do not commit it or place a
+literal value in `.npmrc`. GitHub Actions uses `OPENCODE_PACKAGES_TOKEN` when
+configured and otherwise falls back to the workflow `github.token` with
+`packages: read`.
 
 `bun run electron:dev` starts the web dev server with HMR, then launches Electron against `packages/electron/main.mjs`.
 
@@ -98,7 +105,7 @@ The macOS menu bar item is enabled by default and can be disabled in General set
 
 ## Bundled OpenCode CLI
 
-Packaged Desktop builds include the official OpenCode CLI that matches the pinned `@opencode-ai/sdk` version in the root `package.json`. `prepare:opencode-cli` downloads the platform-specific release artifact, caches it under `packages/electron/.cache/opencode-cli`, stages `opencode` or `opencode.exe` into `resources/opencode-cli`, and verifies `opencode --version` before packaging. Re-running the step is fast when the staged binary already matches the pinned version.
+Packaged Desktop builds include the OpenChamber-managed OpenCode fork pinned by `opencode-cli.lock.json`. `prepare:opencode-cli` downloads only the platform-specific `ZunbaRan/opencode` release artifact named in that lock, verifies its SHA256, caches it under `packages/electron/.cache/opencode-cli`, stages `opencode` or `opencode.exe` into `resources/opencode-cli`, and verifies `opencode --version` before packaging. Re-running the step is fast when the staged binary already matches the locked version.
 
 Managed local Desktop startup prefers OpenCode binaries in this order:
 
@@ -122,7 +129,7 @@ Use an explicit override when testing a different OpenCode CLI build or when a u
 | `OPENCHAMBER_HMR_API_PORT` | Preferred API port for desktop dev, default `3901` |
 | `OPENCHAMBER_RUNTIME=desktop` | Set by Electron before starting the web server |
 | `OPENCHAMBER_HTML_ARTIFACTS_SCRIPTS=false` | Emergency kill switch for the default-enabled Managed Desktop Scripts Runner |
-| `OPENCHAMBER_OPENCODE_CLI_VERSION` | Optional packaging override for the bundled OpenCode CLI version; defaults to the pinned root `@opencode-ai/sdk` version |
+The bundled CLI version is not overrideable at packaging time. Update `opencode-cli.lock.json` from a verified `ZunbaRan/opencode` release, including all platform hashes and exact upstream/fork commits.
 | `OPENCHAMBER_TARGET_ARCH` | Explicit desktop package architecture (`x64` or `arm64`); Linux requires it to match the native host |
 | `OPENCHAMBER_DESKTOP_NOTIFY=true` | Enables desktop notification flow in the web server |
 | `OPENCHAMBER_SKIP_API_COMPRESSION=true` | Defaulted by Desktop to reduce local CPU overhead |

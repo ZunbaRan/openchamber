@@ -5,6 +5,13 @@ export interface InstalledVersion {
   source: { type: string; marketplaceId?: string };
   publisher: { id: string; name: string; keyId: string; fingerprint: string };
   agentRuntime: AgentRuntimeSummary;
+  delivery: 'local' | 'hosted';
+  hosted?: {
+    manifestUrl: string;
+    lastGoodVersion?: string;
+    pendingManifestHash?: string;
+    lastErrorCode?: string;
+  };
 }
 
 export interface AgentRuntimeSummary {
@@ -26,6 +33,26 @@ export interface PackageInspection {
     artifacts: Array<{ id: string; tools: string[] }>;
   } | null;
   agentRuntime: AgentRuntimeSummary;
+  delivery: 'local' | 'hosted';
+  hosted?: {
+    manifestUrl: string;
+    ttlSeconds: number;
+    manifestHash: string;
+    version: string;
+    publishedAt: string;
+    permissions: HostedPermissions;
+  };
+}
+
+export interface HostedPermissions {
+  resourceOrigins: string[];
+  networkOrigins: string[];
+  externalLinkOrigins: string[];
+  credentialScopes: string[];
+  actionIds: string[];
+  agentToolNames: string[];
+  clipboard: boolean;
+  popups: boolean;
 }
 
 export interface MarketplaceInspection {
@@ -165,6 +192,23 @@ const isRecord = (value: unknown): value is Record<string, unknown> => (
 
 const stringValue = (value: unknown, fallback = ''): string => typeof value === 'string' ? value : fallback;
 
+const normalizeHostedPermissions = (value: unknown): HostedPermissions => {
+  const permissions = isRecord(value) ? value : {};
+  const strings = (entry: unknown) => Array.isArray(entry)
+    ? entry.filter((item): item is string => typeof item === 'string')
+    : [];
+  return {
+    resourceOrigins: strings(permissions.resourceOrigins),
+    networkOrigins: strings(permissions.networkOrigins),
+    externalLinkOrigins: strings(permissions.externalLinkOrigins),
+    credentialScopes: strings(permissions.credentialScopes),
+    actionIds: strings(permissions.actionIds),
+    agentToolNames: strings(permissions.agentToolNames),
+    clipboard: permissions.clipboard === true,
+    popups: permissions.popups === true,
+  };
+};
+
 const normalizeAgentRuntime = (value: unknown): AgentRuntimeSummary => {
   const runtime = isRecord(value) ? value : {};
   return {
@@ -198,6 +242,10 @@ const normalizeVersion = (value: unknown, fallbackVersion: string): InstalledVer
   const version = stringValue(value.version, fallbackVersion);
   const publisher = isRecord(value.publisher) ? value.publisher : {};
   const source = isRecord(value.source) ? value.source : {};
+  const hosted = isRecord(value.hosted) ? value.hosted : null;
+  const lastGood = hosted && isRecord(hosted.lastGood) ? hosted.lastGood : null;
+  const pendingUpdate = hosted && isRecord(hosted.pendingUpdate) ? hosted.pendingUpdate : null;
+  const lastError = hosted && isRecord(hosted.lastError) ? hosted.lastError : null;
   if (!version) return null;
   return {
     version,
@@ -214,6 +262,15 @@ const normalizeVersion = (value: unknown, fallbackVersion: string): InstalledVer
       fingerprint: stringValue(publisher.fingerprint),
     },
     agentRuntime: normalizeAgentRuntime(value.agentRuntime),
+    delivery: value.delivery === 'hosted' ? 'hosted' : 'local',
+    ...(hosted ? {
+      hosted: {
+        manifestUrl: stringValue(hosted.manifestUrl),
+        ...(typeof lastGood?.version === 'string' ? { lastGoodVersion: lastGood.version } : {}),
+        ...(typeof pendingUpdate?.manifestHash === 'string' ? { pendingManifestHash: pendingUpdate.manifestHash } : {}),
+        ...(typeof lastError?.code === 'string' ? { lastErrorCode: lastError.code } : {}),
+      },
+    } : {}),
   };
 };
 
@@ -226,6 +283,7 @@ export const normalizePackageInspection = (value: unknown): PackageInspection | 
   if (!id || !version || !publisherId || !fingerprint) return null;
   const permissions = isRecord(value.permissions) ? value.permissions : {};
   const routing = isRecord(value.agentRouting) ? value.agentRouting : null;
+  const hosted = isRecord(value.hosted) ? value.hosted : null;
   return {
     extension: { id, name: stringValue(value.extension.name, id), version },
     publisher: {
@@ -268,6 +326,19 @@ export const normalizePackageInspection = (value: unknown): PackageInspection | 
         }
       : null,
     agentRuntime: normalizeAgentRuntime(value.agentRuntime),
+    delivery: value.delivery === 'hosted' ? 'hosted' : 'local',
+    ...(hosted && typeof hosted.manifestHash === 'string'
+      ? {
+          hosted: {
+            manifestUrl: stringValue(hosted.manifestUrl),
+            ttlSeconds: Number.isInteger(hosted.ttlSeconds) ? hosted.ttlSeconds as number : 0,
+            manifestHash: hosted.manifestHash,
+            version: stringValue(hosted.version),
+            publishedAt: stringValue(hosted.publishedAt),
+            permissions: normalizeHostedPermissions(hosted.permissions),
+          },
+        }
+      : {}),
   };
 };
 

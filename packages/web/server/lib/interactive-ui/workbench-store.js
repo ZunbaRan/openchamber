@@ -173,7 +173,7 @@ const normalizeTile = (value, { now, createId, preserveTimestamps = false } = {}
   if (!isRecord(value)) fail('tile must be an object');
   const source = normalizeSource(value.source);
   const form = value.form;
-  if (!['interactive-ui', 'html-artifact'].includes(form)) fail('tile.form is unsupported');
+  if (!['interactive-ui', 'html-artifact', 'mcp-app'].includes(form)) fail('tile.form is unsupported');
   const displayMode = value.displayMode === undefined ? 'tile' : value.displayMode;
   if (!['tile', 'focus', 'popout'].includes(displayMode)) fail('tile.displayMode is unsupported');
   const tileId = value.tileId === undefined
@@ -599,12 +599,14 @@ export const createInteractiveUIWorkbenchStore = ({
   };
 
   const normalizeGeneratedSnapshot = (form, envelope) => {
-    if (!['interactive-ui', 'html-artifact'].includes(form) || !isRecord(envelope)) {
+    if (!['interactive-ui', 'html-artifact', 'mcp-app'].includes(form) || !isRecord(envelope)) {
       fail('Generated Workbench snapshot is invalid', 'invalid_workbench_snapshot', 400);
     }
     const expectedSchema = form === 'interactive-ui'
       ? 'openchamber://interactive-result/v1'
-      : 'openchamber://html-artifact-result/v1';
+      : form === 'html-artifact'
+        ? 'openchamber://html-artifact-result/v1'
+        : 'openchamber://mcp-app-result/v1';
     if (envelope.$schema !== expectedSchema || envelope.schemaVersion !== 1) {
       fail('Generated Workbench snapshot schema does not match its form', 'invalid_workbench_snapshot', 400);
     }
@@ -621,6 +623,17 @@ export const createInteractiveUIWorkbenchStore = ({
       || envelope.html.length === 0
     )) {
       fail('Generated HTML Artifact snapshot is incomplete', 'invalid_workbench_snapshot', 400);
+    }
+    if (form === 'mcp-app' && (
+      envelope.source !== 'mcp-app'
+      || typeof envelope.title !== 'string'
+      || !isRecord(envelope.binding)
+      || typeof envelope.binding.server !== 'string'
+      || typeof envelope.binding.resourceUri !== 'string'
+      || !envelope.binding.resourceUri.startsWith('ui://')
+      || !isRecord(envelope.result)
+    )) {
+      fail('Generated MCP App snapshot is incomplete', 'invalid_workbench_snapshot', 400);
     }
     let serialized;
     try {

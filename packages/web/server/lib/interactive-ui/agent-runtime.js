@@ -4,6 +4,7 @@ import crypto from 'node:crypto';
 
 const TOOL_EXTENSIONS = ['.ts', '.js', '.mjs', '.cjs'];
 const MANAGED_HASH_PATTERN = /^sha256-[A-Za-z0-9+/]{43}=$/;
+const EXTENSION_ID_PATTERN = /^[a-z0-9][a-z0-9._-]*$/;
 
 class InteractiveUIAgentRuntimeError extends Error {
   constructor(message, code = 'agent_runtime_error', status = 400) {
@@ -90,6 +91,37 @@ const writeAtomic = async (fsImpl, pathImpl, cryptoImpl, target, content) => {
     await fsImpl.rm(temporary, { force: true }).catch(() => {});
     throw error;
   }
+};
+
+const ownershipRecordContent = (extensionId, assets) => {
+  const versions = Array.from(new Set(assets.map((asset) => asset.version))).sort();
+  return Buffer.from(`${JSON.stringify({
+    schemaVersion: 1,
+    managedBy: 'openchamber',
+    extensionId,
+    versions,
+    assets: assets
+      .map((asset) => ({
+        target: asset.target,
+        kind: asset.kind,
+        name: asset.name,
+        sha256: asset.sha256,
+      }))
+      .sort((left, right) => left.target.localeCompare(right.target)),
+  }, null, 2)}\n`);
+};
+
+const groupOwnershipRecords = (assets) => {
+  const grouped = new Map();
+  for (const [target, asset] of assets) {
+    if (!EXTENSION_ID_PATTERN.test(asset.extensionId)) {
+      throw new InteractiveUIAgentRuntimeError('Managed Agent Runtime extension ID is invalid', 'agent_runtime_state_invalid', 500);
+    }
+    const entries = grouped.get(asset.extensionId) ?? [];
+    entries.push({ target, ...asset });
+    grouped.set(asset.extensionId, entries);
+  }
+  return grouped;
 };
 
 const addDesiredAsset = (desired, relativeTarget, asset) => {
@@ -189,7 +221,15 @@ const addRuntimeAssets = async ({
   }
 };
 
-const buildDesiredAssets = async ({ state, versionsDirectory, builtInRuntime, fsImpl, pathImpl, cryptoImpl }) => {
+const buildDesiredAssets = async ({
+  state,
+  versionsDirectory,
+  hostedCacheDirectory,
+  builtInRuntime,
+  fsImpl,
+  pathImpl,
+  cryptoImpl,
+}) => {
   const desired = new Map();
   if (builtInRuntime !== null && builtInRuntime !== undefined) {
     await addRuntimeAssets({
@@ -210,11 +250,16 @@ const buildDesiredAssets = async ({ state, versionsDirectory, builtInRuntime, fs
     const metadata = extension.versions?.[version];
     const agentRuntime = metadata?.agentRuntime;
     if (!isRecord(agentRuntime)) continue;
+    const extensionDirectory = metadata.delivery === 'hosted'
+      && typeof metadata.hosted?.lastGood?.version === 'string'
+      && hostedCacheDirectory
+      ? pathImpl.join(hostedCacheDirectory, extension.id, metadata.hosted.lastGood.version)
+      : pathImpl.join(versionsDirectory, extension.id, version);
     await addRuntimeAssets({
       desired,
       extensionId: extension.id,
       version,
-      extensionDirectory: pathImpl.join(versionsDirectory, extension.id, version),
+      extensionDirectory,
       agentRuntime,
       fsImpl,
       pathImpl,
@@ -334,6 +379,7 @@ export const reconcileOpenCodeAgentRuntime = async ({
   previousAssets = {},
   configDirectory,
   versionsDirectory,
+  hostedCacheDirectory = null,
   builtInRuntime = null,
   fsImpl = fsPromises,
   pathImpl = nodePath,
@@ -344,16 +390,32 @@ export const reconcileOpenCodeAgentRuntime = async ({
   }
   const resolvedConfigDirectory = pathImpl.resolve(configDirectory);
   const normalizedPreviousAssets = normalizePreviousAssets(pathImpl, previousAssets);
-  const desired = await buildDesiredAssets({ state, versionsDirectory, builtInRuntime, fsImpl, pathImpl, cryptoImpl });
+  const desired = await buildDesiredAssets({
+    state,
+    versionsDirectory,
+    hostedCacheDirectory,
+    builtInRuntime,
+    fsImpl,
+    pathImpl,
+    cryptoImpl,
+  });
   await validateExistingTargets({ desired, previousAssets: normalizedPreviousAssets, configDirectory: resolvedConfigDirectory, fsImpl, pathImpl, cryptoImpl });
 
   const allRelativeTargets = new Set([...Object.keys(normalizedPreviousAssets), ...desired.keys()]);
+  const previousOwnership = groupOwnershipRecords(Object.entries(normalizedPreviousAssets));
+  const desiredOwnership = groupOwnershipRecords(desired.entries());
+  const ownershipIds = new Set([...previousOwnership.keys(), ...desiredOwnership.keys()]);
+  const ownershipTargets = new Map(Array.from(ownershipIds, (extensionId) => [
+    extensionId,
+    pathImpl.join(resolvedConfigDirectory, 'openchamber', `${extensionId}.agent-runtime.v1.json`),
+  ]));
   const backups = new Map();
   const changedTargets = [];
   for (const relativeTarget of allRelativeTargets) {
     const target = pathImpl.join(resolvedConfigDirectory, ...relativeTarget.split('/'));
     backups.set(target, await readFileOrNull(fsImpl, target));
   }
+  for (const target of ownershipTargets.values()) backups.set(target, await readFileOrNull(fsImpl, target));
 
   const rollback = async () => {
     for (const target of changedTargets.slice().reverse()) {
@@ -365,6 +427,35 @@ export const reconcileOpenCodeAgentRuntime = async ({
   };
 
   try {
+    for (const extensionId of ownershipIds) {
+      const target = ownershipTargets.get(extensionId);
+      const current = backups.get(target);
+      const previous = previousOwnership.has(extensionId)
+        ? ownershipRecordContent(extensionId, previousOwnership.get(extensionId))
+        : null;
+      const next = desiredOwnership.has(extensionId)
+        ? ownershipRecordContent(extensionId, desiredOwnership.get(extensionId))
+        : null;
+      const matchesPrevious = previous ? current?.equals(previous) : false;
+      const matchesNext = next ? current?.equals(next) : false;
+      if (current && !matchesPrevious && !matchesNext) {
+        throw new InteractiveUIAgentRuntimeError(
+          `OCIX ownership record for ${extensionId} was modified outside OpenChamber`,
+          'agent_runtime_conflict',
+          409,
+        );
+      }
+      if (!next) {
+        if (current) {
+          await fsImpl.rm(target, { force: true });
+          changedTargets.push(target);
+        }
+        continue;
+      }
+      if (current?.equals(next)) continue;
+      await writeAtomic(fsImpl, pathImpl, cryptoImpl, target, next);
+      changedTargets.push(target);
+    }
     for (const relativeTarget of Object.keys(normalizedPreviousAssets)) {
       if (desired.has(relativeTarget)) continue;
       const target = pathImpl.join(resolvedConfigDirectory, ...relativeTarget.split('/'));

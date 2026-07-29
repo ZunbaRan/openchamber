@@ -1,8 +1,9 @@
 import { runtimeFetch } from '@/lib/runtime-fetch';
 import type { InteractiveResultEnvelope } from './types';
 import type { HTMLArtifactResultEnvelope } from './artifactResult';
+import type { McpAppResultEnvelope } from './mcpApp';
 
-export type WorkbenchSurfaceForm = 'interactive-ui' | 'html-artifact';
+export type WorkbenchSurfaceForm = 'interactive-ui' | 'html-artifact' | 'mcp-app';
 export type WorkbenchSurfaceRuntime = 'declarative' | 'native' | 'artifact';
 export type WorkbenchDisplayMode = 'tile' | 'focus' | 'popout';
 
@@ -174,7 +175,7 @@ export interface WorkbenchGeneratedSnapshot {
   schemaVersion: 1;
   snapshotRef: string;
   form: WorkbenchSurfaceForm;
-  envelope: InteractiveResultEnvelope | HTMLArtifactResultEnvelope;
+  envelope: InteractiveResultEnvelope | HTMLArtifactResultEnvelope | McpAppResultEnvelope;
   createdAt: string;
 }
 
@@ -244,7 +245,7 @@ export const fetchWorkbenchSnapshot = (projectId: string): Promise<WorkbenchSnap
 
 export const createWorkbenchGeneratedSnapshot = (
   form: WorkbenchSurfaceForm,
-  envelope: InteractiveResultEnvelope | HTMLArtifactResultEnvelope,
+  envelope: InteractiveResultEnvelope | HTMLArtifactResultEnvelope | McpAppResultEnvelope,
 ): Promise<WorkbenchGeneratedSnapshot> => (
   requestJSON('/api/interactive-ui/workbench/snapshots', {
     method: 'POST',

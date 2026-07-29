@@ -60,6 +60,10 @@ on:
         default: true
         type: boolean
 
+permissions:
+  contents: write
+  packages: read
+
 concurrency:
   group: mobile-release-${{ inputs.release_tag != '' && inputs.release_tag || github.run_id }}
   cancel-in-progress: false
@@ -68,6 +72,7 @@ env:
   MOBILE_PACKAGE_DIR: packages/mobile
   IOS_PROJECT_DIR: packages/mobile/ios/App
   ANDROID_PROJECT_DIR: packages/mobile/android
+  GITHUB_PACKAGES_TOKEN: ${{ secrets.OPENCODE_PACKAGES_TOKEN || github.token }}
 
 jobs:
   resolve-version:

@@ -63,9 +63,12 @@ import { parseInstalledHTMLArtifactResultEnvelope } from '@/lib/interactive-ui/i
 import { recordRoutingToolObservation } from '@/lib/interactive-ui/routingInspector';
 import { shouldHideToolInputPreview } from './toolRenderUtils';
 import { WorkbenchPinButton } from '@/components/interactive-ui/workbench/WorkbenchPinButton';
+import { createMcpAppResultEnvelope, parseMcpAppBinding } from '@/lib/interactive-ui/mcpApp';
 
 const HTMLArtifactView = React.lazy(() => import('@/components/interactive-ui/HTMLArtifactView')
     .then((module) => ({ default: module.HTMLArtifactView })));
+const McpAppRenderer = React.lazy(() => import('@/components/interactive-ui/McpAppRenderer')
+    .then((module) => ({ default: module.McpAppRenderer })));
 
 const TOOL_ROW_TEXT_CLASS = '!text-[length:var(--text-meta)] !leading-5 sm:!leading-6 tracking-normal';
 const TOOL_ROW_TITLE_CLASS = cn('typography-meta font-medium', TOOL_ROW_TEXT_CLASS);
@@ -1541,6 +1544,21 @@ const ToolExpandedContent: React.FC<ToolExpandedContentProps> = React.memo(({
         () => parseInstalledHTMLArtifactResultEnvelope(outputString),
         [outputString],
     );
+    const mcpAppBinding = React.useMemo(
+        () => parseMcpAppBinding(metadata),
+        [metadata],
+    );
+    const mcpAppEnvelope = React.useMemo(
+        () => mcpAppBinding
+            ? createMcpAppResultEnvelope({
+                binding: mcpAppBinding,
+                toolInput: input,
+                toolOutput: outputString,
+                metadata,
+            })
+            : null,
+        [input, mcpAppBinding, metadata, outputString],
+    );
     const artifactToolContext = React.useMemo(
         () => ({ id: part.id, name: part.tool }),
         [part.id, part.tool],
@@ -1558,7 +1576,9 @@ const ToolExpandedContent: React.FC<ToolExpandedContentProps> = React.memo(({
         [currentDirectory, diffContent, metadata]
     );
     const hasVisualDiffEntry = diffEntries.some((entry) => entry.renderMode === 'diff');
-    const hideToolInputPreview = Boolean(interactiveEnvelope || htmlArtifactEnvelope || installedArtifactEnvelope)
+    const hideToolInputPreview = Boolean(
+        interactiveEnvelope || htmlArtifactEnvelope || installedArtifactEnvelope || mcpAppEnvelope
+    )
         || shouldHideToolInputPreview(part.tool);
     const diagnosticSection = React.useMemo(
         () => getToolDiagnosticSection(part.tool, input, metadata, currentDirectory),
@@ -1622,6 +1642,40 @@ const ToolExpandedContent: React.FC<ToolExpandedContentProps> = React.memo(({
     );
 
     const renderResultContent = () => {
+        if (state.status === 'completed' && mcpAppEnvelope && sessionId) {
+            const fallback = renderScrollableBlock(
+                <ToolScrollableTextOutput
+                    output={outputString}
+                    part={part}
+                    metadata={metadata}
+                    input={input}
+                />,
+                { className: 'p-1' },
+            );
+            return (
+                <div className="space-y-1.5">
+                    <div className="flex justify-end">
+                        <WorkbenchPinButton
+                            envelope={mcpAppEnvelope}
+                            sessionId={sessionId}
+                            messageId={part.messageID}
+                            toolPartId={part.id}
+                        />
+                    </div>
+                    <React.Suspense
+                        fallback={<div className="h-52 animate-pulse rounded-xl bg-muted/40" />}
+                    >
+                        <McpAppRenderer
+                            envelope={mcpAppEnvelope}
+                            directory={currentDirectory}
+                            sessionId={sessionId}
+                            messageId={part.messageID}
+                            fallback={fallback}
+                        />
+                    </React.Suspense>
+                </div>
+            );
+        }
         const artifactEnvelope = htmlArtifactEnvelope ?? installedArtifactEnvelope;
         if (state.status === 'completed' && artifactEnvelope) {
             const fallback = renderScrollableBlock(
@@ -1645,6 +1699,7 @@ const ToolExpandedContent: React.FC<ToolExpandedContentProps> = React.memo(({
                         <WorkbenchPinButton
                             envelope={artifactEnvelope}
                             sessionId={sessionId}
+                            messageId={part.messageID}
                             toolPartId={part.id}
                         />
                     </div>
@@ -1676,6 +1731,7 @@ const ToolExpandedContent: React.FC<ToolExpandedContentProps> = React.memo(({
                         <WorkbenchPinButton
                             envelope={interactiveEnvelope}
                             sessionId={sessionId}
+                            messageId={part.messageID}
                             toolPartId={part.id}
                         />
                     </div>

@@ -34,8 +34,12 @@ on:
           - "7"
           - "14"
 
+env:
+  GITHUB_PACKAGES_TOKEN: ${{ secrets.OPENCODE_PACKAGES_TOKEN || github.token }}
+
 permissions:
   contents: read
+  packages: read
 
 jobs:
   build-macos-electron:
@@ -73,7 +77,7 @@ jobs:
       - name: Get bundled OpenCode CLI version
         id: opencode_cli_version
         run: |
-          VERSION=$(node -p "require('./package.json').dependencies['@opencode-ai/sdk']")
+          VERSION=$(node -p "require('./packages/electron/opencode-cli.lock.json').version")
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Cache bundled OpenCode CLI artifact
@@ -215,7 +219,7 @@ jobs:
         id: opencode_cli_version
         shell: bash
         run: |
-          VERSION=$(node -p "require('./package.json').dependencies['@opencode-ai/sdk']")
+          VERSION=$(node -p "require('./packages/electron/opencode-cli.lock.json').version")
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Cache bundled OpenCode CLI artifact

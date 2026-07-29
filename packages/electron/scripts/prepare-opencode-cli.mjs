@@ -1,16 +1,15 @@
 import { spawnSync } from 'node:child_process';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { resolveTargetArchitecture } from './target-architecture.mjs';
+import { artifactForTarget, readOpenCodeCliLock } from './opencode-cli-lock.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const electronRoot = path.resolve(__dirname, '..');
-const workspaceRoot = path.resolve(electronRoot, '../..');
 const outputDir = path.join(electronRoot, 'resources', 'opencode-cli');
 const cacheRoot = path.join(electronRoot, '.cache', 'opencode-cli');
-const rootPackagePath = path.join(workspaceRoot, 'package.json');
 
 const run = (command, args, options = {}) => {
   const result = spawnSync(command, args, {
@@ -25,36 +24,6 @@ const run = (command, args, options = {}) => {
     throw new Error(`Command failed: ${command} ${args.join(' ')}${stderr}${stdout}`);
   }
   return result;
-};
-
-const readPinnedSdkVersion = () => {
-  const pkg = JSON.parse(fs.readFileSync(rootPackagePath, 'utf8'));
-  const version = pkg.dependencies?.['@opencode-ai/sdk'];
-  if (typeof version !== 'string' || !version.trim()) {
-    throw new Error('Missing @opencode-ai/sdk dependency in root package.json');
-  }
-  const trimmed = version.trim();
-  if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(trimmed)) {
-    throw new Error(`@opencode-ai/sdk must be pinned to an exact version for desktop CLI bundling, got: ${trimmed}`);
-  }
-  return trimmed;
-};
-
-const artifactForPlatform = (platform, targetArchitecture) => {
-  const arch = targetArchitecture.opencode;
-  if (platform === 'darwin') {
-    if (arch === 'arm64') return { name: 'opencode-darwin-arm64.zip', binary: 'opencode' };
-    if (arch === 'x64') return { name: 'opencode-darwin-x64-baseline.zip', binary: 'opencode' };
-  }
-  if (platform === 'win32') {
-    if (arch === 'arm64') return { name: 'opencode-windows-arm64.zip', binary: 'opencode.exe' };
-    if (arch === 'x64') return { name: 'opencode-windows-x64-baseline.zip', binary: 'opencode.exe' };
-  }
-  if (platform === 'linux') {
-    if (arch === 'arm64') return { name: 'opencode-linux-arm64.tar.gz', binary: 'opencode' };
-    if (arch === 'x64') return { name: 'opencode-linux-x64-baseline.tar.gz', binary: 'opencode' };
-  }
-  throw new Error(`No OpenCode CLI artifact mapping for ${platform}/${arch}`);
 };
 
 const outputBinaryPath = (binaryName) => path.join(outputDir, binaryName);
@@ -77,7 +46,16 @@ const ensureExecutable = (filePath) => {
   }
 };
 
-const download = async (url, destination) => {
+const sha256 = (filePath) => crypto.createHash('sha256').update(fs.readFileSync(filePath)).digest('hex');
+
+const assertHash = (filePath, expected) => {
+  const actual = sha256(filePath);
+  if (actual !== expected) {
+    throw new Error(`OpenCode CLI artifact SHA256 mismatch for ${filePath}: expected ${expected}, got ${actual}`);
+  }
+};
+
+const download = async (url, destination, expectedSha256) => {
   fs.mkdirSync(path.dirname(destination), { recursive: true });
   const response = await fetch(url);
   if (!response.ok) {
@@ -85,6 +63,7 @@ const download = async (url, destination) => {
   }
   const temp = `${destination}.tmp`;
   fs.writeFileSync(temp, Buffer.from(await response.arrayBuffer()));
+  assertHash(temp, expectedSha256);
   fs.renameSync(temp, destination);
 };
 
@@ -130,14 +109,12 @@ const findBinary = (root, binaryName) => {
 };
 
 const main = async () => {
-  const version = process.env.OPENCHAMBER_OPENCODE_CLI_VERSION || readPinnedSdkVersion();
-  if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(version)) {
-    throw new Error(`Invalid OpenCode CLI version: ${version}`);
-  }
-
+  const lock = readOpenCodeCliLock();
+  const version = lock.version;
   const targetArchitecture = resolveTargetArchitecture();
-  const artifact = artifactForPlatform(process.platform, targetArchitecture);
-  const outputBinary = outputBinaryPath(artifact.binary);
+  const artifact = artifactForTarget(lock, process.platform, targetArchitecture.opencode);
+  const binary = process.platform === 'win32' ? 'opencode.exe' : 'opencode';
+  const outputBinary = outputBinaryPath(binary);
   const existingVersion = readBinaryVersion(outputBinary);
   if (existingVersion === version) {
     console.log(`[electron] bundled OpenCode CLI already prepared: ${outputBinary} (${version})`);
@@ -145,20 +122,20 @@ const main = async () => {
   }
 
   const cacheDir = path.join(cacheRoot, version, `${process.platform}-${targetArchitecture.opencode}`);
-  const archivePath = path.join(cacheDir, artifact.name);
-  const url = `https://github.com/anomalyco/opencode/releases/download/v${version}/${artifact.name}`;
+  const archivePath = path.join(cacheDir, artifact.file);
   if (!fs.existsSync(archivePath)) {
-    console.log(`[electron] downloading OpenCode CLI ${version}: ${artifact.name}`);
-    await download(url, archivePath);
+    console.log(`[electron] downloading managed OpenCode CLI ${version}: ${artifact.file}`);
+    await download(artifact.url, archivePath, artifact.sha256);
   } else {
+    assertHash(archivePath, artifact.sha256);
     console.log(`[electron] using cached OpenCode CLI archive: ${archivePath}`);
   }
 
   const extractDir = path.join(cacheDir, 'extract');
   extractArchive(archivePath, extractDir);
-  const extractedBinary = findBinary(extractDir, artifact.binary);
+  const extractedBinary = findBinary(extractDir, binary);
   if (!extractedBinary) {
-    throw new Error(`Archive ${archivePath} did not contain ${artifact.binary}`);
+    throw new Error(`Archive ${archivePath} did not contain ${binary}`);
   }
 
   fs.mkdirSync(outputDir, { recursive: true });
@@ -174,7 +151,20 @@ const main = async () => {
     throw new Error(`Prepared OpenCode CLI version mismatch: expected ${version}, got ${preparedVersion || 'unknown'}`);
   }
 
-  console.log(`[electron] prepared OpenCode CLI ${version}: ${outputBinary}`);
+  fs.writeFileSync(
+    path.join(outputDir, 'distribution.json'),
+    `${JSON.stringify({
+      schema: lock.schema,
+      repository: lock.repository,
+      releaseTag: lock.releaseTag,
+      version: lock.version,
+      upstreamCommit: lock.upstreamCommit,
+      forkCommit: lock.forkCommit,
+      target: artifact.key,
+      sha256: artifact.sha256,
+    }, null, 2)}\n`,
+  );
+  console.log(`[electron] prepared managed OpenCode CLI ${version}: ${outputBinary}`);
 };
 
 main().catch((error) => {

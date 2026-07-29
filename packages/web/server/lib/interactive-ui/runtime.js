@@ -928,7 +928,7 @@ export const createInteractiveUIRuntime = ({
       if (typeof input.source.snapshotRef !== 'string' || !input.source.snapshotRef.trim()) {
         throw new InteractiveUIRuntimeError('Generated Workbench tile snapshotRef is required', 400, 'invalid_workbench_tile');
       }
-      if (!['interactive-ui', 'html-artifact'].includes(input.form)) {
+      if (!['interactive-ui', 'html-artifact', 'mcp-app'].includes(input.form)) {
         throw new InteractiveUIRuntimeError('Generated Workbench tile form is invalid', 400, 'invalid_workbench_tile');
       }
       const snapshotRef = input.source.snapshotRef.trim();

@@ -41,86 +41,37 @@ export const registerOpenCodeRoutes = (app, dependencies) => {
     return trimmed || null;
   };
 
-  const isBundledOpenCodeBinaryActive = async () => {
-    const settings = await readSettingsFromDiskMigrated();
-    const resolution = await getOpenCodeResolutionSnapshot(settings);
-    return resolution?.source === 'bundled' || resolution?.detectedSourceNow === 'bundled';
-  };
-
-  const readOpenCodeCurrentVersion = async () => {
-    const healthResponse = await fetch(buildOpenCodeUrl('/global/health', ''), {
+  const readOpenCodeCapabilities = async () => {
+    const response = await fetch(buildOpenCodeUrl('/global/capabilities', ''), {
       method: 'GET',
       headers: { Accept: 'application/json', ...getOpenCodeAuthHeaders() },
     });
-    const health = await healthResponse.json().catch(() => null);
-    if (!healthResponse.ok) {
-      return { ok: false, status: healthResponse.status, error: health?.error || healthResponse.statusText };
+    const payload = await response.json().catch(() => null);
+    if (response.ok) return { supported: true, capabilities: payload };
+    if (response.status === 404) {
+      const healthResponse = await fetch(buildOpenCodeUrl('/global/health', ''), {
+        method: 'GET',
+        headers: { Accept: 'application/json', ...getOpenCodeAuthHeaders() },
+      });
+      const health = await healthResponse.json().catch(() => null);
+      return {
+        supported: false,
+        capabilities: {
+          distribution: 'external-or-official',
+          version: typeof health?.version === 'string' ? health.version.replace(/^v/, '') : null,
+          apiVersion: 'legacy',
+          managedUpdate: false,
+          features: {
+            mcpLegacy: true,
+            mcp20260728: false,
+            mcpApps: false,
+            mcpAppToolCall: false,
+          },
+        },
+        diagnostic: 'The selected external OpenCode CLI does not expose OpenChamber capabilities.',
+      };
     }
-    const currentVersion = typeof health?.version === 'string' ? health.version.replace(/^v/, '') : null;
-    return { ok: true, currentVersion };
-  };
-
-  const parseVersionForComparison = (value) => {
-    const normalized = String(value || '').replace(/^v/, '').split('+')[0];
-    const prereleaseIndex = normalized.indexOf('-');
-    const core = prereleaseIndex >= 0 ? normalized.slice(0, prereleaseIndex) : normalized;
-    const parts = core.split('.').map((part) => {
-      const parsed = Number.parseInt(part || '0', 10);
-      return Number.isFinite(parsed) ? parsed : 0;
-    });
-    return { parts, prerelease: prereleaseIndex >= 0 };
-  };
-
-  const compareVersions = (left, right) => {
-    const a = parseVersionForComparison(left);
-    const b = parseVersionForComparison(right);
-    const length = Math.max(a.parts.length, b.parts.length);
-    for (let index = 0; index < length; index += 1) {
-      const diff = (a.parts[index] || 0) - (b.parts[index] || 0);
-      if (diff !== 0) return diff;
-    }
-    if (a.prerelease !== b.prerelease) return a.prerelease ? -1 : 1;
-    return 0;
-  };
-
-  const fetchLatestOpenCodeVersionFromGithub = async () => {
-    const response = await fetch('https://api.github.com/repos/anomalyco/opencode/releases/latest', {
-      headers: { Accept: 'application/json' },
-      signal: AbortSignal.timeout(10_000),
-    });
-    if (!response.ok) {
-      throw new Error(`OpenCode releases responded with ${response.status}`);
-    }
-    const payload = await response.json();
-    const tag = typeof payload?.tag_name === 'string' ? payload.tag_name.trim() : '';
-    return tag.replace(/^v/, '');
-  };
-
-  const fetchLatestOpenCodeVersionFromNpm = async () => {
-    const response = await fetch('https://registry.npmjs.org/opencode-ai/latest', {
-      headers: { Accept: 'application/json' },
-      signal: AbortSignal.timeout(10_000),
-    });
-    if (!response.ok) {
-      throw new Error(`OpenCode npm registry responded with ${response.status}`);
-    }
-    const payload = await response.json();
-    return typeof payload?.version === 'string' ? payload.version.trim().replace(/^v/, '') : '';
-  };
-
-  const fetchLatestOpenCodeVersion = async () => {
-    const results = await Promise.allSettled([
-      fetchLatestOpenCodeVersionFromNpm(),
-      fetchLatestOpenCodeVersionFromGithub(),
-    ]);
-    const versions = results
-      .filter((result) => result.status === 'fulfilled' && result.value)
-      .map((result) => result.value);
-    if (versions.length === 0) {
-      const failure = results.find((result) => result.status === 'rejected');
-      throw failure?.reason instanceof Error ? failure.reason : new Error('Failed to resolve latest OpenCode version');
-    }
-    return versions.sort((left, right) => compareVersions(right, left))[0];
+    throw new Error(payload?.error || response.statusText || 'Failed to read OpenCode capabilities');
   };
 
   const pruneExpiredPendingMcpAuthContexts = () => {
@@ -153,97 +104,40 @@ export const registerOpenCodeRoutes = (app, dependencies) => {
     }
   });
 
-  app.post('/api/opencode/upgrade', async (req, res) => {
-    try {
-      if (await isBundledOpenCodeBinaryActive()) {
-        return res.status(409).json({
-          success: false,
-          error: 'OpenCode is bundled with OpenChamber Desktop and cannot be upgraded separately.',
-        });
-      }
-
-      const target = typeof req.body?.target === 'string' && req.body.target.trim().length > 0
-        ? req.body.target.trim()
-        : undefined;
-      const response = await fetch(buildOpenCodeUrl('/global/upgrade', ''), {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Accept: 'application/json',
-          ...getOpenCodeAuthHeaders(),
-        },
-        body: JSON.stringify(target ? { target } : {}),
-      });
-      const payload = await response.json().catch(() => null);
-      if (!response.ok) {
-        return res.status(response.status).json({
-          success: false,
-          error: payload?.error || response.statusText || 'Failed to upgrade OpenCode',
-        });
-      }
-
-      try {
-        await refreshOpenCodeAfterConfigChange('OpenCode upgrade');
-      } catch (restartError) {
-        return res.status(500).json({
-          success: false,
-          upgraded: true,
-          error: restartError instanceof Error
-            ? `OpenCode upgraded, but restart failed: ${restartError.message}`
-            : 'OpenCode upgraded, but restart failed',
-        });
-      }
-
-      return res.json({ ...(payload ?? { success: true }), restarted: true });
-    } catch (error) {
-      console.error('Failed to upgrade OpenCode:', error);
-      return res.status(500).json({
-        success: false,
-        error: error instanceof Error ? error.message : 'Failed to upgrade OpenCode',
-      });
-    }
+  app.post('/api/opencode/upgrade', (_req, res) => {
+    return res.status(409).json({
+      success: false,
+      error:
+        'OpenChamber never upgrades OpenCode independently. The bundled fork is upgraded with OpenChamber; external CLIs are user-managed diagnostics only.',
+    });
   });
 
   app.get('/api/opencode/upgrade-status', async (_req, res) => {
     try {
-      if (await isBundledOpenCodeBinaryActive()) {
-        const current = await readOpenCodeCurrentVersion().catch(() => ({ ok: false, currentVersion: null }));
-        return res.json({
-          available: false,
-          currentVersion: current.ok ? current.currentVersion : null,
-          latestVersion: null,
-          source: 'bundled',
-        });
-      }
-
-      const [healthResponse, latestVersion] = await Promise.all([
-        fetch(buildOpenCodeUrl('/global/health', ''), {
-          method: 'GET',
-          headers: { Accept: 'application/json', ...getOpenCodeAuthHeaders() },
-        }),
-        fetchLatestOpenCodeVersion(),
-      ]);
-      const health = await healthResponse.json().catch(() => null);
-      if (!healthResponse.ok) {
-        return res.status(healthResponse.status).json({
-          available: null,
-          error: health?.error || healthResponse.statusText || 'Failed to read OpenCode version',
-        });
-      }
-      const currentVersion = typeof health?.version === 'string' ? health.version.replace(/^v/, '') : null;
-      if (!currentVersion || !latestVersion) {
-        return res.json({ available: null, currentVersion, latestVersion: latestVersion || null });
-      }
-      const available = compareVersions(latestVersion, currentVersion) > 0;
+      const result = await readOpenCodeCapabilities();
       return res.json({
-        available,
-        currentVersion,
-        latestVersion,
+        available: false,
+        currentVersion: result.capabilities?.version ?? null,
+        latestVersion: null,
+        source: result.capabilities?.distribution ?? 'external',
+        managedBy: result.capabilities?.managedUpdate ? 'openchamber' : 'user',
       });
     } catch (error) {
       return res.status(500).json({
         available: null,
         error: error instanceof Error ? error.message : 'Failed to check OpenCode upgrade status',
+      });
+    }
+  });
+
+  app.get('/api/opencode/capabilities', async (_req, res) => {
+    try {
+      return res.json(await readOpenCodeCapabilities());
+    } catch (error) {
+      return res.status(503).json({
+        supported: false,
+        capabilities: null,
+        error: error instanceof Error ? error.message : 'Failed to read OpenCode capabilities',
       });
     }
   });

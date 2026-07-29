@@ -8,6 +8,12 @@ import {
   verifyExtensionPackage,
   verifySignedExtensionCatalog,
 } from './package-format.js';
+import {
+  fetchHostedOcixManifest,
+  hostedPermissionExpansion,
+  materializeHostedOcix,
+  verifyHostedOcixManifest,
+} from './hosted-ocix.js';
 import { reconcileOpenCodeAgentRuntime } from './agent-runtime.js';
 import { createInteractiveUIRuntime } from './runtime.js';
 
@@ -21,7 +27,30 @@ const ID_PATTERN = /^[a-z0-9]+(?:[._-][a-z0-9]+)+$/i;
 const KEY_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 const SEMVER_PATTERN = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
 const SHA256_PATTERN = /^sha256-[A-Za-z0-9+/]{43}=$/;
+const HOSTED_TOOL_NAME_PATTERN = /^[a-z][a-z0-9_]*$/;
+const RESERVED_TOOL_NAMES = new Set([
+  'apply_patch', 'bash', 'edit', 'glob', 'grep', 'html_artifact', 'interactive_ui',
+  'list', 'read', 'skill', 'task', 'todo', 'webfetch', 'write',
+]);
 const BLOCKED_KEY_IDS = new Set(['__proto__', 'prototype', 'constructor']);
+
+const compareSemver = (left, right) => {
+  const parse = (value) => {
+    if (typeof value !== 'string' || !SEMVER_PATTERN.test(value)) return null;
+    const [core, prerelease = ''] = value.split('-', 2);
+    return { core: core.split('.').map(Number), prerelease };
+  };
+  const a = parse(left);
+  const b = parse(right);
+  if (!a || !b) return null;
+  for (let index = 0; index < 3; index += 1) {
+    if (a.core[index] !== b.core[index]) return a.core[index] > b.core[index] ? 1 : -1;
+  }
+  if (a.prerelease === b.prerelease) return 0;
+  if (!a.prerelease) return 1;
+  if (!b.prerelease) return -1;
+  return a.prerelease.localeCompare(b.prerelease, 'en', { numeric: true });
+};
 
 class InteractiveUIExtensionManagerError extends Error {
   constructor(message, code = 'extension_manager_error', status = 400, details = undefined) {
@@ -201,7 +230,7 @@ const summarizeAgentRouting = (manifest) => isRecord(manifest?.agentRouting)
     }
   : null;
 
-const summarizeVerifiedPackage = (verified) => ({
+const summarizeVerifiedPackage = (verified, hosted = null) => ({
   extension: {
     id: verified.manifest.id,
     name: verified.manifest.name,
@@ -223,6 +252,17 @@ const summarizeVerifiedPackage = (verified) => ({
   },
   agentRouting: summarizeAgentRouting(verified.manifest),
   agentRuntime: clone(verified.agentRuntime),
+  delivery: verified.manifest.delivery?.type === 'hosted' ? 'hosted' : 'local',
+  ...(hosted ? {
+    hosted: {
+      manifestUrl: verified.manifest.delivery.manifestUrl,
+      ttlSeconds: verified.manifest.delivery.ttlSeconds,
+      manifestHash: hosted.manifestHash,
+      version: hosted.version,
+      publishedAt: hosted.publishedAt,
+      permissions: clone(hosted.permissions),
+    },
+  } : {}),
 });
 
 export const createInteractiveUIExtensionManager = ({
@@ -236,6 +276,7 @@ export const createInteractiveUIExtensionManager = ({
   logger = console,
   refreshOpenCode = async () => ({ reloaded: false, external: false }),
   builtInRuntime = null,
+  runtimeVersion = '0.0.0',
 } = {}) => {
   if (typeof dataDirectory !== 'string' || !dataDirectory.trim() || typeof fetchImpl !== 'function') {
     throw new Error('Interactive UI extension manager dependencies are incomplete');
@@ -246,6 +287,7 @@ export const createInteractiveUIExtensionManager = ({
   const trustPath = pathImpl.join(managerDirectory, 'trust.json');
   const marketplacesPath = pathImpl.join(managerDirectory, 'marketplaces.json');
   const versionsDirectory = pathImpl.join(root, 'extensions');
+  const hostedCacheDirectory = pathImpl.join(managerDirectory, 'hosted-cache');
   const stagingDirectory = pathImpl.join(managerDirectory, 'staging');
   const trashDirectory = pathImpl.join(managerDirectory, 'trash');
   const resolvedOpenCodeConfigDirectory = pathImpl.resolve(
@@ -299,6 +341,7 @@ export const createInteractiveUIExtensionManager = ({
       previousAssets: previousState.agentRuntime?.assets ?? {},
       configDirectory: resolvedOpenCodeConfigDirectory,
       versionsDirectory,
+      hostedCacheDirectory,
       builtInRuntime,
       fsImpl,
       pathImpl,
@@ -441,22 +484,30 @@ export const createInteractiveUIExtensionManager = ({
       if (!active) continue;
       const integrity = await inspectInstalledVersionIntegrity(extension, active);
       if (integrity.status !== 'ready') extension.enabled = false;
+      if (active.delivery === 'hosted') {
+        const hostedRoot = typeof active.hosted?.lastGood?.version === 'string'
+          ? pathImpl.join(hostedCacheDirectory, extension.id, active.hosted.lastGood.version)
+          : null;
+        if (!hostedRoot || !(await fsImpl.stat(hostedRoot).catch(() => null))?.isDirectory()) {
+          extension.enabled = false;
+        }
+      }
     }
     return runtimeState;
   };
 
-  const validateStagedExtension = async (directory, verified) => {
+  const validateExtensionRoot = async (directory, extensionId, manifest) => {
     const runtime = createInteractiveUIRuntime({
       fsPromises: fsImpl,
       path: pathImpl,
       crypto: cryptoImpl,
       fetchImpl,
       extensionRoots: [directory],
-      environment: placeholderEnvironment(verified.manifest, environment),
+      environment: placeholderEnvironment(manifest, environment),
       logger: { warn() {}, info() {} },
     });
     const listed = await runtime.listExtensions();
-    if (listed.errors.length || listed.extensions.length !== 1 || listed.extensions[0].id !== verified.manifest.id) {
+    if (listed.errors.length || listed.extensions.length !== 1 || listed.extensions[0].id !== extensionId) {
       throw new InteractiveUIExtensionManagerError(
         listed.errors[0]?.error || 'Installed extension failed runtime validation',
         'extension_validation_failed',
@@ -477,6 +528,167 @@ export const createInteractiveUIExtensionManager = ({
       );
     }
   };
+
+  const validateStagedExtension = async (directory, verified) => (
+    validateExtensionRoot(directory, verified.manifest.id, verified.manifest)
+  );
+
+  const fetchAndVerifyHosted = async (verifiedPackage) => {
+    const delivery = verifiedPackage.manifest.delivery;
+    if (delivery?.type !== 'hosted') return null;
+    const minimumRuntimeVersion = delivery.minimumRuntimeVersion;
+    const comparison = minimumRuntimeVersion
+      ? compareSemver(runtimeVersion, minimumRuntimeVersion)
+      : 0;
+    if (comparison === null || comparison < 0) {
+      throw new InteractiveUIExtensionManagerError(
+        `Hosted OCIX requires OpenChamber ${minimumRuntimeVersion} or newer (current ${runtimeVersion})`,
+        'hosted_runtime_incompatible',
+        409,
+        { minimumRuntimeVersion, runtimeVersion },
+      );
+    }
+    const document = await fetchHostedOcixManifest({
+      manifestUrl: delivery.manifestUrl,
+      fetchImpl,
+    });
+    const hosted = verifyHostedOcixManifest({
+      document,
+      extensionId: verifiedPackage.manifest.id,
+      publisherKeyId: verifiedPackage.packageIndex.publisher.keyId,
+      publisherPublicKey: verifiedPackage.publisherPublicKey,
+      cryptoImpl,
+    });
+    const undeclared = hostedPermissionExpansion(delivery.initialPermissions, hosted.permissions);
+    if (undeclared) {
+      throw new InteractiveUIExtensionManagerError(
+        'Hosted manifest requests permissions not declared by the thin package',
+        'hosted_permission_mismatch',
+        403,
+        { addedPermissions: undeclared, permissions: hosted.permissions },
+      );
+    }
+    return hosted;
+  };
+
+  const hostedSurfaceBindings = (extension) => {
+    const bindings = new Map();
+    for (const [kind, surfaces] of [
+      ['view', Array.isArray(extension.views) ? extension.views : []],
+      ['artifact', Array.isArray(extension.artifacts) ? extension.artifacts : []],
+    ]) {
+      for (const surface of surfaces) {
+        if (!isRecord(surface) || typeof surface.id !== 'string') continue;
+        for (const name of Array.isArray(surface.tools) ? surface.tools : []) {
+          if (typeof name !== 'string'
+            || !HOSTED_TOOL_NAME_PATTERN.test(name)
+            || RESERVED_TOOL_NAMES.has(name)) {
+            throw new InteractiveUIExtensionManagerError(
+              `Hosted surface ${surface.id} declares an invalid or reserved Agent Tool`,
+              'invalid_hosted_agent_tool',
+            );
+          }
+          const existing = bindings.get(name);
+          if (existing && (existing.surfaceId !== surface.id || existing.kind !== kind)) {
+            throw new InteractiveUIExtensionManagerError(
+              `Hosted Agent Tool ${name} is bound to more than one surface`,
+              'invalid_hosted_agent_tool',
+            );
+          }
+          bindings.set(name, {
+            name,
+            kind,
+            surfaceId: surface.id,
+            title: typeof surface.title === 'string' && surface.title.trim()
+              ? surface.title.trim()
+              : surface.id,
+            defaultContext: isRecord(surface.dashboard?.defaultContext)
+              ? clone(surface.dashboard.defaultContext)
+              : {},
+          });
+        }
+      }
+    }
+    return [...bindings.values()];
+  };
+
+  const hostedToolSource = (binding) => {
+    const schema = binding.kind === 'view'
+      ? 'openchamber://interactive-result/v1'
+      : 'openchamber://installed-html-artifact-result/v1';
+    const surfaceKey = binding.kind === 'view' ? 'view' : 'artifact';
+    const summary = `Open hosted ${binding.title}`;
+    return `import { tool } from '@opencode-ai/plugin';
+
+export default tool({
+  description: ${JSON.stringify(`Open the installed Hosted OCIX surface “${binding.title}”. Use contextJson only for parameters explicitly supplied or inferred from the user. The page calls business APIs through OpenChamber Business Gateway; never invent replacement business data.`)},
+  args: {
+    contextJson: tool.schema.string().optional().describe('Optional JSON object containing the surface parameters'),
+  },
+  async execute(args) {
+    let context = ${JSON.stringify(binding.defaultContext)};
+    if (args.contextJson) {
+      let parsed;
+      try {
+        parsed = JSON.parse(args.contextJson);
+      } catch {
+        throw new Error('contextJson must be valid JSON');
+      }
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        throw new Error('contextJson must contain a JSON object');
+      }
+      context = { ...context, ...parsed };
+    }
+    return JSON.stringify({
+      $schema: ${JSON.stringify(schema)},
+      schemaVersion: 1,
+      ${surfaceKey}: ${JSON.stringify(binding.surfaceId)},
+      mode: 'live',
+      summary: ${JSON.stringify(summary)},
+      context,
+      updatedAt: new Date().toISOString(),
+    });
+  },
+});
+`;
+  };
+
+  const installHostedAgentRuntime = async (directory, hosted) => {
+    const tools = hostedSurfaceBindings(hosted.extension);
+    if (tools.length === 0) {
+      return {
+        tools: [],
+        skills: [],
+        unresolvedSurfaceTools: [],
+        unresolvedViewTools: [],
+      };
+    }
+    const agentDirectory = pathImpl.join(directory, 'agent-runtime', 'tools');
+    await fsImpl.mkdir(agentDirectory, { recursive: true, mode: 0o700 });
+    for (const binding of tools) {
+      await fsImpl.writeFile(
+        pathImpl.join(agentDirectory, `${binding.name}.ts`),
+        hostedToolSource(binding),
+        { flag: 'wx', mode: 0o600 },
+      );
+    }
+    return {
+      tools: tools.map(({ name }) => ({ name, entry: `agent-runtime/tools/${name}.ts` })),
+      skills: [],
+      unresolvedSurfaceTools: [],
+      unresolvedViewTools: [],
+    };
+  };
+
+  const materializeHostedCandidate = async (hosted) => materializeHostedOcix({
+    verified: hosted,
+    cacheDirectory: hostedCacheDirectory,
+    fetchImpl,
+    fsImpl,
+    pathImpl,
+    cryptoImpl,
+    validate: (directory) => validateExtensionRoot(directory, hosted.extensionId, hosted.extension),
+  });
 
   const trustPublisherInDocument = (trust, { id, name, keyId, publicKey, source = 'manual' }) => {
     const publisherId = assertNamespacedId(id, 'Publisher id');
@@ -504,7 +716,13 @@ export const createInteractiveUIExtensionManager = ({
     return { publisherId, keyId: normalizedKeyId, fingerprint, added: !existing };
   };
 
-  const installVerifiedPackage = async ({ verified, source, previousState, nextState }) => {
+  const installVerifiedPackage = async ({
+    verified,
+    hosted,
+    source,
+    previousState,
+    nextState,
+  }) => {
     const { id, name, version } = verified.manifest;
     if (id === builtInRuntime?.extensionId) {
       throw new InteractiveUIExtensionManagerError('Built-in Interactive UI cannot be replaced by an OCIX package', 'reserved_extension', 409);
@@ -515,11 +733,9 @@ export const createInteractiveUIExtensionManager = ({
       if (existingVersion.packageHash === verified.packageHash) {
         await verifyInstalledVersionIntegrity(
           { id },
-          { version, fileHashes: fileHashesFromPackageIndex(verified.packageIndex) },
+          existingVersion,
           destination,
         );
-        existingVersion.agentRuntime = clone(verified.agentRuntime);
-        existingVersion.fileHashes = fileHashesFromPackageIndex(verified.packageIndex);
         const openCode = await commitStateWithAgentRuntime(previousState, nextState);
         return { extension: clone(nextState.extensions[id]), installed: false, openCode };
       }
@@ -531,7 +747,14 @@ export const createInteractiveUIExtensionManager = ({
     try {
       await fsImpl.mkdir(stagingPath, { recursive: true, mode: 0o700 });
       await writeVerifiedFiles(stagingPath, verified.files);
-      await validateStagedExtension(stagingPath, verified);
+      let hostedRoot = null;
+      let agentRuntime = clone(verified.agentRuntime);
+      if (hosted) {
+        hostedRoot = await materializeHostedCandidate(hosted);
+        agentRuntime = await installHostedAgentRuntime(hostedRoot, hosted);
+      } else {
+        await validateStagedExtension(stagingPath, verified);
+      }
       await fsImpl.mkdir(pathImpl.dirname(destination), { recursive: true });
       try {
         await fsImpl.stat(destination);
@@ -566,8 +789,26 @@ export const createInteractiveUIExtensionManager = ({
           keyId: verified.packageIndex.publisher.keyId,
           fingerprint: verified.publisherFingerprint,
         },
-        agentRuntime: clone(verified.agentRuntime),
+        delivery: hosted ? 'hosted' : 'local',
+        agentRuntime,
         fileHashes: fileHashesFromPackageIndex(verified.packageIndex),
+        ...(hosted ? {
+          hosted: {
+            manifestUrl: verified.manifest.delivery.manifestUrl,
+            ttlSeconds: verified.manifest.delivery.ttlSeconds,
+            minimumRuntimeVersion: verified.manifest.delivery.minimumRuntimeVersion ?? null,
+            approvedPermissions: clone(hosted.permissions),
+            lastGood: {
+              version: hosted.version,
+              manifestHash: hosted.manifestHash,
+              publishedAt: hosted.publishedAt,
+              fetchedAt: installedAt,
+              expiresAt: new Date(Date.now() + verified.manifest.delivery.ttlSeconds * 1_000).toISOString(),
+            },
+            pendingUpdate: null,
+            lastError: null,
+          },
+        } : {}),
       };
       nextState.extensions[id] = next;
       const openCode = await commitStateWithAgentRuntime(previousState, nextState);
@@ -588,19 +829,31 @@ export const createInteractiveUIExtensionManager = ({
 
   const inspectPackage = async (buffer) => {
     const trust = await readTrust();
-    return summarizeVerifiedPackage(await verifyPackageAgainstTrust(buffer, trust));
+    const verified = await verifyPackageAgainstTrust(buffer, trust);
+    const hosted = await fetchAndVerifyHosted(verified);
+    return summarizeVerifiedPackage(verified, hosted);
   };
 
   const installPackageInternal = async (buffer, {
     source = { type: 'file' },
     catalogPublisher,
     confirmedPublisherFingerprint,
+    confirmedHostedManifestHash,
   } = {}) => {
     const originalTrust = await readTrust();
     const trust = clone(originalTrust);
     let catalogTrust;
     if (catalogPublisher) catalogTrust = trustPublisherInDocument(trust, catalogPublisher);
     const verified = await verifyPackageAgainstTrust(buffer, trust);
+    const hosted = await fetchAndVerifyHosted(verified);
+    if (hosted && confirmedHostedManifestHash !== hosted.manifestHash) {
+      throw new InteractiveUIExtensionManagerError(
+        'Hosted OCIX permissions and remote manifest must be confirmed before installation',
+        'hosted_manifest_confirmation_required',
+        403,
+        summarizeVerifiedPackage(verified, hosted),
+      );
+    }
     let packageTrust;
     if (!verified.publisherTrusted && !catalogTrust) {
       if (confirmedPublisherFingerprint !== verified.publisherFingerprint) {
@@ -624,7 +877,13 @@ export const createInteractiveUIExtensionManager = ({
     const trustAdded = Boolean(catalogTrust?.added || packageTrust?.added);
     if (trustAdded) await atomicWriteJson(fsImpl, pathImpl, cryptoImpl, trustPath, trust);
     try {
-      return await installVerifiedPackage({ verified, source, previousState, nextState });
+      return await installVerifiedPackage({
+        verified,
+        hosted,
+        source,
+        previousState,
+        nextState,
+      });
     } catch (error) {
       if (trustAdded) {
         await atomicWriteJson(fsImpl, pathImpl, cryptoImpl, trustPath, originalTrust).catch((rollbackError) => {
@@ -635,9 +894,133 @@ export const createInteractiveUIExtensionManager = ({
     }
   };
 
-  const getEnabledExtensionRoots = async () => {
-    const state = await readState();
+  const refreshHostedMetadata = async (
+    extension,
+    metadata,
+    trust,
+    { force = false, confirmedManifestHash } = {},
+  ) => {
+    if (metadata.delivery !== 'hosted' || !isRecord(metadata.hosted)) {
+      throw new InteractiveUIExtensionManagerError('Extension is not delivered as Hosted OCIX', 'hosted_extension_required', 409);
+    }
+    const now = Date.now();
+    const currentRoot = typeof metadata.hosted.lastGood?.version === 'string'
+      ? pathImpl.join(hostedCacheDirectory, extension.id, metadata.hosted.lastGood.version)
+      : null;
+    const usableCurrentRoot = currentRoot && (await fsImpl.stat(currentRoot).catch(() => null))?.isDirectory()
+      ? currentRoot
+      : null;
+    const refreshAfter = Date.parse(metadata.hosted.refreshAfter ?? metadata.hosted.lastGood?.expiresAt ?? '');
+    if (!force && usableCurrentRoot && Number.isFinite(refreshAfter) && refreshAfter > now) {
+      return { root: usableCurrentRoot, changed: false, runtimeChanged: false, confirmationRequired: false };
+    }
+
+    const trustedKey = trust.publishers?.[metadata.publisher?.id]?.keys?.[metadata.publisher?.keyId]?.publicKey;
+    if (!trustedKey) {
+      throw new InteractiveUIExtensionManagerError(
+        'Hosted OCIX publisher key is no longer trusted',
+        'publisher_untrusted',
+        403,
+      );
+    }
+
+    try {
+      const document = await fetchHostedOcixManifest({
+        manifestUrl: metadata.hosted.manifestUrl,
+        fetchImpl,
+      });
+      const candidate = verifyHostedOcixManifest({
+        document,
+        extensionId: extension.id,
+        publisherKeyId: metadata.publisher.keyId,
+        publisherPublicKey: trustedKey,
+        cryptoImpl,
+      });
+      const addedPermissions = hostedPermissionExpansion(
+        metadata.hosted.approvedPermissions,
+        candidate.permissions,
+      );
+      if (addedPermissions && confirmedManifestHash !== candidate.manifestHash) {
+        metadata.hosted.pendingUpdate = {
+          version: candidate.version,
+          manifestHash: candidate.manifestHash,
+          publishedAt: candidate.publishedAt,
+          permissions: clone(candidate.permissions),
+          addedPermissions,
+          detectedAt: new Date(now).toISOString(),
+        };
+        metadata.hosted.refreshAfter = new Date(now + metadata.hosted.ttlSeconds * 1_000).toISOString();
+        metadata.hosted.lastError = null;
+        return {
+          root: usableCurrentRoot,
+          changed: true,
+          runtimeChanged: false,
+          confirmationRequired: true,
+          pendingUpdate: clone(metadata.hosted.pendingUpdate),
+        };
+      }
+
+      if (candidate.manifestHash === metadata.hosted.lastGood?.manifestHash && usableCurrentRoot) {
+        metadata.hosted.lastGood.expiresAt = new Date(now + metadata.hosted.ttlSeconds * 1_000).toISOString();
+        metadata.hosted.refreshAfter = metadata.hosted.lastGood.expiresAt;
+        metadata.hosted.pendingUpdate = null;
+        metadata.hosted.lastError = null;
+        return {
+          root: usableCurrentRoot,
+          changed: true,
+          runtimeChanged: false,
+          confirmationRequired: false,
+        };
+      }
+
+      const rootDirectory = await materializeHostedCandidate(candidate);
+      metadata.agentRuntime = await installHostedAgentRuntime(rootDirectory, candidate);
+      if (addedPermissions) metadata.hosted.approvedPermissions = clone(candidate.permissions);
+      metadata.hosted.lastGood = {
+        version: candidate.version,
+        manifestHash: candidate.manifestHash,
+        publishedAt: candidate.publishedAt,
+        fetchedAt: new Date(now).toISOString(),
+        expiresAt: new Date(now + metadata.hosted.ttlSeconds * 1_000).toISOString(),
+      };
+      metadata.hosted.refreshAfter = metadata.hosted.lastGood.expiresAt;
+      metadata.hosted.pendingUpdate = null;
+      metadata.hosted.lastError = null;
+      return {
+        root: rootDirectory,
+        changed: true,
+        runtimeChanged: true,
+        confirmationRequired: false,
+      };
+    } catch (error) {
+      metadata.hosted.lastError = {
+        code: typeof error?.code === 'string' ? error.code : 'hosted_refresh_failed',
+        message: error instanceof Error ? error.message : 'Hosted OCIX refresh failed',
+        occurredAt: new Date(now).toISOString(),
+      };
+      metadata.hosted.refreshAfter = new Date(
+        now + Math.min(metadata.hosted.ttlSeconds, 5 * 60) * 1_000,
+      ).toISOString();
+      if (usableCurrentRoot) {
+        return {
+          root: usableCurrentRoot,
+          changed: true,
+          runtimeChanged: false,
+          confirmationRequired: false,
+          fallback: true,
+        };
+      }
+      throw error;
+    }
+  };
+
+  const getEnabledExtensionRoots = () => mutate(async () => {
+    const previousState = await readState();
+    const state = clone(previousState);
+    const trust = await readTrust();
     const roots = [];
+    let stateChanged = false;
+    let runtimeChanged = false;
     for (const extension of Object.values(state.extensions ?? {})) {
       if (!extension.enabled) continue;
       const active = extension.versions?.[extension.activeVersion];
@@ -652,12 +1035,56 @@ export const createInteractiveUIExtensionManager = ({
         }
         continue;
       }
+      if (active.delivery === 'hosted') {
+        try {
+          const refreshed = await refreshHostedMetadata(extension, active, trust);
+          stateChanged ||= refreshed.changed;
+          runtimeChanged ||= refreshed.runtimeChanged;
+          if (refreshed.root) roots.push(refreshed.root);
+        } catch (error) {
+          const quarantineKey = `${extension.id}@${extension.activeVersion}:${error?.code ?? 'hosted_refresh_failed'}`;
+          if (!reportedQuarantines.has(quarantineKey)) {
+            reportedQuarantines.add(quarantineKey);
+            logger.warn?.(`[InteractiveUI] Hosted OCIX ${extension.id} is unavailable: ${error?.code ?? error}`);
+          }
+        }
+        continue;
+      }
       if ((await fsImpl.stat(directory)).isDirectory()) {
         roots.push(directory);
       }
     }
+    if (stateChanged) {
+      await commitStateWithAgentRuntime(previousState, state, { reload: runtimeChanged });
+    }
     return roots;
-  };
+  });
+
+  const refreshHosted = (id, options = {}) => mutate(async () => {
+    assertNamespacedId(id, 'Extension id');
+    const previousState = await readState();
+    const nextState = clone(previousState);
+    const extension = nextState.extensions[id];
+    if (!extension) throw new InteractiveUIExtensionManagerError('Extension was not found', 'extension_not_found', 404);
+    const metadata = extension.versions?.[extension.activeVersion];
+    const trust = await readTrust();
+    const result = await refreshHostedMetadata(extension, metadata, trust, {
+      force: true,
+      confirmedManifestHash: options.confirmedManifestHash,
+    });
+    const openCode = await commitStateWithAgentRuntime(previousState, nextState, {
+      reload: result.runtimeChanged,
+    });
+    if (result.confirmationRequired) {
+      throw new InteractiveUIExtensionManagerError(
+        'Hosted OCIX update requests additional permissions',
+        'hosted_permission_confirmation_required',
+        403,
+        { ...result.pendingUpdate, openCode },
+      );
+    }
+    return { extension: clone(extension), fallback: result.fallback === true, openCode };
+  });
 
   const initialize = () => mutate(async () => {
     try {
@@ -739,6 +1166,18 @@ export const createInteractiveUIExtensionManager = ({
         active,
         pathImpl.join(versionsDirectory, extension.id, extension.activeVersion),
       );
+      if (active.delivery === 'hosted') {
+        const trust = await readTrust();
+        const refreshed = await refreshHostedMetadata(extension, active, trust);
+        if (refreshed.confirmationRequired && !refreshed.root) {
+          throw new InteractiveUIExtensionManagerError(
+            'Hosted OCIX requires permission confirmation before it can be enabled',
+            'hosted_permission_confirmation_required',
+            403,
+            refreshed.pendingUpdate,
+          );
+        }
+      }
     }
     extension.enabled = enabled;
     const openCode = await commitStateWithAgentRuntime(previousState, nextState);
@@ -762,6 +1201,19 @@ export const createInteractiveUIExtensionManager = ({
       extension.versions[previous],
       pathImpl.join(versionsDirectory, extension.id, previous),
     );
+    const previousMetadata = extension.versions[previous];
+    if (previousMetadata.delivery === 'hosted') {
+      const trust = await readTrust();
+      const refreshed = await refreshHostedMetadata(extension, previousMetadata, trust);
+      if (refreshed.confirmationRequired && !refreshed.root) {
+        throw new InteractiveUIExtensionManagerError(
+          'Hosted OCIX rollback target requires permission confirmation',
+          'hosted_permission_confirmation_required',
+          403,
+          refreshed.pendingUpdate,
+        );
+      }
+    }
     const current = extension.activeVersion;
     extension.activeVersion = previous;
     extension.activationHistory.push(current);
@@ -788,6 +1240,9 @@ export const createInteractiveUIExtensionManager = ({
     delete nextState.extensions[id];
     try {
       const openCode = await commitStateWithAgentRuntime(previousState, nextState);
+      await fsImpl.rm(pathImpl.join(hostedCacheDirectory, id), { recursive: true, force: true }).catch((error) => {
+        logger.warn?.(`[InteractiveUI] Failed to remove Hosted OCIX cache for ${id}`, error);
+      });
       return { removed: true, recoveryPath: moved ? trash : null, openCode };
     } catch (error) {
       if (moved) await fsImpl.rename(trash, source).catch(() => {});
@@ -929,6 +1384,7 @@ export const createInteractiveUIExtensionManager = ({
     inspectPackage,
     installPackage,
     setEnabled,
+    refreshHosted,
     rollback,
     uninstall,
     addMarketplace,

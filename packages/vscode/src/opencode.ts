@@ -1018,7 +1018,7 @@ export function createOpenCodeManager(context: vscode.ExtensionContext): OpenCod
           moreInfoLabel
         ).then(selection => {
           if (selection === moreInfoLabel) {
-            vscode.env.openExternal(vscode.Uri.parse('https://github.com/anomalyco/opencode'));
+            vscode.env.openExternal(vscode.Uri.parse('https://github.com/ZunbaRan/opencode/releases'));
           }
         });
       } else {

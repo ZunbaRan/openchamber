@@ -6,6 +6,9 @@ on:
   issue_comment:
     types: [created]
 
+env:
+  GITHUB_PACKAGES_TOKEN: ${{ secrets.OPENCODE_PACKAGES_TOKEN || github.token }}
+
 jobs:
   reproduce:
     if: |
@@ -18,6 +21,7 @@ jobs:
     permissions:
       contents: write
       issues: write
+      packages: read
     steps:
       - name: Generate bot app token
         id: app-token
