@@ -1,42 +1,65 @@
-import { create } from 'zustand';
-import { devtools, persist } from 'zustand/middleware';
-import type { SidebarSection } from '@/constants/sidebar';
-import { createDeferredSafeJSONStorage } from './utils/safeStorage';
-import { SEMANTIC_TYPOGRAPHY, getTypographyVariable, type SemanticTypographyKey } from '@/lib/typography';
-import type { ShortcutCombo } from '@/lib/shortcuts';
-import type { DraftStarterRef } from '@/lib/draftStarters';
-import { DEFAULT_MONO_FONT, DEFAULT_UI_FONT, type MonoFontOption, type UiFontOption } from '@/lib/fontOptions';
-import { getStoredMobileKeyboardMode, type MobileKeyboardMode } from '@/lib/mobileKeyboardMode';
-import { getRuntimeKey } from '@/lib/runtime-switch';
-import type { TerminalShell } from '@/lib/api/types';
+import { create } from "zustand";
+import { devtools, persist } from "zustand/middleware";
+import type { SidebarSection } from "@/constants/sidebar";
+import { createDeferredSafeJSONStorage } from "./utils/safeStorage";
+import {
+  SEMANTIC_TYPOGRAPHY,
+  getTypographyVariable,
+  type SemanticTypographyKey,
+} from "@/lib/typography";
+import type { ShortcutCombo } from "@/lib/shortcuts";
+import type { DraftStarterRef } from "@/lib/draftStarters";
+import {
+  DEFAULT_MONO_FONT,
+  DEFAULT_UI_FONT,
+  type MonoFontOption,
+  type UiFontOption,
+} from "@/lib/fontOptions";
+import {
+  getStoredMobileKeyboardMode,
+  type MobileKeyboardMode,
+} from "@/lib/mobileKeyboardMode";
+import { getRuntimeKey } from "@/lib/runtime-switch";
+import type { TerminalShell } from "@/lib/api/types";
+import { useFilesViewTabsStore } from "./useFilesViewTabsStore";
 
-export type MainTab = 'chat' | 'plan' | 'git' | 'diff' | 'terminal' | 'files' | 'context' | 'diagram';
-export type PendingDiffScope = 'working' | 'staged' | 'turn';
-export type RightSidebarTab = 'git' | 'files' | 'context' | 'extensions';
+export type MainTab =
+  | "chat"
+  | "plan"
+  | "git"
+  | "diff"
+  | "terminal"
+  | "files"
+  | "context"
+  | "diagram";
+export type PendingDiffScope = "working" | "staged" | "turn";
+export type RightSidebarTab = "git" | "files" | "context" | "extensions";
 export type ContextPanelMode =
-  | 'diff'
-  | 'file'
-  | 'context'
-  | 'plan'
-  | 'chat'
-  | 'preview'
-  | 'browser'
-  | 'files-root'
-  | 'git'
-  | 'terminal'
-  | 'extensions';
-export type MermaidRenderingMode = 'svg' | 'ascii';
-export type UserMessageRenderingMode = 'markdown' | 'plain';
-export type ChatRenderMode = 'sorted' | 'live';
-export type ActivityRenderMode = 'collapsed' | 'summary';
-export type SessionRetentionAction = 'archive' | 'delete';
-export type TimeFormatPreference = 'auto' | '12h' | '24h';
-export type WeekStartPreference = 'auto' | 'sunday' | 'monday';
-export type DesktopWindowControlsPosition = 'auto' | 'left' | 'right';
-export type FileEditorKeymap = 'default' | 'vim';
+  | "diff"
+  | "file"
+  | "context"
+  | "plan"
+  | "chat"
+  | "preview"
+  | "browser"
+  | "files-root"
+  | "git"
+  | "pr"
+  | "notes"
+  | "terminal"
+  | "extensions";
+export type MermaidRenderingMode = "svg" | "ascii";
+export type UserMessageRenderingMode = "markdown" | "plain";
+export type ChatRenderMode = "sorted" | "live";
+export type ActivityRenderMode = "collapsed" | "summary";
+export type SessionRetentionAction = "archive" | "delete";
+export type TimeFormatPreference = "auto" | "12h" | "24h";
+export type WeekStartPreference = "auto" | "sunday" | "monday";
+export type DesktopWindowControlsPosition = "left" | "right";
+export type FileEditorKeymap = "default" | "vim";
 
 function normalizeFileEditorKeymap(value: unknown): FileEditorKeymap {
-  return value === 'vim' ? 'vim' : 'default';
+  return value === "vim" ? "vim" : "default";
 }
 
 type ContextPanelTab = {
@@ -68,7 +91,8 @@ type ContextPanelDirectoryState = {
   expanded: boolean;
   tabs: ContextPanelTab[];
   activeTabId: string | null;
-  width: number;
+  // Manual per-surface widths (px), populated only by user resize; surfaces
+  // without an entry fall back to their registry defaultWidthFraction.
   widthByMode: Partial<Record<ContextPanelMode, number>>;
   touchedAt: number;
 };
@@ -81,46 +105,61 @@ type PendingFileNavigation = {
 
 export type MainTabGuard = (nextTab: MainTab) => boolean;
 export type EventStreamStatus =
-  | 'idle'
-  | 'connecting'
-  | 'connected'
-  | 'reconnecting'
-  | 'paused'
-  | 'offline'
-  | 'error';
+  | "idle"
+  | "connecting"
+  | "connected"
+  | "reconnecting"
+  | "paused"
+  | "offline"
+  | "error";
 
 const LEGACY_DEFAULT_NOTIFICATION_TEMPLATES = {
-  completion: { title: '{agent_name} is ready', message: '{last_message}' },
-  error: { title: 'Tool error', message: '{last_message}' },
-  question: { title: '{agent_name} needs input', message: '{last_message}' },
-  subtask: { title: 'Subtask complete', message: '{last_message}' },
+  completion: { title: "{agent_name} is ready", message: "{last_message}" },
+  error: { title: "Tool error", message: "{last_message}" },
+  question: { title: "{agent_name} needs input", message: "{last_message}" },
+  subtask: { title: "Subtask complete", message: "{last_message}" },
 } as const;
 
 const EMPTY_NOTIFICATION_TEMPLATES = {
-  completion: { title: '', message: '' },
-  error: { title: '', message: '' },
-  question: { title: '', message: '' },
-  subtask: { title: '', message: '' },
+  completion: { title: "", message: "" },
+  error: { title: "", message: "" },
+  question: { title: "", message: "" },
+  subtask: { title: "", message: "" },
 } as const;
 
 const isSameTemplateValue = (
   a: { title: string; message: string } | undefined,
-  b: { title: string; message: string }
+  b: { title: string; message: string },
 ) => {
   if (!a) return false;
   return a.title === b.title && a.message === b.message;
 };
 
 const isLegacyDefaultTemplates = (value: unknown): boolean => {
-  if (!value || typeof value !== 'object') {
+  if (!value || typeof value !== "object") {
     return false;
   }
-  const candidate = value as Record<string, { title: string; message: string } | undefined>;
+  const candidate = value as Record<
+    string,
+    { title: string; message: string } | undefined
+  >;
   return (
-    isSameTemplateValue(candidate.completion, LEGACY_DEFAULT_NOTIFICATION_TEMPLATES.completion)
-    && isSameTemplateValue(candidate.error, LEGACY_DEFAULT_NOTIFICATION_TEMPLATES.error)
-    && isSameTemplateValue(candidate.question, LEGACY_DEFAULT_NOTIFICATION_TEMPLATES.question)
-    && isSameTemplateValue(candidate.subtask, LEGACY_DEFAULT_NOTIFICATION_TEMPLATES.subtask)
+    isSameTemplateValue(
+      candidate.completion,
+      LEGACY_DEFAULT_NOTIFICATION_TEMPLATES.completion,
+    ) &&
+    isSameTemplateValue(
+      candidate.error,
+      LEGACY_DEFAULT_NOTIFICATION_TEMPLATES.error,
+    ) &&
+    isSameTemplateValue(
+      candidate.question,
+      LEGACY_DEFAULT_NOTIFICATION_TEMPLATES.question,
+    ) &&
+    isSameTemplateValue(
+      candidate.subtask,
+      LEGACY_DEFAULT_NOTIFICATION_TEMPLATES.subtask,
+    )
   );
 };
 
@@ -141,23 +180,27 @@ const activeMainTabByRuntime = new Map<string, MainTab>();
 
 const runtimeMemoryKey = (value?: string | null): string => {
   const key = (value ?? getRuntimeKey()).trim();
-  return key || 'default';
+  return key || "default";
 };
 
+// Shared with rail/panel consumers so contextPanelByDirectory lookups agree on keys.
+export const normalizeContextPanelDirectoryKey = (value: string): string =>
+  normalizeDirectoryPath(value);
+
 const normalizeDirectoryPath = (value: string): string => {
-  if (!value) return '';
+  if (!value) return "";
 
-  const raw = value.replace(/\\/g, '/');
-  const hadUncPrefix = raw.startsWith('//');
-  let normalized = raw.replace(/\/+$/g, '');
-  normalized = normalized.replace(/\/+/g, '/');
+  const raw = value.replace(/\\/g, "/");
+  const hadUncPrefix = raw.startsWith("//");
+  let normalized = raw.replace(/\/+$/g, "");
+  normalized = normalized.replace(/\/+/g, "/");
 
-  if (hadUncPrefix && !normalized.startsWith('//')) {
+  if (hadUncPrefix && !normalized.startsWith("//")) {
     normalized = `/${normalized}`;
   }
 
-  if (normalized === '') {
-    return raw.startsWith('/') ? '/' : '';
+  if (normalized === "") {
+    return raw.startsWith("/") ? "/" : "";
   }
 
   return normalized;
@@ -168,18 +211,16 @@ const clampContextPanelWidth = (width: number): number => {
     return CONTEXT_PANEL_DEFAULT_WIDTH;
   }
 
-  return Math.min(CONTEXT_PANEL_MAX_WIDTH, Math.max(CONTEXT_PANEL_MIN_WIDTH, Math.round(width)));
+  return Math.min(
+    CONTEXT_PANEL_MAX_WIDTH,
+    Math.max(CONTEXT_PANEL_MIN_WIDTH, Math.round(width)),
+  );
 };
 
-const getDefaultContextPanelWidthForMode = (mode: ContextPanelMode): number => {
-  if (mode === 'extensions' && typeof window !== 'undefined') {
-    return clampContextPanelWidth(Math.round(window.innerWidth * 0.5));
-  }
-  return CONTEXT_PANEL_DEFAULT_WIDTH;
-};
-
-const normalizeContextTargetPath = (value: string | null | undefined): string | null => {
-  if (typeof value !== 'string') {
+const normalizeContextTargetPath = (
+  value: string | null | undefined,
+): string | null => {
+  if (typeof value !== "string") {
     return null;
   }
 
@@ -188,11 +229,13 @@ const normalizeContextTargetPath = (value: string | null | undefined): string | 
     return null;
   }
 
-  return trimmed.replace(/\\/g, '/');
+  return trimmed.replace(/\\/g, "/");
 };
 
-const normalizeContextTabLabel = (value: string | null | undefined): string | null => {
-  if (typeof value !== 'string') {
+const normalizeContextTabLabel = (
+  value: string | null | undefined,
+): string | null => {
+  if (typeof value !== "string") {
     return null;
   }
 
@@ -207,15 +250,20 @@ const normalizeContextTabLabel = (value: string | null | undefined): string | nu
 };
 
 const normalizePendingDiffScope = (value: unknown): PendingDiffScope | null => {
-  return value === 'working' || value === 'staged' || value === 'turn' ? value : null;
+  return value === "working" || value === "staged" || value === "turn"
+    ? value
+    : null;
 };
 
-const buildDefaultContextPanelTabDedupeKey = (mode: ContextPanelMode, targetPath: string | null): string => {
-  if (mode === 'file') {
+const buildDefaultContextPanelTabDedupeKey = (
+  mode: ContextPanelMode,
+  targetPath: string | null,
+): string => {
+  if (mode === "file") {
     return targetPath || mode;
   }
 
-  if (mode === 'preview') {
+  if (mode === "preview") {
     return targetPath || mode;
   }
 
@@ -227,11 +275,11 @@ const normalizeContextPanelTabDedupeKey = (
   targetPath: string | null,
   dedupeKey: string | null | undefined,
 ): string => {
-  if (mode === 'diff') {
+  if (mode === "diff") {
     return mode;
   }
 
-  if (typeof dedupeKey === 'string') {
+  if (typeof dedupeKey === "string") {
     const trimmed = dedupeKey.trim();
     if (trimmed) {
       return trimmed;
@@ -241,12 +289,19 @@ const normalizeContextPanelTabDedupeKey = (
   return buildDefaultContextPanelTabDedupeKey(mode, targetPath);
 };
 
-const buildContextPanelTabID = (mode: ContextPanelMode, dedupeKey: string): string => {
+const buildContextPanelTabID = (
+  mode: ContextPanelMode,
+  dedupeKey: string,
+): string => {
   return dedupeKey === mode ? mode : `${mode}:${dedupeKey}`;
 };
 
-const createContextPanelTab = (descriptor: ContextPanelTabDescriptor): ContextPanelTab => {
-  const normalizedTargetPath = normalizeContextTargetPath(descriptor.targetPath);
+const createContextPanelTab = (
+  descriptor: ContextPanelTabDescriptor,
+): ContextPanelTab => {
+  const normalizedTargetPath = normalizeContextTargetPath(
+    descriptor.targetPath,
+  );
   const dedupeKey = normalizeContextPanelTabDedupeKey(
     descriptor.mode,
     normalizedTargetPath,
@@ -258,15 +313,23 @@ const createContextPanelTab = (descriptor: ContextPanelTabDescriptor): ContextPa
     targetPath: normalizedTargetPath,
     dedupeKey,
     label: normalizeContextTabLabel(descriptor.label),
-    sessionTitleFallback: normalizeContextTabLabel(descriptor.sessionTitleFallback),
+    sessionTitleFallback: normalizeContextTabLabel(
+      descriptor.sessionTitleFallback,
+    ),
     readOnly: descriptor.readOnly === true,
     stagedDiff: descriptor.stagedDiff === true,
-    diffScope: normalizePendingDiffScope(descriptor.diffScope) ?? (descriptor.stagedDiff === true ? 'staged' : 'working'),
+    diffScope:
+      normalizePendingDiffScope(descriptor.diffScope) ??
+      (descriptor.stagedDiff === true ? "staged" : "working"),
     touchedAt: Date.now(),
   };
 };
 
-const clampContextPanelTabs = (tabs: ContextPanelTab[], maxTabs: number, activeTabId: string | null): ContextPanelTab[] => {
+const clampContextPanelTabs = (
+  tabs: ContextPanelTab[],
+  maxTabs: number,
+  activeTabId: string | null,
+): ContextPanelTab[] => {
   if (tabs.length <= maxTabs) {
     return tabs;
   }
@@ -278,7 +341,9 @@ const clampContextPanelTabs = (tabs: ContextPanelTab[], maxTabs: number, activeT
     return tabs.slice(-maxTabs);
   }
 
-  const removeSet = new Set(removable.slice(0, removeCount).map((tab) => tab.id));
+  const removeSet = new Set(
+    removable.slice(0, removeCount).map((tab) => tab.id),
+  );
   return tabs.filter((tab) => !removeSet.has(tab.id));
 };
 
@@ -291,7 +356,7 @@ const sanitizeContextPanelTabs = (tabs: unknown): ContextPanelTab[] => {
   const seen = new Set<string>();
 
   for (const entry of tabs) {
-    if (!entry || typeof entry !== 'object') {
+    if (!entry || typeof entry !== "object") {
       continue;
     }
 
@@ -307,25 +372,31 @@ const sanitizeContextPanelTabs = (tabs: unknown): ContextPanelTab[] => {
       touchedAt?: unknown;
     };
 
-    if (candidate.mode !== 'diff'
-      && candidate.mode !== 'file'
-      && candidate.mode !== 'context'
-      && candidate.mode !== 'plan'
-      && candidate.mode !== 'chat'
-      && candidate.mode !== 'preview'
-      && candidate.mode !== 'browser'
-      && candidate.mode !== 'files-root'
-      && candidate.mode !== 'git'
-      && candidate.mode !== 'terminal'
-      && candidate.mode !== 'extensions') {
+    if (
+      candidate.mode !== "diff" &&
+      candidate.mode !== "file" &&
+      candidate.mode !== "context" &&
+      candidate.mode !== "plan" &&
+      candidate.mode !== "chat" &&
+      candidate.mode !== "preview" &&
+      candidate.mode !== "browser" &&
+      candidate.mode !== "files-root" &&
+      candidate.mode !== "git" &&
+      candidate.mode !== "pr" &&
+      candidate.mode !== "notes" &&
+      candidate.mode !== "terminal" &&
+      candidate.mode !== "extensions"
+    ) {
       continue;
     }
 
-    const targetPath = normalizeContextTargetPath(typeof candidate.targetPath === 'string' ? candidate.targetPath : null);
+    const targetPath = normalizeContextTargetPath(
+      typeof candidate.targetPath === "string" ? candidate.targetPath : null,
+    );
     const dedupeKey = normalizeContextPanelTabDedupeKey(
       candidate.mode,
       targetPath,
-      typeof candidate.dedupeKey === 'string' ? candidate.dedupeKey : null,
+      typeof candidate.dedupeKey === "string" ? candidate.dedupeKey : null,
     );
     const id = buildContextPanelTabID(candidate.mode, dedupeKey);
     if (!id || seen.has(id)) {
@@ -338,21 +409,34 @@ const sanitizeContextPanelTabs = (tabs: unknown): ContextPanelTab[] => {
       mode: candidate.mode,
       targetPath,
       dedupeKey,
-      label: normalizeContextTabLabel(typeof candidate.label === 'string' ? candidate.label : null),
-      sessionTitleFallback: normalizeContextTabLabel(typeof candidate.sessionTitleFallback === 'string' ? candidate.sessionTitleFallback : null),
+      label: normalizeContextTabLabel(
+        typeof candidate.label === "string" ? candidate.label : null,
+      ),
+      sessionTitleFallback: normalizeContextTabLabel(
+        typeof candidate.sessionTitleFallback === "string"
+          ? candidate.sessionTitleFallback
+          : null,
+      ),
       readOnly: candidate.readOnly === true,
       stagedDiff: candidate.stagedDiff === true,
-      diffScope: normalizePendingDiffScope(candidate.diffScope) ?? (candidate.stagedDiff === true ? 'staged' : 'working'),
-      touchedAt: typeof candidate.touchedAt === 'number' && Number.isFinite(candidate.touchedAt)
-        ? candidate.touchedAt
-        : Date.now(),
+      diffScope:
+        normalizePendingDiffScope(candidate.diffScope) ??
+        (candidate.stagedDiff === true ? "staged" : "working"),
+      touchedAt:
+        typeof candidate.touchedAt === "number" &&
+        Number.isFinite(candidate.touchedAt)
+          ? candidate.touchedAt
+          : Date.now(),
     });
   }
 
   return result;
 };
 
-const resolveActiveContextPanelTabID = (tabs: ContextPanelTab[], activeTabId: string | null): string | null => {
+const resolveActiveContextPanelTabID = (
+  tabs: ContextPanelTab[],
+  activeTabId: string | null,
+): string | null => {
   if (activeTabId && tabs.some((tab) => tab.id === activeTabId)) {
     return activeTabId;
   }
@@ -364,7 +448,9 @@ const resolveActiveContextPanelTabID = (tabs: ContextPanelTab[], activeTabId: st
   return tabs[tabs.length - 1].id;
 };
 
-const touchContextPanelState = (prev?: ContextPanelDirectoryState): ContextPanelDirectoryState => {
+const touchContextPanelState = (
+  prev?: ContextPanelDirectoryState,
+): ContextPanelDirectoryState => {
   if (prev) {
     const tabs = sanitizeContextPanelTabs(prev.tabs);
     const activeTabId = resolveActiveContextPanelTabID(tabs, prev.activeTabId);
@@ -382,7 +468,6 @@ const touchContextPanelState = (prev?: ContextPanelDirectoryState): ContextPanel
     expanded: false,
     tabs: [],
     activeTabId: null,
-    width: CONTEXT_PANEL_DEFAULT_WIDTH,
     widthByMode: {},
     touchedAt: Date.now(),
   };
@@ -393,34 +478,46 @@ const upsertContextPanelTab = (
   descriptor: ContextPanelTabDescriptor,
 ): ContextPanelDirectoryState => {
   const nextTab = createContextPanelTab(descriptor);
-  const existingIndex = current.tabs.findIndex((tab) => tab.id === nextTab.id);
-  const tabs = existingIndex === -1
-    ? [...current.tabs, nextTab]
-    : current.tabs.map((tab, index) => (index === existingIndex
-      ? {
-          ...tab,
-          mode: nextTab.mode,
-          targetPath: nextTab.targetPath || tab.targetPath,
-          dedupeKey: nextTab.dedupeKey,
-          label: nextTab.label,
-          sessionTitleFallback: nextTab.sessionTitleFallback || tab.sessionTitleFallback,
-          stagedDiff: nextTab.stagedDiff,
-          diffScope: nextTab.diffScope,
-          readOnly: nextTab.readOnly,
-          touchedAt: Date.now(),
-        }
-      : tab));
+  // A real file tab replaces the empty editor placeholder ('file' with no
+  // target) that the rail can open before any file is picked.
+  const baseTabs =
+    nextTab.mode === "file" && nextTab.targetPath
+      ? current.tabs.filter((tab) => !(tab.mode === "file" && !tab.targetPath))
+      : current.tabs;
+  const existingIndex = baseTabs.findIndex((tab) => tab.id === nextTab.id);
+  const tabs =
+    existingIndex === -1
+      ? [...baseTabs, nextTab]
+      : baseTabs.map((tab, index) =>
+          index === existingIndex
+            ? {
+                ...tab,
+                mode: nextTab.mode,
+                targetPath: nextTab.targetPath || tab.targetPath,
+                dedupeKey: nextTab.dedupeKey,
+                label: nextTab.label,
+                sessionTitleFallback:
+                  nextTab.sessionTitleFallback || tab.sessionTitleFallback,
+                stagedDiff: nextTab.stagedDiff,
+                diffScope: nextTab.diffScope,
+                readOnly: nextTab.readOnly,
+                touchedAt: Date.now(),
+              }
+            : tab,
+        );
 
   const activeTabId = nextTab.id;
-  const clampedTabs = clampContextPanelTabs(tabs, CONTEXT_PANEL_MAX_TABS, activeTabId);
+  const clampedTabs = clampContextPanelTabs(
+    tabs,
+    CONTEXT_PANEL_MAX_TABS,
+    activeTabId,
+  );
 
   return {
     ...current,
     isOpen: true,
     tabs: clampedTabs,
     activeTabId: resolveActiveContextPanelTabID(clampedTabs, activeTabId),
-    width: current.widthByMode[nextTab.mode]
-      ?? getDefaultContextPanelWidthForMode(nextTab.mode),
     touchedAt: Date.now(),
   };
 };
@@ -429,20 +526,41 @@ const closeContextPanelTab = (
   current: ContextPanelDirectoryState,
   tabID: string,
 ): ContextPanelDirectoryState => {
+  const closedTab = current.tabs.find((tab) => tab.id === tabID) ?? null;
   const nextTabs = current.tabs.filter((tab) => tab.id !== tabID);
-  const nextActiveTabId = current.activeTabId === tabID
-    ? (nextTabs[nextTabs.length - 1]?.id ?? null)
-    : resolveActiveContextPanelTabID(nextTabs, current.activeTabId);
+
+  if (current.activeTabId !== tabID) {
+    return {
+      ...current,
+      tabs: nextTabs,
+      activeTabId: resolveActiveContextPanelTabID(
+        nextTabs,
+        current.activeTabId,
+      ),
+      isOpen: nextTabs.length > 0 ? current.isOpen : false,
+      touchedAt: Date.now(),
+    };
+  }
+
+  // Closing the active tab stays inside the active surface: activate the most
+  // recent remaining tab of the same mode, and when it was the last one just
+  // close the panel instead of jumping to another surface.
+  const sameModeTabs = closedTab
+    ? nextTabs.filter((tab) => tab.mode === closedTab.mode)
+    : [];
+  const nextSameModeTab =
+    sameModeTabs.length > 0
+      ? sameModeTabs.reduce((best, tab) =>
+          tab.touchedAt >= best.touchedAt ? tab : best,
+        )
+      : null;
 
   return {
     ...current,
     tabs: nextTabs,
-    activeTabId: nextActiveTabId,
-    isOpen: nextTabs.length > 0 ? current.isOpen : false,
-    width: nextActiveTabId
-      ? current.widthByMode[nextTabs.find((tab) => tab.id === nextActiveTabId)?.mode ?? 'context']
-        ?? getDefaultContextPanelWidthForMode(nextTabs.find((tab) => tab.id === nextActiveTabId)?.mode ?? 'context')
-      : current.width,
+    activeTabId:
+      nextSameModeTab?.id ?? resolveActiveContextPanelTabID(nextTabs, null),
+    isOpen: nextSameModeTab ? current.isOpen : false,
     touchedAt: Date.now(),
   };
 };
@@ -491,7 +609,7 @@ const setContextPanelTabTargetPath = (
 const sanitizeContextPanelByDirectory = (
   value: unknown,
 ): Record<string, ContextPanelDirectoryState> => {
-  if (!value || typeof value !== 'object') {
+  if (!value || typeof value !== "object") {
     return {};
   }
 
@@ -500,7 +618,7 @@ const sanitizeContextPanelByDirectory = (
 
   for (const [rawDirectory, rawState] of Object.entries(source)) {
     const directory = normalizeDirectoryPath(rawDirectory);
-    if (!directory || !rawState || typeof rawState !== 'object') {
+    if (!directory || !rawState || typeof rawState !== "object") {
       continue;
     }
 
@@ -509,7 +627,6 @@ const sanitizeContextPanelByDirectory = (
       expanded?: unknown;
       tabs?: unknown;
       activeTabId?: unknown;
-      width?: unknown;
       widthByMode?: unknown;
       touchedAt?: unknown;
       mode?: unknown;
@@ -519,42 +636,87 @@ const sanitizeContextPanelByDirectory = (
     };
 
     let tabs = sanitizeContextPanelTabs(candidate.tabs);
-    let activeTabId = typeof candidate.activeTabId === 'string' ? candidate.activeTabId : null;
+    let activeTabId =
+      typeof candidate.activeTabId === "string" ? candidate.activeTabId : null;
 
-    if (tabs.length === 0 && (candidate.mode === 'diff' || candidate.mode === 'file' || candidate.mode === 'context' || candidate.mode === 'plan' || candidate.mode === 'chat')) {
-      tabs = [createContextPanelTab({
-        mode: candidate.mode,
-        targetPath: typeof candidate.targetPath === 'string' ? candidate.targetPath : null,
-        dedupeKey: typeof candidate.dedupeKey === 'string' ? candidate.dedupeKey : null,
-        label: typeof candidate.label === 'string' ? candidate.label : null,
-      })];
+    if (
+      tabs.length === 0 &&
+      (candidate.mode === "diff" ||
+        candidate.mode === "file" ||
+        candidate.mode === "context" ||
+        candidate.mode === "plan" ||
+        candidate.mode === "chat")
+    ) {
+      tabs = [
+        createContextPanelTab({
+          mode: candidate.mode,
+          targetPath:
+            typeof candidate.targetPath === "string"
+              ? candidate.targetPath
+              : null,
+          dedupeKey:
+            typeof candidate.dedupeKey === "string"
+              ? candidate.dedupeKey
+              : null,
+          label: typeof candidate.label === "string" ? candidate.label : null,
+        }),
+      ];
       activeTabId = tabs[0]?.id ?? null;
     }
 
-    const resolvedActiveTabId = resolveActiveContextPanelTabID(tabs, activeTabId);
-    const clampedTabs = clampContextPanelTabs(tabs, CONTEXT_PANEL_MAX_TABS, resolvedActiveTabId);
+    const resolvedActiveTabId = resolveActiveContextPanelTabID(
+      tabs,
+      activeTabId,
+    );
+    const clampedTabs = clampContextPanelTabs(
+      tabs,
+      CONTEXT_PANEL_MAX_TABS,
+      resolvedActiveTabId,
+    );
 
-    const widthByMode = candidate.widthByMode && typeof candidate.widthByMode === 'object'
-      ? Object.fromEntries(
-          Object.entries(candidate.widthByMode as Record<string, unknown>)
-            .filter(([mode, width]) => (
-              sanitizeContextPanelTabs([{ mode, dedupeKey: mode }]).length === 1
-              && typeof width === 'number'
-            ))
-            .map(([mode, width]) => [mode, clampContextPanelWidth(width as number)]),
-        ) as Partial<Record<ContextPanelMode, number>>
-      : {};
+    // Legacy single `width` values are intentionally dropped: widths are now
+    // per-surface, seeded from registry defaults until the user resizes.
+    const widthByMode: Partial<Record<ContextPanelMode, number>> = {};
+    if (candidate.widthByMode && typeof candidate.widthByMode === "object") {
+      for (const [mode, value] of Object.entries(
+        candidate.widthByMode as Record<string, unknown>,
+      )) {
+        if (
+          (mode === "diff" ||
+            mode === "file" ||
+            mode === "context" ||
+            mode === "plan" ||
+            mode === "chat" ||
+            mode === "preview" ||
+            mode === "browser" ||
+            mode === "files-root" ||
+            mode === "git" ||
+            mode === "pr" ||
+            mode === "notes" ||
+            mode === "terminal" ||
+            mode === "extensions") &&
+          typeof value === "number" &&
+          Number.isFinite(value)
+        ) {
+          widthByMode[mode] = clampContextPanelWidth(value);
+        }
+      }
+    }
 
     next[directory] = {
       isOpen: candidate.isOpen === true,
       expanded: candidate.expanded === true,
       tabs: clampedTabs,
-      activeTabId: resolveActiveContextPanelTabID(clampedTabs, resolvedActiveTabId),
-      width: clampContextPanelWidth(typeof candidate.width === 'number' ? candidate.width : CONTEXT_PANEL_DEFAULT_WIDTH),
+      activeTabId: resolveActiveContextPanelTabID(
+        clampedTabs,
+        resolvedActiveTabId,
+      ),
       widthByMode,
-      touchedAt: typeof candidate.touchedAt === 'number' && Number.isFinite(candidate.touchedAt)
-        ? candidate.touchedAt
-        : Date.now(),
+      touchedAt:
+        typeof candidate.touchedAt === "number" &&
+        Number.isFinite(candidate.touchedAt)
+          ? candidate.touchedAt
+          : Date.now(),
     };
   }
 
@@ -563,7 +725,7 @@ const sanitizeContextPanelByDirectory = (
 
 const clampContextPanelRoots = (
   byDirectory: Record<string, ContextPanelDirectoryState>,
-  maxRoots: number
+  maxRoots: number,
 ): Record<string, ContextPanelDirectoryState> => {
   const entries = Object.entries(byDirectory);
   if (entries.length <= maxRoots) {
@@ -579,8 +741,7 @@ const clampContextPanelRoots = (
 };
 
 interface UIStore {
-
-  theme: 'light' | 'dark' | 'system';
+  theme: "light" | "dark" | "system";
   isMultiRunLauncherOpen: boolean;
   multiRunLauncherPrefillPrompt: string;
   isSidebarOpen: boolean;
@@ -593,10 +754,9 @@ interface UIStore {
   hasManuallyResizedRightSidebarWorkbench: boolean;
   rightSidebarTab: RightSidebarTab;
   contextPanelByDirectory: Record<string, ContextPanelDirectoryState>;
-  isBottomTerminalOpen: boolean;
-  isBottomTerminalExpanded: boolean;
-  bottomTerminalHeight: number;
-  hasManuallyResizedBottomTerminal: boolean;
+  contextRailOrder: string[];
+  contextEditorTreeVisible: boolean;
+  contextEditorTreeWidth: number;
   notesPanelHeight: number;
   todoPanelHeight: number;
   isSessionSwitcherOpen: boolean;
@@ -623,6 +783,8 @@ interface UIStore {
     projectId: string | null;
     requestId: number;
   } | null;
+  isArchivePageOpen: boolean;
+  worktreesPageProjectId: string | null;
   isSettingsDialogOpen: boolean;
   isNewWorktreeDialogOpen: boolean;
   isModelSelectorOpen: boolean;
@@ -653,6 +815,7 @@ interface UIStore {
   fontSize: number;
   // Global draft welcome starters; null = unset (use the default built-in set).
   globalDraftStarters: DraftStarterRef[] | null;
+  draftStartersVisible: boolean;
   terminalFontSize: number;
   terminalShell: TerminalShell;
   terminalLoginShells: TerminalShell[];
@@ -672,15 +835,15 @@ interface UIStore {
   recentAgents: string[];
   recentEfforts: Record<string, string[]>;
 
-  diffLayoutPreference: 'dynamic' | 'inline' | 'side-by-side';
-  diffFileLayout: Record<string, 'inline' | 'side-by-side'>;
+  diffLayoutPreference: "dynamic" | "inline" | "side-by-side";
+  diffFileLayout: Record<string, "inline" | "side-by-side">;
   diffWrapLines: boolean;
-  gitChangesViewMode: 'flat' | 'tree';
+  gitChangesViewMode: "flat" | "tree";
   isTimelineDialogOpen: boolean;
   isPromptNavigatorPanelOpen: boolean;
   isImagePreviewOpen: boolean;
   nativeNotificationsEnabled: boolean;
-  notificationMode: 'always' | 'hidden-only';
+  notificationMode: "always" | "hidden-only";
   notifyOnSubtasks: boolean;
   // Desktop dock badge showing the count of sessions with unseen activity (macOS).
   dockBadgeEnabled: boolean;
@@ -700,13 +863,14 @@ interface UIStore {
 
   // Summarization settings
   summarizeLastMessage: boolean;
-  summaryThreshold: number;   // chars — messages longer than this get summarized
-  summaryLength: number;      // chars — target length for summary
+  summaryThreshold: number; // chars — messages longer than this get summarized
+  summaryLength: number; // chars — target length for summary
   maxLastMessageLength: number; // chars — truncate {last_message} when summarization is off
 
   showTerminalQuickKeysOnDesktop: boolean;
   persistChatDraft: boolean;
   showOpenCodeUpdateNotifications: boolean;
+  agentControlToolEnabled: boolean;
   inputSpellcheckEnabled: boolean;
   wideChatLayoutEnabled: boolean;
   codeBlockLineWrap: boolean;
@@ -733,7 +897,7 @@ interface UIStore {
   shortcutOverrides: Record<string, ShortcutCombo>;
   fileEditorKeymap: FileEditorKeymap;
 
-  setTheme: (theme: 'light' | 'dark' | 'system') => void;
+  setTheme: (theme: "light" | "dark" | "system") => void;
   toggleSidebar: () => void;
   setSidebarOpen: (open: boolean) => void;
   setSidebarWidth: (width: number) => void;
@@ -742,25 +906,50 @@ interface UIStore {
   setRightSidebarWidth: (width: number) => void;
   setRightSidebarWorkbenchWidth: (width: number) => void;
   setRightSidebarTab: (tab: RightSidebarTab) => void;
-  openContextPanelTab: (directory: string, tab: ContextPanelTabDescriptor) => void;
-  openContextDiff: (directory: string, filePath: string, staged?: boolean, scope?: PendingDiffScope | null) => void;
+  setContextRailOrder: (order: string[]) => void;
+  toggleContextEditorTree: () => void;
+  setContextEditorTreeWidth: (width: number) => void;
+  openContextSurface: (directory: string, mode: ContextPanelMode) => void;
+  openContextPanelTab: (
+    directory: string,
+    tab: ContextPanelTabDescriptor,
+  ) => void;
+  openContextDiff: (
+    directory: string,
+    filePath: string,
+    staged?: boolean,
+    scope?: PendingDiffScope | null,
+  ) => void;
   openContextFile: (directory: string, filePath: string) => void;
-  openContextFileAtLine: (directory: string, filePath: string, line: number, column?: number) => void;
+  openContextFileAtLine: (
+    directory: string,
+    filePath: string,
+    line: number,
+    column?: number,
+  ) => void;
   openContextOverview: (directory: string) => void;
   openContextPlan: (directory: string) => void;
   openContextPreview: (directory: string, url: string) => void;
   openContextBrowser: (directory: string, url?: string) => void;
-  setContextPanelTabTargetPath: (directory: string, tabID: string, targetPath: string) => void;
+  setContextPanelTabTargetPath: (
+    directory: string,
+    tabID: string,
+    targetPath: string,
+  ) => void;
   setActiveContextPanelTab: (directory: string, tabID: string) => void;
-  reorderContextPanelTabs: (directory: string, activeTabID: string, overTabID: string) => void;
+  reorderContextPanelTabs: (
+    directory: string,
+    activeTabID: string,
+    overTabID: string,
+  ) => void;
   closeContextPanelTab: (directory: string, tabID: string) => void;
   closeContextPanel: (directory: string) => void;
   toggleContextPanelExpanded: (directory: string) => void;
-  setContextPanelWidth: (directory: string, width: number) => void;
-  toggleBottomTerminal: () => void;
-  setBottomTerminalOpen: (open: boolean) => void;
-  setBottomTerminalExpanded: (expanded: boolean) => void;
-  setBottomTerminalHeight: (height: number) => void;
+  setContextPanelWidth: (
+    directory: string,
+    mode: ContextPanelMode,
+    width: number,
+  ) => void;
   setNotesPanelHeight: (height: number) => void;
   setTodoPanelHeight: (height: number) => void;
   setSessionSwitcherOpen: (open: boolean) => void;
@@ -769,11 +958,19 @@ interface UIStore {
   prepareForRuntimeSwitch: (runtimeKey?: string | null) => void;
   restoreForRuntimeSwitch: (runtimeKey?: string | null) => void;
   setMainTabGuard: (guard: MainTabGuard | null) => void;
-  setPendingDiffFile: (filePath: string | null, staged?: boolean, scope?: PendingDiffScope | null) => void;
+  setPendingDiffFile: (
+    filePath: string | null,
+    staged?: boolean,
+    scope?: PendingDiffScope | null,
+  ) => void;
   setPendingDiagramFile: (filePath: string | null) => void;
   setPendingFileNavigation: (navigation: PendingFileNavigation | null) => void;
   setPendingFileFocusPath: (path: string | null) => void;
-  navigateToDiff: (filePath: string, staged?: boolean, scope?: PendingDiffScope | null) => void;
+  navigateToDiff: (
+    filePath: string,
+    staged?: boolean,
+    scope?: PendingDiffScope | null,
+  ) => void;
   consumePendingDiffFile: () => string | null;
   navigateToDiagram: (filePath: string) => void;
   consumePendingDiagramFile: () => string | null;
@@ -787,8 +984,15 @@ interface UIStore {
   setOpenCodeStatusText: (text: string) => void;
   setSessionCreateDialogOpen: (open: boolean) => void;
   setScheduledTasksDialogOpen: (open: boolean) => void;
-  openScheduledTaskEditor: (prefill: { prompt: string; projectId?: string | null }) => void;
+  openScheduledTaskEditor: (prefill: {
+    prompt: string;
+    projectId?: string | null;
+  }) => void;
   clearScheduledTaskPrefill: () => void;
+  setArchivePageOpen: (open: boolean) => void;
+  setWorktreesPageProjectId: (projectId: string | null) => void;
+  /** Close every full-page surface (Scheduled, Archive, Worktrees, Multi-run). */
+  closeMainSurfaces: () => void;
   setSettingsDialogOpen: (open: boolean) => void;
   setNewWorktreeDialogOpen: (open: boolean) => void;
   setModelSelectorOpen: (open: boolean) => void;
@@ -797,7 +1001,10 @@ interface UIStore {
   setSettingsPage: (slug: string) => void;
   setSettingsProjectsSelectedId: (projectId: string | null) => void;
   setSettingsRemoteInstancesSelectedId: (instanceId: string | null) => void;
-  setEventStreamStatus: (status: EventStreamStatus, hint?: string | null) => void;
+  setEventStreamStatus: (
+    status: EventStreamStatus,
+    hint?: string | null,
+  ) => void;
   setShowReasoningTraces: (value: boolean) => void;
   setSessionRecapEnabled: (value: boolean) => void;
   setSessionSuggestionEnabled: (value: boolean) => void;
@@ -815,6 +1022,7 @@ interface UIStore {
   setMessageLimit: (value: number) => void;
   setFontSize: (size: number) => void;
   setGlobalDraftStarters: (refs: DraftStarterRef[]) => void;
+  setDraftStartersVisible: (value: boolean) => void;
   setTerminalFontSize: (size: number) => void;
   setTerminalShell: (shell: TerminalShell) => void;
   setTerminalLoginShells: (shells: TerminalShell[]) => void;
@@ -827,7 +1035,6 @@ interface UIStore {
   setMobileKeyboardMode: (mode: MobileKeyboardMode) => void;
   applyTypography: () => void;
   applyPadding: () => void;
-  updateProportionalSidebarWidths: () => void;
   toggleFavoriteModel: (providerID: string, modelID: string) => void;
   reorderFavoriteModel: (
     activeProviderID: string,
@@ -841,35 +1048,50 @@ interface UIStore {
   hideAllModels: (providerID: string, modelIDs: string[]) => void;
   showAllModels: (providerID: string) => void;
   toggleModelProviderCollapsed: (providerID: string) => void;
-  setModelProvidersCollapsed: (providerIDs: string[], collapsed: boolean) => void;
+  setModelProvidersCollapsed: (
+    providerIDs: string[],
+    collapsed: boolean,
+  ) => void;
   isFavoriteModel: (providerID: string, modelID: string) => boolean;
   addRecentModel: (providerID: string, modelID: string) => void;
   addRecentAgent: (agentName: string) => void;
-  addRecentEffort: (providerID: string, modelID: string, variant: string | undefined) => void;
-  setDiffLayoutPreference: (mode: 'dynamic' | 'inline' | 'side-by-side') => void;
-  setDiffFileLayout: (filePath: string, mode: 'inline' | 'side-by-side') => void;
+  addRecentEffort: (
+    providerID: string,
+    modelID: string,
+    variant: string | undefined,
+  ) => void;
+  setDiffLayoutPreference: (
+    mode: "dynamic" | "inline" | "side-by-side",
+  ) => void;
+  setDiffFileLayout: (
+    filePath: string,
+    mode: "inline" | "side-by-side",
+  ) => void;
   setDiffWrapLines: (wrap: boolean) => void;
-  setGitChangesViewMode: (mode: 'flat' | 'tree') => void;
+  setGitChangesViewMode: (mode: "flat" | "tree") => void;
   setMultiRunLauncherOpen: (open: boolean) => void;
   setTimelineDialogOpen: (open: boolean) => void;
   setPromptNavigatorPanelOpen: (open: boolean) => void;
   togglePromptNavigatorPanel: () => void;
   setImagePreviewOpen: (open: boolean) => void;
   setNativeNotificationsEnabled: (value: boolean) => void;
-  setNotificationMode: (mode: 'always' | 'hidden-only') => void;
+  setNotificationMode: (mode: "always" | "hidden-only") => void;
   setShowTerminalQuickKeysOnDesktop: (value: boolean) => void;
   setNotifyOnSubtasks: (value: boolean) => void;
   setDockBadgeEnabled: (value: boolean) => void;
   setNotifyOnCompletion: (value: boolean) => void;
   setNotifyOnError: (value: boolean) => void;
   setNotifyOnQuestion: (value: boolean) => void;
-  setNotificationTemplates: (templates: UIStore['notificationTemplates']) => void;
+  setNotificationTemplates: (
+    templates: UIStore["notificationTemplates"],
+  ) => void;
   setSummarizeLastMessage: (value: boolean) => void;
   setSummaryThreshold: (value: number) => void;
   setSummaryLength: (value: number) => void;
   setMaxLastMessageLength: (value: number) => void;
   setPersistChatDraft: (value: boolean) => void;
   setShowOpenCodeUpdateNotifications: (value: boolean) => void;
+  setAgentControlToolEnabled: (value: boolean) => void;
   setInputSpellcheckEnabled: (value: boolean) => void;
   setWideChatLayoutEnabled: (value: boolean) => void;
   setCodeBlockLineWrap: (value: boolean) => void;
@@ -879,7 +1101,9 @@ interface UIStore {
   setShowExpandedEditTools: (value: boolean) => void;
   setTimeFormatPreference: (value: TimeFormatPreference) => void;
   setWeekStartPreference: (value: WeekStartPreference) => void;
-  setDesktopWindowControlsPosition: (value: DesktopWindowControlsPosition) => void;
+  setDesktopWindowControlsPosition: (
+    value: DesktopWindowControlsPosition,
+  ) => void;
   setMermaidRenderingMode: (value: MermaidRenderingMode) => void;
   setUserMessageRenderingMode: (value: UserMessageRenderingMode) => void;
   setCollapsibleUserMessages: (value: boolean) => void;
@@ -891,8 +1115,8 @@ interface UIStore {
   setIsMobileSessionStatusBarCollapsed: (value: boolean) => void;
   setMobileSessionPanelOpen: (value: boolean) => void;
   setMobileSessionFilterProjectId: (value: string | null) => void;
-  viewPagerPage: 'left' | 'center' | 'right';
-  setViewPagerPage: (page: 'left' | 'center' | 'right') => void;
+  viewPagerPage: "left" | "center" | "right";
+  setViewPagerPage: (page: "left" | "center" | "right") => void;
   toggleExpandedInput: () => void;
   setExpandedInput: (value: boolean) => void;
   openMultiRunLauncher: () => void;
@@ -904,15 +1128,13 @@ interface UIStore {
   setFileEditorKeymap: (value: FileEditorKeymap) => void;
 }
 
-
 export const useUIStore = create<UIStore>()(
   devtools(
     persist(
       (set, get) => ({
-
-        theme: 'system',
+        theme: "system",
         isMultiRunLauncherOpen: false,
-        multiRunLauncherPrefillPrompt: '',
+        multiRunLauncherPrefillPrompt: "",
         isSidebarOpen: true,
         sidebarWidth: LEFT_SIDEBAR_DEFAULT_WIDTH,
         hasManuallyResizedLeftSidebar: false,
@@ -921,17 +1143,16 @@ export const useUIStore = create<UIStore>()(
         hasManuallyResizedRightSidebar: false,
         rightSidebarWorkbenchWidth: 960,
         hasManuallyResizedRightSidebarWorkbench: false,
-        rightSidebarTab: 'git',
+        rightSidebarTab: "git",
         contextPanelByDirectory: {},
-        isBottomTerminalOpen: false,
-        isBottomTerminalExpanded: false,
-        bottomTerminalHeight: 300,
-        hasManuallyResizedBottomTerminal: false,
+        contextRailOrder: [],
+        contextEditorTreeVisible: true,
+        contextEditorTreeWidth: 240,
         notesPanelHeight: 112,
         todoPanelHeight: 259,
         isSessionSwitcherOpen: false,
         isSessionDropdownOpen: false,
-        activeMainTab: 'chat',
+        activeMainTab: "chat",
         mainTabGuard: null,
         sidebarOpenBeforeFullscreenTab: null,
         pendingDiffFile: null,
@@ -945,19 +1166,21 @@ export const useUIStore = create<UIStore>()(
         isHelpDialogOpen: false,
         isAboutDialogOpen: false,
         isOpenCodeStatusDialogOpen: false,
-        openCodeStatusText: '',
+        openCodeStatusText: "",
         isSessionCreateDialogOpen: false,
         isScheduledTasksDialogOpen: false,
         scheduledTaskPrefill: null,
+        isArchivePageOpen: false,
+        worktreesPageProjectId: null,
         isSettingsDialogOpen: false,
         isNewWorktreeDialogOpen: false,
         isModelSelectorOpen: false,
-        sidebarSection: 'sessions',
-        settingsPage: 'home',
+        sidebarSection: "sessions",
+        settingsPage: "home",
         settingsHasOpenedOnce: false,
         settingsProjectsSelectedId: null,
         settingsRemoteInstancesSelectedId: null,
-        eventStreamStatus: 'idle',
+        eventStreamStatus: "idle",
         eventStreamHint: null,
         showReasoningTraces: true,
         sessionRecapEnabled: true,
@@ -966,18 +1189,18 @@ export const useUIStore = create<UIStore>()(
         sessionGoalDefaultBudgetEnabled: false,
         sessionGoalDefaultBudget: 200_000,
         collapsibleThinkingBlocks: true,
-        chatRenderMode: 'live',
-        activityRenderMode: 'summary',
+        chatRenderMode: "live",
+        activityRenderMode: "summary",
         showDeletionDialog: true,
         autoDeleteEnabled: false,
         autoDeleteAfterDays: 30,
-        sessionRetentionAction: 'archive',
+        sessionRetentionAction: "archive",
         autoDeleteLastRunAt: null,
         messageLimit: 200,
         fontSize: 100,
         globalDraftStarters: null,
         terminalFontSize: 14,
-        terminalShell: 'auto',
+        terminalShell: "auto",
         terminalLoginShells: [],
         editorFontSize: 13,
         uiFont: DEFAULT_UI_FONT,
@@ -993,15 +1216,15 @@ export const useUIStore = create<UIStore>()(
         recentModels: [],
         recentAgents: [],
         recentEfforts: {},
-        diffLayoutPreference: 'inline',
+        diffLayoutPreference: "inline",
         diffFileLayout: {},
         diffWrapLines: false,
-        gitChangesViewMode: 'flat',
+        gitChangesViewMode: "flat",
         isTimelineDialogOpen: false,
         isPromptNavigatorPanelOpen: false,
         isImagePreviewOpen: false,
         nativeNotificationsEnabled: false,
-        notificationMode: 'hidden-only',
+        notificationMode: "hidden-only",
         notifyOnSubtasks: true,
         dockBadgeEnabled: true,
 
@@ -1025,6 +1248,7 @@ export const useUIStore = create<UIStore>()(
         showTerminalQuickKeysOnDesktop: false,
         persistChatDraft: true,
         showOpenCodeUpdateNotifications: true,
+        agentControlToolEnabled: true,
         inputSpellcheckEnabled: false,
         wideChatLayoutEnabled: false,
         codeBlockLineWrap: true,
@@ -1032,24 +1256,25 @@ export const useUIStore = create<UIStore>()(
         showTurnChangedFiles: false,
         showExpandedBashTools: false,
         showExpandedEditTools: false,
-        timeFormatPreference: 'auto',
-        weekStartPreference: 'auto',
-        desktopWindowControlsPosition: 'auto',
-        mermaidRenderingMode: 'svg',
-        userMessageRenderingMode: 'markdown',
+        timeFormatPreference: "auto",
+        weekStartPreference: "auto",
+        desktopWindowControlsPosition: "right",
+        mermaidRenderingMode: "svg",
+        userMessageRenderingMode: "markdown",
         collapsibleUserMessages: true,
         stickyUserHeader: false,
         promptNavigatorEnabled: true,
         expandedEditorToolbar: false,
         showSplitAssistantMessageActions: false,
         allowPromptingSubagentSessions: false,
+        draftStartersVisible: true,
         isMobileSessionStatusBarCollapsed: false,
         mobileSessionPanelOpen: false,
         mobileSessionFilterProjectId: null,
         isExpandedInput: false,
         reportUsage: true,
         shortcutOverrides: {},
-        fileEditorKeymap: 'default',
+        fileEditorKeymap: "default",
 
         setTheme: (theme) => {
           set({ theme });
@@ -1076,7 +1301,10 @@ export const useUIStore = create<UIStore>()(
               if (!open) {
                 return state;
               }
-              if (!state.hasManuallyResizedLeftSidebar && state.sidebarWidth !== LEFT_SIDEBAR_DEFAULT_WIDTH) {
+              if (
+                !state.hasManuallyResizedLeftSidebar &&
+                state.sidebarWidth !== LEFT_SIDEBAR_DEFAULT_WIDTH
+              ) {
                 return {
                   isSidebarOpen: open,
                   sidebarWidth: LEFT_SIDEBAR_DEFAULT_WIDTH,
@@ -1121,12 +1349,15 @@ export const useUIStore = create<UIStore>()(
             if (state.isRightSidebarOpen === open) {
               return state;
             }
-            const shouldResetWidth = open
-              && !state.hasManuallyResizedRightSidebar
-              && state.rightSidebarWidth !== RIGHT_SIDEBAR_DEFAULT_WIDTH;
+            const shouldResetWidth =
+              open &&
+              !state.hasManuallyResizedRightSidebar &&
+              state.rightSidebarWidth !== RIGHT_SIDEBAR_DEFAULT_WIDTH;
             return {
               isRightSidebarOpen: open,
-              rightSidebarWidth: shouldResetWidth ? RIGHT_SIDEBAR_DEFAULT_WIDTH : state.rightSidebarWidth,
+              rightSidebarWidth: shouldResetWidth
+                ? RIGHT_SIDEBAR_DEFAULT_WIDTH
+                : state.rightSidebarWidth,
             };
           });
         },
@@ -1134,15 +1365,48 @@ export const useUIStore = create<UIStore>()(
         setRightSidebarWidth: (width) => {
           const clamped = Math.min(
             RIGHT_SIDEBAR_MAX_WIDTH,
-            Math.max(RIGHT_SIDEBAR_MIN_WIDTH, width)
+            Math.max(RIGHT_SIDEBAR_MIN_WIDTH, width),
           );
-          set({ rightSidebarWidth: clamped, hasManuallyResizedRightSidebar: true });
+          set({
+            rightSidebarWidth: clamped,
+            hasManuallyResizedRightSidebar: true,
+          });
+        },
+
+        setContextRailOrder: (order) => {
+          const sanitized = Array.isArray(order)
+            ? order.filter(
+                (id, index) =>
+                  typeof id === "string" &&
+                  id.trim() !== "" &&
+                  order.indexOf(id) === index,
+              )
+            : [];
+          set({ contextRailOrder: sanitized });
+        },
+
+        toggleContextEditorTree: () => {
+          set((state) => ({
+            contextEditorTreeVisible: !state.contextEditorTreeVisible,
+          }));
+        },
+
+        setContextEditorTreeWidth: (width) => {
+          if (!Number.isFinite(width)) {
+            return;
+          }
+          set({
+            contextEditorTreeWidth: Math.min(
+              480,
+              Math.max(200, Math.round(width)),
+            ),
+          });
         },
 
         setRightSidebarWorkbenchWidth: (width) => {
           const clamped = Math.min(
             RIGHT_SIDEBAR_WORKBENCH_MAX_WIDTH,
-            Math.max(RIGHT_SIDEBAR_WORKBENCH_MIN_WIDTH, width)
+            Math.max(RIGHT_SIDEBAR_WORKBENCH_MIN_WIDTH, width),
           );
           set({
             rightSidebarWorkbenchWidth: clamped,
@@ -1154,8 +1418,53 @@ export const useUIStore = create<UIStore>()(
           set({ rightSidebarTab: tab });
         },
 
+        // Rail entry point: activates the most recent tab of the requested
+        // mode, opens a fresh singleton tab when none exists, and toggles the
+        // panel closed when the requested mode is already active and visible.
+        openContextSurface: (directory, mode) => {
+          const normalizedDirectory = normalizeDirectoryPath(
+            (directory || "").trim(),
+          );
+          if (!normalizedDirectory) {
+            return;
+          }
+
+          const state = get();
+          const panelState = state.contextPanelByDirectory[normalizedDirectory];
+          const tabs = panelState?.tabs ?? [];
+          const activeTab =
+            tabs.find((tab) => tab.id === panelState?.activeTabId) ?? null;
+
+          if (panelState?.isOpen && activeTab?.mode === mode) {
+            state.closeContextPanel(normalizedDirectory);
+            return;
+          }
+
+          const tabsOfMode = tabs.filter((tab) => tab.mode === mode);
+          if (tabsOfMode.length > 0) {
+            // `>=` so equal timestamps (same-millisecond opens) resolve to the
+            // later tab in insertion order.
+            const mostRecent = tabsOfMode.reduce((best, tab) =>
+              tab.touchedAt >= best.touchedAt ? tab : best,
+            );
+            state.setActiveContextPanelTab(normalizedDirectory, mostRecent.id);
+            return;
+          }
+
+          // Content-driven modes need a payload (a preview URL or session);
+          // the rail renders them disabled until content exists. 'file' opens
+          // an empty editor whose embedded tree picks the first file.
+          if (mode === "preview" || mode === "chat") {
+            return;
+          }
+
+          state.openContextPanelTab(normalizedDirectory, { mode });
+        },
+
         openContextPanelTab: (directory, tab) => {
-          const normalizedDirectory = normalizeDirectoryPath((directory || '').trim());
+          const normalizedDirectory = normalizeDirectoryPath(
+            (directory || "").trim(),
+          );
           if (!normalizedDirectory) {
             return;
           }
@@ -1168,49 +1477,74 @@ export const useUIStore = create<UIStore>()(
               [normalizedDirectory]: upsertContextPanelTab(current, tab),
             };
 
-            return { contextPanelByDirectory: clampContextPanelRoots(byDirectory, 20) };
+            return {
+              contextPanelByDirectory: clampContextPanelRoots(byDirectory, 20),
+              isRightSidebarOpen: true,
+            };
           });
         },
 
-        openContextDiff: (directory, filePath, staged = false, scope = null) => {
-          const normalizedDirectory = normalizeDirectoryPath((directory || '').trim());
-          const normalizedFilePath = (filePath || '').trim();
+        openContextDiff: (
+          directory,
+          filePath,
+          staged = false,
+          scope = null,
+        ) => {
+          const normalizedDirectory = normalizeDirectoryPath(
+            (directory || "").trim(),
+          );
+          const normalizedFilePath = (filePath || "").trim();
           if (!normalizedDirectory || !normalizedFilePath) {
             return;
           }
 
-          const diffScope = normalizePendingDiffScope(scope) ?? (staged ? 'staged' : 'working');
+          const diffScope =
+            normalizePendingDiffScope(scope) ?? (staged ? "staged" : "working");
 
           get().openContextPanelTab(normalizedDirectory, {
-            mode: 'diff',
+            mode: "diff",
             targetPath: normalizedFilePath,
-            stagedDiff: diffScope === 'staged',
+            stagedDiff: diffScope === "staged",
             diffScope,
           });
         },
 
         openContextFile: (directory, filePath) => {
-          const normalizedDirectory = normalizeDirectoryPath((directory || '').trim());
+          const normalizedDirectory = normalizeDirectoryPath(
+            (directory || "").trim(),
+          );
           const normalizedFilePath = normalizeContextTargetPath(filePath);
           if (!normalizedDirectory || !normalizedFilePath) {
             return;
           }
 
-          get().openContextPanelTab(normalizedDirectory, { mode: 'file', targetPath: normalizedFilePath });
+          get().openContextPanelTab(normalizedDirectory, {
+            mode: "file",
+            targetPath: normalizedFilePath,
+          });
           get().setPendingFileFocusPath(normalizedFilePath);
           get().setPendingFileNavigation(null);
         },
 
         openContextFileAtLine: (directory, filePath, line, column) => {
-          const normalizedDirectory = normalizeDirectoryPath((directory || '').trim());
+          const normalizedDirectory = normalizeDirectoryPath(
+            (directory || "").trim(),
+          );
           const normalizedFilePath = normalizeContextTargetPath(filePath);
-          const normalizedLine = Number.isFinite(line) ? Math.max(1, Math.trunc(line)) : 1;
-          const normalizedColumn = Number.isFinite(column) ? Math.max(1, Math.trunc(column as number)) : 1;
+          const normalizedLine = Number.isFinite(line)
+            ? Math.max(1, Math.trunc(line))
+            : 1;
+          const normalizedColumn = Number.isFinite(column)
+            ? Math.max(1, Math.trunc(column as number))
+            : 1;
           if (!normalizedDirectory || !normalizedFilePath) {
             return;
           }
 
-          get().openContextPanelTab(normalizedDirectory, { mode: 'file', targetPath: normalizedFilePath });
+          get().openContextPanelTab(normalizedDirectory, {
+            mode: "file",
+            targetPath: normalizedFilePath,
+          });
           get().setPendingFileFocusPath(null);
           get().setPendingFileNavigation({
             path: normalizedFilePath,
@@ -1220,26 +1554,32 @@ export const useUIStore = create<UIStore>()(
         },
 
         openContextOverview: (directory) => {
-          const normalizedDirectory = normalizeDirectoryPath((directory || '').trim());
+          const normalizedDirectory = normalizeDirectoryPath(
+            (directory || "").trim(),
+          );
           if (!normalizedDirectory) {
             return;
           }
 
-          get().openContextPanelTab(normalizedDirectory, { mode: 'context' });
+          get().openContextPanelTab(normalizedDirectory, { mode: "context" });
         },
 
         openContextPlan: (directory) => {
-          const normalizedDirectory = normalizeDirectoryPath((directory || '').trim());
+          const normalizedDirectory = normalizeDirectoryPath(
+            (directory || "").trim(),
+          );
           if (!normalizedDirectory) {
             return;
           }
 
-          get().openContextPanelTab(normalizedDirectory, { mode: 'plan' });
+          get().openContextPanelTab(normalizedDirectory, { mode: "plan" });
         },
 
         openContextPreview: (directory, url) => {
-          const normalizedDirectory = normalizeDirectoryPath((directory || '').trim());
-          const normalizedUrl = (url || '').trim();
+          const normalizedDirectory = normalizeDirectoryPath(
+            (directory || "").trim(),
+          );
+          const normalizedUrl = (url || "").trim();
           if (!normalizedDirectory || !normalizedUrl) {
             return;
           }
@@ -1247,35 +1587,40 @@ export const useUIStore = create<UIStore>()(
           let label: string | null = null;
           try {
             const parsed = new URL(normalizedUrl);
-            if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
-              label = parsed.host || parsed.hostname || 'Preview';
+            if (parsed.protocol === "http:" || parsed.protocol === "https:") {
+              label = parsed.host || parsed.hostname || "Preview";
             }
           } catch {
             // ignore invalid URL
           }
 
           get().openContextPanelTab(normalizedDirectory, {
-            mode: 'preview',
+            mode: "preview",
             targetPath: normalizedUrl,
             dedupeKey: normalizedUrl,
             label,
           });
         },
-        openContextBrowser: (directory, url = '') => {
-          const normalizedDirectory = normalizeDirectoryPath((directory || '').trim());
+        openContextBrowser: (directory, url = "") => {
+          const normalizedDirectory = normalizeDirectoryPath(
+            (directory || "").trim(),
+          );
           if (!normalizedDirectory) return;
-          const targetUrl = typeof url === 'string' && url.trim().length > 0 ? url.trim() : '';
+          const targetUrl =
+            typeof url === "string" && url.trim().length > 0 ? url.trim() : "";
           get().openContextPanelTab(normalizedDirectory, {
-            mode: 'browser',
+            mode: "browser",
             targetPath: targetUrl,
             dedupeKey: `desktop-browser:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`,
-            label: 'Browser',
+            label: "Browser",
           });
         },
 
         setContextPanelTabTargetPath: (directory, tabID, targetPath) => {
-          const normalizedDirectory = normalizeDirectoryPath((directory || '').trim());
-          const normalizedTabID = (tabID || '').trim();
+          const normalizedDirectory = normalizeDirectoryPath(
+            (directory || "").trim(),
+          );
+          const normalizedTabID = (tabID || "").trim();
           if (!normalizedDirectory || !normalizedTabID) return;
           set((state) => {
             const current = state.contextPanelByDirectory[normalizedDirectory];
@@ -1283,15 +1628,21 @@ export const useUIStore = create<UIStore>()(
             return {
               contextPanelByDirectory: {
                 ...state.contextPanelByDirectory,
-                [normalizedDirectory]: setContextPanelTabTargetPath(current, normalizedTabID, targetPath),
+                [normalizedDirectory]: setContextPanelTabTargetPath(
+                  current,
+                  normalizedTabID,
+                  targetPath,
+                ),
               },
             };
           });
         },
 
         setActiveContextPanelTab: (directory, tabID) => {
-          const normalizedDirectory = normalizeDirectoryPath((directory || '').trim());
-          const normalizedTabID = (tabID || '').trim();
+          const normalizedDirectory = normalizeDirectoryPath(
+            (directory || "").trim(),
+          );
+          const normalizedTabID = (tabID || "").trim();
           if (!normalizedDirectory || !normalizedTabID) {
             return;
           }
@@ -1313,38 +1664,51 @@ export const useUIStore = create<UIStore>()(
                 ...current,
                 isOpen: true,
                 activeTabId: normalizedTabID,
-                width: current.widthByMode[
-                  current.tabs.find((tab) => tab.id === normalizedTabID)?.mode ?? 'context'
-                ] ?? getDefaultContextPanelWidthForMode(
-                  current.tabs.find((tab) => tab.id === normalizedTabID)?.mode ?? 'context',
-                ),
                 touchedAt: Date.now(),
-                tabs: current.tabs.map((tab) => (tab.id === normalizedTabID
-                  ? { ...tab, touchedAt: Date.now() }
-                  : tab)),
+                tabs: current.tabs.map((tab) =>
+                  tab.id === normalizedTabID
+                    ? { ...tab, touchedAt: Date.now() }
+                    : tab,
+                ),
               },
             };
 
-            return { contextPanelByDirectory: clampContextPanelRoots(byDirectory, 20) };
+            return {
+              contextPanelByDirectory: clampContextPanelRoots(byDirectory, 20),
+              isRightSidebarOpen: true,
+            };
           });
         },
 
         reorderContextPanelTabs: (directory, activeTabID, overTabID) => {
-          const normalizedDirectory = normalizeDirectoryPath((directory || '').trim());
-          const normalizedActiveTabID = (activeTabID || '').trim();
-          const normalizedOverTabID = (overTabID || '').trim();
-          if (!normalizedDirectory || !normalizedActiveTabID || !normalizedOverTabID) {
+          const normalizedDirectory = normalizeDirectoryPath(
+            (directory || "").trim(),
+          );
+          const normalizedActiveTabID = (activeTabID || "").trim();
+          const normalizedOverTabID = (overTabID || "").trim();
+          if (
+            !normalizedDirectory ||
+            !normalizedActiveTabID ||
+            !normalizedOverTabID
+          ) {
             return;
           }
 
           set((state) => {
             const prev = state.contextPanelByDirectory[normalizedDirectory];
             const current = touchContextPanelState(prev);
-            if (!current.tabs.some((tab) => tab.id === normalizedActiveTabID) || !current.tabs.some((tab) => tab.id === normalizedOverTabID)) {
+            if (
+              !current.tabs.some((tab) => tab.id === normalizedActiveTabID) ||
+              !current.tabs.some((tab) => tab.id === normalizedOverTabID)
+            ) {
               return state;
             }
 
-            const next = reorderContextPanelTabs(current, normalizedActiveTabID, normalizedOverTabID);
+            const next = reorderContextPanelTabs(
+              current,
+              normalizedActiveTabID,
+              normalizedOverTabID,
+            );
             if (next.tabs === current.tabs) {
               return state;
             }
@@ -1354,16 +1718,25 @@ export const useUIStore = create<UIStore>()(
               [normalizedDirectory]: next,
             };
 
-            return { contextPanelByDirectory: clampContextPanelRoots(byDirectory, 20) };
+            return {
+              contextPanelByDirectory: clampContextPanelRoots(byDirectory, 20),
+              isRightSidebarOpen: false,
+            };
           });
         },
 
         closeContextPanelTab: (directory, tabID) => {
-          const normalizedDirectory = normalizeDirectoryPath((directory || '').trim());
-          const normalizedTabID = (tabID || '').trim();
+          const normalizedDirectory = normalizeDirectoryPath(
+            (directory || "").trim(),
+          );
+          const normalizedTabID = (tabID || "").trim();
           if (!normalizedDirectory || !normalizedTabID) {
             return;
           }
+
+          const closingTab = get().contextPanelByDirectory[
+            normalizedDirectory
+          ]?.tabs.find((tab) => tab.id === normalizedTabID);
 
           set((state) => {
             const prev = state.contextPanelByDirectory[normalizedDirectory];
@@ -1374,15 +1747,30 @@ export const useUIStore = create<UIStore>()(
 
             const byDirectory = {
               ...state.contextPanelByDirectory,
-              [normalizedDirectory]: closeContextPanelTab(current, normalizedTabID),
+              [normalizedDirectory]: closeContextPanelTab(
+                current,
+                normalizedTabID,
+              ),
             };
 
-            return { contextPanelByDirectory: clampContextPanelRoots(byDirectory, 20) };
+            return {
+              contextPanelByDirectory: clampContextPanelRoots(byDirectory, 20),
+            };
           });
+
+          // Keep the editor's own open-file state in sync so a reopened
+          // editor surface does not resurrect the closed file.
+          if (closingTab?.mode === "file" && closingTab.targetPath) {
+            useFilesViewTabsStore
+              .getState()
+              .removeOpenPath(normalizedDirectory, closingTab.targetPath);
+          }
         },
 
         closeContextPanel: (directory) => {
-          const normalizedDirectory = normalizeDirectoryPath((directory || '').trim());
+          const normalizedDirectory = normalizeDirectoryPath(
+            (directory || "").trim(),
+          );
           if (!normalizedDirectory) {
             return;
           }
@@ -1401,12 +1789,16 @@ export const useUIStore = create<UIStore>()(
               },
             };
 
-            return { contextPanelByDirectory: clampContextPanelRoots(byDirectory, 20) };
+            return {
+              contextPanelByDirectory: clampContextPanelRoots(byDirectory, 20),
+            };
           });
         },
 
         toggleContextPanelExpanded: (directory) => {
-          const normalizedDirectory = normalizeDirectoryPath((directory || '').trim());
+          const normalizedDirectory = normalizeDirectoryPath(
+            (directory || "").trim(),
+          );
           if (!normalizedDirectory) {
             return;
           }
@@ -1422,12 +1814,16 @@ export const useUIStore = create<UIStore>()(
               },
             };
 
-            return { contextPanelByDirectory: clampContextPanelRoots(byDirectory, 20) };
+            return {
+              contextPanelByDirectory: clampContextPanelRoots(byDirectory, 20),
+            };
           });
         },
 
-        setContextPanelWidth: (directory, width) => {
-          const normalizedDirectory = normalizeDirectoryPath((directory || '').trim());
+        setContextPanelWidth: (directory, mode, width) => {
+          const normalizedDirectory = normalizeDirectoryPath(
+            (directory || "").trim(),
+          );
           if (!normalizedDirectory) {
             return;
           }
@@ -1439,77 +1835,17 @@ export const useUIStore = create<UIStore>()(
               ...state.contextPanelByDirectory,
               [normalizedDirectory]: {
                 ...current,
-                width: clampContextPanelWidth(width),
-                widthByMode: current.activeTabId
-                  ? {
-                      ...current.widthByMode,
-                      [current.tabs.find((tab) => tab.id === current.activeTabId)?.mode ?? 'context']:
-                        clampContextPanelWidth(width),
-                    }
-                  : current.widthByMode,
+                widthByMode: {
+                  ...current.widthByMode,
+                  [mode]: clampContextPanelWidth(width),
+                },
               },
             };
 
-            return { contextPanelByDirectory: clampContextPanelRoots(byDirectory, 20) };
+            return {
+              contextPanelByDirectory: clampContextPanelRoots(byDirectory, 20),
+            };
           });
-        },
-
-        toggleBottomTerminal: () => {
-          set((state) => {
-            const newOpen = !state.isBottomTerminalOpen;
-
-            if (newOpen && typeof window !== 'undefined') {
-              const proportionalHeight = Math.floor(window.innerHeight * 0.32);
-              return {
-                isBottomTerminalOpen: newOpen,
-                bottomTerminalHeight: proportionalHeight,
-                hasManuallyResizedBottomTerminal: false,
-              };
-            }
-
-            return { isBottomTerminalOpen: newOpen };
-          });
-        },
-
-        setBottomTerminalOpen: (open) => {
-          set((state) => {
-            if (state.isBottomTerminalOpen === open) {
-              if (!open) {
-                return state;
-              }
-              if (!state.hasManuallyResizedBottomTerminal && typeof window !== 'undefined') {
-                const proportionalHeight = Math.floor(window.innerHeight * 0.32);
-                if (state.bottomTerminalHeight === proportionalHeight && state.hasManuallyResizedBottomTerminal === false) {
-                  return state;
-                }
-                return {
-                  isBottomTerminalOpen: open,
-                  bottomTerminalHeight: proportionalHeight,
-                  hasManuallyResizedBottomTerminal: false,
-                };
-              }
-              return state;
-            }
-
-            if (open && typeof window !== 'undefined') {
-              const proportionalHeight = Math.floor(window.innerHeight * 0.32);
-              return {
-                isBottomTerminalOpen: open,
-                bottomTerminalHeight: proportionalHeight,
-                hasManuallyResizedBottomTerminal: false,
-              };
-            }
-
-            return { isBottomTerminalOpen: open };
-          });
-        },
-
-        setBottomTerminalExpanded: (expanded) => {
-          set({ isBottomTerminalExpanded: expanded });
-        },
-
-        setBottomTerminalHeight: (height) => {
-          set({ bottomTerminalHeight: height, hasManuallyResizedBottomTerminal: true });
         },
 
         setNotesPanelHeight: (height) => {
@@ -1551,11 +1887,15 @@ export const useUIStore = create<UIStore>()(
         },
 
         prepareForRuntimeSwitch: (runtimeKey?: string | null) => {
-          activeMainTabByRuntime.set(runtimeMemoryKey(runtimeKey), get().activeMainTab);
+          activeMainTabByRuntime.set(
+            runtimeMemoryKey(runtimeKey),
+            get().activeMainTab,
+          );
         },
 
         restoreForRuntimeSwitch: (runtimeKey?: string | null) => {
-          const restored = activeMainTabByRuntime.get(runtimeMemoryKey(runtimeKey)) ?? 'chat';
+          const restored =
+            activeMainTabByRuntime.get(runtimeMemoryKey(runtimeKey)) ?? "chat";
           set({ activeMainTab: restored });
         },
 
@@ -1581,26 +1921,35 @@ export const useUIStore = create<UIStore>()(
 
         navigateToDiff: (filePath, staged = false, scope = null) => {
           const guard = get().mainTabGuard;
-          if (guard && !guard('diff')) {
+          if (guard && !guard("diff")) {
             return;
           }
-          set({ pendingDiffFile: filePath, pendingDiffStaged: staged, pendingDiffScope: scope, activeMainTab: 'diff' });
+          set({
+            pendingDiffFile: filePath,
+            pendingDiffStaged: staged,
+            pendingDiffScope: scope,
+            activeMainTab: "diff",
+          });
         },
 
         consumePendingDiffFile: () => {
           const { pendingDiffFile } = get();
           if (pendingDiffFile) {
-            set({ pendingDiffFile: null, pendingDiffStaged: false, pendingDiffScope: null });
+            set({
+              pendingDiffFile: null,
+              pendingDiffStaged: false,
+              pendingDiffScope: null,
+            });
           }
           return pendingDiffFile;
         },
 
         navigateToDiagram: (filePath) => {
           const guard = get().mainTabGuard;
-          if (guard && !guard('diagram')) {
+          if (guard && !guard("diagram")) {
             return;
           }
-          set({ pendingDiagramFile: filePath, activeMainTab: 'diagram' });
+          set({ pendingDiagramFile: filePath, activeMainTab: "diagram" });
         },
 
         consumePendingDiagramFile: () => {
@@ -1616,7 +1965,9 @@ export const useUIStore = create<UIStore>()(
         },
 
         toggleCommandPalette: () => {
-          set((state) => ({ isCommandPaletteOpen: !state.isCommandPaletteOpen }));
+          set((state) => ({
+            isCommandPaletteOpen: !state.isCommandPaletteOpen,
+          }));
         },
 
         setCommandPaletteOpen: (open) => {
@@ -1648,7 +1999,61 @@ export const useUIStore = create<UIStore>()(
         },
 
         setScheduledTasksDialogOpen: (open) => {
-          set({ isScheduledTasksDialogOpen: open });
+          set(
+            open
+              ? {
+                  isScheduledTasksDialogOpen: true,
+                  isArchivePageOpen: false,
+                  worktreesPageProjectId: null,
+                  isMultiRunLauncherOpen: false,
+                }
+              : { isScheduledTasksDialogOpen: false },
+          );
+        },
+
+        setArchivePageOpen: (open) => {
+          set(
+            open
+              ? {
+                  isArchivePageOpen: true,
+                  isScheduledTasksDialogOpen: false,
+                  worktreesPageProjectId: null,
+                  isMultiRunLauncherOpen: false,
+                }
+              : { isArchivePageOpen: false },
+          );
+        },
+
+        setWorktreesPageProjectId: (projectId) => {
+          set(
+            projectId
+              ? {
+                  worktreesPageProjectId: projectId,
+                  isScheduledTasksDialogOpen: false,
+                  isArchivePageOpen: false,
+                  isMultiRunLauncherOpen: false,
+                }
+              : { worktreesPageProjectId: null },
+          );
+        },
+
+        closeMainSurfaces: () => {
+          const state = get();
+          if (
+            !state.isScheduledTasksDialogOpen &&
+            !state.isArchivePageOpen &&
+            !state.worktreesPageProjectId &&
+            !state.isMultiRunLauncherOpen
+          ) {
+            return;
+          }
+          set({
+            isScheduledTasksDialogOpen: false,
+            isArchivePageOpen: false,
+            worktreesPageProjectId: null,
+            isMultiRunLauncherOpen: false,
+            multiRunLauncherPrefillPrompt: "",
+          });
         },
 
         openScheduledTaskEditor: (prefill) => {
@@ -1783,6 +2188,10 @@ export const useUIStore = create<UIStore>()(
           set({ globalDraftStarters: refs });
         },
 
+        setDraftStartersVisible: (value) => {
+          set({ draftStartersVisible: value });
+        },
+
         setTerminalFontSize: (size) => {
           const rounded = Math.round(size);
           const clamped = Math.max(9, Math.min(52, rounded));
@@ -1829,7 +2238,9 @@ export const useUIStore = create<UIStore>()(
           // 100 = default (1.0x), 50 = half size (0.5x), 200 = double (2.0x)
           const scale = fontSize / 100;
 
-          const entries = Object.entries(SEMANTIC_TYPOGRAPHY) as Array<[SemanticTypographyKey, string]>;
+          const entries = Object.entries(SEMANTIC_TYPOGRAPHY) as Array<
+            [SemanticTypographyKey, string]
+          >;
 
           // Default must be SEMANTIC_TYPOGRAPHY (from CSS). Remove overrides.
           if (scale === 1) {
@@ -1844,7 +2255,10 @@ export const useUIStore = create<UIStore>()(
             if (!Number.isFinite(numericValue)) {
               continue;
             }
-            root.style.setProperty(getTypographyVariable(key), `${numericValue * scale}rem`);
+            root.style.setProperty(
+              getTypographyVariable(key),
+              `${numericValue * scale}rem`,
+            );
           }
         },
 
@@ -1855,11 +2269,11 @@ export const useUIStore = create<UIStore>()(
           const scale = padding / 100;
 
           if (scale === 1) {
-            root.style.removeProperty('--padding-scale');
-            root.style.removeProperty('--line-height-tight');
-            root.style.removeProperty('--line-height-normal');
-            root.style.removeProperty('--line-height-relaxed');
-            root.style.removeProperty('--line-height-loose');
+            root.style.removeProperty("--padding-scale");
+            root.style.removeProperty("--line-height-tight");
+            root.style.removeProperty("--line-height-normal");
+            root.style.removeProperty("--line-height-relaxed");
+            root.style.removeProperty("--line-height-loose");
             return;
           }
 
@@ -1868,15 +2282,27 @@ export const useUIStore = create<UIStore>()(
           const adjustedScale = Math.sqrt(scale);
 
           // Set the CSS custom property that all spacing tokens reference
-          root.style.setProperty('--padding-scale', adjustedScale.toString());
+          root.style.setProperty("--padding-scale", adjustedScale.toString());
 
           // Dampened line-height scaling at extremes
           const lineHeightScale = 1 + (scale - 1) * 0.15;
 
-          root.style.setProperty('--line-height-tight', (1.25 * lineHeightScale).toFixed(3));
-          root.style.setProperty('--line-height-normal', (1.5 * lineHeightScale).toFixed(3));
-          root.style.setProperty('--line-height-relaxed', (1.625 * lineHeightScale).toFixed(3));
-          root.style.setProperty('--line-height-loose', (2 * lineHeightScale).toFixed(3));
+          root.style.setProperty(
+            "--line-height-tight",
+            (1.25 * lineHeightScale).toFixed(3),
+          );
+          root.style.setProperty(
+            "--line-height-normal",
+            (1.5 * lineHeightScale).toFixed(3),
+          );
+          root.style.setProperty(
+            "--line-height-relaxed",
+            (1.625 * lineHeightScale).toFixed(3),
+          );
+          root.style.setProperty(
+            "--line-height-loose",
+            (2 * lineHeightScale).toFixed(3),
+          );
         },
 
         setDiffLayoutPreference: (mode) => {
@@ -1899,44 +2325,61 @@ export const useUIStore = create<UIStore>()(
         setGitChangesViewMode: (mode) => {
           set({ gitChangesViewMode: mode });
         },
- 
+
         setInputBarOffset: (offset) => {
           set({ inputBarOffset: offset });
         },
 
         setMobileKeyboardMode: (mode) => {
-          set((state) => state.mobileKeyboardMode === mode ? state : { mobileKeyboardMode: mode });
+          set((state) =>
+            state.mobileKeyboardMode === mode
+              ? state
+              : { mobileKeyboardMode: mode },
+          );
         },
 
         toggleFavoriteModel: (providerID, modelID) => {
           set((state) => {
             const exists = state.favoriteModels.some(
-              (fav) => fav.providerID === providerID && fav.modelID === modelID
+              (fav) => fav.providerID === providerID && fav.modelID === modelID,
             );
-            
+
             if (exists) {
               // Remove from favorites
               return {
                 favoriteModels: state.favoriteModels.filter(
-                  (fav) => !(fav.providerID === providerID && fav.modelID === modelID)
+                  (fav) =>
+                    !(fav.providerID === providerID && fav.modelID === modelID),
                 ),
               };
             } else {
               // Add to favorites (newest first)
               return {
-                favoriteModels: [{ providerID, modelID }, ...state.favoriteModels],
+                favoriteModels: [
+                  { providerID, modelID },
+                  ...state.favoriteModels,
+                ],
               };
             }
           });
         },
 
-        reorderFavoriteModel: (activeProviderID, activeModelID, overProviderID, overModelID) => {
+        reorderFavoriteModel: (
+          activeProviderID,
+          activeModelID,
+          overProviderID,
+          overModelID,
+        ) => {
           set((state) => {
             const oldIndex = state.favoriteModels.findIndex(
-              (fav) => fav.providerID === activeProviderID && fav.modelID === activeModelID
+              (fav) =>
+                fav.providerID === activeProviderID &&
+                fav.modelID === activeModelID,
             );
             const newIndex = state.favoriteModels.findIndex(
-              (fav) => fav.providerID === overProviderID && fav.modelID === overModelID
+              (fav) =>
+                fav.providerID === overProviderID &&
+                fav.modelID === overModelID,
             );
 
             if (oldIndex === -1 || newIndex === -1 || oldIndex === newIndex) {
@@ -1955,9 +2398,14 @@ export const useUIStore = create<UIStore>()(
 
         setProviderOrder: (orderedProviderIDs) => {
           set((state) => {
-            const next = orderedProviderIDs.filter((id) => typeof id === 'string' && id.length > 0);
+            const next = orderedProviderIDs.filter(
+              (id) => typeof id === "string" && id.length > 0,
+            );
             const current = state.providerOrder;
-            if (current.length === next.length && current.every((id, index) => id === next[index])) {
+            if (
+              current.length === next.length &&
+              current.every((id, index) => id === next[index])
+            ) {
               return state;
             }
             return { providerOrder: next };
@@ -1967,13 +2415,17 @@ export const useUIStore = create<UIStore>()(
         toggleHiddenModel: (providerID, modelID) => {
           set((state) => {
             const exists = state.hiddenModels.some(
-              (item) => item.providerID === providerID && item.modelID === modelID
+              (item) =>
+                item.providerID === providerID && item.modelID === modelID,
             );
 
             if (exists) {
               return {
                 hiddenModels: state.hiddenModels.filter(
-                  (item) => !(item.providerID === providerID && item.modelID === modelID)
+                  (item) =>
+                    !(
+                      item.providerID === providerID && item.modelID === modelID
+                    ),
                 ),
               };
             }
@@ -1987,15 +2439,20 @@ export const useUIStore = create<UIStore>()(
         isHiddenModel: (providerID, modelID) => {
           const { hiddenModels } = get();
           return hiddenModels.some(
-            (item) => item.providerID === providerID && item.modelID === modelID
+            (item) =>
+              item.providerID === providerID && item.modelID === modelID,
           );
         },
 
         hideAllModels: (providerID, modelIDs) => {
           set((state) => {
-            const current = state.hiddenModels.filter((item) => item.providerID !== providerID);
+            const current = state.hiddenModels.filter(
+              (item) => item.providerID !== providerID,
+            );
             const additions = modelIDs
-              .filter((modelID) => typeof modelID === 'string' && modelID.length > 0)
+              .filter(
+                (modelID) => typeof modelID === "string" && modelID.length > 0,
+              )
               .map((modelID) => ({ providerID, modelID }));
             return { hiddenModels: [...additions, ...current] };
           });
@@ -2003,37 +2460,51 @@ export const useUIStore = create<UIStore>()(
 
         showAllModels: (providerID) => {
           set((state) => ({
-            hiddenModels: state.hiddenModels.filter((item) => item.providerID !== providerID),
+            hiddenModels: state.hiddenModels.filter(
+              (item) => item.providerID !== providerID,
+            ),
           }));
         },
 
         toggleModelProviderCollapsed: (providerID) => {
-          const normalizedProviderID = typeof providerID === 'string' ? providerID.trim() : '';
+          const normalizedProviderID =
+            typeof providerID === "string" ? providerID.trim() : "";
           if (!normalizedProviderID) {
             return;
           }
 
           set((state) => {
-            const isCollapsed = state.collapsedModelProviders.includes(normalizedProviderID);
+            const isCollapsed =
+              state.collapsedModelProviders.includes(normalizedProviderID);
             if (isCollapsed) {
               return {
-                collapsedModelProviders: state.collapsedModelProviders.filter((id) => id !== normalizedProviderID),
+                collapsedModelProviders: state.collapsedModelProviders.filter(
+                  (id) => id !== normalizedProviderID,
+                ),
               };
             }
 
             return {
-              collapsedModelProviders: [...state.collapsedModelProviders, normalizedProviderID],
+              collapsedModelProviders: [
+                ...state.collapsedModelProviders,
+                normalizedProviderID,
+              ],
             };
           });
         },
 
         setModelProvidersCollapsed: (providerIDs, collapsed) => {
-          const normalizedProviderIDs = Array.from(new Set(
-            providerIDs
-              .filter((providerID): providerID is string => typeof providerID === 'string')
-              .map((providerID) => providerID.trim())
-              .filter(Boolean)
-          ));
+          const normalizedProviderIDs = Array.from(
+            new Set(
+              providerIDs
+                .filter(
+                  (providerID): providerID is string =>
+                    typeof providerID === "string",
+                )
+                .map((providerID) => providerID.trim())
+                .filter(Boolean),
+            ),
+          );
 
           if (normalizedProviderIDs.length === 0) {
             return;
@@ -2041,7 +2512,9 @@ export const useUIStore = create<UIStore>()(
 
           set((state) => {
             const scopedProviderIDs = new Set(normalizedProviderIDs);
-            const untouchedProviders = state.collapsedModelProviders.filter((providerID) => !scopedProviderIDs.has(providerID));
+            const untouchedProviders = state.collapsedModelProviders.filter(
+              (providerID) => !scopedProviderIDs.has(providerID),
+            );
 
             return {
               collapsedModelProviders: collapsed
@@ -2054,7 +2527,7 @@ export const useUIStore = create<UIStore>()(
         isFavoriteModel: (providerID, modelID) => {
           const { favoriteModels } = get();
           return favoriteModels.some(
-            (fav) => fav.providerID === providerID && fav.modelID === modelID
+            (fav) => fav.providerID === providerID && fav.modelID === modelID,
           );
         },
 
@@ -2062,7 +2535,7 @@ export const useUIStore = create<UIStore>()(
           set((state) => {
             // Remove existing instance if any
             const filtered = state.recentModels.filter(
-              (m) => !(m.providerID === providerID && m.modelID === modelID)
+              (m) => !(m.providerID === providerID && m.modelID === modelID),
             );
             // Add to front, limit to 5
             return {
@@ -2072,7 +2545,8 @@ export const useUIStore = create<UIStore>()(
         },
 
         addRecentAgent: (agentName) => {
-          const normalized = typeof agentName === 'string' ? agentName.trim() : '';
+          const normalized =
+            typeof agentName === "string" ? agentName.trim() : "";
           if (!normalized) {
             return;
           }
@@ -2088,13 +2562,17 @@ export const useUIStore = create<UIStore>()(
         },
 
         addRecentEffort: (providerID, modelID, variant) => {
-          const provider = typeof providerID === 'string' ? providerID.trim() : '';
-          const model = typeof modelID === 'string' ? modelID.trim() : '';
+          const provider =
+            typeof providerID === "string" ? providerID.trim() : "";
+          const model = typeof modelID === "string" ? modelID.trim() : "";
           if (!provider || !model) {
             return;
           }
           const key = `${provider}/${model}`;
-          const normalizedVariant = typeof variant === 'string' && variant.trim().length > 0 ? variant.trim() : 'default';
+          const normalizedVariant =
+            typeof variant === "string" && variant.trim().length > 0
+              ? variant.trim()
+              : "default";
           set((state) => {
             const current = state.recentEfforts[key] ?? [];
             if (current.includes(normalizedVariant)) {
@@ -2110,51 +2588,50 @@ export const useUIStore = create<UIStore>()(
           });
         },
 
-        updateProportionalSidebarWidths: () => {
-          if (typeof window === 'undefined') {
-            return;
-          }
-
-          set((state) => {
-            const updates: Partial<UIStore> = {};
-
-            if (state.isBottomTerminalOpen && !state.hasManuallyResizedBottomTerminal) {
-              const nextHeight = Math.floor(window.innerHeight * 0.32);
-              if (state.bottomTerminalHeight !== nextHeight) {
-                updates.bottomTerminalHeight = nextHeight;
-              }
-            }
-
-            return Object.keys(updates).length > 0 ? updates : state;
-          });
-        },
-
         applyTheme: () => {
           const { theme } = get();
           const root = document.documentElement;
 
-          root.classList.remove('light', 'dark');
+          root.classList.remove("light", "dark");
 
-          if (theme === 'system') {
-            const systemTheme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+          if (theme === "system") {
+            const systemTheme = window.matchMedia(
+              "(prefers-color-scheme: dark)",
+            ).matches
+              ? "dark"
+              : "light";
             root.classList.add(systemTheme);
           } else {
             root.classList.add(theme);
           }
         },
 
+        // Multi-run is one of the mutually exclusive full-page surfaces:
+        // opening it closes the other surfaces and vice versa.
         setMultiRunLauncherOpen: (open) => {
           set((state) => ({
             isMultiRunLauncherOpen: open,
-            multiRunLauncherPrefillPrompt: open ? state.multiRunLauncherPrefillPrompt : '',
+            multiRunLauncherPrefillPrompt: open
+              ? state.multiRunLauncherPrefillPrompt
+              : "",
+            ...(open
+              ? {
+                  isScheduledTasksDialogOpen: false,
+                  isArchivePageOpen: false,
+                  worktreesPageProjectId: null,
+                }
+              : {}),
           }));
         },
 
         openMultiRunLauncher: () => {
           set({
             isMultiRunLauncherOpen: true,
-            multiRunLauncherPrefillPrompt: '',
+            multiRunLauncherPrefillPrompt: "",
             isSessionSwitcherOpen: false,
+            isScheduledTasksDialogOpen: false,
+            isArchivePageOpen: false,
+            worktreesPageProjectId: null,
           });
         },
 
@@ -2163,6 +2640,9 @@ export const useUIStore = create<UIStore>()(
             isMultiRunLauncherOpen: true,
             multiRunLauncherPrefillPrompt: prompt,
             isSessionSwitcherOpen: false,
+            isScheduledTasksDialogOpen: false,
+            isArchivePageOpen: false,
+            worktreesPageProjectId: null,
           });
         },
 
@@ -2175,7 +2655,9 @@ export const useUIStore = create<UIStore>()(
         },
 
         togglePromptNavigatorPanel: () => {
-          set((state) => ({ isPromptNavigatorPanelOpen: !state.isPromptNavigatorPanelOpen }));
+          set((state) => ({
+            isPromptNavigatorPanelOpen: !state.isPromptNavigatorPanelOpen,
+          }));
         },
 
         setImagePreviewOpen: (open) => {
@@ -2202,19 +2684,38 @@ export const useUIStore = create<UIStore>()(
           set({ dockBadgeEnabled: value });
         },
 
-        setNotifyOnCompletion: (value) => { set({ notifyOnCompletion: value }); },
-        setNotifyOnError: (value) => { set({ notifyOnError: value }); },
-        setNotifyOnQuestion: (value) => { set({ notifyOnQuestion: value }); },
-        setNotificationTemplates: (templates) => { set({ notificationTemplates: templates }); },
-        setSummarizeLastMessage: (value) => { set({ summarizeLastMessage: value }); },
-        setSummaryThreshold: (value) => { set({ summaryThreshold: value }); },
-        setSummaryLength: (value) => { set({ summaryLength: value }); },
-        setMaxLastMessageLength: (value) => { set({ maxLastMessageLength: value }); },
+        setNotifyOnCompletion: (value) => {
+          set({ notifyOnCompletion: value });
+        },
+        setNotifyOnError: (value) => {
+          set({ notifyOnError: value });
+        },
+        setNotifyOnQuestion: (value) => {
+          set({ notifyOnQuestion: value });
+        },
+        setNotificationTemplates: (templates) => {
+          set({ notificationTemplates: templates });
+        },
+        setSummarizeLastMessage: (value) => {
+          set({ summarizeLastMessage: value });
+        },
+        setSummaryThreshold: (value) => {
+          set({ summaryThreshold: value });
+        },
+        setSummaryLength: (value) => {
+          set({ summaryLength: value });
+        },
+        setMaxLastMessageLength: (value) => {
+          set({ maxLastMessageLength: value });
+        },
         setPersistChatDraft: (value) => {
           set({ persistChatDraft: value });
         },
         setShowOpenCodeUpdateNotifications: (value) => {
           set({ showOpenCodeUpdateNotifications: value });
+        },
+        setAgentControlToolEnabled: (value) => {
+          set({ agentControlToolEnabled: value });
         },
         setInputSpellcheckEnabled: (value) => {
           set({ inputSpellcheckEnabled: value });
@@ -2246,7 +2747,9 @@ export const useUIStore = create<UIStore>()(
           set({ weekStartPreference: value });
         },
         setDesktopWindowControlsPosition: (value) => {
-          set({ desktopWindowControlsPosition: value });
+          set({
+            desktopWindowControlsPosition: value === "left" ? "left" : "right",
+          });
         },
         setMermaidRenderingMode: (value) => {
           set({ mermaidRenderingMode: value });
@@ -2284,16 +2787,10 @@ export const useUIStore = create<UIStore>()(
         setReportUsage: (value) => {
           set({ reportUsage: value });
         },
-        viewPagerPage: 'center',
-        setViewPagerPage: (page: 'left' | 'center' | 'right') => {
+        viewPagerPage: "center",
+        setViewPagerPage: (page: "left" | "center" | "right") => {
           set({ viewPagerPage: page });
-          if (page === 'left') {
-            set({ isSessionSwitcherOpen: true, isRightSidebarOpen: false });
-          } else if (page === 'right') {
-            set({ isRightSidebarOpen: true, isSessionSwitcherOpen: false });
-          } else {
-            set({ isSessionSwitcherOpen: false, isRightSidebarOpen: false });
-          }
+          set({ isSessionSwitcherOpen: page === "left" });
         },
 
         setShortcutOverride: (actionId, combo) => {
@@ -2330,14 +2827,24 @@ export const useUIStore = create<UIStore>()(
         },
       }),
       {
-        name: 'ui-store',
+        name: "ui-store",
         storage: createDeferredSafeJSONStorage(),
-        version: 11,
+        version: 12,
         migrate: (persistedState, version) => {
-          if (!persistedState || typeof persistedState !== 'object') {
+          if (!persistedState || typeof persistedState !== "object") {
             return persistedState;
           }
           const state = persistedState as Record<string, unknown>;
+
+          // v11 -> v12: drop legacy window-controls "auto" (always meant right).
+          if (version < 12) {
+            if (
+              state.desktopWindowControlsPosition === "auto" ||
+              state.desktopWindowControlsPosition == null
+            ) {
+              state.desktopWindowControlsPosition = "right";
+            }
+          }
 
           // v10 -> v11: move the previous terminal font default forward.
           if (version < 11 && state.terminalFontSize === 13) {
@@ -2351,10 +2858,16 @@ export const useUIStore = create<UIStore>()(
 
           // v8 -> v9: initialize notes/todo panel height fields
           if (version < 9) {
-            if (typeof state.notesPanelHeight !== 'number' || !Number.isFinite(state.notesPanelHeight)) {
+            if (
+              typeof state.notesPanelHeight !== "number" ||
+              !Number.isFinite(state.notesPanelHeight)
+            ) {
               state.notesPanelHeight = 112;
             }
-            if (typeof state.todoPanelHeight !== 'number' || !Number.isFinite(state.todoPanelHeight)) {
+            if (
+              typeof state.todoPanelHeight !== "number" ||
+              !Number.isFinite(state.todoPanelHeight)
+            ) {
               state.todoPanelHeight = 259;
             }
           }
@@ -2380,9 +2893,12 @@ export const useUIStore = create<UIStore>()(
             const active = state.memoryLimitActiveSession as number | undefined;
 
             // If user had a non-default custom value, keep it as the new messageLimit.
-            if (typeof hist === 'number' && !OLD_DEFAULTS.has(hist)) {
+            if (typeof hist === "number" && !OLD_DEFAULTS.has(hist)) {
               state.messageLimit = hist;
-            } else if (typeof active === 'number' && !OLD_DEFAULTS.has(active)) {
+            } else if (
+              typeof active === "number" &&
+              !OLD_DEFAULTS.has(active)
+            ) {
               state.messageLimit = active;
             }
             // Otherwise leave undefined → Zustand uses the initial default (200).
@@ -2393,27 +2909,33 @@ export const useUIStore = create<UIStore>()(
           }
 
           if (
-            typeof state.rightSidebarTab !== 'string'
-            || (
-              state.rightSidebarTab !== 'git'
-              && state.rightSidebarTab !== 'files'
-              && state.rightSidebarTab !== 'context'
-              && state.rightSidebarTab !== 'extensions'
-            )
+            typeof state.rightSidebarTab !== "string" ||
+            (state.rightSidebarTab !== "git" &&
+              state.rightSidebarTab !== "files" &&
+              state.rightSidebarTab !== "context" &&
+              state.rightSidebarTab !== "extensions")
           ) {
-            state.rightSidebarTab = 'git';
+            state.rightSidebarTab = "git";
           }
 
-          state.contextPanelByDirectory = sanitizeContextPanelByDirectory(state.contextPanelByDirectory);
+          state.contextPanelByDirectory = sanitizeContextPanelByDirectory(
+            state.contextPanelByDirectory,
+          );
 
           if (version < 5) {
-            if (!state.shortcutOverrides || typeof state.shortcutOverrides !== 'object') {
+            if (
+              !state.shortcutOverrides ||
+              typeof state.shortcutOverrides !== "object"
+            ) {
               state.shortcutOverrides = {};
             } else {
-              const overrides = state.shortcutOverrides as Record<string, unknown>;
+              const overrides = state.shortcutOverrides as Record<
+                string,
+                unknown
+              >;
               const cleaned: Record<string, string> = {};
               for (const [key, value] of Object.entries(overrides)) {
-                if (typeof key === 'string' && typeof value === 'string') {
+                if (typeof key === "string" && typeof value === "string") {
                   cleaned[key] = value;
                 }
               }
@@ -2422,20 +2944,36 @@ export const useUIStore = create<UIStore>()(
           }
 
           if (version < 6) {
-            state.contextPanelByDirectory = sanitizeContextPanelByDirectory(state.contextPanelByDirectory);
+            state.contextPanelByDirectory = sanitizeContextPanelByDirectory(
+              state.contextPanelByDirectory,
+            );
           }
 
           if (version < 7) {
-            state.contextPanelByDirectory = sanitizeContextPanelByDirectory(state.contextPanelByDirectory);
+            state.contextPanelByDirectory = sanitizeContextPanelByDirectory(
+              state.contextPanelByDirectory,
+            );
           }
 
           if (version < 8) {
-            if (state.gitChangesViewMode !== 'flat' && state.gitChangesViewMode !== 'tree') {
-              state.gitChangesViewMode = 'flat';
+            if (
+              state.gitChangesViewMode !== "flat" &&
+              state.gitChangesViewMode !== "tree"
+            ) {
+              state.gitChangesViewMode = "flat";
             }
           }
 
-          state.fileEditorKeymap = normalizeFileEditorKeymap(state.fileEditorKeymap);
+          state.fileEditorKeymap = normalizeFileEditorKeymap(
+            state.fileEditorKeymap,
+          );
+
+          state.contextRailOrder = Array.isArray(state.contextRailOrder)
+            ? (state.contextRailOrder as unknown[]).filter(
+                (id): id is string =>
+                  typeof id === "string" && id.trim() !== "",
+              )
+            : [];
 
           return state;
         },
@@ -2448,9 +2986,9 @@ export const useUIStore = create<UIStore>()(
           rightSidebarWorkbenchWidth: state.rightSidebarWorkbenchWidth,
           rightSidebarTab: state.rightSidebarTab,
           contextPanelByDirectory: state.contextPanelByDirectory,
-          isBottomTerminalOpen: state.isBottomTerminalOpen,
-          isBottomTerminalExpanded: state.isBottomTerminalExpanded,
-          bottomTerminalHeight: state.bottomTerminalHeight,
+          contextRailOrder: state.contextRailOrder,
+          contextEditorTreeVisible: state.contextEditorTreeVisible,
+          contextEditorTreeWidth: state.contextEditorTreeWidth,
           notesPanelHeight: state.notesPanelHeight,
           todoPanelHeight: state.todoPanelHeight,
           isSessionSwitcherOpen: state.isSessionSwitcherOpen,
@@ -2459,14 +2997,16 @@ export const useUIStore = create<UIStore>()(
           settingsPage: state.settingsPage,
           settingsHasOpenedOnce: state.settingsHasOpenedOnce,
           settingsProjectsSelectedId: state.settingsProjectsSelectedId,
-          settingsRemoteInstancesSelectedId: state.settingsRemoteInstancesSelectedId,
+          settingsRemoteInstancesSelectedId:
+            state.settingsRemoteInstancesSelectedId,
           isSessionCreateDialogOpen: state.isSessionCreateDialogOpen,
           // Note: isSettingsDialogOpen intentionally NOT persisted
           showReasoningTraces: state.showReasoningTraces,
           sessionRecapEnabled: state.sessionRecapEnabled,
           sessionSuggestionEnabled: state.sessionSuggestionEnabled,
           sessionGoalEnabled: state.sessionGoalEnabled,
-          sessionGoalDefaultBudgetEnabled: state.sessionGoalDefaultBudgetEnabled,
+          sessionGoalDefaultBudgetEnabled:
+            state.sessionGoalDefaultBudgetEnabled,
           sessionGoalDefaultBudget: state.sessionGoalDefaultBudget,
           collapsibleThinkingBlocks: state.collapsibleThinkingBlocks,
           chatRenderMode: state.chatRenderMode,
@@ -2511,7 +3051,9 @@ export const useUIStore = create<UIStore>()(
           summaryLength: state.summaryLength,
           maxLastMessageLength: state.maxLastMessageLength,
           persistChatDraft: state.persistChatDraft,
-          showOpenCodeUpdateNotifications: state.showOpenCodeUpdateNotifications,
+          showOpenCodeUpdateNotifications:
+            state.showOpenCodeUpdateNotifications,
+          agentControlToolEnabled: state.agentControlToolEnabled,
           inputSpellcheckEnabled: state.inputSpellcheckEnabled,
           wideChatLayoutEnabled: state.wideChatLayoutEnabled,
           codeBlockLineWrap: state.codeBlockLineWrap,
@@ -2528,17 +3070,20 @@ export const useUIStore = create<UIStore>()(
           stickyUserHeader: state.stickyUserHeader,
           promptNavigatorEnabled: state.promptNavigatorEnabled,
           expandedEditorToolbar: state.expandedEditorToolbar,
-          showSplitAssistantMessageActions: state.showSplitAssistantMessageActions,
+          showSplitAssistantMessageActions:
+            state.showSplitAssistantMessageActions,
           allowPromptingSubagentSessions: state.allowPromptingSubagentSessions,
-          isMobileSessionStatusBarCollapsed: state.isMobileSessionStatusBarCollapsed,
+          draftStartersVisible: state.draftStartersVisible,
+          isMobileSessionStatusBarCollapsed:
+            state.isMobileSessionStatusBarCollapsed,
           mobileSessionFilterProjectId: state.mobileSessionFilterProjectId,
           shortcutOverrides: state.shortcutOverrides,
           fileEditorKeymap: state.fileEditorKeymap,
-        })
-      }
+        }),
+      },
     ),
     {
-      name: 'ui-store'
-    }
-  )
+      name: "ui-store",
+    },
+  ),
 );

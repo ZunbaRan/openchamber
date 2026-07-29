@@ -1,24 +1,24 @@
-import React from 'react';
+import React from "react";
 
-import { ProjectNotesTodoPanel } from '@/components/session/ProjectNotesTodoPanel';
-import { GitView } from '@/components/views/GitView';
-import { useGitStore } from '@/stores/useGitStore';
-import { useProjectsStore } from '@/stores/useProjectsStore';
-import { useDirectoryStore } from '@/stores/useDirectoryStore';
-import { useUIStore } from '@/stores/useUIStore';
-import { useRuntimeAPIs } from '@/hooks/useRuntimeAPIs';
-import { useEffectiveDirectory } from '@/hooks/useEffectiveDirectory';
-import { formatDirectoryName, cn } from '@/lib/utils';
-import { SidebarFilesTree } from './SidebarFilesTree';
-import { ExtensionWorkbench } from '@/components/interactive-ui/workbench/ExtensionWorkbench';
+import { ProjectNotesTodoPanel } from "@/components/session/ProjectNotesTodoPanel";
+import { GitView } from "@/components/views/GitView";
+import { useGitStore } from "@/stores/useGitStore";
+import { useProjectsStore } from "@/stores/useProjectsStore";
+import { useDirectoryStore } from "@/stores/useDirectoryStore";
+import { useUIStore } from "@/stores/useUIStore";
+import { useRuntimeAPIs } from "@/hooks/useRuntimeAPIs";
+import { useEffectiveDirectory } from "@/hooks/useEffectiveDirectory";
+import { formatDirectoryName, cn } from "@/lib/utils";
+import { SidebarFilesTree } from "./SidebarFilesTree";
+import { ExtensionWorkbench } from "@/components/interactive-ui/workbench/ExtensionWorkbench";
 
-type RightTab = 'git' | 'files' | 'context' | 'extensions';
+type RightTab = "git" | "files" | "context" | "extensions";
 
-const RIGHT_TAB_FALLBACK: RightTab = 'files';
+const RIGHT_TAB_FALLBACK: RightTab = "files";
 
 const isBrowserActive = (): boolean => {
-  if (typeof document !== 'undefined' && document.hidden) return false;
-  if (typeof navigator !== 'undefined' && !navigator.onLine) return false;
+  if (typeof document !== "undefined" && document.hidden) return false;
+  if (typeof navigator !== "undefined" && !navigator.onLine) return false;
   return true;
 };
 
@@ -39,13 +39,17 @@ function useRightSidebarGitSync(
   directory: string | undefined,
   isSidebarOpen: boolean,
   rightTab: RightTab | undefined,
-  mainTab: string | undefined
+  mainTab: string | undefined,
 ) {
   const { git } = useRuntimeAPIs();
   const ensureStatus = useGitStore((state) => state.ensureStatus);
 
   const shouldPoll = Boolean(
-    directory && git && isSidebarOpen && rightTab === 'git' && mainTab !== 'git'
+    directory &&
+    git &&
+    isSidebarOpen &&
+    rightTab === "git" &&
+    mainTab !== "git",
   );
 
   React.useEffect(() => {
@@ -71,7 +75,11 @@ export const ProjectContextPanel: React.FC = () => {
 
   const activeProject = React.useMemo(() => {
     if (activeProjectId) {
-      return projects.find((project) => project.id === activeProjectId) ?? projects[0] ?? null;
+      return (
+        projects.find((project) => project.id === activeProjectId) ??
+        projects[0] ??
+        null
+      );
     }
     return projects[0] ?? null;
   }, [activeProjectId, projects]);
@@ -90,9 +98,11 @@ export const ProjectContextPanel: React.FC = () => {
     if (!activeProject) {
       return null;
     }
-    return activeProject.label?.trim()
-      || formatDirectoryName(activeProject.path, homeDirectory)
-      || activeProject.path;
+    return (
+      activeProject.label?.trim() ||
+      formatDirectoryName(activeProject.path, homeDirectory) ||
+      activeProject.path
+    );
   }, [activeProject, homeDirectory]);
 
   const canCreateWorktree = React.useMemo(() => {
@@ -112,7 +122,6 @@ export const ProjectContextPanel: React.FC = () => {
     </div>
   );
 };
-
 export const RightSidebarTabs: React.FC = () => {
   const rightSidebarTab = useUIStore((state) => state.rightSidebarTab);
   const setRightSidebarTab = useUIStore((state) => state.setRightSidebarTab);
@@ -120,7 +129,12 @@ export const RightSidebarTabs: React.FC = () => {
   const activeMainTab = useUIStore((state) => state.activeMainTab);
   const directory = useEffectiveDirectory();
 
-  useRightSidebarGitSync(directory, isRightSidebarOpen, rightSidebarTab, activeMainTab);
+  useRightSidebarGitSync(
+    directory,
+    isRightSidebarOpen,
+    rightSidebarTab,
+    activeMainTab,
+  );
 
   // When the main view already hosts a right-tab equivalent (e.g. main tab
   // 'git' renders GitView in the secondary slot), the right sidebar's
@@ -128,10 +142,10 @@ export const RightSidebarTabs: React.FC = () => {
   // effects. The map is small and stable; expand it if more shared
   // secondary/right views are added.
   const hiddenRightTab: RightTab | null =
-    activeMainTab === 'git'
-      ? 'git'
-      : activeMainTab === 'context'
-        ? 'context'
+    activeMainTab === "git"
+      ? "git"
+      : activeMainTab === "context"
+        ? "context"
         : null;
 
   // Persisted right sidebar tab can be stale across main-tab switches (e.g.
@@ -143,21 +157,26 @@ export const RightSidebarTabs: React.FC = () => {
     }
   }, [hiddenRightTab, rightSidebarTab, setRightSidebarTab]);
 
-  const isRightGitTabActive = isRightSidebarOpen && rightSidebarTab === 'git' && hiddenRightTab !== 'git';
+  const isRightGitTabActive =
+    isRightSidebarOpen && rightSidebarTab === "git" && hiddenRightTab !== "git";
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden bg-background">
       <div className="min-h-0 flex-1 overflow-hidden">
-        <div className={cn('h-full', rightSidebarTab !== 'git' && 'hidden')}>
+        <div className={cn("h-full", rightSidebarTab !== "git" && "hidden")}>
           <GitView isActive={isRightGitTabActive} />
         </div>
-        <div className={cn('h-full', rightSidebarTab !== 'files' && 'hidden')}>
+        <div className={cn("h-full", rightSidebarTab !== "files" && "hidden")}>
           <SidebarFilesTree />
         </div>
-        <div className={cn('h-full', rightSidebarTab !== 'context' && 'hidden')}>
+        <div
+          className={cn("h-full", rightSidebarTab !== "context" && "hidden")}
+        >
           <ProjectContextPanel />
         </div>
-        <div className={cn('h-full', rightSidebarTab !== 'extensions' && 'hidden')}>
+        <div
+          className={cn("h-full", rightSidebarTab !== "extensions" && "hidden")}
+        >
           <ExtensionWorkbench />
         </div>
       </div>

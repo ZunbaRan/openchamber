@@ -1551,6 +1551,7 @@ const AssistantMessageBody = React.memo(({
                 const paddingSize = 24;
 
                 wrapper = document.createElement('div');
+                wrapper.setAttribute('data-message-image-export', 'true');
                 wrapper.style.cssText = `
                     padding: ${paddingSize}px;
                     background-color: ${resolvedBackgroundColor};

@@ -1,6 +1,6 @@
 {
   "name": "openchamber-monorepo",
-  "version": "1.16.5",
+  "version": "1.17.1",
   "description": "OpenChamber monorepo workspace for web, ui, and desktop runtimes",
   "private": true,
   "type": "module",
@@ -60,6 +60,7 @@
     "mobile:sim:install": "bun run --cwd packages/mobile sim:install",
     "mobile:sim:launch": "bun run --cwd packages/mobile sim:launch",
     "mobile:sim:run": "bun run --cwd packages/mobile sim:run",
+    "mobile:sim:dev": "bun run --cwd packages/mobile sim:dev",
     "mobile:sim:serve": "bun run --cwd packages/mobile sim:serve",
     "mobile:sim:list": "bun run --cwd packages/mobile sim:list",
     "mobile:sim:kill": "bun run --cwd packages/mobile sim:kill",

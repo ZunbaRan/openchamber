@@ -14,20 +14,20 @@ The preload bridge exposes desktop-only APIs to the web UI through `window.__OPE
 
 ## Main Files
 
-| File | Purpose |
-|------|---------|
-| `main.mjs` | Electron main process, app lifecycle, windows, menus, deep links, native IPC handlers, updates, local server startup |
-| `preload.mjs` | Safe bridge from the rendered UI to Electron IPC |
-| `artifact-runner.mjs` | Main-process lifecycle, URL, permission, concurrency, CPU, memory, and lease gates for Scripts Artifacts |
-| `artifact-runner-preload.cjs` | Message-only Artifact transport; exposes no Electron API to the Artifact main world |
-| `ssh-manager.mjs` | SSH host import, connection lifecycle, tunnel/port forwarding helpers |
-| `scripts/electron-dev.mjs` | Desktop dev launcher with Vite HMR support |
-| `scripts/build-web-assets.mjs` | Builds `packages/web` and stages UI assets into `resources/web-dist` |
-| `scripts/prepare-opencode-cli.mjs` | Downloads and stages the pinned OpenCode CLI into `resources/opencode-cli` |
-| `scripts/bundle-main.mjs` | Bundles Electron main code into `dist-bundle/main.mjs` for packaging |
-| `scripts/rebuild-native.mjs` | Rebuilds native modules against the Electron runtime |
-| `scripts/package.mjs` | Runs `electron-builder`, with unsigned Windows builds when signing env is missing |
-| `resources/` | Packaged web assets, icons, and macOS entitlements |
+| File                               | Purpose                                                                                                              |
+| ---------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `main.mjs`                         | Electron main process, app lifecycle, windows, menus, deep links, native IPC handlers, updates, local server startup |
+| `preload.mjs`                      | Safe bridge from the rendered UI to Electron IPC                                                                     |
+| `artifact-runner.mjs`              | Main-process lifecycle, URL, permission, concurrency, CPU, memory, and lease gates for Scripts Artifacts             |
+| `artifact-runner-preload.cjs`      | Message-only Artifact transport; exposes no Electron API to the Artifact main world                                  |
+| `ssh-manager.mjs`                  | SSH host import, connection lifecycle, tunnel/port forwarding helpers                                                |
+| `scripts/electron-dev.mjs`         | Desktop dev launcher with Vite HMR support                                                                           |
+| `scripts/build-web-assets.mjs`     | Builds `packages/web` and stages UI assets into `resources/web-dist`                                                 |
+| `scripts/prepare-opencode-cli.mjs` | Downloads and stages the pinned OpenCode CLI into `resources/opencode-cli`                                           |
+| `scripts/bundle-main.mjs`          | Bundles Electron main code into `dist-bundle/main.mjs` for packaging                                                 |
+| `scripts/rebuild-native.mjs`       | Rebuilds native modules against the Electron runtime                                                                 |
+| `scripts/package.mjs`              | Runs `electron-builder`, with unsigned Windows builds when signing env is missing                                    |
+| `resources/`                       | Packaged web assets, icons, and macOS entitlements                                                                   |
 
 ## Development
 
@@ -73,7 +73,7 @@ That runs, in order:
 2. `prepare:opencode-cli` to download/cache the pinned OpenCode CLI and copy it into `packages/electron/resources/opencode-cli`.
 3. `bundle:main` to create `packages/electron/dist-bundle/main.mjs`.
 4. `rebuild:native` to rebuild native modules for Electron.
-5. `package.mjs` to run `electron-builder`.
+5. `package.mjs` to run `electron-builder`; its `afterPack` hook stages the rebuilt `better-sqlite3` binary that Electron Builder's Bun dependency collector otherwise omits.
 
 Build output goes to `packages/electron/dist`.
 
@@ -99,7 +99,7 @@ Each published version must use a semver tag greater than the installed applicat
 
 A loopback-only updater fixture remains available for contributor QA. It is enabled only by the embedded E2E build marker together with `OPENCHAMBER_E2E=1` and a credential-free loopback URL; invalid or incomplete E2E configuration resolves to no feed and never falls back to the production GitHub source. It is test infrastructure, not a user-configurable update source. See [`scripts/updater-e2e-fixture.md`](./scripts/updater-e2e-fixture.md) for the controlled procedure.
 
-The package supports macOS, Windows, and Linux desktop features. Linux AppImage builds include in-app window controls; system tray and launch-at-login remain macOS/Windows only. Some native discovery helpers are platform-specific. For example, app icon fetching and app filtering currently only work on macOS, while opening files in installed apps and installed-app discovery work on macOS and Windows (Linux returns an empty list without errors).
+The package supports macOS, Windows, and Linux desktop features. Linux AppImage builds include in-app window controls, auto-update, system tray, and launch-at-login (XDG autostart). Some native discovery helpers are platform-specific. For example, app icon fetching and app filtering currently only work on macOS, while opening files in installed apps and installed-app discovery work on macOS, Windows, and Linux.
 
 The macOS menu bar item is enabled by default and can be disabled in General settings. The setting applies after restart; while disabled, Desktop does not create the native tray controller or start the renderer subscriptions, polling, quota refresh, or IPC updates that feed it.
 
@@ -120,15 +120,16 @@ Use an explicit override when testing a different OpenCode CLI build or when a u
 
 ## Common Env Vars
 
-| Variable | Use |
-|----------|-----|
-| `OPENCHAMBER_ELECTRON_DEV=1` | Marks the runtime as desktop development mode |
-| `OPENCHAMBER_ELECTRON_USE_BUNDLED_UI=1` | Uses staged web assets instead of the HMR dev server |
-| `OPENCHAMBER_SKIP_LOCAL_SERVER=1` | Skips the in-process local OpenChamber server and uses the configured default remote instance; Desktop imports this from the user's login-shell environment, and packaged/bundled UI remains available for connection recovery |
-| `OPENCHAMBER_HMR_UI_PORT` | Preferred Vite UI port for desktop dev, default `5173` |
-| `OPENCHAMBER_HMR_API_PORT` | Preferred API port for desktop dev, default `3901` |
-| `OPENCHAMBER_RUNTIME=desktop` | Set by Electron before starting the web server |
-| `OPENCHAMBER_HTML_ARTIFACTS_SCRIPTS=false` | Emergency kill switch for the default-enabled Managed Desktop Scripts Runner |
+| Variable                                   | Use                                                                                                                                                                                                                            |
+| ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `OPENCHAMBER_ELECTRON_DEV=1`               | Marks the runtime as desktop development mode                                                                                                                                                                                  |
+| `OPENCHAMBER_ELECTRON_USE_BUNDLED_UI=1`    | Uses staged web assets instead of the HMR dev server                                                                                                                                                                           |
+| `OPENCHAMBER_SKIP_LOCAL_SERVER=1`          | Skips the in-process local OpenChamber server and uses the configured default remote instance; Desktop imports this from the user's login-shell environment, and packaged/bundled UI remains available for connection recovery |
+| `OPENCHAMBER_HMR_UI_PORT`                  | Preferred Vite UI port for desktop dev, default `5173`                                                                                                                                                                         |
+| `OPENCHAMBER_HMR_API_PORT`                 | Preferred API port for desktop dev, default `3901`                                                                                                                                                                             |
+| `OPENCHAMBER_RUNTIME=desktop`              | Set by Electron before starting the web server                                                                                                                                                                                 |
+| `OPENCHAMBER_HTML_ARTIFACTS_SCRIPTS=false` | Emergency kill switch for the default-enabled Managed Desktop Scripts Runner                                                                                                                                                   |
+
 The bundled CLI version is not overrideable at packaging time. Update `opencode-cli.lock.json` from a verified `ZunbaRan/opencode` release, including all platform hashes and exact upstream/fork commits.
 | `OPENCHAMBER_TARGET_ARCH` | Explicit desktop package architecture (`x64` or `arm64`); Linux requires it to match the native host |
 | `OPENCHAMBER_DESKTOP_NOTIFY=true` | Enables desktop notification flow in the web server |
