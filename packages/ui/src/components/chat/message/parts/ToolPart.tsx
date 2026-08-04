@@ -74,9 +74,14 @@ import { recordRoutingToolObservation } from "@/lib/interactive-ui/routingInspec
 import { shouldHideToolInputPreview } from "./toolRenderUtils";
 import { WorkbenchPinButton } from "@/components/interactive-ui/workbench/WorkbenchPinButton";
 import {
+  canRenderMcpAppToolState,
   createMcpAppResultEnvelope,
   parseMcpAppBinding,
+  persistMcpAppEnvelopeToToolPart,
+  resolveMcpAppToolLifecycleStatus,
+  type McpAppResultEnvelope,
 } from "@/lib/interactive-ui/mcpApp";
+import { opencodeClient } from "@/lib/opencode/client";
 
 const HTMLArtifactView = React.lazy(() =>
   import("@/components/interactive-ui/HTMLArtifactView").then((module) => ({
@@ -106,9 +111,38 @@ type ToolStateWithMetadata = ToolStateUnion & {
   attachments?: Array<FilePart>;
 };
 
+type McpAppCompletionWaiter = {
+  resolve: () => void;
+  reject: (error: Error) => void;
+  timeout: number;
+};
+
+const mcpAppPartPersistenceSignature = (part: ToolPartType) => {
+  if (part.state.status !== "completed") return null;
+  const metadata = part.state.metadata as Record<string, unknown> | undefined;
+  return JSON.stringify({
+    output: part.state.output,
+    structuredContent: metadata?.structuredContent,
+    modelContextContent: metadata?.mcpAppModelContextContent,
+  });
+};
+
+const createMcpAppEnvelopeFromPart = (part: ToolPartType) => {
+  const state = part.state as ToolStateWithMetadata;
+  const binding = parseMcpAppBinding(state.metadata);
+  if (!binding || !canRenderMcpAppToolState(state.status)) return null;
+  return createMcpAppResultEnvelope({
+    binding,
+    toolInput: state.input,
+    toolOutput: typeof state.output === "string" ? state.output : "",
+    metadata: state.metadata,
+  });
+};
+
 interface ToolPartProps {
   part: ToolPartType;
   sessionId?: string;
+  projectDirectory?: string;
   isExpanded: boolean;
   onToggle: (toolId: string) => void;
   isMobile: boolean;
@@ -1906,6 +1940,7 @@ interface ToolExpandedContentProps {
   sessionId?: string;
   state: ToolStateUnion;
   currentDirectory: string;
+  projectDirectory: string;
   isExpanded: boolean;
   isMobile: boolean;
   onShowPopup?: (content: ToolPopupContent) => void;
@@ -1917,6 +1952,7 @@ const ToolExpandedContent: React.FC<ToolExpandedContentProps> = React.memo(
     sessionId,
     state,
     currentDirectory,
+    projectDirectory,
     isExpanded,
     isMobile,
     onShowPopup,
@@ -1930,6 +1966,14 @@ const ToolExpandedContent: React.FC<ToolExpandedContentProps> = React.memo(
     const metadata = stateWithData.metadata;
     const input = stateWithData.input;
     const rawOutput = stateWithData.output;
+    const mcpAppToolLifecycleStatus = React.useMemo(
+      () => resolveMcpAppToolLifecycleStatus({
+        status: state.status,
+        metadata,
+        error: stateWithData.error,
+      }),
+      [metadata, state.status, stateWithData.error],
+    );
     const hasStringOutput =
       typeof rawOutput === "string" && rawOutput.length > 0;
     const outputString = typeof rawOutput === "string" ? rawOutput : "";
@@ -1949,7 +1993,7 @@ const ToolExpandedContent: React.FC<ToolExpandedContentProps> = React.memo(
       () => parseMcpAppBinding(metadata),
       [metadata],
     );
-    const mcpAppEnvelope = React.useMemo(
+    const incomingMcpAppEnvelope = React.useMemo(
       () =>
         mcpAppBinding
           ? createMcpAppResultEnvelope({
@@ -1961,6 +2005,104 @@ const ToolExpandedContent: React.FC<ToolExpandedContentProps> = React.memo(
           : null,
       [input, mcpAppBinding, metadata, outputString],
     );
+    const latestMcpAppPartRef = React.useRef(part);
+    const latestMcpAppPartIdRef = React.useRef(part.id);
+    const awaitingMcpAppEchoSignatureRef = React.useRef<string | null>(null);
+    const mcpAppCompletionWaitersRef = React.useRef<Set<McpAppCompletionWaiter>>(new Set());
+    const [mcpAppPersistencePending, setMcpAppPersistencePending] = React.useState(false);
+    const [authoritativeMcpAppEnvelope, setAuthoritativeMcpAppEnvelope] = React.useState(
+      incomingMcpAppEnvelope,
+    );
+
+    React.useEffect(() => {
+      const incomingSignature = mcpAppPartPersistenceSignature(part);
+      const awaitingSignature = awaitingMcpAppEchoSignatureRef.current;
+      if (latestMcpAppPartIdRef.current !== part.id) {
+        latestMcpAppPartIdRef.current = part.id;
+        latestMcpAppPartRef.current = part;
+        awaitingMcpAppEchoSignatureRef.current = null;
+        setAuthoritativeMcpAppEnvelope(incomingMcpAppEnvelope);
+      } else if (!awaitingSignature || awaitingSignature === incomingSignature) {
+        latestMcpAppPartRef.current = part;
+        setAuthoritativeMcpAppEnvelope(incomingMcpAppEnvelope);
+        if (awaitingSignature === incomingSignature) {
+          awaitingMcpAppEchoSignatureRef.current = null;
+        }
+      }
+
+      const status = part.state.status;
+      if (status !== "completed" && status !== "error") return;
+      const waiters = [...mcpAppCompletionWaitersRef.current];
+      mcpAppCompletionWaitersRef.current.clear();
+      for (const waiter of waiters) {
+        window.clearTimeout(waiter.timeout);
+        if (status === "completed") waiter.resolve();
+        else waiter.reject(new Error("MCP App tool call failed before model context could be saved"));
+      }
+    }, [incomingMcpAppEnvelope, part]);
+
+    React.useEffect(() => () => {
+      const waiters = [...mcpAppCompletionWaitersRef.current];
+      mcpAppCompletionWaitersRef.current.clear();
+      for (const waiter of waiters) {
+        window.clearTimeout(waiter.timeout);
+        waiter.reject(new Error("MCP App was closed before model context could be saved"));
+      }
+    }, []);
+
+    const waitForCompletedMcpAppPart = React.useCallback(async () => {
+      const currentStatus = latestMcpAppPartRef.current.state.status;
+      if (currentStatus === "completed") return;
+      if (currentStatus === "error") {
+        throw new Error("MCP App tool call failed before model context could be saved");
+      }
+      await new Promise<void>((resolve, reject) => {
+        const waiter: McpAppCompletionWaiter = {
+          resolve,
+          reject,
+          timeout: window.setTimeout(() => {
+            mcpAppCompletionWaitersRef.current.delete(waiter);
+            reject(new Error("Timed out waiting for the MCP App tool result"));
+          }, 60_000),
+        };
+        mcpAppCompletionWaitersRef.current.add(waiter);
+      });
+    }, []);
+
+    const handlePersistableMcpAppEnvelopeChange = React.useCallback(
+      async (envelope: McpAppResultEnvelope) => {
+        if (!sessionId) throw new Error('MCP App session is unavailable');
+        setMcpAppPersistencePending(true);
+        try {
+          await waitForCompletedMcpAppPart();
+          const nextPart = persistMcpAppEnvelopeToToolPart(
+            latestMcpAppPartRef.current,
+            envelope,
+          );
+          const persisted = await opencodeClient.updateMessagePart({
+            directory: currentDirectory,
+            sessionId,
+            messageId: part.messageID,
+            partId: part.id,
+            part: nextPart,
+          });
+          if (persisted.type !== 'tool') {
+            throw new Error('OpenCode returned an invalid MCP App tool part');
+          }
+          const persistedEnvelope = createMcpAppEnvelopeFromPart(persisted);
+          if (!persistedEnvelope) {
+            throw new Error('OpenCode returned an MCP App part without its binding');
+          }
+          awaitingMcpAppEchoSignatureRef.current = mcpAppPartPersistenceSignature(persisted);
+          latestMcpAppPartRef.current = persisted;
+          setAuthoritativeMcpAppEnvelope(persistedEnvelope);
+        } finally {
+          setMcpAppPersistencePending(false);
+        }
+      },
+      [currentDirectory, part.id, part.messageID, sessionId, waitForCompletedMcpAppPart],
+    );
+    const mcpAppEnvelope = authoritativeMcpAppEnvelope ?? incomingMcpAppEnvelope;
     const artifactToolContext = React.useMemo(
       () => ({ id: part.id, name: part.tool }),
       [part.id, part.tool],
@@ -2080,7 +2222,7 @@ const ToolExpandedContent: React.FC<ToolExpandedContentProps> = React.memo(
     );
 
     const renderResultContent = () => {
-      if (state.status === "completed" && mcpAppEnvelope && sessionId) {
+      if (mcpAppToolLifecycleStatus && mcpAppEnvelope && sessionId) {
         const fallback = renderScrollableBlock(
           <ToolScrollableTextOutput
             output={outputString}
@@ -2092,17 +2234,25 @@ const ToolExpandedContent: React.FC<ToolExpandedContentProps> = React.memo(
         );
         return (
           <div className="space-y-1.5">
-            <div className="flex justify-end">
-              <WorkbenchPinButton
-                envelope={mcpAppEnvelope}
-                sessionId={sessionId}
-                messageId={part.messageID}
-                toolPartId={part.id}
-              />
-            </div>
+            {state.status === "completed" ? (
+              <div className="flex justify-end">
+                <WorkbenchPinButton
+                  envelope={mcpAppEnvelope}
+                  sessionId={sessionId}
+                  messageId={part.messageID}
+                  toolPartId={part.id}
+                  projectDirectory={projectDirectory}
+                  disabled={mcpAppPersistencePending}
+                />
+              </div>
+            ) : null}
             <React.Suspense
               fallback={
-                <div className="h-52 animate-pulse rounded-xl bg-muted/40" />
+                <div
+                  className="h-52 animate-pulse rounded-xl bg-muted/40"
+                  data-mcp-app-loading-stage="module"
+                  aria-label="Loading MCP App renderer"
+                />
               }
             >
               <McpAppRenderer
@@ -2110,7 +2260,15 @@ const ToolExpandedContent: React.FC<ToolExpandedContentProps> = React.memo(
                 directory={currentDirectory}
                 sessionId={sessionId}
                 messageId={part.messageID}
+                partId={part.id}
                 fallback={fallback}
+                onPersistableEnvelopeChange={handlePersistableMcpAppEnvelopeChange}
+                toolStateStatus={mcpAppToolLifecycleStatus}
+                toolCancellationReason={
+                  mcpAppToolLifecycleStatus === 'cancelled'
+                    ? stateWithData.error
+                    : undefined
+                }
               />
             </React.Suspense>
           </div>
@@ -2142,6 +2300,7 @@ const ToolExpandedContent: React.FC<ToolExpandedContentProps> = React.memo(
                 sessionId={sessionId}
                 messageId={part.messageID}
                 toolPartId={part.id}
+                projectDirectory={projectDirectory}
               />
             </div>
             <React.Suspense fallback={loadingFallback}>
@@ -2174,6 +2333,7 @@ const ToolExpandedContent: React.FC<ToolExpandedContentProps> = React.memo(
                 sessionId={sessionId}
                 messageId={part.messageID}
                 toolPartId={part.id}
+                projectDirectory={projectDirectory}
               />
             </div>
             <InteractiveUIView
@@ -2640,6 +2800,7 @@ ToolExpandedContent.displayName = "ToolExpandedContent";
 const ToolPartContent: React.FC<ToolPartProps> = ({
   part,
   sessionId,
+  projectDirectory,
   isExpanded,
   onToggle,
   isMobile,
@@ -2650,6 +2811,7 @@ const ToolPartContent: React.FC<ToolPartProps> = ({
   const state = part.state;
   const showToolFileIcons = useUIStore((s) => s.showToolFileIcons);
   const currentDirectory = useEffectiveDirectory() ?? "";
+  const pinProjectDirectory = projectDirectory?.trim() || currentDirectory;
 
   const normalizedPartTool = normalizeToolName(part.tool);
   const isTaskTool = normalizedPartTool === "task";
@@ -2850,25 +3012,28 @@ const ToolPartContent: React.FC<ToolPartProps> = ({
         : null,
     [isError, isFinalized, taskOutputString],
   );
-  const hasRichResult = Boolean(
-    interactiveResult || htmlArtifactResult || installedArtifactResult,
+  const mcpAppBinding = React.useMemo(
+    () =>
+      !isError && canRenderMcpAppToolState(status ?? "")
+        ? parseMcpAppBinding(metadata)
+        : null,
+    [isError, metadata, status],
   );
-  const autoExpandedInteractivePartRef = React.useRef<string | null>(null);
+  const hasRichResult = Boolean(
+    interactiveResult ||
+      htmlArtifactResult ||
+      installedArtifactResult ||
+      mcpAppBinding,
+  );
+  const autoExpandedRichPartRef = React.useRef<string | null>(null);
 
   React.useEffect(() => {
-    if (
-      (!interactiveResult && !htmlArtifactResult && !installedArtifactResult) ||
-      isTaskTool ||
-      isExpanded
-    )
-      return;
-    if (autoExpandedInteractivePartRef.current === part.id) return;
-    autoExpandedInteractivePartRef.current = part.id;
+    if (!hasRichResult || isTaskTool || isExpanded) return;
+    if (autoExpandedRichPartRef.current === part.id) return;
+    autoExpandedRichPartRef.current = part.id;
     onToggle(part.id);
   }, [
-    htmlArtifactResult,
-    installedArtifactResult,
-    interactiveResult,
+    hasRichResult,
     isExpanded,
     isTaskTool,
     onToggle,
@@ -3426,6 +3591,7 @@ const ToolPartContent: React.FC<ToolPartProps> = ({
                 sessionId={sessionId}
                 state={state}
                 currentDirectory={currentDirectory}
+                projectDirectory={pinProjectDirectory}
                 isExpanded={isExpanded}
                 isMobile={isMobile}
                 onShowPopup={onShowPopup}
@@ -3526,6 +3692,7 @@ export default React.memo(ToolPart, (prev, next) => {
     prev.isExpanded === next.isExpanded &&
     prev.isMobile === next.isMobile &&
     prev.sessionId === next.sessionId &&
+    prev.projectDirectory === next.projectDirectory &&
     prev.alwaysShowActions === next.alwaysShowActions &&
     prev.onContentChange === next.onContentChange &&
     prev.onShowPopup === next.onShowPopup &&

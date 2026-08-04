@@ -4,7 +4,20 @@ import type { McpStatus } from '@opencode-ai/sdk/v2';
 import { opencodeClient } from '@/lib/opencode/client';
 import { useDirectoryStore } from '@/stores/useDirectoryStore';
 
-export type McpStatusMap = Record<string, McpStatus>;
+export type McpConnectedDiagnostics = {
+  status: 'connected';
+  protocolVersion?: string;
+  era: 'legacy' | '2026-07-28';
+  adapter: 'legacy-sdk' | '2026-sdk';
+  apps: {
+    client: boolean;
+    server: boolean;
+    negotiated: boolean;
+  };
+};
+
+export type McpRuntimeStatus = McpStatus | McpConnectedDiagnostics;
+export type McpStatusMap = Record<string, McpRuntimeStatus>;
 type McpRuntimeDiagnostic = {
   status: 'failed';
   error: string;
@@ -54,7 +67,7 @@ type RefreshOptions = {
 };
 
 type TestConnectionResult = {
-  status?: McpStatus;
+  status?: McpRuntimeStatus;
   error?: string;
   warning?: string;
 };

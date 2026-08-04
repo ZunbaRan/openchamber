@@ -121,6 +121,9 @@ export const areRenderRelevantPartsEqual = (left: Part[], right: Part[]): boolea
 const areRenderRelevantMessageInfoEqual = (left: Message, right: Message): boolean => {
   if (left === right) return true;
 
+  const leftPath = (left as { path?: { cwd?: unknown; root?: unknown } }).path;
+  const rightPath = (right as { path?: { cwd?: unknown; root?: unknown } }).path;
+
   return left.id === right.id
     && left.role === right.role
     && left.sessionID === right.sessionID
@@ -133,6 +136,8 @@ const areRenderRelevantMessageInfoEqual = (left: Message, right: Message): boole
     && (left as { variant?: unknown }).variant === (right as { variant?: unknown }).variant
     && (left as { clientRole?: unknown }).clientRole === (right as { clientRole?: unknown }).clientRole
     && (left as { userMessageMarker?: unknown }).userMessageMarker === (right as { userMessageMarker?: unknown }).userMessageMarker
+    && (leftPath?.cwd ?? null) === (rightPath?.cwd ?? null)
+    && (leftPath?.root ?? null) === (rightPath?.root ?? null)
     && ((left as { time?: { created?: unknown; completed?: unknown } }).time?.created ?? null) === ((right as { time?: { created?: unknown; completed?: unknown } }).time?.created ?? null)
     && ((left as { time?: { created?: unknown; completed?: unknown } }).time?.completed ?? null) === ((right as { time?: { created?: unknown; completed?: unknown } }).time?.completed ?? null);
 };

@@ -1,4 +1,5 @@
 import React from 'react';
+import type { ToolPart } from '@opencode-ai/sdk/v2';
 import {
   DndContext,
   DragOverlay,
@@ -48,7 +49,10 @@ import { useExtensionWorkbenchStore } from '@/stores/useExtensionWorkbenchStore'
 import { useProjectsStore } from '@/stores/useProjectsStore';
 import { useUIStore } from '@/stores/useUIStore';
 import { InteractiveUIView } from '@/components/interactive-ui/InteractiveUIView';
-import { McpAppRenderer } from '@/components/interactive-ui/McpAppRenderer';
+import {
+  McpAppRenderer,
+  type McpAppRendererHandle,
+} from '@/components/interactive-ui/McpAppRenderer';
 import {
   HTMLArtifactView,
   type HTMLArtifactViewHandle,
@@ -68,6 +72,12 @@ import {
 } from '@/lib/interactive-ui/workbench-events';
 import { isWorkbenchVersionCompatible } from '@/lib/interactive-ui/workbench-version';
 import {
+  parseMcpAppBinding,
+  persistMcpAppEnvelopeToToolPart,
+  type McpAppResultEnvelope,
+} from '@/lib/interactive-ui/mcpApp';
+import { opencodeClient } from '@/lib/opencode/client';
+import {
   releaseWorkbenchPopout,
   reserveWorkbenchPopout,
 } from '@/lib/interactive-ui/workbench-popouts';
@@ -86,6 +96,92 @@ const RELATIONSHIP_COLORS = [
   'var(--ocix-chart-4)',
   'var(--ocix-chart-5)',
 ];
+
+// eslint-disable-next-line react-refresh/only-export-components -- Pure App Board routing helper is covered by focused tests.
+export const resolveWorkbenchPrimaryDisplayAction = (
+  form: WorkbenchTile['form'],
+  focused = false,
+): 'focus' | 'mcp-fullscreen' | 'exit-focus' => {
+  if (focused) return 'exit-focus';
+  return form === 'mcp-app' ? 'mcp-fullscreen' : 'focus';
+};
+
+// eslint-disable-next-line react-refresh/only-export-components -- Pure App Board/MCP display-mode routing helper is covered by focused tests.
+export const resolveWorkbenchMcpAppFocusDisplayMode = (
+  form: WorkbenchTile['form'],
+  focused: boolean,
+  wasFocused: boolean,
+): 'fullscreen' | 'inline' | null => {
+  if (form !== 'mcp-app') return null;
+  if (focused) return 'fullscreen';
+  return wasFocused ? 'inline' : null;
+};
+
+const isSameMcpAppBinding = (
+  current: McpAppResultEnvelope,
+  next: McpAppResultEnvelope,
+) => current.binding.server === next.binding.server
+  && current.binding.resourceUri === next.binding.resourceUri
+  && current.binding.toolKey === next.binding.toolKey;
+
+// eslint-disable-next-line react-refresh/only-export-components -- Pure same-binding snapshot reducer is covered by focused tests.
+export const refreshMcpAppWorkbenchSnapshot = (
+  snapshot: WorkbenchGeneratedSnapshot,
+  nextEnvelope: McpAppResultEnvelope,
+): WorkbenchGeneratedSnapshot => {
+  if (
+    snapshot.form !== 'mcp-app'
+    || snapshot.envelope.$schema !== 'openchamber://mcp-app-result/v1'
+    || !isSameMcpAppBinding(snapshot.envelope, nextEnvelope)
+  ) return snapshot;
+  return {
+    ...snapshot,
+    envelope: nextEnvelope,
+  };
+};
+
+// eslint-disable-next-line react-refresh/only-export-components -- Pure persistence gate is covered by focused tests.
+export const persistMcpAppWorkbenchSnapshot = async (
+  current: WorkbenchGeneratedSnapshot | null,
+  nextEnvelope: McpAppResultEnvelope,
+  persist: (envelope: McpAppResultEnvelope) => Promise<WorkbenchGeneratedSnapshot>,
+): Promise<WorkbenchGeneratedSnapshot> => {
+  const next = current
+    ? refreshMcpAppWorkbenchSnapshot(current, nextEnvelope)
+    : current;
+  if (!current || next === current) {
+    throw new Error('MCP App snapshot binding changed before it could be persisted');
+  }
+  return persist(nextEnvelope);
+};
+
+// eslint-disable-next-line react-refresh/only-export-components -- Origin binding and canonical ToolPart persistence are covered by focused tests.
+export const persistMcpAppOriginToolPart = async (
+  originPart: ToolPart,
+  envelope: McpAppResultEnvelope,
+  persist: (part: ToolPart) => Promise<ToolPart>,
+) => {
+  const state = originPart.state;
+  const metadata = state.status === 'running'
+    || state.status === 'completed'
+    || state.status === 'error'
+    ? state.metadata
+    : undefined;
+  const originBinding = parseMcpAppBinding(metadata);
+  if (!originBinding
+    || originBinding.server !== envelope.binding.server
+    || originBinding.resourceUri !== envelope.binding.resourceUri
+    || originBinding.toolKey !== envelope.binding.toolKey) {
+    throw new Error('Pinned MCP App origin binding no longer matches');
+  }
+  const persisted = await persist(
+    persistMcpAppEnvelopeToToolPart(originPart, envelope),
+  );
+  if (persisted.type !== 'tool') {
+    throw new Error('Pinned MCP App origin did not persist as a tool part');
+  }
+  return persisted;
+};
 
 const workbenchCollisionDetection: CollisionDetection = (args) => {
   if (args.pointerCoordinates) return pointerWithin(args);
@@ -335,23 +431,46 @@ const WorkbenchCatalog: React.FC<WorkbenchCatalogProps> = ({
   );
 };
 
-const GeneratedWorkbenchSurface: React.FC<{
+const GeneratedWorkbenchSurface = React.forwardRef<McpAppRendererHandle, {
   projectId: string;
   tile: WorkbenchTile & { source: { kind: 'agent-generated'; snapshotRef: string } };
-}> = ({ projectId, tile }) => {
+  focused: boolean;
+  onTitleChange?: (title: string | null) => void;
+}>(function GeneratedWorkbenchSurface({ projectId, tile, focused, onTitleChange }, forwardedRef) {
   const { t } = useI18n();
   const projects = useProjectsStore((state) => state.projects);
+  const updateGeneratedTileEnvelope = useExtensionWorkbenchStore(
+    (state) => state.updateGeneratedTileEnvelope,
+  );
   const directory = projects.find((project) => project.id === projectId)?.path ?? '';
   const [snapshot, setSnapshot] = React.useState<WorkbenchGeneratedSnapshot | null>(null);
   const [error, setError] = React.useState<string | null>(null);
+  const latestSnapshotRef = React.useRef<WorkbenchGeneratedSnapshot | null>(null);
+  const originSessionId = tile.origin?.sessionId;
+  const originMessageId = tile.origin?.messageId;
+  const originToolCallId = tile.origin?.toolCallId;
 
   React.useEffect(() => {
+    const current = latestSnapshotRef.current;
+    if (current?.snapshotRef === tile.source.snapshotRef) {
+      setSnapshot(current);
+      return;
+    }
     let active = true;
+    latestSnapshotRef.current = null;
     setSnapshot(null);
     setError(null);
     void fetchWorkbenchGeneratedSnapshot(tile.source.snapshotRef)
       .then((next) => {
-        if (active) setSnapshot(next);
+        if (!active) return;
+        latestSnapshotRef.current = next;
+        setSnapshot(next);
+        onTitleChange?.(
+          next.form === 'mcp-app'
+            && next.envelope.$schema === 'openchamber://mcp-app-result/v1'
+            ? next.envelope.title
+            : null,
+        );
       })
       .catch((nextError) => {
         if (active) {
@@ -361,7 +480,68 @@ const GeneratedWorkbenchSurface: React.FC<{
     return () => {
       active = false;
     };
-  }, [t, tile.source.snapshotRef]);
+  }, [onTitleChange, t, tile.source.snapshotRef]);
+
+  const handlePersistableEnvelopeChange = React.useCallback((
+    nextEnvelope: McpAppResultEnvelope,
+  ) => {
+    return persistMcpAppWorkbenchSnapshot(
+      latestSnapshotRef.current,
+      nextEnvelope,
+      async (envelope) => {
+        if (directory && originSessionId && originMessageId && originToolCallId) {
+          const originPart = await opencodeClient.getMessagePart({
+            directory,
+            sessionId: originSessionId,
+            messageId: originMessageId,
+            partId: originToolCallId,
+          });
+          if (originPart.type !== 'tool') {
+            throw new Error('Pinned MCP App origin is not a tool part');
+          }
+          await persistMcpAppOriginToolPart(
+            originPart,
+            envelope,
+            async (part) => opencodeClient.updateMessagePart({
+              directory,
+              sessionId: originSessionId,
+              messageId: originMessageId,
+              partId: originToolCallId,
+              part,
+            }).then((persisted) => {
+              if (persisted.type !== 'tool') {
+                throw new Error('Pinned MCP App origin did not persist as a tool part');
+              }
+              return persisted;
+            }),
+          );
+        }
+        return updateGeneratedTileEnvelope(
+          projectId,
+          tile.tileId,
+          'mcp-app',
+          envelope,
+        );
+      },
+    ).then((persisted) => {
+      latestSnapshotRef.current = persisted;
+      setSnapshot(persisted);
+      onTitleChange?.(
+        persisted.envelope.$schema === 'openchamber://mcp-app-result/v1'
+          ? persisted.envelope.title
+          : null,
+      );
+    });
+  }, [
+    directory,
+    onTitleChange,
+    originMessageId,
+    originSessionId,
+    originToolCallId,
+    projectId,
+    tile.tileId,
+    updateGeneratedTileEnvelope,
+  ]);
 
   if (error) {
     return (
@@ -406,7 +586,12 @@ const GeneratedWorkbenchSurface: React.FC<{
   }
   if (snapshot.form === 'mcp-app'
     && snapshot.envelope.$schema === 'openchamber://mcp-app-result/v1') {
-    if (!directory || !tile.origin?.sessionId || !tile.origin?.messageId) {
+    if (
+      !directory
+      || !tile.origin?.sessionId
+      || !tile.origin?.messageId
+      || !tile.origin?.toolCallId
+    ) {
       return (
         <div className="typography-ui-caption text-[var(--status-error)]">
           {t('workbench.tile.generatedSnapshotUnavailable')}
@@ -415,11 +600,17 @@ const GeneratedWorkbenchSurface: React.FC<{
     }
     return (
       <McpAppRenderer
+        ref={forwardedRef}
         envelope={snapshot.envelope}
         directory={directory}
         sessionId={tile.origin.sessionId}
         messageId={tile.origin.messageId}
-        className="min-h-full"
+        partId={tile.origin.toolCallId}
+        className="h-full min-h-0"
+        presentation="workbench"
+        layoutEpoch={focused ? 'focused' : 'tile'}
+        requestedDisplayMode={focused ? 'fullscreen' : 'inline'}
+        onPersistableEnvelopeChange={handlePersistableEnvelopeChange}
         fallback={(
           <pre className="whitespace-pre-wrap typography-micro">
             {JSON.stringify(snapshot.envelope.result, null, 2)}
@@ -433,7 +624,7 @@ const GeneratedWorkbenchSurface: React.FC<{
       {t('workbench.tile.generatedSnapshotUnavailable')}
     </div>
   );
-};
+});
 
 interface WorkbenchTileCardProps {
   projectId: string;
@@ -507,9 +698,14 @@ const WorkbenchTileCard: React.FC<WorkbenchTileCardProps> = ({
   } | null>(null);
   const [previewLayout, setPreviewLayout] = React.useState(layout);
   const artifactViewRef = React.useRef<HTMLArtifactViewHandle>(null);
+  const mcpAppRendererRef = React.useRef<McpAppRendererHandle>(null);
   const interactivePopoutRef = React.useRef<Window | null>(null);
   const popoutPollRef = React.useRef<number | null>(null);
   const [poppedOut, setPoppedOut] = React.useState(false);
+  const [generatedSnapshotTitle, setGeneratedSnapshotTitle] = React.useState<string | null>(null);
+  const generatedSnapshotRef = tile.source.kind === 'agent-generated'
+    ? tile.source.snapshotRef
+    : null;
   const initialDisplayModeRef = React.useRef(tile.displayMode);
   const onDisplayModeChangeRef = React.useRef(onDisplayModeChange);
   onDisplayModeChangeRef.current = onDisplayModeChange;
@@ -555,6 +751,10 @@ const WorkbenchTileCard: React.FC<WorkbenchTileCardProps> = ({
   }, [finishInteractivePopout, tile.tileId]);
 
   React.useEffect(() => setPreviewLayout(layout), [layout]);
+
+  React.useEffect(() => {
+    setGeneratedSnapshotTitle(null);
+  }, [generatedSnapshotRef]);
 
   React.useEffect(() => {
     if (focused) {
@@ -639,7 +839,11 @@ const WorkbenchTileCard: React.FC<WorkbenchTileCardProps> = ({
   };
 
   const title = surface?.title
+    || generatedSnapshotTitle
     || (tile.source.kind === 'agent-generated' ? t('workbench.tile.generated') : tile.source.surfaceId);
+  const handleGeneratedSnapshotTitleChange = React.useCallback((nextTitle: string | null) => {
+    setGeneratedSnapshotTitle(nextTitle);
+  }, []);
   const workbenchContext = React.useMemo(() => ({
     projectId,
     tileId: tile.tileId,
@@ -663,6 +867,57 @@ const WorkbenchTileCard: React.FC<WorkbenchTileCardProps> = ({
     || (tile.form === 'interactive-ui' && surface?.runtime === 'declarative')
   );
   const systemPopoutSupported = workbenchPopoutSupported;
+  const primaryDisplayAction = resolveWorkbenchPrimaryDisplayAction(tile.form, focused);
+
+  const wasWorkbenchFocusedRef = React.useRef(focused);
+  React.useEffect(() => {
+    const wasFocused = wasWorkbenchFocusedRef.current;
+    wasWorkbenchFocusedRef.current = focused;
+    const requestedMode = resolveWorkbenchMcpAppFocusDisplayMode(
+      tile.form,
+      focused,
+      wasFocused,
+    );
+    if (!requestedMode) return;
+
+    // Pinning a conversation App opens and focuses its board tile in the same
+    // React commit that mounts the renderer. The renderer ref can therefore be
+    // assigned one frame after this parent effect. Retry briefly so a focused
+    // MCP tile always negotiates true MCP fullscreen instead of leaving a
+    // full-size host card around an inline/preview App.
+    let cancelled = false;
+    let attempts = 0;
+    let frame = 0;
+    const apply = () => {
+      if (cancelled) return;
+      const mode = mcpAppRendererRef.current?.requestDisplayMode(requestedMode);
+      if (mode === requestedMode || attempts >= 20) return;
+      attempts += 1;
+      frame = window.requestAnimationFrame(apply);
+    };
+    apply();
+    return () => {
+      cancelled = true;
+      if (frame) window.cancelAnimationFrame(frame);
+    };
+  }, [focused, tile.form]);
+
+  const handlePrimaryDisplayToggle = () => {
+    if (primaryDisplayAction === 'exit-focus') {
+      if (tile.form === 'mcp-app') {
+        mcpAppRendererRef.current?.requestDisplayMode('inline');
+      }
+      onExitFocus();
+      return;
+    }
+    if (primaryDisplayAction === 'mcp-fullscreen') {
+      const mode = mcpAppRendererRef.current?.requestDisplayMode('fullscreen');
+      if (mode !== 'fullscreen') toast.info(t('workbench.tile.surfaceUnavailable'));
+      return;
+    }
+    if (focused) onExitFocus();
+    else onFocus();
+  };
 
   const handlePopoutToggle = async () => {
     if (workbenchPopoutSupported) {
@@ -781,8 +1036,9 @@ const WorkbenchTileCard: React.FC<WorkbenchTileCardProps> = ({
             className="relative z-20 size-9 shrink-0"
             disabled={poppedOut && !focused}
             onPointerDown={(event) => event.stopPropagation()}
-            onClick={focused ? onExitFocus : onFocus}
+            onClick={handlePrimaryDisplayToggle}
             aria-label={focused ? t('workbench.tile.exitFocus') : t('workbench.tile.focus')}
+            data-workbench-display-action={primaryDisplayAction}
           >
             <Icon
               name={focused ? 'fullscreen-exit' : 'fullscreen'}
@@ -833,10 +1089,13 @@ const WorkbenchTileCard: React.FC<WorkbenchTileCardProps> = ({
           </div>
         ) : tile.source.kind === 'agent-generated' ? (
           <GeneratedWorkbenchSurface
+            ref={mcpAppRendererRef}
             projectId={projectId}
             tile={tile as WorkbenchTile & {
               source: { kind: 'agent-generated'; snapshotRef: string };
             }}
+            focused={focused}
+            onTitleChange={handleGeneratedSnapshotTitleChange}
           />
         ) : !surface ? (
           <div className="flex min-h-full items-center justify-center rounded-lg border border-dashed border-border/70 p-4 text-center typography-ui-caption text-muted-foreground">

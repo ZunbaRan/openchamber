@@ -59,12 +59,147 @@ const boundedString = (value, label, {
   return trimmed || null;
 };
 
+const normalizeSnapshotRef = (value, label = 'snapshotRef') => {
+  if (typeof value !== 'string') {
+    fail(`${label} must be a snapshot reference`, 'workbench_snapshot_ref_invalid', 400);
+  }
+  const snapshotRef = value.trim();
+  if (!SNAPSHOT_REF_PATTERN.test(snapshotRef)) {
+    fail(`${label} is invalid`, 'workbench_snapshot_ref_invalid', 400);
+  }
+  return snapshotRef;
+};
+
+const normalizeExpectedSnapshotRef = (value) => {
+  if (value === undefined || value === null || value === '') {
+    fail(
+      'expectedSnapshotRef is required',
+      'workbench_snapshot_ref_required',
+      400,
+    );
+  }
+  return normalizeSnapshotRef(value, 'expectedSnapshotRef');
+};
+
 const canonicalize = (value) => {
   if (Array.isArray(value)) return value.map(canonicalize);
   if (isRecord(value)) {
     return Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonicalize(value[key])]));
   }
   return value;
+};
+
+const normalizeMcpAppIdentityString = (value, label) => {
+  if (value === undefined) return null;
+  if (typeof value !== 'string' || !value.trim() || value.length > MAX_STRING_LENGTH) {
+    fail(
+      `Generated MCP App snapshot ${label} identity is invalid`,
+      'invalid_workbench_snapshot',
+      400,
+    );
+  }
+  return value.trim();
+};
+
+const normalizeMcpAppAuthority = (value) => {
+  if (value === undefined) return null;
+  if (typeof value === 'string') {
+    const authority = value.trim();
+    if (!authority || authority.length > 4_096) {
+      fail(
+        'Generated MCP App snapshot authority identity is invalid',
+        'invalid_workbench_snapshot',
+        400,
+      );
+    }
+    return JSON.stringify(authority);
+  }
+  if (!isRecord(value)) {
+    fail(
+      'Generated MCP App snapshot authority identity is invalid',
+      'invalid_workbench_snapshot',
+      400,
+    );
+  }
+  const serialized = JSON.stringify(canonicalize(value));
+  if (Buffer.byteLength(serialized, 'utf8') > 16 * 1024) {
+    fail(
+      'Generated MCP App snapshot authority identity is too large',
+      'invalid_workbench_snapshot',
+      400,
+    );
+  }
+  return serialized;
+};
+
+const oneMcpAppIdentityValue = (values, label, normalize) => {
+  const normalized = values
+    .filter((value) => value !== undefined)
+    .map((value) => normalize(value, label));
+  const distinct = [...new Set(normalized)];
+  if (distinct.length > 1) {
+    fail(
+      `Generated MCP App snapshot has conflicting ${label} identity`,
+      'invalid_workbench_snapshot',
+      400,
+    );
+  }
+  return distinct[0] ?? null;
+};
+
+const mcpAppEnvelopeIdentity = (envelope) => {
+  const binding = envelope.binding;
+  const result = isRecord(envelope.result) ? envelope.result : {};
+  const structuredContent = isRecord(envelope.result?.structuredContent)
+    ? envelope.result.structuredContent
+    : {};
+  const resultMeta = isRecord(envelope.result?._meta) ? envelope.result._meta : {};
+  const argumentsValue = isRecord(envelope.arguments) ? envelope.arguments : {};
+  const bindingMeta = isRecord(binding?.meta) ? binding.meta : {};
+  return {
+    server: binding.server,
+    resourceUri: binding.resourceUri,
+    toolKey: binding.toolKey,
+    canvasId: oneMcpAppIdentityValue(
+      [structuredContent.canvasId, result.canvasId, argumentsValue.canvasId],
+      'canvasId',
+      normalizeMcpAppIdentityString,
+    ),
+    authority: oneMcpAppIdentityValue(
+      [
+        structuredContent.authority,
+        result.authority,
+        resultMeta.authority,
+        argumentsValue.authority,
+        bindingMeta.authority,
+      ],
+      'authority',
+      normalizeMcpAppAuthority,
+    ),
+  };
+};
+
+const completeOriginTuple = (origin) => (
+  origin?.sessionId && origin.messageId && origin.toolCallId
+    ? [origin.sessionId, origin.messageId, origin.toolCallId]
+    : null
+);
+
+const mcpAppTileStableIdentity = (tile, envelope) => {
+  const identity = mcpAppEnvelopeIdentity(envelope);
+  if (!identity.canvasId) return null;
+  const origin = completeOriginTuple(tile.origin);
+  return JSON.stringify({
+    server: identity.server,
+    resourceUri: identity.resourceUri,
+    toolKey: identity.toolKey,
+    canvasId: identity.canvasId,
+    scope: identity.authority
+      ? { kind: 'authority', value: identity.authority }
+      : origin
+        ? { kind: 'origin', value: origin }
+        : null,
+  });
 };
 
 const assertContextSafe = (value, label = 'tile.context', state = { nodes: 0 }, depth = 0) => {
@@ -273,6 +408,9 @@ export const createInteractiveUIWorkbenchStore = ({
     now,
     createId: () => cryptoImpl.randomUUID(),
   };
+  const generatedSnapshotRef = (normalized) => (
+    `snapshot_${cryptoImpl.createHash('sha256').update(JSON.stringify(normalized)).digest('hex')}`
+  );
 
   const normalizeProjectId = (value) => boundedString(value, 'projectId', { max: 512 });
   const projectFile = (projectId) => {
@@ -361,21 +499,61 @@ export const createInteractiveUIWorkbenchStore = ({
       now: dependencies.now(),
       createId: dependencies.createId,
     });
-    const dedupeIndex = board.tiles.findIndex((tile) => (
-      tile.source.kind === normalized.source.kind
-      && tile.form === normalized.form
-      && tile.contextDigest === normalized.contextDigest
-      && (
-        normalized.source.kind === 'third-party-extension'
-          ? tile.source.extensionId === normalized.source.extensionId
-            && tile.source.surfaceId === normalized.source.surfaceId
-            && areWorkbenchVersionRangesCompatible(
-              tile.source.compatibleVersion,
-              normalized.source.compatibleVersion,
-            )
-          : tile.source.snapshotRef === normalized.source.snapshotRef
-      )
-    ));
+    let incomingMcpIdentity = null;
+    if (normalized.source.kind === 'agent-generated' && normalized.form === 'mcp-app') {
+      const incomingSnapshot = await readSnapshot(normalized.source.snapshotRef);
+      if (incomingSnapshot.form !== 'mcp-app') {
+        fail(
+          'Workbench snapshot form does not match its Tile',
+          'workbench_snapshot_form_mismatch',
+          409,
+          { expectedForm: 'mcp-app', actualForm: incomingSnapshot.form },
+        );
+      }
+      incomingMcpIdentity = mcpAppTileStableIdentity(normalized, incomingSnapshot.envelope);
+    }
+
+    let dedupeIndex = -1;
+    for (let index = 0; index < board.tiles.length; index += 1) {
+      const tile = board.tiles[index];
+      if (tile.source.kind !== normalized.source.kind || tile.form !== normalized.form) continue;
+      if (normalized.source.kind === 'third-party-extension') {
+        if (tile.contextDigest === normalized.contextDigest
+          && tile.source.extensionId === normalized.source.extensionId
+          && tile.source.surfaceId === normalized.source.surfaceId
+          && areWorkbenchVersionRangesCompatible(
+            tile.source.compatibleVersion,
+            normalized.source.compatibleVersion,
+          )) {
+          dedupeIndex = index;
+          break;
+        }
+        continue;
+      }
+
+      if (normalized.form !== 'mcp-app' || !incomingMcpIdentity) {
+        if (tile.contextDigest === normalized.contextDigest
+          && tile.source.snapshotRef === normalized.source.snapshotRef) {
+          dedupeIndex = index;
+          break;
+        }
+        continue;
+      }
+
+      try {
+        const existingSnapshot = await readSnapshot(tile.source.snapshotRef);
+        if (existingSnapshot.form === 'mcp-app'
+          && mcpAppTileStableIdentity(tile, existingSnapshot.envelope) === incomingMcpIdentity) {
+          dedupeIndex = index;
+          break;
+        }
+      } catch (error) {
+        // A malformed or missing existing Tile is not authoritative identity
+        // evidence for a new Pin. Keep it isolated instead of either merging
+        // into it or blocking unrelated valid MCP App canvases.
+        if (!(error instanceof InteractiveUIWorkbenchStoreError)) throw error;
+      }
+    }
     let tile;
     let created;
     if (dedupeIndex >= 0) {
@@ -629,12 +807,16 @@ export const createInteractiveUIWorkbenchStore = ({
       || typeof envelope.title !== 'string'
       || !isRecord(envelope.binding)
       || typeof envelope.binding.server !== 'string'
+      || !envelope.binding.server.trim()
+      || typeof envelope.binding.toolKey !== 'string'
+      || !envelope.binding.toolKey.trim()
       || typeof envelope.binding.resourceUri !== 'string'
       || !envelope.binding.resourceUri.startsWith('ui://')
       || !isRecord(envelope.result)
     )) {
       fail('Generated MCP App snapshot is incomplete', 'invalid_workbench_snapshot', 400);
     }
+    if (form === 'mcp-app') mcpAppEnvelopeIdentity(envelope);
     let serialized;
     try {
       serialized = JSON.stringify({ form, envelope });
@@ -649,8 +831,7 @@ export const createInteractiveUIWorkbenchStore = ({
 
   const writeSnapshot = async (form, envelope) => {
     const normalized = normalizeGeneratedSnapshot(form, envelope);
-    const serializedPayload = JSON.stringify(normalized);
-    const snapshotRef = `snapshot_${cryptoImpl.createHash('sha256').update(serializedPayload).digest('hex')}`;
+    const snapshotRef = generatedSnapshotRef(normalized);
     const record = {
       $schema: 'openchamber://extension-workbench-snapshot/v1',
       schemaVersion: 1,
@@ -664,7 +845,7 @@ export const createInteractiveUIWorkbenchStore = ({
     const filePath = pathImpl.join(snapshotRoot, `${snapshotRef}.json`);
     try {
       const existing = await fsImpl.stat(filePath);
-      if (existing.isFile()) return record;
+      if (existing.isFile()) return readSnapshot(snapshotRef);
     } catch (error) {
       if (error?.code !== 'ENOENT') throw error;
     }
@@ -672,23 +853,21 @@ export const createInteractiveUIWorkbenchStore = ({
     try {
       await fsImpl.writeFile(temporaryPath, serialized, { encoding: 'utf8', mode: 0o600, flag: 'wx' });
       try {
-        await fsImpl.rename(temporaryPath, filePath);
+        // Hard-linking the complete temporary file publishes it atomically and
+        // fails rather than replacing an existing content-addressed snapshot.
+        await fsImpl.link(temporaryPath, filePath);
       } catch (error) {
         if (error?.code !== 'EEXIST') throw error;
-        await fsImpl.rm(temporaryPath, { force: true });
+        return await readSnapshot(snapshotRef);
       }
-    } catch (error) {
+    } finally {
       await fsImpl.rm(temporaryPath, { force: true }).catch(() => undefined);
-      throw error;
     }
     return record;
   };
 
   const readSnapshot = async (snapshotRefValue) => {
-    const snapshotRef = boundedString(snapshotRefValue, 'snapshotRef', {
-      max: 80,
-      pattern: SNAPSHOT_REF_PATTERN,
-    });
+    const snapshotRef = normalizeSnapshotRef(snapshotRefValue);
     const filePath = pathImpl.join(snapshotRoot, `${snapshotRef}.json`);
     let raw;
     try {
@@ -715,9 +894,106 @@ export const createInteractiveUIWorkbenchStore = ({
       || parsed.snapshotRef !== snapshotRef) {
       fail('Workbench snapshot is malformed', 'workbench_snapshot_malformed', 409);
     }
-    normalizeGeneratedSnapshot(parsed.form, parsed.envelope);
+    const normalized = normalizeGeneratedSnapshot(parsed.form, parsed.envelope);
+    if (generatedSnapshotRef(normalized) !== snapshotRef) {
+      fail('Workbench snapshot content does not match its reference', 'workbench_snapshot_malformed', 409);
+    }
     return parsed;
   };
+
+  const replaceGeneratedTileSnapshot = async (
+    projectId,
+    tileIdValue,
+    expectedRevision,
+    expectedSnapshotRefValue,
+    form,
+    envelope,
+  ) => withLock(projectId, async (normalizedProjectId) => {
+    const tileId = boundedString(tileIdValue, 'tileId', { max: 128, pattern: TILE_ID_PATTERN });
+    const expectedSnapshotRef = normalizeExpectedSnapshotRef(expectedSnapshotRefValue);
+    const document = await read(normalizedProjectId);
+    const board = activeBoard(document);
+    assertRevision(board, expectedRevision);
+    const index = board.tiles.findIndex((tile) => tile.tileId === tileId);
+    if (index < 0) fail('Workbench tile was not found', 'workbench_tile_not_found', 404);
+    const current = board.tiles[index];
+    if (current.source.kind !== 'agent-generated') {
+      fail(
+        'Installed Workbench tiles cannot replace generated snapshots',
+        'workbench_snapshot_replace_unsupported',
+        409,
+      );
+    }
+    if (current.form !== form) {
+      fail(
+        'Workbench snapshot form does not match its Tile',
+        'workbench_snapshot_form_mismatch',
+        409,
+        { expectedForm: current.form },
+      );
+    }
+    if (current.source.snapshotRef !== expectedSnapshotRef) {
+      fail(
+        'Workbench Tile snapshot changed since it was loaded',
+        'workbench_snapshot_ref_conflict',
+        409,
+        {
+          expectedSnapshotRef,
+          actualSnapshotRef: current.source.snapshotRef,
+        },
+      );
+    }
+
+    const previousGeneratedSnapshot = await readSnapshot(current.source.snapshotRef);
+    if (previousGeneratedSnapshot.form !== current.form) {
+      fail(
+        'Stored Workbench snapshot form does not match its Tile',
+        'workbench_snapshot_form_mismatch',
+        409,
+        { expectedForm: current.form, actualForm: previousGeneratedSnapshot.form },
+      );
+    }
+    const normalized = normalizeGeneratedSnapshot(form, envelope);
+    if (form === 'mcp-app') {
+      const currentBinding = mcpAppEnvelopeIdentity(previousGeneratedSnapshot.envelope);
+      const nextBinding = mcpAppEnvelopeIdentity(normalized.envelope);
+      for (const field of ['server', 'resourceUri', 'toolKey']) {
+        if (currentBinding[field] !== nextBinding[field]) {
+          fail(
+            'Workbench MCP App snapshot binding identity cannot change',
+            'workbench_snapshot_binding_mismatch',
+            409,
+            { field },
+          );
+        }
+      }
+      for (const field of ['canvasId', 'authority']) {
+        if (currentBinding[field] !== nextBinding[field]) {
+          fail(
+            'Workbench MCP App snapshot binding identity cannot change',
+            'workbench_snapshot_binding_mismatch',
+            409,
+            { field },
+          );
+        }
+      }
+    }
+
+    // A generated snapshot is content-addressed and immutable. Publish the new
+    // reference to the Board only after every identity check has passed and the
+    // complete snapshot record has been written.
+    const generatedSnapshot = await writeSnapshot(normalized.form, normalized.envelope);
+    const tile = {
+      ...current,
+      source: { kind: 'agent-generated', snapshotRef: generatedSnapshot.snapshotRef },
+      contextDigest: `sha256-${cryptoImpl.createHash('sha256').update(`${current.form}\0${generatedSnapshot.snapshotRef}`).digest('base64')}`,
+      updatedAt: new Date(dependencies.now()).toISOString(),
+    };
+    board.tiles[index] = tile;
+    board.revision += 1;
+    const snapshot = await write(normalizedProjectId, document);
+    return { snapshot, tile, generatedSnapshot };
+  });
 
   return {
     read,
@@ -727,6 +1003,7 @@ export const createInteractiveUIWorkbenchStore = ({
     updateTile,
     updateTileLayouts,
     migrateTile,
+    replaceGeneratedTileSnapshot,
     removeTile,
     getExtensionTileImpact,
     removeExtensionTiles,

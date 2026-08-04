@@ -1,7 +1,10 @@
 import { parseHTMLArtifactResultEnvelope } from '@/lib/interactive-ui/artifactResult';
 import { parseInstalledHTMLArtifactResultEnvelope } from '@/lib/interactive-ui/installedArtifactResult';
 import { parseInteractiveResultEnvelope } from '@/lib/interactive-ui/result';
-import { parseMcpAppBinding } from '@/lib/interactive-ui/mcpApp';
+import {
+    canRenderMcpAppToolState,
+    parseMcpAppBinding,
+} from '@/lib/interactive-ui/mcpApp';
 import { ACTIVITY_STANDALONE_TOOL_NAMES } from '../../lib/turns/constants';
 
 // Keep only tools with a direct in-app navigation destination compact. Every
@@ -13,6 +16,7 @@ const HIDDEN_INPUT_PREVIEW_TOOL_NAMES = new Set<string>([
     'apply_patch',
     'edit',
     'multiedit',
+    'openchamber',
     'interactive_ui',
     'html_artifact',
 ]);
@@ -52,7 +56,11 @@ export const hasRichToolResult = (part: unknown): boolean => {
         if (state && typeof state === 'object') {
             const status = (state as { status?: unknown }).status;
             const metadata = (state as { metadata?: unknown }).metadata;
-            if (status === 'completed' && parseMcpAppBinding(metadata)) {
+            if (
+                typeof status === 'string'
+                && canRenderMcpAppToolState(status)
+                && parseMcpAppBinding(metadata)
+            ) {
                 return true;
             }
         }

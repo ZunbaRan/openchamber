@@ -158,6 +158,10 @@ export class SessionMessageLoader {
     }
   }
 
+  activate(): void {
+    this.disposed = false
+  }
+
   ensure(
     target: SessionMessageTarget,
     options?: { force?: boolean; reason?: "navigation" | "reactive" | "prefetch" },

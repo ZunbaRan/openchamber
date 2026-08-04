@@ -295,6 +295,28 @@ export const patchWorkbenchTile = (
   )
 );
 
+export const replaceWorkbenchGeneratedTileSnapshot = (
+  projectId: string,
+  tileId: string,
+  expectedRevision: number,
+  expectedSnapshotRef: string,
+  form: WorkbenchSurfaceForm,
+  envelope: InteractiveResultEnvelope | HTMLArtifactResultEnvelope | McpAppResultEnvelope,
+): Promise<{
+  snapshot: WorkbenchSnapshot;
+  tile: WorkbenchTile;
+  generatedSnapshot: WorkbenchGeneratedSnapshot;
+}> => (
+  requestJSON(
+    `/api/interactive-ui/workbench/boards/${encodeURIComponent(projectId)}/tiles/${encodeURIComponent(tileId)}/replace-generated-snapshot`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ expectedRevision, expectedSnapshotRef, form, envelope }),
+    },
+  )
+);
+
 export const patchWorkbenchTileLayouts = (
   projectId: string,
   expectedRevision: number,

@@ -2,6 +2,7 @@ import { InteractiveUIRuntimeError } from './runtime.js';
 import { isWorkbenchVersionCompatible } from './workbench-version.js';
 
 const isRecord = (value) => typeof value === 'object' && value !== null && !Array.isArray(value);
+const WORKBENCH_SNAPSHOT_REF_PATTERN = /^snapshot_[a-f0-9]{64}$/;
 
 const sendError = (res, error) => {
   if (error instanceof InteractiveUIRuntimeError || (Number.isInteger(error?.status) && typeof error?.code === 'string')) {
@@ -356,12 +357,13 @@ export const registerInteractiveUIRoutes = (app, {
     try {
       const result = await manager.uninstall(req.params.extensionId);
       try {
+        const credentials = await runtime.removeExtensionConnections(req.params.extensionId);
         const workbench = workbenchStore
           ? await workbenchStore.removeExtensionTiles(req.params.extensionId)
           : { removed: 0, projects: 0 };
         res.json({
           ...result,
-          credentials: { removed: 0, retained: true },
+          credentials,
           workbench,
         });
       } catch (error) {
@@ -549,6 +551,61 @@ export const registerInteractiveUIRoutes = (app, {
         req.params.tileId,
         req.body?.expectedRevision,
         migrated,
+      );
+      res.setHeader('Cache-Control', 'no-store');
+      res.json(result);
+    } catch (error) {
+      sendError(res, error);
+    }
+  });
+
+  app.post('/api/interactive-ui/workbench/boards/:projectId/tiles/:tileId/replace-generated-snapshot', express.json({ limit: '600kb' }), async (req, res) => {
+    try {
+      if (!workbenchStore || typeof workbenchStore.replaceGeneratedTileSnapshot !== 'function') {
+        throw new InteractiveUIRuntimeError('Extension Workbench snapshot replacement is unavailable', 501, 'workbench_unsupported');
+      }
+      if (!isRecord(req.body)
+        || Object.keys(req.body).some((key) => !['expectedRevision', 'expectedSnapshotRef', 'form', 'envelope'].includes(key))
+        || !['interactive-ui', 'html-artifact', 'mcp-app'].includes(req.body.form)
+        || !isRecord(req.body.envelope)) {
+        throw new InteractiveUIRuntimeError(
+          'Workbench generated snapshot replacement body is invalid',
+          400,
+          'invalid_workbench_snapshot_replace',
+        );
+      }
+      if (!Number.isInteger(req.body.expectedRevision) || req.body.expectedRevision < 0) {
+        throw new InteractiveUIRuntimeError(
+          'expectedRevision is required',
+          400,
+          'workbench_revision_required',
+        );
+      }
+      if (req.body.expectedSnapshotRef === undefined) {
+        throw new InteractiveUIRuntimeError(
+          'expectedSnapshotRef is required',
+          400,
+          'workbench_snapshot_ref_required',
+        );
+      }
+      if (typeof req.body.expectedSnapshotRef !== 'string'
+        || !WORKBENCH_SNAPSHOT_REF_PATTERN.test(req.body.expectedSnapshotRef)) {
+        throw new InteractiveUIRuntimeError(
+          'expectedSnapshotRef is invalid',
+          400,
+          'workbench_snapshot_ref_invalid',
+        );
+      }
+      if (req.body.form === 'html-artifact') {
+        await artifactStore.materialize(req.body.envelope);
+      }
+      const result = await workbenchStore.replaceGeneratedTileSnapshot(
+        req.params.projectId,
+        req.params.tileId,
+        req.body.expectedRevision,
+        req.body.expectedSnapshotRef,
+        req.body.form,
+        req.body.envelope,
       );
       res.setHeader('Cache-Control', 'no-store');
       res.json(result);

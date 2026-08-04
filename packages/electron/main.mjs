@@ -51,6 +51,10 @@ import {
 } from "./path-open-utils.mjs";
 import { mintOutsideFileGrant } from "@openchamber/web/server/lib/fs/routes.js";
 import { createArtifactRunnerManager } from "./artifact-runner.mjs";
+import {
+  createDesktopBinarySaveController,
+  isDesktopBinarySaveCommand,
+} from "./desktop-binary-save.mjs";
 
 const execFileAsync = promisify(execFile);
 
@@ -213,6 +217,9 @@ const MINI_CHAT_WINDOW_HEIGHT = 760;
 const MINI_CHAT_MIN_WINDOW_WIDTH = 360;
 const MINI_CHAT_MIN_WINDOW_HEIGHT = 480;
 const MAX_CAPTURE_PAGE_RECT_AREA = 4_000_000;
+const desktopBinarySaveController = createDesktopBinarySaveController({
+  showSaveDialog: (owner, options) => dialog.showSaveDialog(owner, options),
+});
 const LOCAL_HOST_ID = "local";
 const LOCAL_DESKTOP_CLIENT_KIND = "desktop-local";
 const LOCAL_DESKTOP_CLIENT_DEDUPE_KEY = "desktop-local";
@@ -6053,13 +6060,23 @@ const COMMANDS_SAFE_FOR_REMOTE = new Set([
 ]);
 
 ipcMain.handle("openchamber:invoke", async (event, command, args) => {
-  if (!isLocalSender(event.sender) && !COMMANDS_SAFE_FOR_REMOTE.has(command)) {
+  const local = isLocalSender(event.sender);
+  if (!local && !COMMANDS_SAFE_FOR_REMOTE.has(command)) {
     log.warn(
       `[ipc] rejected ${command} from non-local origin: ${event.sender?.getURL?.() || "(unknown)"}`,
     );
     throw new Error("IPC not available for this origin");
   }
   const browserWindow = BrowserWindow.fromWebContents(event.sender);
+  if (isDesktopBinarySaveCommand(command)) {
+    return desktopBinarySaveController.handleIpc({
+      local,
+      sender: event.sender,
+      browserWindow,
+      command,
+      args,
+    });
+  }
   return handleInvoke(browserWindow, command, args);
 });
 

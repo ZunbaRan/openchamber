@@ -172,4 +172,23 @@ describe("SessionMessageLoader", () => {
     loader.dispose()
     childStores.disposeAll()
   })
+
+  test("can resume after a lifecycle cleanup reuses the same loader instance", async () => {
+    let calls = 0
+    const { childStores, loader } = createLoader(async ({ sessionID }) => {
+      calls += 1
+      return response([createRecord(sessionID)])
+    })
+    const target = { directory: "/repo", sessionID: "session-a" }
+
+    loader.dispose()
+    loader.activate()
+    await loader.ensure(target, { reason: "reactive" })
+
+    expect(calls).toBe(1)
+    expect(loader.getSnapshot(target).status).toBe("ready")
+    expect(childStores.getChild(target.directory)?.getState().message[target.sessionID]?.length).toBe(1)
+    loader.dispose()
+    childStores.disposeAll()
+  })
 })

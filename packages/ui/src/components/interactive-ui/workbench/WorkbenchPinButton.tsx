@@ -32,7 +32,47 @@ interface WorkbenchPinButtonProps {
   sessionId?: string;
   messageId?: string;
   toolPartId: string;
+  projectDirectory?: string;
+  disabled?: boolean;
 }
+
+type PinProject = { id: string; path: string };
+
+const normalizeProjectDirectory = (value: string | undefined): string => {
+  const normalized = (value ?? '').trim().replace(/\\/g, '/');
+  if (!normalized || normalized === '/') return normalized;
+  return normalized.replace(/\/+$/, '');
+};
+
+export const resolveWorkbenchPinProject = (
+  projects: PinProject[],
+  activeProjectId: string | null,
+  projectDirectory?: string,
+): PinProject | null => {
+  const requestedDirectory = normalizeProjectDirectory(projectDirectory);
+  if (requestedDirectory) {
+    const directoryProject = projects
+      .filter((project) => {
+        const projectPath = normalizeProjectDirectory(project.path);
+        return Boolean(projectPath) && (
+          projectPath === requestedDirectory
+          || requestedDirectory.startsWith(`${projectPath}/`)
+        );
+      })
+      .sort((left, right) => (
+        normalizeProjectDirectory(right.path).length
+        - normalizeProjectDirectory(left.path).length
+      ))[0];
+    if (directoryProject) return directoryProject;
+    // An authoritative message directory must never silently pin into an
+    // unrelated active project. The caller can register that project or show
+    // the existing no-project diagnostic instead of corrupting another board.
+    return null;
+  }
+  return projects.find((project) => project.id === activeProjectId)
+    ?? projects[0]
+    ?? null;
+};
 
 const isInteractive = (envelope: PinEnvelope): envelope is InteractiveResultEnvelope => (
   envelope.$schema === 'openchamber://interactive-result/v1'
@@ -75,18 +115,34 @@ export const WorkbenchPinButton: React.FC<WorkbenchPinButtonProps> = ({
   sessionId,
   messageId,
   toolPartId,
+  projectDirectory: requestedProjectDirectory,
+  disabled = false,
 }) => {
   const { t } = useI18n();
   const [pending, setPending] = React.useState(false);
   const activeProjectId = useProjectsStore((state) => state.activeProjectId);
   const projects = useProjectsStore((state) => state.projects);
-  const projectId = activeProjectId || projects[0]?.id || null;
-  const projectDirectory = projects.find((project) => project.id === projectId)?.path ?? '';
+  const pinProject = resolveWorkbenchPinProject(
+    projects,
+    activeProjectId,
+    requestedProjectDirectory,
+  );
+  const projectId = pinProject?.id ?? null;
+  const projectDirectory = pinProject?.path ?? '';
   const setRightSidebarOpen = useUIStore((state) => state.setRightSidebarOpen);
   const openContextPanelTab = useUIStore((state) => state.openContextPanelTab);
+  const mcpAppStructuredContent = envelope.$schema === 'openchamber://mcp-app-result/v1'
+    && envelope.result.structuredContent
+    && typeof envelope.result.structuredContent === 'object'
+    && !Array.isArray(envelope.result.structuredContent)
+    ? envelope.result.structuredContent as Record<string, unknown>
+    : null;
+  const mcpAppPersistableRevision = typeof mcpAppStructuredContent?.revision === 'number'
+    ? String(mcpAppStructuredContent.revision)
+    : undefined;
 
   const handlePin = async () => {
-    if (!projectId || pending) {
+    if (!projectId || pending || disabled) {
       if (!projectId) toast.error(t('workbench.pin.noProject'));
       return;
     }
@@ -155,6 +211,7 @@ export const WorkbenchPinButton: React.FC<WorkbenchPinButtonProps> = ({
       }
 
       const result = await useExtensionWorkbenchStore.getState().pin(projectId, tile);
+      useProjectsStore.getState().setActiveProjectIdOnly(projectId);
       if (projectDirectory) {
         openContextPanelTab(projectDirectory, {
           mode: 'extensions',
@@ -176,10 +233,11 @@ export const WorkbenchPinButton: React.FC<WorkbenchPinButtonProps> = ({
     <Button
       size="xs"
       variant="ghost"
-      disabled={pending}
+      disabled={pending || disabled}
       onClick={() => void handlePin()}
       aria-label={t('workbench.pin.aria')}
       title={t('workbench.pin.aria')}
+      data-mcp-app-persistable-revision={mcpAppPersistableRevision}
     >
       <Icon name={pending ? 'refresh' : 'pushpin'} className={pending ? 'animate-spin' : undefined} />
       {t('workbench.pin.label')}

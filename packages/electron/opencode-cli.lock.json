@@ -1,45 +1,45 @@
 {
   "schema": "com.openchamber.opencode-cli-lock.v1",
   "repository": "ZunbaRan/opencode",
-  "releaseTag": "v1.18.9-oc.2",
-  "version": "1.18.9-oc.2",
-  "upstreamCommit": "7565e03536d19e850f9996c407f9bf5e932b5f7a",
-  "forkCommit": "4d9d138e9daf23f207aea130eaf94223278cc219",
+  "releaseTag": "v1.18.10-oc.1",
+  "version": "1.18.10-oc.1",
+  "upstreamCommit": "e024e2ef92293a81a06b6cc418422c52207ce85d",
+  "forkCommit": "bf12c7a79358ae763733d6e67de93af5d6715226",
   "sdk": {
     "package": "@zunbaran/opencode-sdk",
-    "version": "1.18.9-oc.2",
-    "sha256": "3756ed405c4eca869d95ef9b2ca5741011d519a08f82390525200468ade40094"
+    "version": "1.18.10-oc.1",
+    "sha256": "4b6f8c7724b4d4ba713d37eaeb7a63df2143f17c79a8bb618e7cb57448e1069e"
   },
   "artifacts": {
     "darwin-arm64": {
       "file": "opencode-darwin-arm64.zip",
-      "url": "https://github.com/ZunbaRan/opencode/releases/download/v1.18.9-oc.2/opencode-darwin-arm64.zip",
-      "sha256": "248ad282d7f3e0bd3319090b876348d1b10a5cd193e811efdf25b46b0325b161"
+      "url": "https://github.com/ZunbaRan/opencode/releases/download/v1.18.10-oc.1/opencode-darwin-arm64.zip",
+      "sha256": "58ad84fbc69d29388a96db30e5538f8e21cb0d007e5af9899f9f58b04cd5650d"
     },
     "darwin-x64": {
       "file": "opencode-darwin-x64.zip",
-      "url": "https://github.com/ZunbaRan/opencode/releases/download/v1.18.9-oc.2/opencode-darwin-x64.zip",
-      "sha256": "40d09b3f31224940237d56742e793d875c2b601c5de5b489079574f1b751ef1d"
+      "url": "https://github.com/ZunbaRan/opencode/releases/download/v1.18.10-oc.1/opencode-darwin-x64.zip",
+      "sha256": "2d8605487a9d88b9b66c9be222218e79800166ed74db3fef0c6a41685c404de8"
     },
     "windows-arm64": {
       "file": "opencode-windows-arm64.zip",
-      "url": "https://github.com/ZunbaRan/opencode/releases/download/v1.18.9-oc.2/opencode-windows-arm64.zip",
-      "sha256": "64f08087bea5fa2823c4b7e126e2dc87ba9448d42391412a6c88c9553d69d9bb"
+      "url": "https://github.com/ZunbaRan/opencode/releases/download/v1.18.10-oc.1/opencode-windows-arm64.zip",
+      "sha256": "87226489840862d09b9eda9ebbf9ae924bb7a68c6d510c73679bdc967da7961d"
     },
     "windows-x64": {
       "file": "opencode-windows-x64.zip",
-      "url": "https://github.com/ZunbaRan/opencode/releases/download/v1.18.9-oc.2/opencode-windows-x64.zip",
-      "sha256": "3d8eecdcf0822d3dd36c616b0b84f344e506d3ad919ca92dec52d71d6ce5072d"
+      "url": "https://github.com/ZunbaRan/opencode/releases/download/v1.18.10-oc.1/opencode-windows-x64.zip",
+      "sha256": "3bbe58e1fd61307c4bcdc6a7ac8154ce7cbc32bd71922205b01eceba6988ff84"
     },
     "linux-arm64": {
       "file": "opencode-linux-arm64.tar.gz",
-      "url": "https://github.com/ZunbaRan/opencode/releases/download/v1.18.9-oc.2/opencode-linux-arm64.tar.gz",
-      "sha256": "39944843b30aa4a4b0b32ea9ce1fa7749b4a322276f5529c40290700af32b7b7"
+      "url": "https://github.com/ZunbaRan/opencode/releases/download/v1.18.10-oc.1/opencode-linux-arm64.tar.gz",
+      "sha256": "de4a74d5602e89293d61a464c5c4f17e6b60ee80c0785bf5835e1a84d77daa23"
     },
     "linux-x64": {
       "file": "opencode-linux-x64.tar.gz",
-      "url": "https://github.com/ZunbaRan/opencode/releases/download/v1.18.9-oc.2/opencode-linux-x64.tar.gz",
-      "sha256": "65e38930ed819ba9997864d2bbc66129144093119c91c2097c402e13cced9c67"
+      "url": "https://github.com/ZunbaRan/opencode/releases/download/v1.18.10-oc.1/opencode-linux-x64.tar.gz",
+      "sha256": "344fa581f463d9642246fa00df693f566f37d62564311c4d1ae6c09e0d7b2495"
     }
   }
 }

@@ -115,6 +115,40 @@ const main = async () => {
   const artifact = artifactForTarget(lock, process.platform, targetArchitecture.opencode);
   const binary = process.platform === 'win32' ? 'opencode.exe' : 'opencode';
   const outputBinary = outputBinaryPath(binary);
+  const localOverride = process.env.OPENCHAMBER_OPENCODE_CLI_PATH?.trim();
+  if (localOverride) {
+    const sourceBinary = path.resolve(localOverride);
+    const localVersion = readBinaryVersion(sourceBinary);
+    if (!localVersion) {
+      throw new Error(`Local OpenCode CLI override is missing or not executable: ${sourceBinary}`);
+    }
+
+    fs.mkdirSync(outputDir, { recursive: true });
+    for (const entry of fs.readdirSync(outputDir)) {
+      if (entry === '.gitkeep') continue;
+      fs.rmSync(path.join(outputDir, entry), { recursive: true, force: true });
+    }
+    fs.copyFileSync(sourceBinary, outputBinary);
+    ensureExecutable(outputBinary);
+
+    fs.writeFileSync(
+      path.join(outputDir, 'distribution.json'),
+      `${JSON.stringify({
+        schema: lock.schema,
+        repository: lock.repository,
+        releaseTag: 'local-override',
+        version: localVersion,
+        upstreamCommit: process.env.OPENCODE_UPSTREAM_COMMIT || lock.upstreamCommit,
+        forkCommit: process.env.OPENCODE_FORK_COMMIT || 'local-uncommitted',
+        target: artifact.key,
+        sha256: sha256(outputBinary),
+        localOverride: true,
+      }, null, 2)}\n`,
+    );
+    console.log(`[electron] prepared local OpenCode CLI override ${localVersion}: ${outputBinary}`);
+    return;
+  }
+
   const existingVersion = readBinaryVersion(outputBinary);
   if (existingVersion === version) {
     console.log(`[electron] bundled OpenCode CLI already prepared: ${outputBinary} (${version})`);

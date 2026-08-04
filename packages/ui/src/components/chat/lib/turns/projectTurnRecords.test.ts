@@ -165,6 +165,67 @@ describe('projectTurnRecords', () => {
         expect(groupedToolIds).toEqual(['tool_bash']);
     });
 
+    test('keeps a bound MCP App outside Activity across running to completed', () => {
+        const user = createMessageEntry({ id: 'u1', role: 'user', createdAt: 1 });
+        const bindingMetadata = {
+            mcpApp: {
+                server: 'tldraw-local',
+                tool: 'tldraw_open_canvas',
+                toolKey: 'tldraw-local_tldraw_open_canvas',
+                resourceUri: 'ui://tldraw/canvas.html',
+                meta: {
+                    resourceUri: 'ui://tldraw/canvas.html',
+                    visibility: ['model', 'app'],
+                },
+            },
+        };
+        const project = (status: 'running' | 'completed') => {
+            const assistant = createMessageEntry({ id: 'a1', role: 'assistant', parentID: 'u1', createdAt: 2 });
+            assistant.parts = [
+                {
+                    id: 'tool_bash',
+                    type: 'tool',
+                    tool: 'bash',
+                    state: { status: 'completed', output: 'prepared' },
+                } as Part,
+                {
+                    id: 'tool_tldraw',
+                    sessionID: 's1',
+                    messageID: 'a1',
+                    callID: 'call_tldraw',
+                    type: 'tool',
+                    tool: 'tldraw-local_tldraw_open_canvas',
+                    state: status === 'completed'
+                        ? {
+                            status: 'completed',
+                            input: { canvasId: 'service-topology' },
+                            output: 'Revision 1',
+                            title: 'Open tldraw canvas',
+                            metadata: bindingMetadata,
+                            time: { start: 2, end: 3 },
+                        }
+                        : {
+                            status: 'running',
+                            input: { canvasId: 'service-topology' },
+                            metadata: bindingMetadata,
+                            time: { start: 2 },
+                        },
+                } as Part,
+            ];
+            return projectTurnRecords([user, assistant]).turns[0];
+        };
+        const groupedIds = (turn: ReturnType<typeof project>) => turn?.activitySegments.flatMap((segment) => (
+            segment.parts.filter((activity) => activity.kind === 'tool').map((activity) => activity.id)
+        ));
+
+        const running = project('running');
+        const completed = project('completed');
+        expect(running?.activityParts.map((activity) => activity.id)).toEqual(['tool_bash', 'tool_tldraw']);
+        expect(completed?.activityParts.map((activity) => activity.id)).toEqual(['tool_bash', 'tool_tldraw']);
+        expect(groupedIds(running)).toEqual(['tool_bash']);
+        expect(groupedIds(completed)).toEqual(['tool_bash']);
+    });
+
     test('reuses the whole turns array when every turn is unchanged', () => {
         const user = createMessageEntry({ id: 'u1', role: 'user', createdAt: 1 });
         const assistant = createMessageEntry({ id: 'a1', role: 'assistant', parentID: 'u1', createdAt: 2 });

@@ -94,6 +94,45 @@ describe('tool rendering classification', () => {
         expect(isStandaloneTool('task')).toBe(true);
     });
 
+    test('keeps a bound MCP App standalone from running through completion', () => {
+        const mcpAppPart = {
+            state: {
+                status: 'completed',
+                output: 'tldraw canvas service-topology created at revision 1',
+                metadata: {
+                    mcpApp: {
+                        server: 'interop-tldraw-2026',
+                        tool: 'tldraw_open_canvas',
+                        toolKey: 'interop-tldraw-2026_tldraw_open_canvas',
+                        resourceUri: 'ui://openchamber/interop-tldraw-contract-v5.0.2',
+                        meta: {
+                            resourceUri: 'ui://openchamber/interop-tldraw-contract-v5.0.2',
+                            visibility: ['model', 'app'],
+                            preferred: { maxHeight: 380 },
+                        },
+                    },
+                },
+            },
+        };
+
+        expect(hasRichToolResult(mcpAppPart)).toBe(true);
+        expect(isStandaloneTool('interop-tldraw-2026_tldraw_open_canvas', mcpAppPart)).toBe(true);
+        const runningPart = {
+            ...mcpAppPart,
+            state: { ...mcpAppPart.state, status: 'running', output: undefined },
+        };
+        expect(hasRichToolResult(runningPart)).toBe(true);
+        expect(isStandaloneTool('interop-tldraw-2026_tldraw_open_canvas', runningPart)).toBe(true);
+        expect(hasRichToolResult({
+            ...mcpAppPart,
+            state: { ...mcpAppPart.state, status: 'pending' },
+        })).toBe(false);
+        expect(hasRichToolResult({
+            ...mcpAppPart,
+            state: { ...mcpAppPart.state, status: 'error' },
+        })).toBe(false);
+    });
+
     test('keeps pending, malformed, and ordinary tool results inside Activity', () => {
         expect(hasRichToolResult({
             state: {

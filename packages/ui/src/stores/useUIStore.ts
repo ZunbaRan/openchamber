@@ -164,8 +164,8 @@ const isLegacyDefaultTemplates = (value: unknown): boolean => {
 };
 
 export const CONTEXT_PANEL_DEFAULT_WIDTH = 420;
-export const CONTEXT_PANEL_MIN_WIDTH = 320;
-export const CONTEXT_PANEL_MAX_WIDTH = 960;
+export const CONTEXT_PANEL_MIN_WIDTH = 380;
+export const CONTEXT_PANEL_MAX_WIDTH = 1400;
 const CONTEXT_PANEL_MAX_TABS = 12;
 const CONTEXT_PANEL_MAX_LABEL_LENGTH = 120;
 export const LEFT_SIDEBAR_DEFAULT_WIDTH = 280;

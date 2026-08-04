@@ -1310,6 +1310,12 @@ export const McpPage: React.FC = () => {
   const runtimeDiagnostic = selectedMcpName ? mcpDiagnostics[selectedMcpName] : undefined;
   const effectiveRuntimeStatus = runtimeStatus ?? runtimeDiagnostic;
   const isConnected = runtimeStatus?.status === 'connected';
+  const connectionDiagnostics = runtimeStatus?.status === 'connected'
+    && 'era' in runtimeStatus
+    && 'adapter' in runtimeStatus
+    && 'apps' in runtimeStatus
+    ? runtimeStatus
+    : null;
   const needsAuthorization = runtimeStatus?.status === 'needs_auth' || runtimeStatus?.status === 'needs_client_registration';
   const suggestedRedirectUri = isVSCodeAuthRuntime ? null : buildMcpOAuthRedirectUri(selectedMcpName, currentDirectory);
   const runtimeDescription = getStatusDescription(
@@ -1395,7 +1401,32 @@ export const McpPage: React.FC = () => {
       showSaveStatus={false}
     >
 
-
+        {connectionDiagnostics && (
+          <SettingsSection divider={false}>
+            <div
+              className="flex flex-wrap gap-2"
+              aria-label="MCP protocol diagnostics"
+              data-testid="mcp-protocol-diagnostics"
+            >
+              <span className="rounded-full border border-border/70 bg-muted/30 px-2.5 py-1 typography-micro text-muted-foreground">
+                Protocol {connectionDiagnostics.protocolVersion ?? connectionDiagnostics.era}
+              </span>
+              <span className="rounded-full border border-border/70 bg-muted/30 px-2.5 py-1 typography-micro text-muted-foreground">
+                {connectionDiagnostics.adapter}
+              </span>
+              <span
+                className={cn(
+                  'rounded-full border px-2.5 py-1 typography-micro',
+                  connectionDiagnostics.apps.negotiated
+                    ? 'border-success/40 bg-success/10 text-success'
+                    : 'border-border/70 bg-muted/30 text-muted-foreground',
+                )}
+              >
+                MCP Apps {connectionDiagnostics.apps.negotiated ? 'negotiated' : 'compatibility only'}
+              </span>
+            </div>
+          </SettingsSection>
+        )}
 
         {/* Runtime Status - Simplified for connected, expanded for errors */}
         {!isNewServer && shouldShowFullStatusCard(effectiveRuntimeStatus?.status, authUrl, needsAuthorization, isAuthPolling) && (

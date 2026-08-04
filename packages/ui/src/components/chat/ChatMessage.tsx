@@ -15,6 +15,7 @@ import { cn } from '@/lib/utils';
 
 import type { AnimationHandlers, ContentChangeReason } from '@/hooks/useChatAutoFollow';
 import MessageBody from './message/MessageBody';
+import { resolveMessageProjectDirectory } from './message/messageProjectDirectory';
 import type { AgentMentionInfo } from './message/types';
 import type { StreamPhase, ToolPopupContent } from './message/types';
 import { deriveMessageRole } from './message/messageRole';
@@ -156,6 +157,7 @@ const ChatMessage: React.FC<ChatMessageProps> = ({
     onUserAnimationConsumed,
     reviewTransferDirection = null,
 }) => {
+    const messageProjectDirectory = resolveMessageProjectDirectory(message.info);
     const { t } = useI18n();
     const { isMobile, isTablet, hasTouchInput } = useDeviceInfo();
     const alwaysShowMessageActions = isMobile || isTablet;
@@ -1050,6 +1052,7 @@ const ChatMessage: React.FC<ChatMessageProps> = ({
                                         >
                                             <MessageBody
                                                 messageId={message.info.id}
+                                                projectDirectory={messageProjectDirectory}
                                                 parts={displayParts}
                                                 isUser={isUser}
                                                 isMessageCompleted={isMessageCompleted}
@@ -1087,6 +1090,7 @@ const ChatMessage: React.FC<ChatMessageProps> = ({
                                         {useExternalUserActionsRow ? (
                                             <MessageBody
                                                 messageId={message.info.id}
+                                                projectDirectory={messageProjectDirectory}
                                                 parts={displayParts}
                                                 isUser={isUser}
                                                 isMessageCompleted={isMessageCompleted}
@@ -1130,6 +1134,7 @@ const ChatMessage: React.FC<ChatMessageProps> = ({
                             <MessageBody
                                 sessionId={message.info.sessionID}
                                 messageId={message.info.id}
+                                projectDirectory={messageProjectDirectory}
                                 parts={visibleParts}
                                 isUser={isUser}
                                 isMessageCompleted={isMessageCompleted}

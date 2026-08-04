@@ -18,14 +18,20 @@ const envelope = (scripts = false) => ({
   display: { preferred: 'inline', allowExpand: true, inlineHeight: 360 },
 });
 
-const createApp = async (environment = {}, runtime = {}, uiAuthController = null, workbenchStore = null) => {
+const createApp = async (
+  environment = {},
+  runtime = {},
+  uiAuthController = null,
+  workbenchStore = null,
+  manager = {},
+) => {
   const dataDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'openchamber-artifact-routes-'));
   temporaryDirectories.push(dataDirectory);
   const app = express();
   registerInteractiveUIRoutes(app, {
     express,
     runtime,
-    manager: {},
+    manager,
     uiAuthController,
     workbenchStore,
     artifactStore: createHTMLArtifactStore({
@@ -332,6 +338,132 @@ describe('HTML Artifact routes', () => {
     expect(impact.body).toEqual({ tiles: 3, projects: 2 });
   });
 
+  test('replaces a generated Tile snapshot through the narrow CAS route', async () => {
+    const calls = [];
+    const expectedSnapshotRef = `snapshot_${'a'.repeat(64)}`;
+    const generatedEnvelope = {
+      $schema: 'openchamber://interactive-result/v1',
+      schemaVersion: 1,
+      view: 'com.openchamber.builtin.interactive-ui.generated',
+      mode: 'snapshot',
+      context: { title: 'Refreshed dashboard' },
+      data: { values: [3, 5, 8] },
+    };
+    const workbenchStore = {
+      async replaceGeneratedTileSnapshot(projectId, tileId, expectedRevision, sourceSnapshotRef, form, nextEnvelope) {
+        calls.push({
+          projectId,
+          tileId,
+          expectedRevision,
+          expectedSnapshotRef: sourceSnapshotRef,
+          form,
+          envelope: nextEnvelope,
+        });
+        if (expectedRevision === 3) {
+          throw Object.assign(new Error('Workbench board changed since it was loaded'), {
+            status: 409,
+            code: 'workbench_revision_conflict',
+            details: { expectedRevision: 3, actualRevision: 4 },
+          });
+        }
+        const tile = {
+          tileId,
+          source: { kind: 'agent-generated', snapshotRef: `snapshot_${'b'.repeat(64)}` },
+          form,
+        };
+        return {
+          snapshot: {
+            projectId,
+            activeBoardId: 'default',
+            boards: [{ id: 'default', revision: expectedRevision + 1, tiles: [tile] }],
+          },
+          tile,
+          generatedSnapshot: {
+            snapshotRef: tile.source.snapshotRef,
+            form,
+            envelope: nextEnvelope,
+          },
+        };
+      },
+    };
+    const app = await createApp({}, {}, null, workbenchStore);
+
+    const response = await request(app)
+      .post('/api/interactive-ui/workbench/boards/project-1/tiles/tile-generated/replace-generated-snapshot')
+      .send({ expectedRevision: 4, expectedSnapshotRef, form: 'interactive-ui', envelope: generatedEnvelope })
+      .expect(200);
+    expect(response.headers['cache-control']).toBe('no-store');
+    expect(response.body.snapshot.boards[0].revision).toBe(5);
+    expect(calls).toEqual([{
+      projectId: 'project-1',
+      tileId: 'tile-generated',
+      expectedRevision: 4,
+      expectedSnapshotRef,
+      form: 'interactive-ui',
+      envelope: generatedEnvelope,
+    }]);
+
+    await request(app)
+      .post('/api/interactive-ui/workbench/boards/project-1/tiles/tile-generated/replace-generated-snapshot')
+      .send({ expectedRevision: 3, expectedSnapshotRef, form: 'interactive-ui', envelope: generatedEnvelope })
+      .expect(409)
+      .expect(({ body }) => {
+        expect(body).toMatchObject({
+          code: 'workbench_revision_conflict',
+          expectedRevision: 3,
+          actualRevision: 4,
+        });
+      });
+
+    await request(app)
+      .post('/api/interactive-ui/workbench/boards/project-1/tiles/tile-generated/replace-generated-snapshot')
+      .send({ form: 'interactive-ui', envelope: generatedEnvelope })
+      .expect(400)
+      .expect(({ body }) => {
+        expect(body.code).toBe('workbench_revision_required');
+      });
+    await request(app)
+      .post('/api/interactive-ui/workbench/boards/project-1/tiles/tile-generated/replace-generated-snapshot')
+      .send({ expectedRevision: 4, form: 'interactive-ui', envelope: generatedEnvelope })
+      .expect(400)
+      .expect(({ body }) => {
+        expect(body.code).toBe('workbench_snapshot_ref_required');
+      });
+    await request(app)
+      .post('/api/interactive-ui/workbench/boards/project-1/tiles/tile-generated/replace-generated-snapshot')
+      .send({
+        expectedRevision: 4,
+        expectedSnapshotRef: 'snapshot_not-a-digest',
+        form: 'interactive-ui',
+        envelope: generatedEnvelope,
+      })
+      .expect(400)
+      .expect(({ body }) => {
+        expect(body.code).toBe('workbench_snapshot_ref_invalid');
+      });
+    await request(app)
+      .post('/api/interactive-ui/workbench/boards/project-1/tiles/tile-generated/replace-generated-snapshot')
+      .send({
+        expectedRevision: 5,
+        expectedSnapshotRef,
+        form: 'interactive-ui',
+        envelope: generatedEnvelope,
+        source: { kind: 'third-party-extension' },
+      })
+      .expect(400)
+      .expect(({ body }) => {
+        expect(body.code).toBe('invalid_workbench_snapshot_replace');
+      });
+    await request(app)
+      .post('/api/interactive-ui/workbench/boards/project-1/tiles/tile-generated/replace-generated-snapshot')
+      .send({ expectedRevision: 4, expectedSnapshotRef, form: 'html-artifact', envelope: envelope(true) })
+      .expect(409)
+      .expect(({ body }) => {
+        expect(body.code).toBe('artifact_scripts_unsupported');
+      });
+    expect(calls).toHaveLength(2);
+  });
+
   test('returns an explicit capability error instead of silently stripping scripts', async () => {
     const app = await createApp();
     const response = await request(app)
@@ -342,6 +474,47 @@ describe('HTML Artifact routes', () => {
       code: 'artifact_scripts_unsupported',
       staticAvailable: true,
     });
+  });
+
+  test('removes extension credentials and board tiles during uninstall', async () => {
+    const calls = [];
+    const app = await createApp(
+      {},
+      {
+        async removeExtensionConnections(extensionId) {
+          calls.push({ kind: 'credentials', extensionId });
+          return { removed: 1 };
+        },
+      },
+      null,
+      {
+        async removeExtensionTiles(extensionId) {
+          calls.push({ kind: 'tiles', extensionId });
+          return { removed: 2, projects: 1 };
+        },
+      },
+      {
+        async uninstall(extensionId) {
+          calls.push({ kind: 'extension', extensionId });
+          return { removed: true };
+        },
+      },
+    );
+
+    const response = await request(app)
+      .delete('/api/interactive-ui/manager/extensions/com.acme.crm')
+      .expect(200);
+
+    expect(response.body).toEqual({
+      removed: true,
+      credentials: { removed: 1 },
+      workbench: { removed: 2, projects: 1 },
+    });
+    expect(calls).toEqual([
+      { kind: 'extension', extensionId: 'com.acme.crm' },
+      { kind: 'credentials', extensionId: 'com.acme.crm' },
+      { kind: 'tiles', extensionId: 'com.acme.crm' },
+    ]);
   });
 
   test('tracks session references and cleans shared content only after successful final deletion', async () => {

@@ -401,6 +401,7 @@ const formatTurnDuration = (durationMs: number): string => {
 interface MessageBodyProps {
     sessionId?: string;
     messageId: string;
+    projectDirectory?: string;
     parts: Part[];
     isUser: boolean;
     isMessageCompleted: boolean;
@@ -1070,6 +1071,7 @@ const AssistantMessageActionButtons = React.memo(({
 const AssistantMessageBody = React.memo(({
     sessionId,
     messageId,
+    projectDirectory,
     parts,
     isMessageCompleted,
     messageFinish,
@@ -1785,6 +1787,7 @@ const AssistantMessageBody = React.memo(({
                 <div key={`progressive-group-${segment.id}`} className="mb-3">
                     <TurnActivity
                         sessionId={sessionId}
+                        projectDirectory={projectDirectory}
                         parts={visibleSegmentParts}
                         isExpanded={turnGroupingContext?.isGroupExpanded === true}
                         collapsedPreviewCount={collapsedPreviewCount}
@@ -1984,6 +1987,7 @@ const AssistantMessageBody = React.memo(({
                                 <ToolPart
                                     part={toolPart}
                                     sessionId={sessionId}
+                                    projectDirectory={projectDirectory}
                                     isExpanded={expandedTools.has(toolPart.id)}
                                     onToggle={onToggleTool}
                                     isMobile={isMobile}
@@ -2059,6 +2063,7 @@ const AssistantMessageBody = React.memo(({
         isMessageCompleted,
         lastRenderableTextPartIndex,
         messageId,
+        projectDirectory,
         messageActionButtons,
         renderJustificationActions,
         sessionId,

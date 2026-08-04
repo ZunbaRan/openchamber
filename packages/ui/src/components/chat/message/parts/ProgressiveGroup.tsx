@@ -32,6 +32,7 @@ const TOOL_ROW_DESCRIPTION_CLASS = cn('typography-meta', TOOL_ROW_TEXT_CLASS);
 
 interface ProgressiveGroupProps {
     sessionId?: string;
+    projectDirectory?: string;
     parts: TurnActivityPart[];
     isExpanded: boolean;
     collapsedPreviewCount?: number;
@@ -372,6 +373,7 @@ type AggregatedRow =
 
 interface ExpandableToolRowProps {
     sessionId?: string;
+    projectDirectory?: string;
     activity: TurnActivityPart;
     isExpanded: boolean;
     isMobile: boolean;
@@ -384,6 +386,7 @@ interface ExpandableToolRowProps {
 
 const ExpandableToolRow: React.FC<ExpandableToolRowProps> = ({
     sessionId,
+    projectDirectory,
     activity,
     isExpanded,
     isMobile,
@@ -401,6 +404,7 @@ const ExpandableToolRow: React.FC<ExpandableToolRowProps> = ({
         <ToolPart
             part={activity.part as ToolPartType}
             sessionId={sessionId}
+            projectDirectory={projectDirectory}
             isExpanded={isExpanded}
             onToggle={handleToggle}
             isMobile={isMobile}
@@ -426,6 +430,7 @@ const ExpandableToolRow: React.FC<ExpandableToolRowProps> = ({
 const MemoExpandableToolRow = React.memo(ExpandableToolRow, (prev, next) => {
     return prev.isExpanded === next.isExpanded
         && prev.sessionId === next.sessionId
+        && prev.projectDirectory === next.projectDirectory
         && prev.isMobile === next.isMobile
         && prev.onToggleTool === next.onToggleTool
         && prev.onShowPopup === next.onShowPopup
@@ -509,7 +514,7 @@ const aggregateRows = (parts: TurnActivityPart[]): AggregatedRow[] => {
         const toolPart = activity.part as ToolPartType;
         const toolName = toolPart.tool?.toLowerCase() ?? '';
 
-        if (isStandaloneTool(toolName)) {
+        if (isStandaloneTool(toolName, toolPart)) {
             // Standalone tools are rendered separately, skip
             i++;
             continue;
@@ -815,6 +820,7 @@ const InlineJustificationBlock = React.memo(({ activity, onContentChange, action
 
 const ProgressiveGroup: React.FC<ProgressiveGroupProps> = ({
     sessionId,
+    projectDirectory,
     parts,
     isExpanded,
     collapsedPreviewCount = 0,
@@ -907,6 +913,7 @@ const ProgressiveGroup: React.FC<ProgressiveGroupProps> = ({
                         key={row.activity.id}
                         activity={row.activity}
                         sessionId={sessionId}
+                        projectDirectory={projectDirectory}
                         isExpanded={expandedTools.has(row.activity.id)}
                         isMobile={isMobile}
                         onToggleTool={onToggleTool}
@@ -934,6 +941,7 @@ const ProgressiveGroup: React.FC<ProgressiveGroupProps> = ({
                         key={row.activity.id}
                         activity={row.activity}
                         sessionId={sessionId}
+                        projectDirectory={projectDirectory}
                         isExpanded={expandedTools.has(row.activity.id)}
                         isMobile={isMobile}
                         onToggleTool={onToggleTool}

@@ -47,6 +47,63 @@ const installedTile = (overrides = {}) => ({
   ...overrides,
 });
 
+const interactiveSnapshotEnvelope = (title) => ({
+  $schema: 'openchamber://interactive-result/v1',
+  schemaVersion: 1,
+  view: 'com.openchamber.builtin.interactive-ui.generated',
+  mode: 'snapshot',
+  context: { title },
+  data: { values: [2, 3, 5] },
+});
+
+const mcpAppSnapshotEnvelope = (binding = {}, revision = 1, identity = {}) => {
+  const canvasId = identity.canvasId ?? 'sales-dashboard';
+  const authority = Object.hasOwn(identity, 'authority')
+    ? identity.authority
+    : {
+        distribution: 'tldraw-mcp-app',
+        installation: 'install-sales',
+        scope: 'workspace',
+        workspace: 'project-a',
+        resourceUri: 'ui://sales/dashboard',
+      };
+  return {
+    $schema: 'openchamber://mcp-app-result/v1',
+    schemaVersion: 1,
+    source: 'mcp-app',
+    title: 'Sales dashboard',
+    binding: {
+      server: 'sales',
+      tool: 'open_dashboard',
+      toolKey: 'sales_open_dashboard',
+      resourceUri: 'ui://sales/dashboard',
+      meta: { resourceUri: 'ui://sales/dashboard', visibility: ['model', 'app'] },
+      ...binding,
+    },
+    arguments: { region: 'apac', canvasId },
+    result: {
+      content: [{ type: 'text', text: 'ready' }],
+      structuredContent: {
+        canvasId,
+        revision,
+        ...(authority === undefined ? {} : { authority }),
+      },
+    },
+  };
+};
+
+const generatedTile = (snapshotRef, overrides = {}) => ({
+  source: { kind: 'agent-generated', snapshotRef },
+  form: 'interactive-ui',
+  context: {},
+  contextDigest: 'sha256-generated-initial',
+  layout: { column: 0, row: 0, columns: 6, rows: 4 },
+  displayMode: 'tile',
+  relationship: null,
+  origin: { sessionId: 'session-1', messageId: 'message-1', toolCallId: 'tool-1' },
+  ...overrides,
+});
+
 describe('Extension Workbench store', () => {
   it('returns an authoritative empty board when the project has no file', async () => {
     const { store } = await createStore();
@@ -303,6 +360,7 @@ describe('Extension Workbench store', () => {
     const first = await store.writeSnapshot('interactive-ui', envelope);
     const second = await store.writeSnapshot('interactive-ui', envelope);
     expect(second.snapshotRef).toBe(first.snapshotRef);
+    expect(second.createdAt).toBe(first.createdAt);
     expect(await store.readSnapshot(first.snapshotRef)).toMatchObject({
       $schema: 'openchamber://extension-workbench-snapshot/v1',
       form: 'interactive-ui',
@@ -346,8 +404,416 @@ describe('Extension Workbench store', () => {
     });
   });
 
-  it('rejects malformed or mismatched generated snapshots', async () => {
+  it('deduplicates new MCP App snapshots for the same authority and canvas', async () => {
     const { store } = await createStore();
+    const initialSnapshot = await store.writeSnapshot('mcp-app', mcpAppSnapshotEnvelope({}, 1));
+    const refreshedSnapshot = await store.writeSnapshot('mcp-app', mcpAppSnapshotEnvelope({}, 2, {
+      authority: {
+        workspace: 'project-a',
+        resourceUri: 'ui://sales/dashboard',
+        scope: 'workspace',
+        installation: 'install-sales',
+        distribution: 'tldraw-mcp-app',
+      },
+    }));
+    const first = await store.upsertTile('project-a', 0, generatedTile(initialSnapshot.snapshotRef, {
+      form: 'mcp-app',
+      contextDigest: 'sha256-mcp-initial',
+    }));
+    const second = await store.upsertTile('project-a', 1, generatedTile(refreshedSnapshot.snapshotRef, {
+      form: 'mcp-app',
+      contextDigest: 'sha256-mcp-refreshed',
+      origin: { sessionId: 'session-2', messageId: 'message-2', toolCallId: 'tool-2' },
+    }));
+
+    expect(second.created).toBe(false);
+    expect(second.tile.tileId).toBe(first.tile.tileId);
+    expect(second.tile.source.snapshotRef).toBe(initialSnapshot.snapshotRef);
+    expect(second.snapshot.boards[0].tiles).toHaveLength(1);
+  });
+
+  it('keeps different MCP App canvases and authorities as separate Tiles', async () => {
+    const { store } = await createStore();
+    const initialSnapshot = await store.writeSnapshot('mcp-app', mcpAppSnapshotEnvelope({}, 1));
+    const otherCanvasSnapshot = await store.writeSnapshot('mcp-app', mcpAppSnapshotEnvelope({}, 1, {
+      canvasId: 'sales-dashboard-2',
+    }));
+    const otherAuthoritySnapshot = await store.writeSnapshot('mcp-app', mcpAppSnapshotEnvelope({}, 1, {
+      authority: {
+        distribution: 'tldraw-mcp-app',
+        installation: 'install-other',
+        scope: 'workspace',
+        workspace: 'project-a',
+        resourceUri: 'ui://sales/dashboard',
+      },
+    }));
+
+    await store.upsertTile('project-a', 0, generatedTile(initialSnapshot.snapshotRef, {
+      form: 'mcp-app',
+      contextDigest: 'sha256-mcp-initial',
+    }));
+    const otherCanvas = await store.upsertTile('project-a', 1, generatedTile(otherCanvasSnapshot.snapshotRef, {
+      form: 'mcp-app',
+      contextDigest: 'sha256-mcp-other-canvas',
+    }));
+    const otherAuthority = await store.upsertTile('project-a', 2, generatedTile(otherAuthoritySnapshot.snapshotRef, {
+      form: 'mcp-app',
+      contextDigest: 'sha256-mcp-other-authority',
+    }));
+
+    expect(otherCanvas.created).toBe(true);
+    expect(otherAuthority.created).toBe(true);
+    expect(otherAuthority.snapshot.boards[0].tiles).toHaveLength(3);
+  });
+
+  it('replaces a generated Tile snapshot with one Board revision and restores it after restart', async () => {
+    const { dataDirectory, store } = await createStore();
+    const initialEnvelope = interactiveSnapshotEnvelope('Initial trend');
+    const initialSnapshot = await store.writeSnapshot('interactive-ui', initialEnvelope);
+    const pinned = await store.upsertTile('project-a', 0, generatedTile(initialSnapshot.snapshotRef));
+    const initialSnapshotPath = path.join(
+      dataDirectory,
+      'extension-workbench',
+      'snapshots',
+      `${initialSnapshot.snapshotRef}.json`,
+    );
+    const initialSnapshotBytes = await fs.readFile(initialSnapshotPath, 'utf8');
+    const nextEnvelope = interactiveSnapshotEnvelope('Refreshed trend');
+
+    const replaced = await store.replaceGeneratedTileSnapshot(
+      'project-a',
+      pinned.tile.tileId,
+      1,
+      initialSnapshot.snapshotRef,
+      'interactive-ui',
+      nextEnvelope,
+    );
+
+    expect(replaced.generatedSnapshot.snapshotRef).not.toBe(initialSnapshot.snapshotRef);
+    expect(replaced.generatedSnapshot.envelope).toEqual(nextEnvelope);
+    expect(replaced.snapshot.boards[0].revision).toBe(2);
+    expect(replaced.tile).toMatchObject({
+      tileId: pinned.tile.tileId,
+      source: {
+        kind: 'agent-generated',
+        snapshotRef: replaced.generatedSnapshot.snapshotRef,
+      },
+      layout: pinned.tile.layout,
+      origin: pinned.tile.origin,
+      createdAt: pinned.tile.createdAt,
+    });
+    expect(replaced.tile.contextDigest).toBe(
+      `sha256-${crypto.createHash('sha256').update(`interactive-ui\0${replaced.generatedSnapshot.snapshotRef}`).digest('base64')}`,
+    );
+    expect(await fs.readFile(initialSnapshotPath, 'utf8')).toBe(initialSnapshotBytes);
+    expect((await store.readSnapshot(initialSnapshot.snapshotRef)).envelope).toEqual(initialEnvelope);
+
+    const restarted = createInteractiveUIWorkbenchStore({
+      dataDirectory,
+      fsImpl: fs,
+      pathImpl: path,
+      cryptoImpl: crypto,
+    });
+    const restoredBoard = (await restarted.read('project-a')).boards[0];
+    expect(restoredBoard).toMatchObject({
+      revision: 2,
+      tiles: [{
+        tileId: pinned.tile.tileId,
+        source: {
+          kind: 'agent-generated',
+          snapshotRef: replaced.generatedSnapshot.snapshotRef,
+        },
+      }],
+    });
+    expect((await restarted.readSnapshot(replaced.generatedSnapshot.snapshotRef)).envelope).toEqual(nextEnvelope);
+  });
+
+  it('rejects a stale generated snapshot replacement before writing a new snapshot', async () => {
+    const { dataDirectory, store } = await createStore();
+    const initialSnapshot = await store.writeSnapshot(
+      'interactive-ui',
+      interactiveSnapshotEnvelope('Initial trend'),
+    );
+    const pinned = await store.upsertTile('project-a', 0, generatedTile(initialSnapshot.snapshotRef));
+    const snapshotDirectory = path.join(dataDirectory, 'extension-workbench', 'snapshots');
+    const entriesBefore = await fs.readdir(snapshotDirectory);
+
+    await expect(store.replaceGeneratedTileSnapshot(
+      'project-a',
+      pinned.tile.tileId,
+      0,
+      initialSnapshot.snapshotRef,
+      'interactive-ui',
+      interactiveSnapshotEnvelope('Stale replacement'),
+    )).rejects.toMatchObject({
+      code: 'workbench_revision_conflict',
+      status: 409,
+      details: { expectedRevision: 0, actualRevision: 1 },
+    });
+
+    expect(await fs.readdir(snapshotDirectory)).toEqual(entriesBefore);
+    expect((await store.read('project-a')).boards[0]).toMatchObject({
+      revision: 1,
+      tiles: [{ source: { kind: 'agent-generated', snapshotRef: initialSnapshot.snapshotRef } }],
+    });
+  });
+
+  it('rejects a two-window stale snapshot replay even after the caller reloads the Board revision', async () => {
+    const { dataDirectory, store } = await createStore();
+    const initialSnapshot = await store.writeSnapshot('mcp-app', mcpAppSnapshotEnvelope({}, 1));
+    const pinned = await store.upsertTile('project-a', 0, generatedTile(initialSnapshot.snapshotRef, {
+      form: 'mcp-app',
+      contextDigest: 'sha256-mcp-initial',
+    }));
+    const winner = await store.replaceGeneratedTileSnapshot(
+      'project-a',
+      pinned.tile.tileId,
+      1,
+      initialSnapshot.snapshotRef,
+      'mcp-app',
+      mcpAppSnapshotEnvelope({}, 2),
+    );
+    const snapshotDirectory = path.join(dataDirectory, 'extension-workbench', 'snapshots');
+    const entriesBeforeReplay = await fs.readdir(snapshotDirectory);
+
+    await expect(store.replaceGeneratedTileSnapshot(
+      'project-a',
+      pinned.tile.tileId,
+      2,
+      initialSnapshot.snapshotRef,
+      'mcp-app',
+      mcpAppSnapshotEnvelope({}, 3),
+    )).rejects.toMatchObject({
+      code: 'workbench_snapshot_ref_conflict',
+      status: 409,
+      details: {
+        expectedSnapshotRef: initialSnapshot.snapshotRef,
+        actualSnapshotRef: winner.generatedSnapshot.snapshotRef,
+      },
+    });
+
+    expect(await fs.readdir(snapshotDirectory)).toEqual(entriesBeforeReplay);
+    expect((await store.read('project-a')).boards[0]).toMatchObject({
+      revision: 2,
+      tiles: [{ source: { snapshotRef: winner.generatedSnapshot.snapshotRef } }],
+    });
+  });
+
+  it('keeps the old Board authoritative when publishing the replacement Board fails', async () => {
+    const dataDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'ocix-workbench-'));
+    temporaryDirectories.push(dataDirectory);
+    let failBoardRename = false;
+    const fsImpl = {
+      ...fs,
+      async rename(from, to) {
+        if (failBoardRename && to.includes(`${path.sep}boards${path.sep}`)) {
+          throw Object.assign(new Error('injected Board rename failure'), { code: 'EIO' });
+        }
+        return fs.rename(from, to);
+      },
+    };
+    const store = createInteractiveUIWorkbenchStore({
+      dataDirectory,
+      fsImpl,
+      pathImpl: path,
+      cryptoImpl: crypto,
+    });
+    const initialSnapshot = await store.writeSnapshot(
+      'interactive-ui',
+      interactiveSnapshotEnvelope('Initial trend'),
+    );
+    const pinned = await store.upsertTile('project-a', 0, generatedTile(initialSnapshot.snapshotRef));
+
+    failBoardRename = true;
+    await expect(store.replaceGeneratedTileSnapshot(
+      'project-a',
+      pinned.tile.tileId,
+      1,
+      initialSnapshot.snapshotRef,
+      'interactive-ui',
+      interactiveSnapshotEnvelope('Unpublished replacement'),
+    )).rejects.toMatchObject({ code: 'EIO' });
+
+    expect((await store.read('project-a')).boards[0]).toMatchObject({
+      revision: 1,
+      tiles: [{ source: { kind: 'agent-generated', snapshotRef: initialSnapshot.snapshotRef } }],
+    });
+    expect(await fs.readdir(path.join(dataDirectory, 'extension-workbench', 'snapshots')))
+      .toHaveLength(2);
+  });
+
+  it('does not allow installed Tiles or snapshot forms to switch identity', async () => {
+    const { store } = await createStore();
+    const installed = await store.upsertTile('project-installed', 0, installedTile());
+    await expect(store.replaceGeneratedTileSnapshot(
+      'project-installed',
+      installed.tile.tileId,
+      1,
+      `snapshot_${'a'.repeat(64)}`,
+      'interactive-ui',
+      interactiveSnapshotEnvelope('Replacement'),
+    )).rejects.toMatchObject({
+      code: 'workbench_snapshot_replace_unsupported',
+      status: 409,
+    });
+
+    const initialSnapshot = await store.writeSnapshot(
+      'interactive-ui',
+      interactiveSnapshotEnvelope('Initial trend'),
+    );
+    const generated = await store.upsertTile(
+      'project-generated',
+      0,
+      generatedTile(initialSnapshot.snapshotRef),
+    );
+    await expect(store.replaceGeneratedTileSnapshot(
+      'project-generated',
+      generated.tile.tileId,
+      1,
+      initialSnapshot.snapshotRef,
+      'html-artifact',
+      {
+        $schema: 'openchamber://html-artifact-result/v1',
+        schemaVersion: 1,
+        title: 'Wrong form',
+        html: '<p>wrong form</p>',
+      },
+    )).rejects.toMatchObject({
+      code: 'workbench_snapshot_form_mismatch',
+      status: 409,
+      details: { expectedForm: 'interactive-ui' },
+    });
+    expect((await store.read('project-generated')).boards[0]).toMatchObject({
+      revision: 1,
+      tiles: [{ source: { snapshotRef: initialSnapshot.snapshotRef } }],
+    });
+  });
+
+  it('preserves MCP App server, resource, Tool, canvas, and authority identity', async () => {
+    const { dataDirectory, store } = await createStore();
+    const initialSnapshot = await store.writeSnapshot('mcp-app', mcpAppSnapshotEnvelope());
+    const pinned = await store.upsertTile('project-a', 0, generatedTile(initialSnapshot.snapshotRef, {
+      form: 'mcp-app',
+    }));
+
+    const mismatches = [
+      ['server', { server: 'attacker' }],
+      ['resourceUri', { resourceUri: 'ui://attacker/dashboard' }],
+      ['toolKey', { toolKey: 'attacker_open_dashboard' }],
+    ];
+    for (const [field, binding] of mismatches) {
+      await expect(store.replaceGeneratedTileSnapshot(
+        'project-a',
+        pinned.tile.tileId,
+        1,
+        initialSnapshot.snapshotRef,
+        'mcp-app',
+        mcpAppSnapshotEnvelope(binding, 2),
+      )).rejects.toMatchObject({
+        code: 'workbench_snapshot_binding_mismatch',
+        status: 409,
+        details: { field },
+      });
+    }
+    await expect(store.replaceGeneratedTileSnapshot(
+      'project-a',
+      pinned.tile.tileId,
+      1,
+      initialSnapshot.snapshotRef,
+      'mcp-app',
+      mcpAppSnapshotEnvelope({}, 2, { canvasId: 'another-canvas' }),
+    )).rejects.toMatchObject({
+      code: 'workbench_snapshot_binding_mismatch',
+      status: 409,
+      details: { field: 'canvasId' },
+    });
+    await expect(store.replaceGeneratedTileSnapshot(
+      'project-a',
+      pinned.tile.tileId,
+      1,
+      initialSnapshot.snapshotRef,
+      'mcp-app',
+      mcpAppSnapshotEnvelope({}, 2, { authority: undefined }),
+    )).rejects.toMatchObject({
+      code: 'workbench_snapshot_binding_mismatch',
+      status: 409,
+      details: { field: 'authority' },
+    });
+
+    expect(await fs.readdir(path.join(dataDirectory, 'extension-workbench', 'snapshots')))
+      .toEqual([`${initialSnapshot.snapshotRef}.json`]);
+    expect((await store.read('project-a')).boards[0]).toMatchObject({
+      revision: 1,
+      tiles: [{ source: { snapshotRef: initialSnapshot.snapshotRef } }],
+    });
+
+    const equivalentAuthorityEnvelope = mcpAppSnapshotEnvelope({}, 2);
+    equivalentAuthorityEnvelope.result.authority = equivalentAuthorityEnvelope.result.structuredContent.authority;
+    delete equivalentAuthorityEnvelope.result.structuredContent.authority;
+    const replaced = await store.replaceGeneratedTileSnapshot(
+      'project-a',
+      pinned.tile.tileId,
+      1,
+      initialSnapshot.snapshotRef,
+      'mcp-app',
+      equivalentAuthorityEnvelope,
+    );
+    expect(replaced.snapshot.boards[0].revision).toBe(2);
+    expect(replaced.generatedSnapshot.snapshotRef).not.toBe(initialSnapshot.snapshotRef);
+    expect(replaced.generatedSnapshot.envelope.result.structuredContent).toMatchObject({
+      canvasId: 'sales-dashboard',
+      revision: 2,
+    });
+  });
+
+  it('rejects adding an authority to a previously authority-less MCP App Tile', async () => {
+    const { store } = await createStore();
+    const initialSnapshot = await store.writeSnapshot(
+      'mcp-app',
+      mcpAppSnapshotEnvelope({}, 1, { authority: undefined }),
+    );
+    const pinned = await store.upsertTile('project-a', 0, generatedTile(initialSnapshot.snapshotRef, {
+      form: 'mcp-app',
+      contextDigest: 'sha256-mcp-no-authority',
+    }));
+
+    await expect(store.replaceGeneratedTileSnapshot(
+      'project-a',
+      pinned.tile.tileId,
+      1,
+      initialSnapshot.snapshotRef,
+      'mcp-app',
+      mcpAppSnapshotEnvelope({}, 2),
+    )).rejects.toMatchObject({
+      code: 'workbench_snapshot_binding_mismatch',
+      status: 409,
+      details: { field: 'authority' },
+    });
+  });
+
+  it('rejects a malformed current snapshot reference without changing the Board', async () => {
+    const { store } = await createStore();
+    const pinned = await store.upsertTile('project-a', 0, generatedTile('snapshot_not-a-digest'));
+
+    await expect(store.replaceGeneratedTileSnapshot(
+      'project-a',
+      pinned.tile.tileId,
+      1,
+      'snapshot_not-a-digest',
+      'interactive-ui',
+      interactiveSnapshotEnvelope('Replacement'),
+    )).rejects.toMatchObject({
+      code: 'workbench_snapshot_ref_invalid',
+      status: 400,
+    });
+    expect((await store.read('project-a')).boards[0]).toMatchObject({
+      revision: 1,
+      tiles: [{ source: { snapshotRef: 'snapshot_not-a-digest' } }],
+    });
+  });
+
+  it('rejects malformed or mismatched generated snapshots', async () => {
+    const { dataDirectory, store } = await createStore();
     await expect(store.writeSnapshot('interactive-ui', {
       $schema: 'openchamber://html-artifact-result/v1',
       schemaVersion: 1,
@@ -355,6 +821,24 @@ describe('Extension Workbench store', () => {
       html: '<p>wrong</p>',
     })).rejects.toMatchObject({ code: 'invalid_workbench_snapshot' });
     await expect(store.readSnapshot('snapshot_not-a-digest'))
-      .rejects.toMatchObject({ status: 400 });
+      .rejects.toMatchObject({ code: 'workbench_snapshot_ref_invalid', status: 400 });
+
+    const stored = await store.writeSnapshot(
+      'interactive-ui',
+      interactiveSnapshotEnvelope('Original'),
+    );
+    const storedPath = path.join(
+      dataDirectory,
+      'extension-workbench',
+      'snapshots',
+      `${stored.snapshotRef}.json`,
+    );
+    const tampered = JSON.parse(await fs.readFile(storedPath, 'utf8'));
+    tampered.envelope.context.title = 'Tampered';
+    await fs.writeFile(storedPath, JSON.stringify(tampered), 'utf8');
+    await expect(store.readSnapshot(stored.snapshotRef)).rejects.toMatchObject({
+      code: 'workbench_snapshot_malformed',
+      status: 409,
+    });
   });
 });

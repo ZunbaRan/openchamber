@@ -160,6 +160,16 @@ Add new native capabilities in this order:
 3. Gate privileged commands in main process logic so remote pages cannot access local filesystem or shell capabilities.
 4. Keep shared UI runtime contracts in `packages/ui` and server/runtime APIs in `packages/web` when the behavior is not inherently native.
 
+MCP App binary exports use a request-bound, cancellable IPC transaction. The
+renderer sends a unique request ID with `desktop_save_binary_file` and sends
+`desktop_cancel_binary_file_save` when its AppBridge request is aborted. The
+main process binds cancellation to the originating renderer/window, rechecks it
+after the native dialog and every awaited filesystem boundary, and publishes
+only by an atomic same-directory rename. Dialog cancellation, renderer/window
+closure, or AppBridge abort must not publish a destination; any unpublished
+temporary file is closed and removed before the per-window transaction registry
+is released.
+
 ### Scripts Artifact Runner
 
 Managed Desktop never renders Scripts Artifacts in the privileged UI renderer. `ArtifactExecutionSurface` asks the main process for a `WebContentsView` using a unique non-persistent partition, `sandbox:true`, `contextIsolation:true`, `nodeIntegration:false`, and a preload that exposes no main-world object. The main process accepts only exact generated/installed Artifact document routes, denies permissions, windows, webviews and unexpected requests/navigation, and terminates the renderer on Stop, lease expiry, memory budget breach, sustained CPU saturation, crash, or owner-window closure. Static Artifacts continue to use the browser iframe backend.

@@ -11,6 +11,11 @@ const promptAsyncResults: Array<unknown> = [];
 const capabilitiesCalls: unknown[][] = [];
 const mcpResourceCalls: unknown[][] = [];
 const mcpToolCallCalls: unknown[][] = [];
+let mcpToolCallAvailable = true;
+const partUpdateCalls: unknown[][] = [];
+const sessionMessageCalls: unknown[][] = [];
+const runtimeFetchCalls: Array<[string | URL | Request, RequestInit | undefined]> = [];
+let sessionMessageParts: unknown[] = [];
 let routingPayload: unknown = [];
 const capabilitiesMock = mock(async (...args: unknown[]) => {
   capabilitiesCalls.push(args);
@@ -21,7 +26,7 @@ const capabilitiesMock = mock(async (...args: unknown[]) => {
     upstreamVersion: '1.18.9',
     upstreamCommit: 'upstream-sha',
     forkCommit: 'fork-sha',
-    apiVersion: 2,
+    apiVersion: '2',
     managedUpdate: true,
     features: {
       mcpLegacy: true,
@@ -52,6 +57,14 @@ const mcpToolCallMock = mock(async (parameters: Record<string, unknown>, ...args
   },
   };
 });
+const partUpdateMock = mock(async (parameters: Record<string, unknown>, ...args: unknown[]) => {
+  partUpdateCalls.push([parameters, ...args]);
+  return { data: parameters.part };
+});
+const sessionMessageMock = mock(async (parameters: Record<string, unknown>, ...args: unknown[]) => {
+  sessionMessageCalls.push([parameters, ...args]);
+  return { data: { parts: sessionMessageParts } };
+});
 
 const promptAsyncMock = mock(async (...args: unknown[]) => {
   promptAsyncCalls.push(args);
@@ -72,6 +85,7 @@ mock.module('@opencode-ai/sdk/v2', () => ({
     },
     session: {
       promptAsync: promptAsyncMock,
+      message: sessionMessageMock,
     },
     global: {
       capabilities: capabilitiesMock,
@@ -79,8 +93,11 @@ mock.module('@opencode-ai/sdk/v2', () => ({
     mcp: {
       app: {
         resource: mcpResourceMock,
-        toolCall: mcpToolCallMock,
+        ...(mcpToolCallAvailable ? { toolCall: mcpToolCallMock } : {}),
       },
+    },
+    part: {
+      update: partUpdateMock,
     },
   })),
 }));
@@ -101,9 +118,34 @@ mock.module('@/lib/runtime-switch', () => ({
 }));
 
 mock.module('@/lib/runtime-fetch', () => ({
-  runtimeFetch: mock(async () => new Response(JSON.stringify(routingPayload), {
-    headers: { 'Content-Type': 'application/json' },
-  })),
+  runtimeFetch: mock(async (input: string | URL | Request, init?: RequestInit) => {
+    runtimeFetchCalls.push([input, init]);
+    if (input.toString().includes('/mcp/app/resource')) {
+      const url = new URL(input.toString(), 'http://openchamber.test');
+      return new Response(JSON.stringify({
+        server: url.searchParams.get('server'),
+        resourceUri: url.searchParams.get('resourceUri'),
+        mimeType: 'text/html;profile=mcp-app',
+        html: '<!doctype html><title>MCP App</title>',
+        sha256: 'sha256-test',
+      }), {
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+    if (input.toString().includes('/mcp/app/tool-call')) {
+      const body = typeof init?.body === 'string'
+        ? JSON.parse(init.body) as Record<string, unknown>
+        : {};
+      return new Response(JSON.stringify({
+        content: [{ type: 'text', text: String(body.name) }],
+      }), {
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+    return new Response(JSON.stringify(routingPayload), {
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }),
 }));
 
 mock.module('@/lib/startupTrace', () => ({
@@ -120,59 +162,162 @@ beforeEach(() => {
   capabilitiesCalls.length = 0;
   mcpResourceCalls.length = 0;
   mcpToolCallCalls.length = 0;
+  mcpToolCallAvailable = true;
+  partUpdateCalls.length = 0;
+  sessionMessageCalls.length = 0;
+  runtimeFetchCalls.length = 0;
+  sessionMessageParts = [];
   routingPayload = [];
   clearInteractiveUIRoutingCache();
   resetRoutingInspectorForTests();
 });
 
 describe('opencodeClient MCP App SDK routing', () => {
-  test('loads bound resources and tool calls through the directory-scoped SDK', async () => {
+  test('loads resources through runtime transport and preserves exact inline and App Board tool-call bindings', async () => {
+    const resourceController = new AbortController();
     const resource = await opencodeClient.getMcpAppResource({
       directory: '/workspace/mcp-app',
       sessionId: 'ses_1',
       messageId: 'msg_1',
+      partId: 'prt_origin',
       server: 'weather',
       resourceUri: 'ui://weather/current',
+      toolKey: 'weather_weather_current',
       force: true,
+      signal: resourceController.signal,
     });
     expect(resource.html).toContain('MCP App');
-    expect(mcpResourceCalls).toEqual([[{
+    expect(mcpResourceCalls).toEqual([]);
+    expect(runtimeFetchCalls).toHaveLength(1);
+    const resourceUrl = new URL(String(runtimeFetchCalls[0]?.[0]), 'http://openchamber.test');
+    expect(resourceUrl.pathname).toBe('/api/mcp/app/resource');
+    expect(Object.fromEntries(resourceUrl.searchParams)).toEqual({
       directory: '/workspace/mcp-app',
       sessionID: 'ses_1',
       messageID: 'msg_1',
+      partID: 'prt_origin',
       server: 'weather',
       resourceUri: 'ui://weather/current',
+      toolKey: 'weather_weather_current',
       force: 'true',
-    }, { signal: undefined }]]);
+    });
+    expect(runtimeFetchCalls[0]?.[1]?.method).toBe('GET');
+    expect(runtimeFetchCalls[0]?.[1]?.signal).toBe(resourceController.signal);
 
+    const controller = new AbortController();
     const result = await opencodeClient.callMcpAppTool({
       directory: '/workspace/mcp-app',
       sessionId: 'ses_1',
       messageId: 'msg_1',
+      partId: 'prt_origin',
       server: 'weather',
       resourceUri: 'ui://weather/current',
+      toolKey: 'weather_weather_current',
       name: 'weather.refresh',
       arguments: { city: 'Singapore' },
+      signal: controller.signal,
     });
     expect(result).toEqual({
       content: [{ type: 'text', text: 'weather.refresh' }],
     });
-    expect(mcpToolCallCalls).toEqual([[{
+    expect(mcpToolCallCalls).toEqual([]);
+    expect(runtimeFetchCalls).toHaveLength(2);
+    expect(runtimeFetchCalls[1]?.[0]).toBe('/api/mcp/app/tool-call?directory=%2Fworkspace%2Fmcp-app');
+    expect(runtimeFetchCalls[1]?.[1]?.method).toBe('POST');
+    expect(runtimeFetchCalls[1]?.[1]?.signal).toBe(controller.signal);
+    expect(JSON.parse(String(runtimeFetchCalls[1]?.[1]?.body))).toEqual({
+      sessionID: 'ses_1',
+      messageID: 'msg_1',
+      partID: 'prt_origin',
+      server: 'weather',
+      resourceUri: 'ui://weather/current',
+      toolKey: 'weather_weather_current',
+      name: 'weather.refresh',
+      arguments: { city: 'Singapore' },
+    });
+
+    await opencodeClient.callMcpAppTool({
+      directory: '/workspace/mcp-app',
+      sessionId: 'ses_1',
+      messageId: 'msg_1',
+      partId: 'prt_board_origin',
+      server: 'weather',
+      resourceUri: 'ui://weather/current',
+      toolKey: 'weather_weather_current',
+      name: 'weather.refresh',
+      arguments: {},
+    });
+    const boardBody = JSON.parse(String(runtimeFetchCalls[2]?.[1]?.body));
+    expect(boardBody.partID).toBe('prt_board_origin');
+    expect(boardBody.toolKey).toBe('weather_weather_current');
+
+    const part = {
+      id: 'prt_1',
+      sessionID: 'ses_1',
+      messageID: 'msg_1',
+      type: 'tool' as const,
+      callID: 'call_1',
+      tool: 'weather_current',
+      state: {
+        status: 'completed' as const,
+        input: { city: 'Singapore' },
+        output: 'Sunny',
+        title: '',
+        metadata: {},
+        time: { start: 1, end: 2 },
+      },
+    };
+    expect(await opencodeClient.updateMessagePart({
+      directory: '/workspace/mcp-app',
+      sessionId: 'ses_1',
+      messageId: 'msg_1',
+      partId: 'prt_1',
+      part,
+    })).toEqual(part);
+    expect(partUpdateCalls).toEqual([[{
       directory: '/workspace/mcp-app',
       sessionID: 'ses_1',
       messageID: 'msg_1',
-      server: 'weather',
-      resourceUri: 'ui://weather/current',
-      name: 'weather.refresh',
-      arguments: { city: 'Singapore' },
+      partID: 'prt_1',
+      part,
+    }, { signal: undefined }]]);
+
+    sessionMessageParts = [part];
+    expect(await opencodeClient.getMessagePart({
+      directory: '/workspace/mcp-app',
+      sessionId: 'ses_1',
+      messageId: 'msg_1',
+      partId: 'prt_1',
+    })).toEqual(part);
+    expect(sessionMessageCalls).toEqual([[{
+      directory: '/workspace/mcp-app',
+      sessionID: 'ses_1',
+      messageID: 'msg_1',
     }, { signal: undefined }]]);
   });
 
   test('reads fork distribution capabilities through the SDK', async () => {
     const capabilities = await opencodeClient.getDistributionCapabilities();
     expect(capabilities.distribution).toBe('ZunbaRan/opencode');
+    expect(capabilities.upstreamVersion).toBe('1.18.9');
+    expect(capabilities.apiVersion).toBe('2');
     expect(capabilities.features.mcpApps).toBe(true);
     expect(capabilitiesCalls).toEqual([[{ signal: undefined }]]);
+  });
+
+  test('keeps external CLI degradation explicit when the MCP App capability is absent', async () => {
+    mcpToolCallAvailable = false;
+    await expect(opencodeClient.callMcpAppTool({
+      directory: '/workspace/external-cli',
+      sessionId: 'ses_1',
+      messageId: 'msg_1',
+      partId: 'prt_1',
+      server: 'weather',
+      resourceUri: 'ui://weather/current',
+      toolKey: 'weather_weather_current',
+      name: 'weather.refresh',
+    })).rejects.toThrow('does not support MCP App tool calls');
+    expect(runtimeFetchCalls).toEqual([]);
   });
 });
 

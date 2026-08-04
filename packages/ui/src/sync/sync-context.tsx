@@ -1800,6 +1800,7 @@ export function SyncProvider(props: {
   }
   const messageLoader = messageLoaderRef.current
   messageLoader.configure({ sdk: props.sdk, runtimeKey })
+  const resourceLifecycleGenerationRef = useRef(0)
   const routingIndexRef = useRef<EventRoutingIndex | null>(null)
   if (!routingIndexRef.current) routingIndexRef.current = createEventRoutingIndex()
   const routingIndex = routingIndexRef.current
@@ -2260,9 +2261,21 @@ export function SyncProvider(props: {
     }
   }, [props.sdk, props.directory, childStores, messageLoader, routingIndex])
 
-  useEffect(() => () => {
-    messageLoader.dispose()
-    childStores.disposeAll()
+  useEffect(() => {
+    const generation = ++resourceLifecycleGenerationRef.current
+    messageLoader.activate()
+
+    return () => {
+      // React StrictMode replays effect cleanup/setup without replacing refs.
+      // Delay destructive cleanup for one microtask so the replayed setup can
+      // supersede this generation. A real unmount has no following setup and
+      // still disposes both resources promptly.
+      queueMicrotask(() => {
+        if (resourceLifecycleGenerationRef.current !== generation) return
+        messageLoader.dispose()
+        childStores.disposeAll()
+      })
+    }
   }, [childStores, messageLoader])
 
   // Subscribe to child store for streaming state derivation
