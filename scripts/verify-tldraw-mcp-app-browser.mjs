@@ -895,8 +895,16 @@ const inspectAppContexts = async () => {
             },
           };
         });
-        const revisionText = shell.querySelector('.identity span')?.textContent?.trim() || '';
-        const revision = Number((revisionText.match(/(?:Revision |Historical revision |Cached revision |r)(\\d+)/i) || [])[1] || 0);
+        // Surface Contract V1 exposes the exact rendered identity as machine
+        // data on the shell (shell.dataset.revision); never parse the numeric
+        // identity from presentation text. revisionText is evidence for
+        // Historical/current labeling only, read from the stable
+        // [data-historical-identity] hook with a narrow .identity span
+        // fallback for older normal UI.
+        const revisionText = shell.querySelector('[data-historical-identity]')?.textContent?.trim()
+          || shell.querySelector('.identity span')?.textContent?.trim()
+          || '';
+        const revision = Number(shell.dataset.revision || 0);
         const rect = shell.getBoundingClientRect();
         const style = getComputedStyle(shell);
         const canvas = document.querySelector('.tl-canvas');
@@ -1069,7 +1077,9 @@ const inspectAppContexts = async () => {
               && hasVisibleRenderedGeometry(element));
           const canvas = document.querySelector('.tl-canvas');
           const text = document.body?.innerText || '';
-          const revisionText = shell.querySelector('.identity span')?.textContent?.trim() || '';
+          const revisionText = shell.querySelector('[data-historical-identity]')?.textContent?.trim()
+            || shell.querySelector('.identity span')?.textContent?.trim()
+            || '';
           return {
             ...documentState,
             hasShell: true,
@@ -1101,7 +1111,7 @@ const inspectAppContexts = async () => {
             visibleSemanticContent: visibleSemanticShapes.length > 0,
             canvasText: canvas?.textContent?.slice(0, 2000) || '',
             text: text.slice(0, 1600),
-            revision: Number((revisionText.match(/(?:Revision |Historical revision |Cached revision |r)(\\d+)/i) || [])[1] || 0),
+            revision: Number(shell.dataset.revision || 0),
             revisionText,
             buttons,
             status: document.querySelector('footer')?.textContent?.trim().slice(0, 800) || '',
@@ -2496,7 +2506,7 @@ const restoreLatestAfterHistory = async (latestRevision) => {
   assert(Number.isInteger(selected), 'Revision history did not expose an older exact revision');
   const historical = await waitFor(async () => {
     const candidate = await findApp({ mode: 'inline' });
-    if (!candidate || candidate.revision !== selected) return null;
+    if (!candidate || candidate.surfaceRevision !== selected) return null;
     if (!/Historical revision/i.test(candidate.revisionText)) return null;
     const contract = assessTldrawSurfaceContract(candidate, {
       expectedRole: 'review',
@@ -2509,7 +2519,7 @@ const restoreLatestAfterHistory = async (latestRevision) => {
   });
   const latest = await waitFor(async () => {
     const candidate = await findApp({ mode: 'inline' });
-    return candidate?.revision === latestRevision && !/Historical/i.test(candidate.revisionText) ? candidate : null;
+    return candidate?.surfaceRevision === latestRevision && !/Historical/i.test(candidate.revisionText) ? candidate : null;
   }, `return to latest revision ${latestRevision}`);
   return { historicalRevision: selected, historicalPreviewLabel: historical.previewLabel, latestRevision: latest.revision };
 };

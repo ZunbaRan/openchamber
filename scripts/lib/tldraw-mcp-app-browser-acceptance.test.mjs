@@ -264,6 +264,51 @@ test('browser verifier wires the truthful checkpoint and failure-evidence contra
   assert.match(verifierSource, /verdict: assessFailureEvidence\(failureEvidence\)/);
 });
 
+test('both App inspection paths read the machine revision from data-revision, never presentation text', () => {
+  assert.equal(
+    (verifierSource.match(/const revision = Number\(shell\.dataset\.revision \|\| 0\);/g) ?? []).length,
+    1,
+    'the primary inspection path must derive the machine revision from shell.dataset.revision',
+  );
+  assert.equal(
+    (verifierSource.match(/\brevision: Number\(shell\.dataset\.revision \|\| 0\),/g) ?? []).length,
+    1,
+    'the direct-frame fallback must derive the machine revision from shell.dataset.revision',
+  );
+  assert.doesNotMatch(verifierSource, /revisionText\.match/);
+  assert.doesNotMatch(verifierSource, /Number\(\(revisionText/);
+});
+
+test('both App inspection paths read revisionText from the stable historical-identity hook', () => {
+  assert.equal(
+    (verifierSource.match(/shell\.querySelector\('\[data-historical-identity\]'\)/g) ?? []).length,
+    2,
+    'both inspection paths must prefer the stable [data-historical-identity] hook',
+  );
+  assert.equal(
+    (verifierSource.match(/shell\.querySelector\('\.identity span'\)/g) ?? []).length,
+    2,
+    'the legacy .identity span read may remain only as a narrow fallback in both paths',
+  );
+  assert.match(
+    verifierSource,
+    /shell\.querySelector\('\[data-historical-identity\]'\)\?\.textContent\?\.trim\(\)\s*\|\|\s*shell\.querySelector\('\.identity span'\)/,
+  );
+});
+
+test('history restore demands the exact machine revision identity on both sides of the round trip', () => {
+  const restore = verifierSource.slice(
+    verifierSource.indexOf('const restoreLatestAfterHistory = async'),
+    verifierSource.indexOf('const diagnosticLogOffsets ='),
+  );
+  assert.match(restore, /candidate\.surfaceRevision !== selected/);
+  assert.doesNotMatch(restore, /candidate\.revision !== selected/);
+  assert.match(restore, /candidate\?\.surfaceRevision === latestRevision/);
+  assert.doesNotMatch(restore, /candidate\?\.revision === latestRevision/);
+  assert.match(restore, /\/Historical revision\/i\.test\(candidate\.revisionText\)/);
+  assert.match(restore, /assessTldrawSurfaceContract\(candidate, \{\s*expectedRole: 'review',\s*expectedMutationAuthority: 'none',\s*\}\);/);
+});
+
 test('locale reload waits on the existing canonical session route without a second navigation', () => {
   const localeCheckpoint = verifierSource.slice(
     verifierSource.indexOf("const switchHostLocaleAndAssertTldraw = async"),
