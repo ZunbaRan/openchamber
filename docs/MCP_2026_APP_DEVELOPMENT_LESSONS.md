@@ -565,6 +565,24 @@ bun run --cwd packages/electron verify:opencode-cli:packaged
 同时终止自己的进程组并确认端口释放；诊断结论只对本次启动的 PID 有效，不能把端口
 探测或旧进程当成新进程证据。
 
+干净 worktree 的另一面是“缺被忽略产物”：`.gitignore` 忽略 `dist`，dirty 主 checkout
+恰好残留历史构建产物，但干净 worktree 没有
+`examples/interactive-ui/acme-sales/dist/ui.mjs`、
+`examples/interactive-ui/acme-crm/dist/ui.mjs` 或
+`templates/interactive-ui-extension/dist/ui.mjs`——三个 manifest 的 Native view 却都
+引用 `dist/ui.mjs`（`openchamber.extension.json` 的 `entry`）。结果
+`interactive-ui-system-test` 的 native descriptor 返回 500（其 status 断言处），
+`interactive-ui-extension.test` 的 scaffold 验证报 `operations/dist/ui.mjs` ENOENT；
+这不是当前 MCP App 产品代码回归。在独立测试 worktree 中补齐同一版本生成资源后，
+`node --test scripts/interactive-ui-extension.test.mjs` 6/6、
+`bun run test:interactive-ui-security` 27 passed / 0 failed。
+
+长期准则：测试入口必须显式生成/拷贝自己需要的 ignored outputs，fixture 要么
+tracked、要么 self-contained，绝不能依赖另一个 dirty checkout 的历史 `dist`。
+模板 Native 入口缺产物时要复制/生成真实文件（不要把 symlink 当修复——模板拷贝会
+跳过 symlink）。本次只是测试环境补齐，不声称仓库已修复该自包含性问题，也不要引导
+去改主 checkout。
+
 ### 8.6 四个独立门禁，不能互相冒充
 
 | 门禁 | 入口 | 证明 | 不能证明 |
@@ -649,6 +667,54 @@ runtime/console/page 错误、零 isError/fallback。证据目录示例（本地
 能当作打包 Electron / Computer Use 验收：浏览器 E2E 证明的是真实 Server + managed
 OpenCode + 浏览器 + 精确 CLI + 单 remote MCP 配置下的宿主行为（见 8.6 四个门禁），
 打包桌面环境与真实 Computer Use 验收仍然 pending。
+
+### 8.8 宿主顶层遮挡会造成 iframe 验收假阳性
+
+真实浏览器 E2E 曾出现“交互检查通过但用户可见 UI 被遮挡”的假通过：宿主在会话上方
+打开了顶层 `DirectoryExplorerDialog`（"Add project directory" onboarding dialog），
+在宿主合成画面里它确实覆盖住了 inline MCP App；但旧 verifier 通过 CDP/evaluate
+直接进入 child iframe context 操作 DOM，绕过了宿主根 document 的指针命中与视觉
+可见性，程序化交互照样通过，于是 inline 检查全部变绿，首张截图却是在顶层 dialog
+之下拍的。
+
+根因是验收只看了 iframe 内容（child target）的可交互性，从不检查宿主根 document 的
+顶层可见性。顶层 dialog 对真实用户指针是命中屏障，但 verifier 在 child context 里
+程序化派发的事件绕过了宿主根 document 的 hit-testing，所以“能点、能断言、能交互”
+既不能证明“用户能看到”，也不能证明截图时刻没有遮挡。修复（commit `451700f9`）只改
+验收 harness，不碰产品代码，门槛如下：
+
+1. 只检查根 document 的可见顶层 `role=dialog`（排除嵌套 dialog；App iframe 内部的
+   dialog 属于 child target，永远不参与）；
+2. 只按受支持 onboarding 文案身份匹配（`isProjectDirectoryOnboardingText` 覆盖
+   `Add project directory` / `添加项目目录` / `新增專案目錄`），不匹配任何其它 dialog；
+3. 要求真实 `button[data-slot="dialog-close"]` connected、visible、enabled 且 bounding
+   rect 为正（`assessProjectDirectoryOnboarding`），任一不满足立即 fail-closed；
+4. 点击匹配 dialog 的真实渲染按钮并断言点击成功，绝不点无关 dialog；
+5. 关闭后按弹窗身份等待消失（记录 remainingDialogs / remainingBackdropCount），不能
+   按 close-usability 判定“已消失”——缺 close 按钮的遮挡弹窗仍必须判为存在；
+6. 首张 inline 截图前再次 fail-closed：`preScreenshotAbsent` 必须为 true，否则把
+   序列化 dialogs 作为证据抛出；
+7. 全程不用 Escape 键、不触碰 React 内部状态。
+
+代码参考（三个 acceptance 文件）：
+
+- `scripts/lib/tldraw-mcp-app-browser-acceptance.mjs`：
+  `isProjectDirectoryOnboardingText`、`assessProjectDirectoryOnboarding`（依赖
+  `hasPositiveRect`）；
+- `scripts/verify-tldraw-mcp-app-browser.mjs`：`inspectHostOnboardingDialogs`、
+  `dismissHostProjectDirectoryOnboarding`，以及 Inline 检查点在
+  `captureVisibleContentScreenshot('inline-preview')` 之前的 `preScreenshotAbsent` 断言；
+- `scripts/lib/tldraw-mcp-app-browser-acceptance.test.mjs`：聚焦测试断言 verifier 从
+  未使用 `dispatchKeyEvent` / Escape / `__react` 内部状态，并断言 wait 与截图前
+  absence 只按弹窗身份匹配、不按 close 可用性掩盖遮挡。
+
+最新真实 E2E（单一环境证据，2026-08-05）：11/11 检查点全绿，
+`projectDirectoryOnboarding` status=`dismissed`、dialogCount=`1`、backdropCount=`1`、
+remainingDialogs=`0`、remainingBackdropCount=`0`、preScreenshotAbsent=`true`；47 次
+AppBridge 交换，0 isError、0 fallback。**不要**把这次单一环境证据泛化成“所有宿主都
+一定有该弹窗”：正确写法是测试原则加 OpenChamber 具体实现参考——任何宿主顶层
+overlay 都不允许覆盖验收截图，是否真的出现该弹窗取决于宿主环境。这也仍然不是打包
+Electron / Computer Use 验收（仍 pending，见 8.6 四个门禁）。
 
 ## 9. Host → source-authenticated Loader → final `srcdoc` App
 
@@ -810,6 +876,9 @@ Chromium 可能把 Broker 文档的 policy container 继承到最终 `srcdoc` Ap
 16. 自包含验收在 `/health` 后、MCP 协商前把验收目录注册为唯一 project（PUT
     `/api/config/settings` 并 round-trip 校验回显，见 8.7），Pin/App Board 才能持久化
     到以 `path_<base64url(abs path)>` 为键的 board。
+17. 首个 inline 截图前验证宿主根 document 顶层 overlay 已消失，且 child iframe App
+    已就绪（host-visible screenshot gate：宿主根文档可见性 + iframe 双层证据，见
+    8.8）；screenshot 是门槛而非装饰，不允许在顶层遮挡下“先截后解释”。
 
 若只通过协议 fixture、源码断言、静态截图或 fallback，上述链路仍是未完成。当前
 自动化覆盖协议、visibility、source-authenticated Loader 到最终 `srcdoc` 的大型页面

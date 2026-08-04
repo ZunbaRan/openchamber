@@ -745,6 +745,49 @@ runtime/console/page 错误、零 isError/fallback（本地示例证据目录：
 注意：这只是验收 harness 的环境身份修复。浏览器 E2E 不能当作打包 Electron /
 Computer Use 验收；打包桌面环境与真实 Computer Use 验收仍为 pending（见上表）。
 
+### 8.8 自包含验收必须拒绝宿主顶层遮挡：host-visible screenshot gate（📦 仓库事实）
+
+浏览器门禁还出现过一类与 8.7 并列的假阳性：真实宿主在会话上方打开顶层
+`DirectoryExplorerDialog`（"Add project directory" onboarding dialog）覆盖
+conversation——它在宿主合成画面里确实遮住 inline MCP App；但旧 verifier 通过
+CDP/evaluate 直接进入 child iframe context 操作 DOM，绕过了宿主根 document 的
+指针命中与视觉可见性，于是交互检查全部通过，用户可见 UI 却被 dialog 盖住
+（“交互检查通过但用户可见 UI 被遮挡”）。修复（commit `451700f9`）只改验收 harness，
+不碰产品代码，把截图从装饰变成门槛：
+
+1. **宿主根文档可见性**：只序列化根 document 的可见顶层 `role=dialog`（排除嵌套
+   dialog；App iframe 内部的 dialog 属于 child target，从不参与）。可见性用
+   connected + 正 bounding rect + computed style（`display` / `visibility` / `opacity`）
+   判定，不用 `offsetParent`——fixed 定位元素的 `offsetParent === null` 是已知陷阱。
+   Helper：`inspectHostOnboardingDialogs`。
+2. **顶层 overlay 身份与关闭门槛**：只按受支持 onboarding 文案身份匹配
+   （`isProjectDirectoryOnboardingText`：`Add project directory` / `添加项目目录` /
+   `新增專案目錄`）；要求真实 `button[data-slot="dialog-close"]` connected、visible、
+   enabled 且正 hit rect（`assessProjectDirectoryOnboarding`）；点击匹配 dialog 的真实
+   渲染按钮并断言点击成功，关闭后按弹窗身份等待消失；不使用 Escape 或 React 内部
+   状态，也不按 close-usability 掩盖遮挡。Helper：`dismissHostProjectDirectoryOnboarding`。
+3. **iframe 双层证据**：截图门槛必须同时证明两层——宿主根 document 在截图时刻没有
+   匹配的顶层 dialog（`preScreenshotAbsent`），且 child iframe 的 App surface 已就绪
+   （`.acceptance-shell` 的 `data-editor-ready` 契约与 `.tl-canvas` 正尺寸，见
+   `docs/MCP_2026_APP_DEVELOPMENT_LESSONS.md` 第 12 节）。**screenshot 是门槛而非
+   装饰**：先断言宿主侧可见性，再 `captureVisibleContentScreenshot('inline-preview')`，
+   不允许“先截后解释”。
+
+聚焦测试（`scripts/lib/tldraw-mcp-app-browser-acceptance.test.mjs`，44 个用例）断言
+`assessProjectDirectoryOnboarding` 对隐藏 / 零 rect / 缺失 / detached / disabled
+close 全部 fail-closed；inline 检查点顺序为 route 选择 → onboarding 关闭 → surface
+验收 → 截图前 absence；verifier 源码不含 `dispatchKeyEvent` / Escape / `__react`；
+wait 与 pre-screenshot absence 只按身份匹配。当前
+`node --test scripts/lib/*.test.mjs` 64/64 通过（acceptance 44 + orchestration 20）。
+
+最新真实 E2E（单一环境证据，2026-08-05）：11/11 检查点全绿，
+`projectDirectoryOnboarding` status=`dismissed`、dialogCount=`1`、backdropCount=`1`、
+remainingDialogs=`0`、remainingBackdropCount=`0`、preScreenshotAbsent=`true`；47 次
+AppBridge 交换，0 isError、0 fallback。**这是测试原则 + OpenChamber 具体实现参考，
+不是“所有宿主都一定有该弹窗”的泛化**：任何宿主顶层 overlay 都不允许覆盖首张截图。
+它仍然不是打包 Electron / Computer Use 验收；打包桌面环境与真实 Computer Use 验收
+仍为 pending（见 8.6 四个门禁表）。
+
 ---
 
 ## 9. 测试金字塔
@@ -824,6 +867,8 @@ describe('MCP App sandbox bootstrap', () => {
 - [ ] `bun run verify:opencode-cli:packaged` 通过
 - [ ] 自包含浏览器门禁固定 `OPENCODE_BINARY`，并在 `/health.opencodeBinaryResolved` 不匹配时 fail-closed（`scripts/lib/tldraw-mcp-app-browser-orchestration.test.mjs` 在完整门禁前运行）
 - [ ] 自包含浏览器门禁在 `/health` 后、MCP 协商前 PUT `/api/config/settings` 注册唯一验收项目，并对回显 fail-closed 校验（`deriveWorkbenchProjectId` / `configureAcceptanceProject`，聚焦测试 60/60）
+- [ ] 自包含浏览器门禁在首个 inline 截图前检查宿主根 document 顶层可见 dialog，按受支持文案身份匹配并 fail-closed 关闭 `Add project directory` onboarding（`inspectHostOnboardingDialogs` / `dismissHostProjectDirectoryOnboarding` / `assessProjectDirectoryOnboarding` / `preScreenshotAbsent`；不使用 Escape 或 React 内部状态；`node --test scripts/lib/*.test.mjs` 64/64）
+- [ ] 测试入口显式生成/拷贝被 `.gitignore` 忽略的产物（如 examples / templates 的 `dist/ui.mjs`），fixture tracked / self-contained；干净 worktree 不依赖主 checkout 的历史 `dist`（见 lessons 8.5；本次仅测试环境补齐，不视为仓库自包含性已修复）
 - [ ] 最终打包 Electron UI 验收（真实 Computer Use）完成（当前为 pending）
 - [ ] 无 `OPENCHAMBER_OPENCODE_CLI_PATH` 时，托管 lock 的 `forkCommit`、CLI/SDK 发布版本与 `/global/capabilities` 指向同一已发布提交（当前 `bf12…` vs `67c…` 尚未满足，故当前包不可作为正式发布候选）
 
