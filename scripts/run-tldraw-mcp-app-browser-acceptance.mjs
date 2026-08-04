@@ -6,6 +6,15 @@ import path from 'node:path';
 import process from 'node:process';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import {
+  ACCEPTANCE_MCP_SERVER_NAME,
+  assessAcceptanceOpenCodeCliMismatch,
+  buildAcceptanceMcpConfigContent,
+  captureSpawnedProcessEvidence,
+  readAcceptanceOpenCodeCliVersion,
+  selectAcceptanceOpenCodeCliPath,
+  validateAcceptanceMcpUrl,
+} from './lib/tldraw-mcp-app-browser-orchestration.mjs';
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const workspaceRoot = path.dirname(projectRoot);
@@ -99,6 +108,7 @@ const spawnLogged = async ({ command, args, cwd, env, logPath, name, tee = false
       detached: process.platform !== 'win32',
     });
     child.runtimeName = name;
+    child.spawnedAt = new Date().toISOString();
     child.once('error', () => {});
     child.stdout.on('data', (chunk) => {
       process.stdout.write(chunk);
@@ -124,6 +134,7 @@ const spawnLogged = async ({ command, args, cwd, env, logPath, name, tee = false
     await handle.close();
   }
   child.runtimeName = name;
+  child.spawnedAt = new Date().toISOString();
   child.once('error', () => {});
   return child;
 };
@@ -211,6 +222,9 @@ let portsReleased = false;
 let primaryFailure;
 let browserReport = null;
 let authSource = null;
+let acceptanceOpenCodeCli = null;
+let opencodeCliEvidence = null;
+let mcpConfigEvidence = null;
 
 const cleanup = () => {
   if (cleanupPromise) return cleanupPromise;
@@ -249,6 +263,17 @@ try {
   for (const directory of Object.values(runtime)) {
     await fs.mkdir(directory, { recursive: true, mode: 0o700 });
   }
+  acceptanceOpenCodeCli = await selectAcceptanceOpenCodeCliPath({ projectRoot });
+  const acceptanceOpenCodeCliVersion = await readAcceptanceOpenCodeCliVersion({
+    cliPath: acceptanceOpenCodeCli.resolved,
+  });
+  opencodeCliEvidence = {
+    source: acceptanceOpenCodeCli.source,
+    requested: acceptanceOpenCodeCli.requested,
+    resolved: acceptanceOpenCodeCli.resolved,
+    version: acceptanceOpenCodeCliVersion,
+  };
+  console.log(`[acceptance] OpenCode CLI (${acceptanceOpenCodeCli.source}): ${acceptanceOpenCodeCli.resolved}${acceptanceOpenCodeCliVersion ? ` (${acceptanceOpenCodeCliVersion})` : ''}`);
   const webIndex = path.join(projectRoot, 'packages', 'web', 'dist', 'index.html');
   await fs.access(webIndex).catch(() => {
     throw new Error('OpenChamber web assets are missing; run `bun run build:web` before the self-contained browser gate');
@@ -269,6 +294,16 @@ try {
   if (tldrawPort === openChamberPort) throw new Error('Dynamic port allocation returned the same port twice');
   const tldrawUrl = `http://127.0.0.1:${tldrawPort}`;
   const openChamberUrl = `http://127.0.0.1:${openChamberPort}`;
+  // The tracked demo at this base does not consume any tldraw-specific env
+  // variable, so the single remote MCP server must arrive through the fork's
+  // OPENCODE_CONFIG_CONTENT loader instead. This keeps the gate independent of
+  // user/project config and of unrelated env handoffs.
+  const tldrawMcpUrl = validateAcceptanceMcpUrl(`${tldrawUrl}/mcp`);
+  const acceptanceMcpConfigContent = buildAcceptanceMcpConfigContent({ mcpUrl: tldrawMcpUrl });
+  mcpConfigEvidence = {
+    server: ACCEPTANCE_MCP_SERVER_NAME,
+    url: tldrawMcpUrl,
+  };
 
   tldrawProcess = await spawnLogged({
     command: process.execPath,
@@ -312,11 +347,12 @@ try {
       XDG_STATE_HOME: runtime.xdgState,
       XDG_CACHE_HOME: runtime.xdgCache,
       OPENCODE_AUTH_CONTENT: auth.content,
+      OPENCODE_BINARY: acceptanceOpenCodeCli.resolved,
+      OPENCODE_CONFIG_CONTENT: acceptanceMcpConfigContent,
       OPENCODE_DISABLE_CHANNEL_DB: 'true',
       OPENCODE_DISABLE_AUTOUPDATE: 'true',
       OPENCHAMBER_INTERACTIVE_UI_DEMO_PORT: String(openChamberPort),
       OPENCHAMBER_INTERACTIVE_UI_DEMO_RUNTIME_DIR: runtime.demo,
-      OPENCHAMBER_TLDRAW_MCP_URL: `${tldrawUrl}/mcp`,
     },
     logPath: openChamberLogPath,
     name: 'OpenChamber demo',
@@ -326,7 +362,17 @@ try {
     const response = await fetch(`${openChamberUrl}/health`, { signal: AbortSignal.timeout(2_000) }).catch(() => null);
     if (!response?.ok) return null;
     const health = await response.json();
-    return health?.openCodeRunning === true ? health : null;
+    if (health?.openCodeRunning !== true) return null;
+    const binaryVerdict = assessAcceptanceOpenCodeCliMismatch({
+      selectedPath: acceptanceOpenCodeCli.resolved,
+      reportedPath: health?.opencodeBinaryResolved,
+    });
+    if (!binaryVerdict.match) {
+      const error = new Error(`OpenChamber launched the wrong OpenCode CLI: ${binaryVerdict.reason}`);
+      error.acceptanceFatal = true;
+      throw error;
+    }
+    return health;
   }, 'OpenChamber and managed OpenCode', 120_000);
   await waitFor(async () => {
     assertChildRunning(openChamberProcess, 'OpenChamber demo');
@@ -334,7 +380,32 @@ try {
       signal: AbortSignal.timeout(5_000),
     }).catch(() => null);
     if (!response?.ok) return null;
-    const status = (await response.json())?.['interop-tldraw-2026'];
+    const payload = await response.json();
+    const status = payload?.[ACCEPTANCE_MCP_SERVER_NAME];
+    if (status && typeof status === 'object') {
+      // Fail fast on explicit permanent error statuses instead of polling until
+      // the 120 s timeout (e.g. the previous real failure where the server was
+      // never configured and the run only surfaced a generic timeout).
+      const fatalMessage = (() => {
+        switch (status.status) {
+          case 'failed':
+            return typeof status.error === 'string' && status.error.trim()
+              ? `tldraw MCP server ${ACCEPTANCE_MCP_SERVER_NAME} failed: ${status.error}`
+              : `tldraw MCP server ${ACCEPTANCE_MCP_SERVER_NAME} failed without an error message`;
+          case 'needs_client_registration':
+            return `tldraw MCP server ${ACCEPTANCE_MCP_SERVER_NAME} requires client registration while the acceptance config disables oauth: ${typeof status.error === 'string' ? status.error : '(no detail)'}`;
+          case 'needs_auth':
+            return `tldraw MCP server ${ACCEPTANCE_MCP_SERVER_NAME} requires auth while the acceptance config disables oauth; no interactive flow is available`;
+          default:
+            return null;
+        }
+      })();
+      if (fatalMessage) {
+        const error = new Error(`OpenChamber MCP 2026 Apps negotiation cannot recover: ${fatalMessage.slice(0, 500)}`);
+        error.acceptanceFatal = true;
+        throw error;
+      }
+    }
     return status?.status === 'connected'
       && status?.protocolVersion === '2026-07-28'
       && status?.apps?.negotiated === true
@@ -383,6 +454,13 @@ try {
     repositories: {
       openchamber: projectRoot,
       tldrawMcpApp: tldrawRepository,
+    },
+    opencodeCli: opencodeCliEvidence,
+    mcpConfig: mcpConfigEvidence,
+    processes: {
+      tldrawMcp: captureSpawnedProcessEvidence(tldrawProcess, 'tldraw-mcp'),
+      openChamberDemo: captureSpawnedProcessEvidence(openChamberProcess, 'openchamber-demo'),
+      browserVerifier: captureSpawnedProcessEvidence(verifierProcess, 'browser-verifier'),
     },
     runtime: {
       isolated: true,

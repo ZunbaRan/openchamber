@@ -1,6 +1,6 @@
 # MCP Apps 客户端主机开发指南
 
-> 快照日期：2026-08-04。区分事实陈述（✅ 官方规范事实）、仓库事实（📦 本仓库代码验证）与建议（💡）。
+> 快照日期：2026-08-05。区分事实陈述（✅ 官方规范事实）、仓库事实（📦 本仓库代码验证）与建议（💡）。
 
 ## 目录
 
@@ -606,9 +606,9 @@ bun run verify:opencode-cli:packaged
 OPENCHAMBER_OPENCODE_CLI_PATH=/path/to/local/opencode bun run prepare:opencode-cli
 ```
 
-`prepare-opencode-cli.mjs` 的本地覆盖分支会检测此环境变量，读取二进制的真实版本，复制它而非从 GitHub 下载，并在 `resources/opencode-cli/distribution.json` 中标记 `"localOverride": true`。不要依赖固定行号；以该分支和分发清单为准。
+`prepare-opencode-cli.mjs` 的本地覆盖分支会检测此环境变量，读取二进制的真实版本，复制它而非从 GitHub 下载，并在 `resources/opencode-cli/distribution.json` 中标记 `"localOverride": true`。本地覆盖时 `forkCommit` 默认写为 `"local-uncommitted"`（除非显式设置 `OPENCODE_FORK_COMMIT`），因此精确源码 commit 必须**独立记录**：从 OpenCode 源码 worktree（如 `git rev-parse HEAD`）或该次构建的 provenance 取，作为与 CLI 版本并列的证据，不能从 `distribution.json` 推断。不要依赖固定行号；以该分支和分发清单为准。
 
-验证器也必须区分两种真相来源：托管发布以 `opencode-cli.lock.json` 为准；本地覆盖以刚生成的 `distribution.json` 为准。如果运行时校验仍无条件拿 lock 中的 `forkCommit` 与本地二进制比较，它会在**正确打入新 fork** 时反而误报旧提交不匹配。可靠做法是先解析 staged `distribution.json`，校验签名前二进制 SHA-256，再用同一清单中的 `version`、`upstreamCommit`、`forkCommit` 核对 `/global/capabilities`。这不是放宽门禁，而是让门禁绑定到本次实际分发物。
+验证器也必须区分两种真相来源：托管发布以 `opencode-cli.lock.json` 为准；本地覆盖以刚生成的 `distribution.json` 为准。如果运行时校验仍无条件拿 lock 中的 `forkCommit` 与本地二进制比较，它会在**正确打入新 fork** 时反而误报旧提交不匹配。可靠做法是先解析 staged `distribution.json`，校验签名前二进制 SHA-256，再用 `version` / `upstreamCommit` 核对 `/global/capabilities`；本地覆盖时 `distribution.json` 的 `forkCommit` 是 `"local-uncommitted"`，不参与对比，精确源码 commit 必须从源码 worktree / 构建 provenance 独立记录。这不是放宽门禁，而是让门禁绑定到本次实际分发物。
 
 macOS 包还有第二层边界：`electron-builder` / `codesign` 会给嵌套 Mach-O 写入签名，因此 `.app` 内 CLI 的字节 SHA-256 可能与签名前 `distribution.json.sha256` 不同。发布校验应拆成两段：
 
@@ -619,7 +619,7 @@ macOS 包还有第二层边界：`electron-builder` / `codesign` 会给嵌套 Ma
 
 ### 8.4 分发清单（📦 仓库事实）
 
-`resources/opencode-cli/distribution.json` 由 prepare 脚本生成。托管发布模式会记录锁文件中的 `releaseTag` / `forkCommit`；本地覆盖模式会明确记录 `releaseTag: "local-override"` 和 `localOverride: true`：
+`resources/opencode-cli/distribution.json` 由 prepare 脚本生成。托管发布模式会记录锁文件中的 `releaseTag` / `forkCommit`；本地覆盖模式会明确记录 `releaseTag: "local-override"`、`localOverride: true`，并且（除非显式设置 `OPENCODE_FORK_COMMIT`）`forkCommit` 为 `"local-uncommitted"`：
 
 ```json
 {
@@ -628,17 +628,71 @@ macOS 包还有第二层边界：`electron-builder` / `codesign` 会给嵌套 Ma
   "releaseTag": "local-override",
   "version": "1.18.10-oc.1",
   "upstreamCommit": "e024e2ef92293a81a06b6cc418422c52207ce85d",
-  "forkCommit": "67c454892fe47ed1906b41250a1eff4e499b0801",
+  "forkCommit": "local-uncommitted",
   "target": "darwin-arm64",
-  "sha256": "<由实际本地二进制计算>",
+  "sha256": "fa86f227...（由实际本地二进制计算；本次干净验收 worktree 实测为该值）",
   "localOverride": true
 }
 ```
+
+> 注意：上面的 `forkCommit: "local-uncommitted"` 是本地覆盖模式的真实取值，不代表
+> 源码 commit。精确源码 commit 必须从 OpenCode 源码 worktree / 构建 provenance
+> 独立记录（如 `git rev-parse HEAD`），并作为与 `distribution.json` 并列的证据保存。
 
 ### 8.5 重要说明（📦 仓库事实）
 
 - **对 OpenCode 源码的修改在构建二进制前无效**。仅编辑 `../opencode` 中的源文件不会改变打包的 CLI。必须先用 `bun run build` 构建二进制，然后通过 `OPENCHAMBER_OPENCODE_CLI_PATH` 指向或以 `prepare:opencode-cli` 重新打包。
 - `package.json` 中不存在对 `../opencode` 的文件依赖或 SDK 的 `file:` 引用——CLI 作为独立二进制分发。
+
+### 8.6 自包含验收必须固定运行路径并验证 /health 实际解析结果（📦 仓库事实）
+
+浏览器自包含门禁 `scripts/run-tldraw-mcp-app-browser-acceptance.mjs` 过去不显式传
+CLI：orchestrator 会把所有 `OPENCODE_*` / `OPENCHAMBER_*` 从继承环境剥离，demo
+服务器因此在 PATH 上找到 `~/.opencode/bin/opencode`（官方 `1.18.4`）。该 CLI 能连接
+Tool，却不协商 MCP Apps capability，协商门禁最终超时（“OpenChamber MCP 2026 Apps
+negotiation did not become ready”），且存在假绿/假红两种风险：fork 源码已改，但
+OpenChamber/测试根本没跑那个 fork。
+
+修复后的选择规则（`scripts/lib/tldraw-mcp-app-browser-orchestration.mjs`）：
+
+1. 显式变量 `OPENCHAMBER_TLDRAW_ACCEPTANCE_OPENCODE_CLI_PATH` 优先；
+2. 缺省用 staged CLI `packages/electron/resources/opencode-cli/opencode`；
+3. `realpath` 规范化后必须是可执行文件，否则在任何 spawn 之前失败并给出可操作提示；
+4. **绝不回退** PATH / `~/.opencode` / 其他已安装 CLI（fail-closed）；
+5. 选择结果以 `OPENCODE_BINARY=<canonical path>` 显式传入 demo 子进程；
+6. `/health` 就绪时校验 `opencodeBinaryResolved` 等于所选 canonical 路径，不匹配立即
+   fatal，不轮询到超时；
+7. orchestration 报告与日志记录 source / requested / resolved / `--version` 身份证据。
+8. demo 子进程注入隔离的 `OPENCODE_CONFIG_CONTENT`：恰好一个 remote MCP server
+   `interop-tldraw-2026`（`type: remote`、`oauth: false`、`timeout: 30000`、
+   `enabled: true`），URL 指向本次启动的 tldraw MCP；门禁不读取用户/项目配置，
+   也不依赖 demo 消费未使用的环境变量；协商出现明确的永久错误状态时立即 fatal。
+
+```bash
+# 显式固定 CLI 运行自包含浏览器门禁
+OPENCHAMBER_TLDRAW_ACCEPTANCE_REPO_DIR=/path/to/tldraw-mcp-app \
+OPENCHAMBER_TLDRAW_ACCEPTANCE_OPENCODE_CLI_PATH=/path/to/staged/opencode \
+bun run test:tldraw-mcp-app-browser:self-contained
+```
+
+运行时身份证据必须与打包证据分列（见 8.3 的 staged/签名后哈希区别）：
+
+- staged `distribution.json.sha256` 是签名前来源完整性；
+- `.app` 内二进制哈希是签名后包内真实字节；在本轮 macOS electron-builder/codesign
+  流程中二者不同（codesign 改写字节），其它平台/流程不一定改写，但两个哈希语义
+  始终不同，必须分别记录、分别核对；
+- 旧安装的 `app.asar` 可能早于源码 commit，用它做 UI 结论会产生过期证据。
+
+四个门禁各自独立，不能互相冒充：
+
+| 门禁 | 入口 | 证明 | 不能证明 |
+|---|---|---|---|
+| 协议/单元 | `node --test scripts/lib/*.test.mjs`、tldraw `verify-dist.mjs`、协议探针 | 契约与聚焦行为 | 真实浏览器可见性 |
+| 独立浏览器 | `bun run test:tldraw-mcp-app-browser:self-contained`（固定 `OPENCODE_BINARY`） | 真实 Server + managed OpenCode + 浏览器 + 精确 CLI | 打包桌面环境 |
+| 打包 Electron | `packages/electron/scripts/verify-packaged-interactive-ui.mjs`（断言 `opencodeBinarySource === 'bundled'`、`opencodeBinaryResolved` 等于包内路径） | 打包边界与 bundled CLI | 真实 Computer Use 交互 |
+| 真实 Computer Use | 打包应用上的人工/自动化 UI 验收 | 端到端 UI 行为 | 由前三者取代 |
+
+> **当前状态（2026-08-05）**：最终 Electron UI 验收仍为 pending；不得声称已通过。
 
 ---
 
@@ -717,6 +771,8 @@ describe('MCP App sandbox bootstrap', () => {
 - [ ] `bun run dead-code` 无新增死代码
 - [ ] `bun run verify:opencode-cli` 通过
 - [ ] `bun run verify:opencode-cli:packaged` 通过
+- [ ] 自包含浏览器门禁固定 `OPENCODE_BINARY`，并在 `/health.opencodeBinaryResolved` 不匹配时 fail-closed（`scripts/lib/tldraw-mcp-app-browser-orchestration.test.mjs` 在完整门禁前运行）
+- [ ] 最终打包 Electron UI 验收（真实 Computer Use）完成（当前为 pending）
 - [ ] 无 `OPENCHAMBER_OPENCODE_CLI_PATH` 时，托管 lock 的 `forkCommit`、CLI/SDK 发布版本与 `/global/capabilities` 指向同一已发布提交（当前 `bf12…` vs `67c…` 尚未满足，故当前包不可作为正式发布候选）
 
 ### 10.3 回归检查

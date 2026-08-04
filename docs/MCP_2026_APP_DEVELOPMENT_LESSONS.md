@@ -459,6 +459,124 @@ capability 时仍返回相同的结构化 canvas state 和文字说明，但宿�
 仅 reload 会话不一定重建 registry；必须对该 MCP connection 执行真实
 **Disconnect → Connect**，再确认新的 Tool schema 和 resource binding 已重新发现。
 
+### 8.1 证据必须按事实分列，不能互相替代
+
+一次验收里至少存在七类事实，每一类只能证明它自己，永远不要把其中一项说成另一项：
+
+| 事实 | 怎么取 | 能证明什么 | 不能证明什么 |
+|---|---|---|---|
+| 源码 commit | fork/App 仓库 `git rev-parse HEAD` | 代码基线 | 构建产物内容、打包内容、运行时行为 |
+| tldraw dist App SHA-256 | `verify-dist.mjs` 与 `tldraw-provenance.json` | 分发的 App artifact 就是该字节序列 | 宿主能渲染、模型能发现 Tool |
+| Server PID / 启动时间 | orchestrator 记录 spawn PID 与时间 | 进程确实由本次 orchestration 启动 | 该进程使用哪个 CLI、UI 是否真实可见 |
+| app.asar 哈希 / 构建时间 | 对打包产物重新计算并记录时间 | 桌面 UI 资源版本 | UI 真实可见性、CLI 行为 |
+| staged CLI 哈希（签名前） | `packages/electron/resources/opencode-cli/distribution.json` 的 `sha256` | 签名前来源完整性；`localOverride`/`version` 可直接核对 | 包内最终字节（本轮 macOS 流程中签名改写字节；其它流程需独立核对） |
+| packaged CLI 哈希（签名后） | 对 `.app/Contents/Resources/opencode-cli/opencode` 重新计算 | 包内真实字节 | 与 staged 哈希相同（在已观测的 macOS electron-builder/codesign 流程中签名会改写字节，因而不同） |
+| 运行时 resolved 路径 | `GET /health` 的 `opencodeBinaryResolved` + `--version` | 实际启动的 CLI | 由 orchestration 选择（除非显式 pin） |
+
+本轮实测证据：tldraw dist 先验证为 protocol `2026-07-28`、App SHA-256
+`4426d8b9f5ca9aa96bc4852a59faea3785bba97b14f71c772792d62555632741`；干净打包的
+CLI 版本 `1.18.10-oc.1`。在本轮 macOS electron-builder/codesign 流程中，包内签名后
+二进制哈希 `ba7fa584…` 与 staged `fa86f227…` 不同，因为 codesign 改写了 Mach-O
+字节；新构建的 app.asar 哈希 `02a3ea5142cf…`（2026-08-05 01:08 构建）。
+**“打包签名后哈希 ≠ staged 哈希”在本观测流程中不是失败**。其它平台/打包流程
+不一定改写字节，但两个哈希语义始终不同（签名前来源 vs 包内真实字节），因此必须
+在任何平台上分别记录、分别核对，永远不要把签名前哈希称为包内最终文件哈希。
+
+### 8.2 旧进程/旧产物会让 UI 诊断无效
+
+- 旧安装的 `app.asar` 可能早于源码 commit，用它得到的 UI 结论基于过期资源，
+  必须先按构建时间核对资源版本；
+- `~/.opencode/bin`、PATH 或系统安装里的旧 CLI 可能能连接 Tool 却不会协商 Apps
+  capability，`/health` 与连接状态都正常，但 UI 永远拿不到 App；
+- 残留的 Server/demo 进程仍持有旧端口或旧版本；诊断必须先记录本次进程的
+  PID 与启动时间，再确认端口确实由本次启动占用，不能把端口探测当成新进程证据；
+- HMR/开发进程也可能伪装成保存或重载缺陷（见第 11 节）。
+
+### 8.3 自包含验收必须 pin OPENCODE_BINARY 并 fail-closed
+
+自包含 orchestration 过去把所有 `OPENCODE_*` / `OPENCHAMBER_*` 从继承环境剥离，
+却不显式传 CLI，导致 demo 在 PATH 上启动 `~/.opencode/bin/opencode`（官方
+`1.18.4`）而不是 staged/当前 fork。这同时造成假绿（用错 CLI 也能过工具探针）与
+假红（fork 源码已改，但 OpenChamber/测试根本没跑那个 fork）。协商门禁最终超时于
+“OpenChamber MCP 2026 Apps negotiation did not become ready”，隔离日志只能事后
+证明启动的是旧 CLI。
+
+现在 orchestration 在任何 spawn 之前选择精确 CLI：
+
+1. 显式变量 `OPENCHAMBER_TLDRAW_ACCEPTANCE_OPENCODE_CLI_PATH` 优先；
+2. 缺省用 staged CLI `packages/electron/resources/opencode-cli/opencode`；
+3. `realpath` 规范化后必须是可执行文件，否则立即失败并给出可操作提示；
+4. **绝不回退** PATH、`~/.opencode` 或另一个已安装 CLI（fail-closed）；
+5. 选择结果以 `OPENCODE_BINARY=<canonical path>` 显式传入 demo 子进程；
+6. `/health` 就绪时校验 `opencodeBinaryResolved` 等于所选 canonical 路径，不匹配
+   立即 fatal，而不是轮询到超时；
+7. orchestration 报告与日志记录 source / requested / resolved / `--version` 身份证据。
+
+demo 子进程同时注入隔离的 `OPENCODE_CONFIG_CONTENT`：内容固定为**恰好一个**
+remote MCP server `interop-tldraw-2026`（`type: remote`、`oauth: false`、
+`timeout: 30000`、`enabled: true`），URL 指向本次启动的 tldraw MCP。它通过
+OpenCode fork 的 `OPENCODE_CONFIG_CONTENT` 加载器注入，不读取用户/项目配置；
+门禁也不再依赖 demo 消费 `OPENCHAMBER_TLDRAW_MCP_URL`（该变量在当前 base 的
+demo 中无人消费，已从环境交接中移除）。orchestration 报告记录非敏感 MCP 配置
+provenance（server 名与 canonical URL，不含 auth）；协商出现明确的永久错误
+（`failed` / `needs_client_registration` / `needs_auth`）时立即 fatal 并给出有界
+错误消息，而不是空等 120 秒超时。
+
+```bash
+OPENCHAMBER_TLDRAW_ACCEPTANCE_REPO_DIR=/path/to/tldraw-mcp-app \
+OPENCHAMBER_TLDRAW_ACCEPTANCE_OPENCODE_CLI_PATH=/path/to/staged/opencode \
+bun run test:tldraw-mcp-app-browser:self-contained
+```
+
+聚焦单元测试覆盖显式选择、staged 缺省、缺失/不可执行文件与 mismatch 判定
+（`scripts/lib/tldraw-mcp-app-browser-orchestration.test.mjs`），并在完整浏览器门禁
+之前运行。
+
+### 8.4 `OPENCHAMBER_OPENCODE_CLI_PATH` 必须覆盖整条打包命令
+
+打包把 `build:web-assets → prepare:opencode-cli → bundle:main → rebuild:native →
+package.mjs` 串成一条命令；override 变量只对 `prepare:opencode-cli` 步骤生效，而且
+每个步骤都是独立 bun 进程。只对单条子命令设置变量、或中途换终端，都会让其它步骤
+按 lock 下载旧制品（当前 lock 的 `forkCommit` 仍是 `bf12c7a7…`，落后于本轮
+`67c45489…`），混出 provenance 不一致的包。
+
+正确做法是整条命令统一导出，并在打包前核对 staged `distribution.json` 显示
+`localOverride: true`，且 `version`、`sha256` 与本地二进制一致。注意：本地覆盖的
+`forkCommit` 在 prepare 脚本中默认写为 `"local-uncommitted"`（除非显式设置
+`OPENCODE_FORK_COMMIT`），所以**不要**期望它等于源码 commit；精确源码 commit 必须
+独立记录——从 OpenCode 源码 worktree（如 `git rev-parse HEAD`）或该次构建的
+provenance 取，并作为与 CLI 版本并列的独立证据保存。
+
+```bash
+OPENCHAMBER_OPENCODE_CLI_PATH=/path/to/local/opencode bun run --cwd packages/electron package
+cat packages/electron/resources/opencode-cli/distribution.json
+bun run --cwd packages/electron verify:opencode-cli:packaged
+```
+
+### 8.5 worktree 隔离的构建与测试
+
+在 git worktree 中构建/测试不会污染主 checkout；但 worktree 有自己的
+`packages/electron/resources/opencode-cli`（通常只有 `.gitkeep`）、自己的 dist 与
+`.tmp`。因此 worktree 必须先 `prepare:opencode-cli` 自己的 staged CLI（或用 env var
+显式指向），不能假设 staged CLI 已存在；自包含门禁缺省路径不存在时会立即失败并
+给出可操作提示。同一台机器上残留的旧进程仍可能持有端口或旧版本：orchestration 报告
+的 `processes` 块会按 role 记录本次运行实际 spawn 的每个子进程的 PID 与 spawnedAt
+（tldraw MCP、OpenChamber demo、browser verifier；未 spawn 时为 null），orchestrator
+同时终止自己的进程组并确认端口释放；诊断结论只对本次启动的 PID 有效，不能把端口
+探测或旧进程当成新进程证据。
+
+### 8.6 四个独立门禁，不能互相冒充
+
+| 门禁 | 入口 | 证明 | 不能证明 |
+|---|---|---|---|
+| 协议/单元 | `node --test scripts/lib/*.test.mjs`、tldraw `verify-dist.mjs`、协议探针 | 契约、visibility、聚焦行为 | 真实浏览器可见性 |
+| 独立浏览器 | `bun run test:tldraw-mcp-app-browser:self-contained`（固定 `OPENCODE_BINARY`，注入隔离的 `OPENCODE_CONFIG_CONTENT`） | 真实 Server + managed OpenCode + 浏览器 + 精确 CLI + 单 remote MCP 配置 | 打包桌面环境 |
+| 打包 Electron | `packages/electron/scripts/verify-packaged-interactive-ui.mjs`（断言 `opencodeBinarySource === 'bundled'`、`opencodeBinaryResolved` 等于包内路径） | 打包边界与 bundled CLI | 真实 Computer Use 交互 |
+| 真实 Computer Use | 打包应用上的人工/自动化 UI 验收 | 端到端 UI 行为 | 由前三者取代 |
+
+> 当前状态（2026-08-05）：最终 Electron UI 验收仍未完成（pending）；本文不得声称
+> 它已通过。
+
 ## 9. Host → source-authenticated Loader → final `srcdoc` App
 
 tldraw v5.0.2 的 SVG/PNG 导出不是单纯序列化当前 DOM。`getSvgString`
