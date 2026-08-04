@@ -663,10 +663,16 @@ sanitize / migrate / 合并字段（`packages/web/server/lib/opencode/settings-r
 聚焦测试（`scripts/lib/tldraw-mcp-app-browser-orchestration.test.mjs`）先写红：首个红
 测试因为 helper 尚未导出而失败（missing export）；随后把校验从“旧实现会接受错误的
 lastDirectory / 额外 project”收紧到 fail-closed 后测试转绿。当前
-`node --test scripts/lib/*.test.mjs` 69/69 通过（acceptance 49 + orchestration 20）。修复后的最终真实浏览器 E2E 通过全部
-11 个检查点（含 Pin/App Board fullscreen），47 次 AppBridge 交换，零
-runtime/console/page 错误、零 isError/fallback。证据目录示例（本地示例，不在仓库）：
-`.tmp/tldraw-mcp-app-browser-orchestrated/2026-08-04T18-19-09-153Z/`。
+`node --test scripts/lib/*.test.mjs` 69/69 通过（acceptance 49 + orchestration 20）。
+
+本节附带的浏览器 E2E 是**项目注册 / 环境身份修复**的修复后证据，不是最终整体验收：
+2026-08-04T18-19-09-153Z 那次 run 通过全部 11 个检查点（含 Pin/App Board
+fullscreen），47 次 AppBridge 交换，零 runtime/console/page 错误、零
+isError/fallback（证据目录示例，本地、不在仓库）：
+`.tmp/tldraw-mcp-app-browser-orchestrated/2026-08-04T18-19-09-153Z/`。其后的宿主顶层
+遮挡 fail-closed 硬化见 8.8：**最终**的真实浏览器 E2E 是 8.8 末尾
+2026-08-04T19-23-36-871Z/browser/report.json 证据（11/11 检查点 status 全为 pass）。
+两次 run 是同一门禁的不同修复阶段，不可互相顶替，18-19-09 run 不得再当作最终验收。
 
 这只是验收 harness 的环境身份修复，不是 Pin API、tldraw App 或宿主渲染的改动，也不
 能当作打包 Electron / Computer Use 验收：浏览器 E2E 证明的是真实 Server + managed
@@ -685,8 +691,15 @@ OpenCode + 浏览器 + 精确 CLI + 单 remote MCP 配置下的宿主行为（�
 根因是验收只看了 iframe 内容（child target）的可交互性，从不检查宿主根 document 的
 顶层可见性。顶层 dialog 对真实用户指针是命中屏障，但 verifier 在 child context 里
 程序化派发的事件绕过了宿主根 document 的 hit-testing，所以“能点、能断言、能交互”
-既不能证明“用户能看到”，也不能证明截图时刻没有遮挡。修复（commit `451700f9`）只改
-验收 harness，不碰产品代码，门槛如下：
+既不能证明“用户能看到”，也不能证明截图时刻没有遮挡。修复只改验收 harness，不碰产品
+代码，分两个 commit：commit `451700f9` 引入/强化了真实 onboarding 检测（根 document
+可见顶层 `role=dialog` 序列化 + 受支持文案身份匹配）、真实 close 按钮点击（点击匹配
+dialog 的真实渲染 `button[data-slot="dialog-close"]` 并断言成功）与根 dialog 的截图前
+可见性门槛（`preScreenshotAbsent`）；commit `42571b47` 随后 fail-closed 硬化：关闭后
+匹配弹窗消失 **且** 可见 `[data-slot="dialog-overlay"]` 计数归零、截图前任何无关可见
+顶层 dialog 都是硬失败、backdropCount 必须是非负安全整数（malformed 计数 fail-closed
+而不强转 0），并输出显式 occlusion verdict（`occlusionVerdict` pass/reasons +
+`serializedPreScreenshotDialogs`）作为证据。两 commit 合并后的完整门槛如下：
 
 1. 只检查根 document 的可见顶层 `role=dialog`（排除嵌套 dialog；App iframe 内部的
    dialog 属于 child target，永远不参与）；

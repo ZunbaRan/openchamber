@@ -740,10 +740,16 @@ bug，而是验收 harness 的环境身份 bug：
 
 聚焦测试覆盖 helper 归一化（尾斜杠、Windows 分隔符、空值）与
 `configureAcceptanceProject` 的成功证据、非 2xx、malformed、mismatched 等失败路径；
-当前 `node --test scripts/lib/*.test.mjs` 69/69 通过（acceptance 49 + orchestration 20）。修复后的最终真实浏览器 E2E 通过
-全部 11 个检查点（含 Pin/App Board fullscreen），47 次 AppBridge 交换、零
-runtime/console/page 错误、零 isError/fallback（本地示例证据目录：
+当前 `node --test scripts/lib/*.test.mjs` 69/69 通过（acceptance 49 + orchestration 20）。
+
+本节附带的浏览器 E2E 是**项目注册 / 环境身份修复**的修复后证据，不是最终整体验收：
+2026-08-04T18-19-09-153Z 那次 run 通过全部 11 个检查点（含 Pin/App Board
+fullscreen）、47 次 AppBridge 交换、零 runtime/console/page 错误、零
+isError/fallback（本地示例证据目录：
 `.tmp/tldraw-mcp-app-browser-orchestrated/2026-08-04T18-19-09-153Z/`，不在仓库内）。
+其后的宿主顶层遮挡 fail-closed 硬化见 8.8：**最终**的真实浏览器 E2E 以 8.8 末尾的
+2026-08-04T19-23-36-871Z/browser/report.json（11/11 检查点 status 全为 pass）为准。
+两次 run 是同一门禁的不同修复阶段，不可互相顶替，18-19-09 run 不得再当作最终验收。
 
 注意：这只是验收 harness 的环境身份修复。浏览器 E2E 不能当作打包 Electron /
 Computer Use 验收；打包桌面环境与真实 Computer Use 验收仍为 pending（见上表）。
@@ -755,8 +761,16 @@ Computer Use 验收；打包桌面环境与真实 Computer Use 验收仍为 pend
 conversation——它在宿主合成画面里确实遮住 inline MCP App；但旧 verifier 通过
 CDP/evaluate 直接进入 child iframe context 操作 DOM，绕过了宿主根 document 的
 指针命中与视觉可见性，于是交互检查全部通过，用户可见 UI 却被 dialog 盖住
-（“交互检查通过但用户可见 UI 被遮挡”）。修复（commit `451700f9`）只改验收 harness，
-不碰产品代码，把截图从装饰变成门槛：
+（“交互检查通过但用户可见 UI 被遮挡”）。修复只改验收 harness，不碰产品代码，分两个
+commit：commit `451700f9` 引入/强化了真实 onboarding 检测（根 document 可见顶层
+`role=dialog` 序列化 + 受支持文案身份匹配）、真实 close 按钮点击（点击匹配 dialog 的
+真实渲染 `button[data-slot="dialog-close"]` 并断言成功）与根 dialog 的截图前可见性
+门槛（`preScreenshotAbsent`）；commit `42571b47` 随后 fail-closed 硬化：关闭后匹配弹窗
+消失 **且** 可见 `[data-slot="dialog-overlay"]` 计数归零、截图前任何无关可见顶层
+dialog 都是硬失败、backdropCount 必须是非负安全整数（malformed 计数 fail-closed 而
+不强转 0），并输出显式 occlusion verdict（`occlusionVerdict` pass/reasons +
+`serializedPreScreenshotDialogs`）作为证据。两 commit 合并后的完整门槛把截图从装饰变成
+门槛：
 
 1. **宿主根文档可见性**：只序列化根 document 的可见顶层 `role=dialog`（排除嵌套
    dialog；App iframe 内部的 dialog 属于 child target，从不参与）。可见性用
