@@ -577,6 +577,79 @@ bun run --cwd packages/electron verify:opencode-cli:packaged
 > 当前状态（2026-08-05）：最终 Electron UI 验收仍未完成（pending）；本文不得声称
 > 它已通过。
 
+### 8.7 自包含验收必须注册隔离项目身份（Pin/App Board 环境身份）
+
+真实浏览器 E2E 曾通过 tldraw inline / 历史 / 中英文 locale 检查点，却在点击 Pin 后等待
+新 App Board tile 超时。浏览器 instrumentation 观测到点击后对
+`/api/interactive-ui/workbench/*` 的请求为零。这不是 Pin API、tldraw App 或宿主渲染
+bug，而是验收 harness 的环境身份 bug（仓库事实）：
+
+- 隔离 acceptance launcher 启动 demo 时把 `settings.json` 覆盖为只含
+  `sessionRecapEnabled` / `sessionSuggestionEnabled` 两个 flag（
+  `scripts/interactive-ui-demo.mjs`），没有注册任何 project；
+- 权威 message directory 是干净集成 worktree（`projectRoot`），不属于 demo 里唯一
+  的合成 'home' 项目；
+- `WorkbenchPinButton.handlePin`（`packages/ui/src/components/interactive-ui/workbench/WorkbenchPinButton.tsx`）
+  的 guard 是 `!projectId || pending || disabled`；pending 只在 guard 之后才 set，
+  verifier 也只对 enabled 的 Pin action 执行 `button.click()`，两个分支都被排除，
+  因此唯一与“点击后零网络请求”一致的路径是 `projectId === null`；
+- `resolveWorkbenchPinProject` 对与所有已注册 project 都无关的权威 message directory
+  有意返回 null（绝不静默 pin 进无关的 active project），于是 `handlePin` 在发起任何
+  网络请求之前 return，只弹 `workbench.pin.noProject` toast。
+
+修复（commit `5b87cb69`）没有放宽 `resolveWorkbenchPinProject`，而是让验收注册真实
+项目（仓库事实）：
+
+1. `scripts/lib/tldraw-mcp-app-browser-orchestration.mjs` 新增共享身份 helper
+   `deriveWorkbenchProjectId`：与服务端 `createProjectIdFromPath`
+   （`packages/web/server/lib/projects/project-id.js`）和 UI `createProjectIdFromPath`
+   （`packages/ui/src/lib/projectId.ts`）相同的 `path_<base64url(abs path)>` 归一化。
+   Workbench board 以该 id 为键：宿主 Pin 动作持久化进 `projectId`，verifier 轮询
+   `GET /api/interactive-ui/workbench/boards/:projectId`，两边必须共用同一个 helper，
+   不能各自内联编码；
+2. `configureAcceptanceProject` 在 `/health` 就绪后、MCP 协商和浏览器 verifier 之前
+   PUT `/api/config/settings`，注册**恰好一个** project：`id` / `path` /
+   `activeProjectId` / `lastDirectory` 全部指向验收 worktree；
+3. 响应 fail-closed：非 2xx、非 JSON、malformed payload、project 数量不是 1、entry
+   `id`/`path` 不匹配、`activeProjectId`/`lastDirectory` 不匹配，任一情况抛错终止，
+   绝不把不完整回显当成功；
+4. browser verifier（`scripts/verify-tldraw-mcp-app-browser.mjs`）改用同一个
+   `deriveWorkbenchProjectId` 计算轮询的 board id；orchestration report 记录
+   `acceptanceProject` 证据。
+
+**验收启动顺序（可复用检查清单，推荐）**：
+
+```text
+1. spawn 隔离 runtime（临时 HOME/XDG）与精确 CLI（OPENCODE_BINARY，见 8.3）；
+2. /health 就绪，并核对 opencodeBinaryResolved 等于所选 canonical 路径；
+3. PUT /api/config/settings 注册验收项目，round-trip 校验回显身份；
+4. MCP 协商：/api/mcp → connected + protocolVersion 2026-07-28 + apps.negotiated；
+5. 浏览器 verifier 检查点（inline → fullscreen → history → locale → Pin/App Board）。
+```
+
+为什么顺序不能换（仓库事实 + 推荐）：项目注册必须在 `/health` **之后**，因为 settings
+端点由 OpenChamber server 提供，health 是“server 与托管 CLI 已起来”的最早可靠信号，
+在此之前 PUT 只会失败或写入半初始化状态。项目注册必须在 MCP 协商**之前**，因为 Pin 是
+纯宿主侧行为、不依赖 MCP 连接；若放在协商之后，Pin 失败会被误归因于 MCP 状态，回归
+定位退回到“服务健康但 UI 无反应”的歧义。settings 变更必须 **round-trip 校验**：2xx 只
+证明请求被接受，不证明 server 持久化的正是所注册身份——server 侧 settings runtime 会
+sanitize / migrate / 合并字段（`packages/web/server/lib/opencode/settings-runtime.js`），
+必须回读响应并断言恰好一个 project、四字段全部一致，任一不匹配立即 fatal，而不是轮询
+到超时。
+
+聚焦测试（`scripts/lib/tldraw-mcp-app-browser-orchestration.test.mjs`）先写红：首个红
+测试因为 helper 尚未导出而失败（missing export）；随后把校验从“旧实现会接受错误的
+lastDirectory / 额外 project”收紧到 fail-closed 后测试转绿。当前
+`node --test scripts/lib/*.test.mjs` 60/60 通过。修复后的最终真实浏览器 E2E 通过全部
+11 个检查点（含 Pin/App Board fullscreen），47 次 AppBridge 交换，零
+runtime/console/page 错误、零 isError/fallback。证据目录示例（本地示例，不在仓库）：
+`.tmp/tldraw-mcp-app-browser-orchestrated/2026-08-04T18-19-09-153Z/`。
+
+这只是验收 harness 的环境身份修复，不是 Pin API、tldraw App 或宿主渲染的改动，也不
+能当作打包 Electron / Computer Use 验收：浏览器 E2E 证明的是真实 Server + managed
+OpenCode + 浏览器 + 精确 CLI + 单 remote MCP 配置下的宿主行为（见 8.6 四个门禁），
+打包桌面环境与真实 Computer Use 验收仍然 pending。
+
 ## 9. Host → source-authenticated Loader → final `srcdoc` App
 
 tldraw v5.0.2 的 SVG/PNG 导出不是单纯序列化当前 DOM。`getSvgString`
@@ -733,7 +806,10 @@ Chromium 可能把 Broker 文档的 policy container 继承到最终 `srcdoc` Ap
 12. result/model-context 更新不 remount iframe，resource/CSP 变化只受控重载一次；
 13. focused/fullscreen 所有退出路径都恢复 inline；
 14. Host download 能等待人工确认、接受后产生真实文件、取消/中止可观察；
-15. 客户端重启后恢复同一 entity/canvas、revision、snapshot ref 和 MCP binding。
+15. 客户端重启后恢复同一 entity/canvas、revision、snapshot ref 和 MCP binding；
+16. 自包含验收在 `/health` 后、MCP 协商前把验收目录注册为唯一 project（PUT
+    `/api/config/settings` 并 round-trip 校验回显，见 8.7），Pin/App Board 才能持久化
+    到以 `path_<base64url(abs path)>` 为键的 board。
 
 若只通过协议 fixture、源码断言、静态截图或 fallback，上述链路仍是未完成。当前
 自动化覆盖协议、visibility、source-authenticated Loader 到最终 `srcdoc` 的大型页面

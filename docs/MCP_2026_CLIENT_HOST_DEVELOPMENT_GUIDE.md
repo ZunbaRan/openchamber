@@ -694,6 +694,57 @@ bun run test:tldraw-mcp-app-browser:self-contained
 
 > **当前状态（2026-08-05）**：最终 Electron UI 验收仍为 pending；不得声称已通过。
 
+### 8.7 自包含验收必须注册隔离项目身份（📦 仓库事实）
+
+浏览器门禁曾出现这样的假红：tldraw inline / 历史 / locale 检查点全部通过，点击 Pin 后
+却等待新 App Board tile 超时，浏览器 instrumentation 观测到点击后对
+`/api/interactive-ui/workbench/*` 的请求为零。这不是 Pin API、tldraw App 或宿主渲染
+bug，而是验收 harness 的环境身份 bug：
+
+- 隔离 demo 启动时把 `settings.json` 覆盖为只含 `sessionRecapEnabled` /
+  `sessionSuggestionEnabled`（`scripts/interactive-ui-demo.mjs`），没有注册 project；
+- 权威 message directory 是干净集成 worktree，不属于 demo 里仅有的合成 'home' 项目；
+  模块级函数 `resolveWorkbenchPinProject`（
+  `packages/ui/src/components/interactive-ui/workbench/WorkbenchPinButton.tsx`，由
+  `WorkbenchPinButton` 组件在渲染时调用）对与所有已注册 project 都无关的目录有意返回
+  null，组件内的 `handlePin` 因此在 `projectId === null` 时于任何网络请求之前 return
+  （pending 在 guard 之后才 set，按钮本身 enabled，两者均已排除）。
+
+修复（commit `5b87cb69`）不改产品代码，而是让验收注册真实项目：
+
+1. `deriveWorkbenchProjectId`（`scripts/lib/tldraw-mcp-app-browser-orchestration.mjs`）
+   与 server `createProjectIdFromPath`（`packages/web/server/lib/projects/project-id.js`）
+   和 UI `createProjectIdFromPath`（`packages/ui/src/lib/projectId.ts`）共用
+   `path_<base64url(abs path)>` 归一化；verifier 也导入同一 helper，保证轮询的 board
+   就是 Pin 持久化的 board；
+2. `configureAcceptanceProject` 在 `/health` 就绪后、MCP 协商与浏览器 verifier 之前
+   PUT `/api/config/settings`，注册恰好一个 project（`id` / `path` /
+   `activeProjectId` / `lastDirectory` 全部等于验收 worktree）；
+3. 对响应 fail-closed：非 2xx / 非 JSON / malformed / 额外或错配 project /
+   `activeProjectId` 或 `lastDirectory` 不匹配 → 抛错终止，绝不把不完整回显当成功；
+4. orchestration report 记录 `acceptanceProject` 证据。
+
+**为什么顺序不能换**（📦 仓库事实 + 💡 建议）：
+
+- 必须在 `/health` 之后：settings 端点由 OpenChamber server 提供，health 是 server 与
+  托管 CLI 已就绪的最早可靠信号；
+- 必须在 MCP 协商之前：Pin 是纯宿主侧行为，若等协商完成再注册，Pin 失败会被误归因于
+  MCP 状态，回归再次落入“服务健康但 UI 无反应”的歧义；
+- settings 变更必须 round-trip 校验：2xx 只证明请求被接受；server 侧 settings runtime
+  会 sanitize / migrate / 合并字段
+  （`packages/web/server/lib/opencode/settings-runtime.js`），必须回读响应并断言恰好
+  一个 project 且四字段全部一致，任一不匹配立即 fatal。
+
+聚焦测试覆盖 helper 归一化（尾斜杠、Windows 分隔符、空值）与
+`configureAcceptanceProject` 的成功证据、非 2xx、malformed、mismatched 等失败路径；
+当前 `node --test scripts/lib/*.test.mjs` 60/60 通过。修复后的最终真实浏览器 E2E 通过
+全部 11 个检查点（含 Pin/App Board fullscreen），47 次 AppBridge 交换、零
+runtime/console/page 错误、零 isError/fallback（本地示例证据目录：
+`.tmp/tldraw-mcp-app-browser-orchestrated/2026-08-04T18-19-09-153Z/`，不在仓库内）。
+
+注意：这只是验收 harness 的环境身份修复。浏览器 E2E 不能当作打包 Electron /
+Computer Use 验收；打包桌面环境与真实 Computer Use 验收仍为 pending（见上表）。
+
 ---
 
 ## 9. 测试金字塔
@@ -772,6 +823,7 @@ describe('MCP App sandbox bootstrap', () => {
 - [ ] `bun run verify:opencode-cli` 通过
 - [ ] `bun run verify:opencode-cli:packaged` 通过
 - [ ] 自包含浏览器门禁固定 `OPENCODE_BINARY`，并在 `/health.opencodeBinaryResolved` 不匹配时 fail-closed（`scripts/lib/tldraw-mcp-app-browser-orchestration.test.mjs` 在完整门禁前运行）
+- [ ] 自包含浏览器门禁在 `/health` 后、MCP 协商前 PUT `/api/config/settings` 注册唯一验收项目，并对回显 fail-closed 校验（`deriveWorkbenchProjectId` / `configureAcceptanceProject`，聚焦测试 60/60）
 - [ ] 最终打包 Electron UI 验收（真实 Computer Use）完成（当前为 pending）
 - [ ] 无 `OPENCHAMBER_OPENCODE_CLI_PATH` 时，托管 lock 的 `forkCommit`、CLI/SDK 发布版本与 `/global/capabilities` 指向同一已发布提交（当前 `bf12…` vs `67c…` 尚未满足，故当前包不可作为正式发布候选）
 
