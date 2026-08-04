@@ -10,6 +10,7 @@ import { fileURLToPath } from 'node:url';
 import {
   PATTERNED_PNG_FEATURE_COLORS,
   assessFailureEvidence,
+  assessProjectDirectoryOnboarding,
   assessTldrawEditorReadiness,
   assessTldrawSurfaceContract,
   buildSemanticCreatePrompt,
@@ -1379,6 +1380,133 @@ const clickAppButton = async ({ text, title, mode, requireEditorReady = mode ===
 const clickTop = async (expression, label) => {
   const clicked = await browser.evaluate(`(() => { ${expression} })()`);
   assert.equal(clicked, true, `Could not click ${label}`);
+};
+
+// Acceptance harness hardening: the host may open a top-level
+// DirectoryExplorerDialog ("Add project directory") over the conversation. The
+// verifier must never accept or capture the inline surface under that dialog,
+// and it must never press Escape or touch internal React state. These helpers
+// serialize only top-level visible role=dialog elements of the root document
+// (never dialogs inside the MCP App iframe, which live in child targets), then
+// dismiss exactly the supported project-directory onboarding through its real
+// rendered [data-slot="dialog-close"] button.
+const inspectHostOnboardingDialogs = async () => browser.evaluate(`(() => {
+  const rectOf = (rect) => ({ x: rect.x, y: rect.y, width: rect.width, height: rect.height });
+  // Fixed-position elements report offsetParent === null, so visibility uses
+  // painted geometry + computed style instead of offsetParent. getBoundingClientRect
+  // already collapses display:none subtrees to a zero rect.
+  const painted = (element) => {
+    if (!(element instanceof HTMLElement)) return false;
+    const rect = element.getBoundingClientRect();
+    const style = getComputedStyle(element);
+    return element.isConnected
+      && rect.width > 1
+      && rect.height > 1
+      && style.display !== 'none'
+      && style.visibility !== 'hidden'
+      && style.opacity !== '0';
+  };
+  const dialogs = Array.from(document.querySelectorAll('[role="dialog"]'))
+    .filter((dialog) => (
+      dialog instanceof HTMLElement
+      && painted(dialog)
+      && !(dialog.parentElement instanceof HTMLElement && dialog.parentElement.closest('[role="dialog"]'))
+    ))
+    .map((dialog) => {
+      const close = dialog.querySelector('button[data-slot="dialog-close"]');
+      const closeRect = close instanceof HTMLElement ? close.getBoundingClientRect() : null;
+      return {
+        text: (dialog.textContent || '').replace(/\\s+/g, ' ').trim().slice(0, 400),
+        visible: true,
+        rect: rectOf(dialog.getBoundingClientRect()),
+        close: close instanceof HTMLElement ? {
+          connected: close.isConnected,
+          visible: painted(close),
+          disabled: close.disabled,
+          rect: rectOf(closeRect),
+        } : null,
+      };
+    });
+  return {
+    dialogs,
+    backdropCount: Array.from(document.querySelectorAll('[data-slot="dialog-overlay"]')).filter((element) => painted(element)).length,
+  };
+})()`);
+
+// Dismiss a supported project-directory onboarding dialog once, through its
+// real rendered close action, and wait until the matching dialog/backdrop is
+// gone. Fails closed when the dialog lacks a usable close action, the click
+// fails, or the dialog stays visible. Returns auditable bounded evidence;
+// unrelated top-level dialogs are never touched.
+const dismissHostProjectDirectoryOnboarding = async () => {
+  const observed = await inspectHostOnboardingDialogs();
+  const entries = observed.dialogs.map((dialog) => ({ dialog, assessment: assessProjectDirectoryOnboarding(dialog) }));
+  // "Matching" means the dialog is the supported project-directory onboarding
+  // by identity; usability of its close action is then mandatory.
+  const matching = entries.find((entry) => isProjectDirectoryOnboardingText(entry.dialog.text)) ?? null;
+  const evidence = {
+    status: matching ? 'dismissed' : 'absent',
+    dialogCount: observed.dialogs.length,
+    backdropCount: observed.backdropCount,
+    dialogs: observed.dialogs.map((dialog) => ({
+      text: dialog.text,
+      rect: dialog.rect,
+      close: dialog.close,
+    })).slice(0, 16),
+  };
+  if (!matching) return evidence;
+
+  assert.equal(
+    matching.assessment.pass,
+    true,
+    `Project-directory onboarding dialog has no usable rendered close action: ${matching.assessment.reasons.join('; ')}`,
+  );
+  // The pure assessment already proved the serialized close action is usable;
+  // click the exact rendered button of the matched dialog (never an unrelated
+  // dialog) and require the click to report success.
+  const clicked = await browser.evaluate(`(() => {
+    const normalize = (value) => String(value || '').replace(/\\s+/g, ' ').trim();
+    const expected = ${JSON.stringify(matching.dialog.text)};
+    // Same painted visibility as the inspection path: connected + positive
+    // bounding rect + computed display/visibility/opacity. Fixed-position
+    // elements can report offsetParent === null, so it is never consulted;
+    // the matched dialog itself must be painted before its close counts.
+    const painted = (element) => {
+      if (!(element instanceof HTMLElement)) return false;
+      const rect = element.getBoundingClientRect();
+      const style = getComputedStyle(element);
+      return element.isConnected
+        && rect.width > 1
+        && rect.height > 1
+        && style.display !== 'none'
+        && style.visibility !== 'hidden'
+        && style.opacity !== '0';
+    };
+    const dialogs = Array.from(document.querySelectorAll('[role="dialog"]'));
+    for (const dialog of dialogs) {
+      if (normalize(dialog.textContent).slice(0, 400) !== expected) continue;
+      if (!painted(dialog)) return false;
+      const close = dialog.querySelector('button[data-slot="dialog-close"]');
+      if (!(close instanceof HTMLButtonElement) || !painted(close) || close.disabled) return false;
+      close.click();
+      return true;
+    }
+    return false;
+  })()`);
+  assert.equal(clicked, true, 'Clicking the project-directory onboarding close action failed');
+
+  // Wait until no visible matching dialog exists. Identity is decisive: a
+  // matching onboarding that stays visible without a usable close action is
+  // still present and must keep failing closed.
+  const remaining = await waitFor(async () => {
+    const current = await inspectHostOnboardingDialogs();
+    return !current.dialogs.some((dialog) => isProjectDirectoryOnboardingText(dialog.text))
+      ? current
+      : null;
+  }, 'project-directory onboarding dialog to close', 15_000, 150);
+  evidence.remainingDialogs = remaining.dialogs.length;
+  evidence.remainingBackdropCount = remaining.backdropCount;
+  return evidence;
 };
 
 const selectSession = async ({ navigate = true, requireDirectRoute = false } = {}) => {
@@ -2852,6 +2980,10 @@ try {
 
   await checkpoint('Inline preview in conversation', async () => {
     const navigation = await selectSession({ navigate: true, requireDirectRoute: true });
+    // A top-level "Add project directory" onboarding dialog would visually
+    // occlude the inline MCP App while the verifier clicks inside the child
+    // context. Dismiss exactly that dialog before accepting the inline surface.
+    const onboarding = await dismissHostProjectDirectoryOnboarding();
     const lastCandidateRef = { value: null };
     const lastContextsRef = { value: [] };
     const liveContextsRef = { value: new Map() };
@@ -2942,9 +3074,22 @@ try {
       toolResultElementCount: modelCreation.toolResultElementCount,
       authoritativeStateElementCount: semanticState.authoritativeStateElementCount,
     });
+    // The first inline screenshot must never be captured under the supported
+    // project-directory onboarding; assert it is absent immediately before
+    // capture and fail closed with the serialized dialogs otherwise.
+    const preScreenshotDialogs = await inspectHostOnboardingDialogs();
+    // Identity is decisive: a still-visible matching onboarding (with or
+    // without a usable close action) is still present and must fail closed.
+    const preScreenshotAbsent = !preScreenshotDialogs.dialogs.some((dialog) => isProjectDirectoryOnboardingText(dialog.text));
+    assert.equal(
+      preScreenshotAbsent,
+      true,
+      `Supported project-directory onboarding is still visible before the inline screenshot: ${JSON.stringify(preScreenshotDialogs)}`,
+    );
     const inlineScreenshot = await captureVisibleContentScreenshot('inline-preview');
     return {
       navigation,
+      projectDirectoryOnboarding: { ...onboarding, preScreenshotAbsent },
       revision: app.revision,
       surfaceContract: app.surfaceContract,
       authorityState: app.authorityState,

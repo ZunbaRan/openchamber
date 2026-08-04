@@ -7,6 +7,7 @@ import {
   TLDRAW_APP_ONLY_TOOLS,
   TLDRAW_MODEL_TOOLS,
   PATTERNED_PNG_FEATURE_COLORS,
+  assessProjectDirectoryOnboarding,
   assessTldrawEditorReadiness,
   assessTldrawSurfaceContract,
   assessFailureEvidence,
@@ -28,6 +29,7 @@ import {
 } from './tldraw-mcp-app-browser-acceptance.mjs';
 
 const verifierSource = await readFile(new URL('../verify-tldraw-mcp-app-browser.mjs', import.meta.url), 'utf8');
+const sourceOfModule = await readFile(new URL('./tldraw-mcp-app-browser-acceptance.mjs', import.meta.url), 'utf8');
 
 const appContext = (overrides = {}) => ({
   sessionId: 'active-session',
@@ -85,6 +87,45 @@ test('project-directory onboarding detection covers supported host locales witho
   assert.equal(isProjectDirectoryOnboardingText('添加项目目录'), true);
   assert.equal(isProjectDirectoryOnboardingText('新增專案目錄'), true);
   assert.equal(isProjectDirectoryOnboardingText('Projects\nopenchamber'), false);
+});
+
+test('project-directory onboarding is only accepted when the visible dialog has a usable rendered close action', () => {
+  const base = {
+    text: 'Add project directory\nChoose a folder to add as a project.',
+    visible: true,
+    rect: { x: 200, y: 150, width: 560, height: 420 },
+    close: { connected: true, visible: true, disabled: false, rect: { x: 720, y: 162, width: 28, height: 28 } },
+  };
+  assert.deepEqual(assessProjectDirectoryOnboarding(base), { pass: true, reasons: [] });
+
+  // Ordinary project text is not the onboarding, even with a usable close.
+  assert.deepEqual(assessProjectDirectoryOnboarding({ ...base, text: 'Projects\nopenchamber' }), {
+    pass: false,
+    reasons: ['not-project-directory-onboarding'],
+  });
+
+  // The dialog itself must be visible with a positive hit area.
+  assert.equal(assessProjectDirectoryOnboarding({ ...base, visible: false }).pass, false);
+  assert.equal(assessProjectDirectoryOnboarding({ ...base, rect: { x: 0, y: 0, width: 0, height: 0 } }).pass, false);
+  assert.equal(assessProjectDirectoryOnboarding(null).pass, false);
+  assert.equal(assessProjectDirectoryOnboarding({ text: 'Add project directory' }).pass, false);
+
+  // Missing, detached, hidden, disabled, or zero-rect close actions are fatal.
+  assert.equal(assessProjectDirectoryOnboarding({ ...base, close: null }).pass, false);
+  assert.equal(assessProjectDirectoryOnboarding({ ...base, close: { ...base.close, connected: false } }).pass, false);
+  assert.equal(assessProjectDirectoryOnboarding({ ...base, close: { ...base.close, visible: false } }).pass, false);
+  assert.equal(assessProjectDirectoryOnboarding({ ...base, close: { ...base.close, disabled: true } }).pass, false);
+  assert.equal(assessProjectDirectoryOnboarding({ ...base, close: { ...base.close, rect: { x: 0, y: 0, width: 0, height: 0 } } }).pass, false);
+});
+
+test('project-directory onboarding assessment never duplicates the locale regex', () => {
+  const helperSource = sourceOfModule;
+  const onboarding = helperSource.slice(
+    helperSource.indexOf('export const assessProjectDirectoryOnboarding'),
+    helperSource.indexOf('export const assessTldrawEditorReadiness'),
+  );
+  assert.match(onboarding, /isProjectDirectoryOnboardingText\(/);
+  assert.doesNotMatch(onboarding, /Add project directory|添加项目目录|新增專案目錄/);
 });
 
 test('editor readiness requires a real canvas and an enabled visible Note hit area', () => {
@@ -330,6 +371,80 @@ test('initial Inline acceptance requires the canonical direct route', () => {
   assert.doesNotMatch(inlineCheckpoint, /Open session switcher/);
   assert.doesNotMatch(inlineCheckpoint, /acceptance session/);
   assert.match(verifierSource, /'MCP App iframe after canonical session route',\s*60_000/);
+});
+
+test('inline acceptance dismisses supported project-directory onboarding before the first screenshot', () => {
+  const inlineCheckpoint = verifierSource.slice(
+    verifierSource.indexOf("await checkpoint('Inline preview in conversation'") ,
+    verifierSource.indexOf("await checkpoint('Fullscreen Edit, app-only add, move, rename, connect, Save'") ,
+  );
+  // Route selection first, then the top-level onboarding dismissal, then the
+  // inline surface acceptance loop.
+  const navigationIndex = inlineCheckpoint.indexOf('const navigation = await selectSession');
+  const onboardingIndex = inlineCheckpoint.indexOf('await dismissHostProjectDirectoryOnboarding()');
+  const acceptanceIndex = inlineCheckpoint.indexOf('const app = assertInteractiveAppState(');
+  assert.ok(navigationIndex >= 0, 'inline checkpoint selects the canonical session route');
+  assert.ok(onboardingIndex > navigationIndex, 'onboarding dismissal runs after route selection');
+  assert.ok(acceptanceIndex > onboardingIndex, 'onboarding dismissal runs before inline surface acceptance');
+
+  // The first inline screenshot is captured only after a final assertion that
+  // the supported onboarding is absent, and the checkpoint records the status.
+  const screenshotIndex = inlineCheckpoint.indexOf("captureVisibleContentScreenshot('inline-preview')");
+  assert.ok(screenshotIndex >= 0);
+  assert.ok(inlineCheckpoint.indexOf('preScreenshotAbsent') < screenshotIndex);
+  assert.match(inlineCheckpoint, /projectDirectoryOnboarding: \{\s*\.\.\.onboarding/);
+
+  // The verifier inspects top-level visible role=dialog elements and clicks
+  // the real rendered [data-slot="dialog-close"] action; it never presses
+  // Escape or touches internal React state.
+  const dismissal = verifierSource.slice(
+    verifierSource.indexOf('const inspectHostOnboardingDialogs = async'),
+    verifierSource.indexOf('const dismissHostProjectDirectoryOnboarding = async'),
+  );
+  assert.match(dismissal, /querySelectorAll\('\.acceptance-shell|querySelectorAll\('\[role="dialog"\]'\)/);
+  assert.match(verifierSource, /button\[data-slot="dialog-close"\]/);
+  assert.match(verifierSource, /assessProjectDirectoryOnboarding\(dialog\)/);
+  assert.doesNotMatch(
+    verifierSource.slice(
+      verifierSource.indexOf('const inspectHostOnboardingDialogs = async'),
+      verifierSource.indexOf('const restoreHostLocale = async'),
+    ),
+    /dispatchKeyEvent|Escape|__react/,
+  );
+});
+
+test('wait and pre-screenshot absence test onboarding identity, never close usability', () => {
+  // A still-visible project-directory onboarding that loses/misses/disables its
+  // close action must keep failing closed. The post-click wait and the
+  // pre-screenshot absence assertion test dialog identity
+  // (isProjectDirectoryOnboardingText), never the close-usability predicate
+  // that would turn an occluded dialog into "gone".
+  const dismissalCode = verifierSource.slice(
+    verifierSource.indexOf('const dismissHostProjectDirectoryOnboarding = async'),
+    verifierSource.indexOf('const selectSession = async'),
+  );
+  assert.match(dismissalCode, /isProjectDirectoryOnboardingText\(dialog\.text\)/);
+  assert.doesNotMatch(dismissalCode, /current\.dialogs\.some\(\(dialog\) => assessProjectDirectoryOnboarding\(dialog\)\.pass\)/);
+
+  const preScreenshot = verifierSource.slice(
+    verifierSource.indexOf('const preScreenshotDialogs = await inspectHostOnboardingDialogs()'),
+    verifierSource.indexOf("const inlineScreenshot = await captureVisibleContentScreenshot('inline-preview')"),
+  );
+  assert.match(preScreenshot, /isProjectDirectoryOnboardingText\(dialog\.text\)/);
+  assert.doesNotMatch(preScreenshot, /assessProjectDirectoryOnboarding\(dialog\)\.pass/);
+
+  // The click evaluation reuses painted visibility (connected + positive rect
+  // + computed style) for both the matched dialog and its close action; the
+  // fixed-position offsetParent pitfall must not reappear, and the matched
+  // dialog itself must be painted before its close is considered.
+  const dismissalStart = verifierSource.indexOf('const dismissHostProjectDirectoryOnboarding = async');
+  const clickCode = verifierSource.slice(
+    verifierSource.indexOf('const clicked = await browser.evaluate(`(() => {', dismissalStart),
+    verifierSource.indexOf('assert.equal(clicked, true', dismissalStart),
+  );
+  assert.doesNotMatch(clickCode, /\.offsetParent/);
+  assert.match(clickCode, /const painted = \(element\) =>/);
+  assert.match(clickCode, /if \(!painted\(dialog\)\) return false/);
 });
 
 test('locale timeout diagnostics capture truthful visible toolbar labels and locale inputs', () => {

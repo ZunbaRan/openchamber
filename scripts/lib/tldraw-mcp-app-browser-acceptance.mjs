@@ -41,6 +41,34 @@ export const isProjectDirectoryOnboardingText = (value) => (
   /(?:Add project directory|添加项目目录|新增專案目錄)/i.test(String(value || ''))
 );
 
+// Acceptance harness hardening: decide whether a serialized top-level dialog is
+// the supported project-directory onboarding AND carries a usable rendered
+// close action (connected, visible, enabled, positive hit area). The verifier
+// uses this before it ever attempts a click, so a hidden dialog, a zero-rect
+// dialog, or a missing/disabled/hidden/zero-rect close action fails closed
+// instead of being silently bypassed. Locale detection stays in
+// isProjectDirectoryOnboardingText; this predicate never duplicates it.
+export const assessProjectDirectoryOnboarding = (dialog) => {
+  if (!isRecord(dialog)) {
+    return { pass: false, reasons: ['missing-dialog-state'] };
+  }
+  if (!isProjectDirectoryOnboardingText(dialog.text)) {
+    return { pass: false, reasons: ['not-project-directory-onboarding'] };
+  }
+  const reasons = [];
+  if (dialog.visible !== true) reasons.push('dialog-not-visible');
+  if (!hasPositiveRect(dialog.rect)) reasons.push('dialog-has-no-hit-area');
+  const close = isRecord(dialog.close) ? dialog.close : null;
+  if (!close) reasons.push('close-action-missing');
+  else {
+    if (close.connected !== true) reasons.push('close-not-connected');
+    if (close.visible !== true) reasons.push('close-not-visible');
+    if (close.disabled === true) reasons.push('close-disabled');
+    if (!hasPositiveRect(close.rect)) reasons.push('close-has-no-hit-area');
+  }
+  return { pass: reasons.length === 0, reasons };
+};
+
 export const assessTldrawEditorReadiness = (candidate) => {
   const reasons = [];
   if (!candidate || typeof candidate !== 'object') {
