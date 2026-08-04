@@ -8,6 +8,8 @@ import { resolveAssistantDisplayText, shouldRenderAssistantText } from './assist
 import { streamPerfCount, streamPerfObserve } from '@/stores/utils/streamDebug';
 import { GeneratedJsonResultCard } from './GeneratedJsonResultCard';
 import { parseGeneratedJsonResult } from './generatedJsonResult';
+import { textContainsShowWidget } from '@/lib/generative-widget';
+import { RenderAssistantTextWithWidgets } from '../../generative-widget/renderAssistantTextWithWidgets';
 
 type PartWithText = Part & { text?: string; content?: string; value?: string; time?: { start?: number; end?: number } };
 
@@ -73,6 +75,26 @@ const AssistantTextPart: React.FC<AssistantTextPartProps> = ({
         isFinalized,
     })) {
         return null;
+    }
+
+    // Generative Widget (show-widget) takes priority over generated JSON cards.
+    if (textContainsShowWidget(displayTextContent)) {
+        return (
+            <div
+                className={`group/assistant-text relative break-words ${chatRenderMode === 'live' ? 'my-1' : ''}`}
+                key={part.id || `${messageId}-text`}
+            >
+                <RenderAssistantTextWithWidgets
+                    text={displayTextContent}
+                    part={part}
+                    messageId={messageId}
+                    streamPhase={streamPhase}
+                    chatRenderMode={chatRenderMode}
+                    isFinalized={isFinalized}
+                    onShowPopup={onShowPopup}
+                />
+            </div>
+        );
     }
 
     const generatedResult = !isStreaming && isFinalized ? parseGeneratedJsonResult(displayTextContent) : null;
