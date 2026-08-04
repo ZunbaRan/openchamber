@@ -11,6 +11,7 @@ import {
   assessTldrawEditorReadiness,
   assessTldrawSurfaceContract,
   assessFailureEvidence,
+  assessHostOcclusionFree,
   buildSemanticCreatePrompt,
   createPatternedPngBuffer,
   findSemanticCreateToolPart,
@@ -413,10 +414,10 @@ test('inline acceptance dismisses supported project-directory onboarding before 
   );
 });
 
-test('wait and pre-screenshot absence test onboarding identity, never close usability', () => {
+test('wait and pre-screenshot occlusion gate test identity and counts, never close usability', () => {
   // A still-visible project-directory onboarding that loses/misses/disables its
   // close action must keep failing closed. The post-click wait and the
-  // pre-screenshot absence assertion test dialog identity
+  // pre-screenshot gate test dialog identity
   // (isProjectDirectoryOnboardingText), never the close-usability predicate
   // that would turn an occluded dialog into "gone".
   const dismissalCode = verifierSource.slice(
@@ -426,12 +427,20 @@ test('wait and pre-screenshot absence test onboarding identity, never close usab
   assert.match(dismissalCode, /isProjectDirectoryOnboardingText\(dialog\.text\)/);
   assert.doesNotMatch(dismissalCode, /current\.dialogs\.some\(\(dialog\) => assessProjectDirectoryOnboarding\(dialog\)\.pass\)/);
 
+  // The pre-screenshot gate decides occlusion with the pure helper, which is
+  // what the lingering-backdrop and unrelated-dialog negative tests exercise;
+  // it must never use the close-usability predicate to call an occluded dialog
+  // "gone", and it must never auto-click unrelated dialogs.
   const preScreenshot = verifierSource.slice(
     verifierSource.indexOf('const preScreenshotDialogs = await inspectHostOnboardingDialogs()'),
     verifierSource.indexOf("const inlineScreenshot = await captureVisibleContentScreenshot('inline-preview')"),
   );
-  assert.match(preScreenshot, /isProjectDirectoryOnboardingText\(dialog\.text\)/);
+  assert.match(preScreenshot, /assessHostOcclusionFree\(preScreenshotDialogs\)/);
+  assert.match(preScreenshot, /preScreenshotAbsent = occlusionVerdict\.matchingOnboardingAbsent/);
+  assert.match(preScreenshot, /preScreenshotBackdropAbsent = occlusionVerdict\.backdropAbsent/);
+  assert.match(preScreenshot, /preScreenshotDialogsAbsent = occlusionVerdict\.dialogsAbsent/);
   assert.doesNotMatch(preScreenshot, /assessProjectDirectoryOnboarding\(dialog\)\.pass/);
+  assert.doesNotMatch(preScreenshot, /\.click\(\)/);
 
   // The click evaluation reuses painted visibility (connected + positive rect
   // + computed style) for both the matched dialog and its close action; the
@@ -445,6 +454,95 @@ test('wait and pre-screenshot absence test onboarding identity, never close usab
   assert.doesNotMatch(clickCode, /\.offsetParent/);
   assert.match(clickCode, /const painted = \(element\) =>/);
   assert.match(clickCode, /if \(!painted\(dialog\)\) return false/);
+});
+
+test('pre-screenshot occlusion gate passes only with no matching onboarding, no backdrop, and no top-level dialog', () => {
+  assert.deepEqual(assessHostOcclusionFree({ dialogs: [], backdropCount: 0 }), {
+    pass: true,
+    reasons: [],
+    matchingOnboardingAbsent: true,
+    backdropAbsent: true,
+    dialogsAbsent: true,
+    dialogCount: 0,
+    backdropCount: 0,
+  });
+
+  // A matching onboarding is still occluding even when every other signal is clean.
+  const matching = assessHostOcclusionFree({
+    dialogs: [{ text: 'Add project directory\nChoose a folder to add as a project.', visible: true }],
+    backdropCount: 0,
+  });
+  assert.equal(matching.pass, false);
+  assert.equal(matching.matchingOnboardingAbsent, false);
+  assert.ok(matching.reasons.includes('matching-onboarding-visible'));
+});
+
+test('pre-screenshot occlusion gate fails closed on a lingering visible backdrop', () => {
+  // A visible [data-slot="dialog-overlay"] with no matching onboarding dialog
+  // still occludes the inline surface: the matching-absent signal alone must
+  // never be enough to capture the screenshot.
+  const verdict = assessHostOcclusionFree({
+    dialogs: [],
+    backdropCount: 1,
+  });
+  assert.equal(verdict.pass, false);
+  assert.deepEqual(verdict.reasons, ['visible-backdrop-count=1']);
+  assert.equal(verdict.matchingOnboardingAbsent, true);
+  assert.equal(verdict.backdropAbsent, false);
+  assert.equal(verdict.dialogsAbsent, true);
+});
+
+test('pre-screenshot occlusion gate fails closed on an unrelated visible top-level dialog', () => {
+  // An unrelated host dialog is never auto-clicked; it is a hard failure with
+  // the serialized dialog state as evidence.
+  const verdict = assessHostOcclusionFree({
+    dialogs: [{
+      text: 'Open session',
+      visible: true,
+      rect: { x: 100, y: 80, width: 420, height: 260 },
+      close: null,
+    }],
+    backdropCount: 0,
+  });
+  assert.equal(verdict.pass, false);
+  assert.ok(verdict.reasons.includes('visible-top-level-dialogs=1'));
+  assert.equal(verdict.matchingOnboardingAbsent, true);
+  assert.equal(verdict.backdropAbsent, true);
+  assert.equal(verdict.dialogsAbsent, false);
+});
+
+test('pre-screenshot occlusion gate fails closed on missing, null, or string backdrop counts', () => {
+  // The gate validates the delivered backdropCount value directly and never
+  // coerces: missing, null, and string "0" must all fail closed with
+  // missing-backdrop-count instead of being treated as a valid zero backdrop.
+  for (const backdropCount of [undefined, null, '0', '1']) {
+    const state = backdropCount === undefined
+      ? { dialogs: [] }
+      : { dialogs: [], backdropCount };
+    const verdict = assessHostOcclusionFree(state);
+    assert.equal(verdict.pass, false, JSON.stringify({ backdropCount, verdict }));
+    assert.ok(verdict.reasons.includes('missing-backdrop-count'), JSON.stringify(verdict));
+    assert.equal(verdict.backdropAbsent, false);
+    assert.equal(verdict.backdropCount, null);
+    assert.equal(verdict.dialogsAbsent, true);
+    assert.equal(verdict.matchingOnboardingAbsent, true);
+  }
+  // A real zero and a real positive integer remain the only accepted values.
+  assert.equal(assessHostOcclusionFree({ dialogs: [], backdropCount: 0 }).pass, true);
+  assert.equal(assessHostOcclusionFree({ dialogs: [], backdropCount: 2 }).pass, false);
+});
+
+test('onboarding dismissal waits for both the matching dialog and the visible overlay to close', () => {
+  const dismissalCode = verifierSource.slice(
+    verifierSource.indexOf('const dismissHostProjectDirectoryOnboarding = async'),
+    verifierSource.indexOf('const selectSession = async'),
+  );
+  // Post-click: matching onboarding must be gone AND visible backdrop count
+  // must be zero; a lingering backdrop is occlusion even when the dialog is gone.
+  assert.match(dismissalCode, /!current\.dialogs\.some\(\(dialog\) => isProjectDirectoryOnboardingText\(dialog\.text\)\)/);
+  assert.match(dismissalCode, /current\.backdropCount === 0/);
+  assert.match(dismissalCode, /remainingBackdropCount = remaining\.backdropCount/);
+  assert.match(dismissalCode, /remainingBackdropAbsent = remaining\.backdropCount === 0/);
 });
 
 test('locale timeout diagnostics capture truthful visible toolbar labels and locale inputs', () => {

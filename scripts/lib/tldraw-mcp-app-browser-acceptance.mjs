@@ -69,6 +69,46 @@ export const assessProjectDirectoryOnboarding = (dialog) => {
   return { pass: reasons.length === 0, reasons };
 };
 
+// Acceptance harness hardening: pure verdict for the host-visible screenshot
+// gate. A screenshot must never be captured while the supported
+// project-directory onboarding is visible, while any visible
+// [data-slot="dialog-overlay"] backdrop exists, or while any visible top-level
+// role=dialog remains (the serialized dialog state only contains top-level
+// visible dialogs of the root document; App iframe dialogs live in child
+// targets and never participate). Identity matching reuses
+// isProjectDirectoryOnboardingText; close usability is deliberately never
+// consulted here, so an occluded dialog can never be called "gone", and
+// unrelated visible dialogs are never dismissed automatically — they fail
+// closed with the serialized state as evidence. backdropCount must arrive as
+// a non-negative safe integer; missing, null, or string counts fail closed
+// instead of coercing to zero.
+export const assessHostOcclusionFree = (state) => {
+  const reasons = [];
+  const dialogs = Array.isArray(state?.dialogs) ? state.dialogs : null;
+  // Validate the delivered value directly; never coerce. Number(null) and
+  // Number("0") would both become valid zero, so the raw value is checked.
+  const backdropCount = state?.backdropCount;
+  const hasBackdropCount = Number.isSafeInteger(backdropCount) && backdropCount >= 0;
+  const matchingOnboardingAbsent = dialogs !== null
+    && !dialogs.some((dialog) => isProjectDirectoryOnboardingText(dialog?.text));
+  const dialogsAbsent = dialogs !== null && dialogs.length === 0;
+  const backdropAbsent = hasBackdropCount && backdropCount === 0;
+  if (dialogs === null) reasons.push('missing-dialog-state');
+  if (!hasBackdropCount) reasons.push('missing-backdrop-count');
+  else if (backdropCount !== 0) reasons.push(`visible-backdrop-count=${backdropCount}`);
+  if (dialogs !== null && !matchingOnboardingAbsent) reasons.push('matching-onboarding-visible');
+  if (dialogs !== null && !dialogsAbsent) reasons.push(`visible-top-level-dialogs=${dialogs.length}`);
+  return {
+    pass: reasons.length === 0,
+    reasons,
+    matchingOnboardingAbsent,
+    backdropAbsent,
+    dialogsAbsent,
+    dialogCount: dialogs?.length ?? null,
+    backdropCount: hasBackdropCount ? backdropCount : null,
+  };
+};
+
 export const assessTldrawEditorReadiness = (candidate) => {
   const reasons = [];
   if (!candidate || typeof candidate !== 'object') {

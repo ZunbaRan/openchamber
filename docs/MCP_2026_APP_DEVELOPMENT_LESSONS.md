@@ -470,14 +470,16 @@ capability 时仍返回相同的结构化 canvas state 和文字说明，但宿�
 | Server PID / 启动时间 | orchestrator 记录 spawn PID 与时间 | 进程确实由本次 orchestration 启动 | 该进程使用哪个 CLI、UI 是否真实可见 |
 | app.asar 哈希 / 构建时间 | 对打包产物重新计算并记录时间 | 桌面 UI 资源版本 | UI 真实可见性、CLI 行为 |
 | staged CLI 哈希（签名前） | `packages/electron/resources/opencode-cli/distribution.json` 的 `sha256` | 签名前来源完整性；`localOverride`/`version` 可直接核对 | 包内最终字节（本轮 macOS 流程中签名改写字节；其它流程需独立核对） |
-| packaged CLI 哈希（签名后） | 对 `.app/Contents/Resources/opencode-cli/opencode` 重新计算 | 包内真实字节 | 与 staged 哈希相同（在已观测的 macOS electron-builder/codesign 流程中签名会改写字节，因而不同） |
+| packaged CLI 哈希（签名后） | 对 `.app/Contents/Resources/opencode-cli/opencode` 重新计算 | 包内真实字节 | 与 staged 哈希一致（本轮 macOS electron-builder/codesign 流程中签名会改写字节、二者必然不同，故不能证明包内字节等于 staged 哈希） |
 | 运行时 resolved 路径 | `GET /health` 的 `opencodeBinaryResolved` + `--version` | 实际启动的 CLI | 由 orchestration 选择（除非显式 pin） |
 
-本轮实测证据：tldraw dist 先验证为 protocol `2026-07-28`、App SHA-256
-`4426d8b9f5ca9aa96bc4852a59faea3785bba97b14f71c772792d62555632741`；干净打包的
+本轮实测证据：tldraw dist 先验证为 protocol `2026-07-28`、App bundle SHA-256
+`2f26aaa31c9c3b40f5ccc3fbd4d34f6eea266b59e9557d42958366271908ce84`；干净打包的
 CLI 版本 `1.18.10-oc.1`。在本轮 macOS electron-builder/codesign 流程中，包内签名后
-二进制哈希 `ba7fa584…` 与 staged `fa86f227…` 不同，因为 codesign 改写了 Mach-O
-字节；新构建的 app.asar 哈希 `02a3ea5142cf…`（2026-08-05 01:08 构建）。
+二进制哈希 `ba7fa5841404a24a7f2b07cb6e3b06b9ac8c3bb0f36fdcdaf6de58e9e8f9f3aa` 与
+staged `fa86f2271100b57a522d0aa6d25ee75132381cb09c867c2258bec35a304b3d80` 不同，
+因为 codesign 改写了 Mach-O 字节；新构建的 app.asar 哈希
+`d6fa382d4411ac33b9c1b3c9812854f09d7a17536077ac60dc8f70dfdfd22045`。
 **“打包签名后哈希 ≠ staged 哈希”在本观测流程中不是失败**。其它平台/打包流程
 不一定改写字节，但两个哈希语义始终不同（签名前来源 vs 包内真实字节），因此必须
 在任何平台上分别记录、分别核对，永远不要把签名前哈希称为包内最终文件哈希。
@@ -538,14 +540,17 @@ bun run test:tldraw-mcp-app-browser:self-contained
 package.mjs` 串成一条命令；override 变量只对 `prepare:opencode-cli` 步骤生效，而且
 每个步骤都是独立 bun 进程。只对单条子命令设置变量、或中途换终端，都会让其它步骤
 按 lock 下载旧制品（当前 lock 的 `forkCommit` 仍是 `bf12c7a7…`，落后于本轮
-`67c45489…`），混出 provenance 不一致的包。
+`67c454892fe47ed1906b41250a1eff4e499b0801`），混出 provenance 不一致的包。
 
 正确做法是整条命令统一导出，并在打包前核对 staged `distribution.json` 显示
 `localOverride: true`，且 `version`、`sha256` 与本地二进制一致。注意：本地覆盖的
-`forkCommit` 在 prepare 脚本中默认写为 `"local-uncommitted"`（除非显式设置
-`OPENCODE_FORK_COMMIT`），所以**不要**期望它等于源码 commit；精确源码 commit 必须
-独立记录——从 OpenCode 源码 worktree（如 `git rev-parse HEAD`）或该次构建的
-provenance 取，并作为与 CLI 版本并列的独立证据保存。
+`forkCommit` 在 prepare 脚本中默认写为 `"local-uncommitted"`（仅当
+`OPENCODE_FORK_COMMIT` 未设置时）；本轮候选显式设置了 `OPENCODE_FORK_COMMIT`，
+`distribution.json` 因而直接报告精确 SHA
+`67c454892fe47ed1906b41250a1eff4e499b0801`。未显式设置时**不要**期望
+`forkCommit` 等于源码 commit；精确源码 commit 必须独立记录——从 OpenCode 源码
+worktree（如 `git rev-parse HEAD`）或该次构建的 provenance 取，并作为与 CLI 版本
+并列的独立证据保存。
 
 ```bash
 OPENCHAMBER_OPENCODE_CLI_PATH=/path/to/local/opencode bun run --cwd packages/electron package
@@ -658,7 +663,7 @@ sanitize / migrate / 合并字段（`packages/web/server/lib/opencode/settings-r
 聚焦测试（`scripts/lib/tldraw-mcp-app-browser-orchestration.test.mjs`）先写红：首个红
 测试因为 helper 尚未导出而失败（missing export）；随后把校验从“旧实现会接受错误的
 lastDirectory / 额外 project”收紧到 fail-closed 后测试转绿。当前
-`node --test scripts/lib/*.test.mjs` 60/60 通过。修复后的最终真实浏览器 E2E 通过全部
+`node --test scripts/lib/*.test.mjs` 69/69 通过（acceptance 49 + orchestration 20）。修复后的最终真实浏览器 E2E 通过全部
 11 个检查点（含 Pin/App Board fullscreen），47 次 AppBridge 交换，零
 runtime/console/page 错误、零 isError/fallback。证据目录示例（本地示例，不在仓库）：
 `.tmp/tldraw-mcp-app-browser-orchestrated/2026-08-04T18-19-09-153Z/`。
@@ -690,20 +695,27 @@ OpenCode + 浏览器 + 精确 CLI + 单 remote MCP 配置下的宿主行为（�
 3. 要求真实 `button[data-slot="dialog-close"]` connected、visible、enabled 且 bounding
    rect 为正（`assessProjectDirectoryOnboarding`），任一不满足立即 fail-closed；
 4. 点击匹配 dialog 的真实渲染按钮并断言点击成功，绝不点无关 dialog；
-5. 关闭后按弹窗身份等待消失（记录 remainingDialogs / remainingBackdropCount），不能
-   按 close-usability 判定“已消失”——缺 close 按钮的遮挡弹窗仍必须判为存在；
-6. 首张 inline 截图前再次 fail-closed：`preScreenshotAbsent` 必须为 true，否则把
-   序列化 dialogs 作为证据抛出；
+5. 关闭后同时等待两个条件：匹配弹窗消失 **且** 可见 `[data-slot="dialog-overlay"]`
+   计数归零（记录 remainingDialogs / remainingBackdropCount /
+   remainingBackdropAbsent），不能按 close-usability 判定“已消失”——缺 close 按钮
+   的遮挡弹窗或残留 backdrop 仍必须判为存在；
+6. 首张 inline 截图前再次 fail-closed（`assessHostOcclusionFree` 的 occlusion
+   verdict）：匹配 onboarding 消失（`preScreenshotAbsent`）、可见 backdrop 计数为零
+   （`preScreenshotBackdropAbsent`）、无任何可见顶层 dialog 残留
+   （`preScreenshotDialogsAbsent`）三者必须全部为 true；**残留 backdrop 或截图前任何
+   可见宿主 dialog 都是硬失败**，否则把序列化 host dialog 状态作为证据抛出；
 7. 全程不用 Escape 键、不触碰 React 内部状态。
 
 代码参考（三个 acceptance 文件）：
 
 - `scripts/lib/tldraw-mcp-app-browser-acceptance.mjs`：
   `isProjectDirectoryOnboardingText`、`assessProjectDirectoryOnboarding`（依赖
-  `hasPositiveRect`）；
+  `hasPositiveRect`）、`assessHostOcclusionFree`（截图前 occlusion verdict）；
 - `scripts/verify-tldraw-mcp-app-browser.mjs`：`inspectHostOnboardingDialogs`、
-  `dismissHostProjectDirectoryOnboarding`，以及 Inline 检查点在
-  `captureVisibleContentScreenshot('inline-preview')` 之前的 `preScreenshotAbsent` 断言；
+  `dismissHostProjectDirectoryOnboarding`（关闭后同时等待匹配弹窗消失且 backdrop
+  计数归零），以及 Inline 检查点在 `captureVisibleContentScreenshot('inline-preview')`
+  之前的 `preScreenshotAbsent` / `preScreenshotBackdropAbsent` /
+  `preScreenshotDialogsAbsent` 断言；
 - `scripts/lib/tldraw-mcp-app-browser-acceptance.test.mjs`：聚焦测试断言 verifier 从
   未使用 `dispatchKeyEvent` / Escape / `__react` 内部状态，并断言 wait 与截图前
   absence 只按弹窗身份匹配、不按 close 可用性掩盖遮挡。
@@ -876,9 +888,10 @@ Chromium 可能把 Broker 文档的 policy container 继承到最终 `srcdoc` Ap
 16. 自包含验收在 `/health` 后、MCP 协商前把验收目录注册为唯一 project（PUT
     `/api/config/settings` 并 round-trip 校验回显，见 8.7），Pin/App Board 才能持久化
     到以 `path_<base64url(abs path)>` 为键的 board。
-17. 首个 inline 截图前验证宿主根 document 顶层 overlay 已消失，且 child iframe App
-    已就绪（host-visible screenshot gate：宿主根文档可见性 + iframe 双层证据，见
-    8.8）；screenshot 是门槛而非装饰，不允许在顶层遮挡下“先截后解释”。
+17. 首个 inline 截图前验证宿主根 document 已无遮挡（host-visible screenshot gate，
+    见 8.8）：匹配 onboarding 消失、可见 backdrop 计数为零、无任何可见顶层 dialog
+    残留，三者缺一即硬失败，且 child iframe App 已就绪；screenshot 是门槛而非装饰，
+    不允许在顶层遮挡下“先截后解释”。
 
 若只通过协议 fixture、源码断言、静态截图或 fallback，上述链路仍是未完成。当前
 自动化覆盖协议、visibility、source-authenticated Loader 到最终 `srcdoc` 的大型页面

@@ -10,6 +10,7 @@ import { fileURLToPath } from 'node:url';
 import {
   PATTERNED_PNG_FEATURE_COLORS,
   assessFailureEvidence,
+  assessHostOcclusionFree,
   assessProjectDirectoryOnboarding,
   assessTldrawEditorReadiness,
   assessTldrawSurfaceContract,
@@ -1495,17 +1496,21 @@ const dismissHostProjectDirectoryOnboarding = async () => {
   })()`);
   assert.equal(clicked, true, 'Clicking the project-directory onboarding close action failed');
 
-  // Wait until no visible matching dialog exists. Identity is decisive: a
-  // matching onboarding that stays visible without a usable close action is
-  // still present and must keep failing closed.
+  // Wait until BOTH the matching onboarding dialog is absent AND the visible
+  // [data-slot="dialog-overlay"] backdrop count is zero. Identity is decisive
+  // for the matching dialog: a matching onboarding that stays visible without a
+  // usable close action is still present and must keep failing closed, and a
+  // lingering backdrop is occlusion even when the dialog itself is gone.
   const remaining = await waitFor(async () => {
     const current = await inspectHostOnboardingDialogs();
-    return !current.dialogs.some((dialog) => isProjectDirectoryOnboardingText(dialog.text))
-      ? current
-      : null;
-  }, 'project-directory onboarding dialog to close', 15_000, 150);
+    const matchingAbsent = !current.dialogs.some((dialog) => isProjectDirectoryOnboardingText(dialog.text));
+    const overlayAbsent = current.backdropCount === 0;
+    return matchingAbsent && overlayAbsent ? current : null;
+  }, 'project-directory onboarding dialog and its overlay to close', 15_000, 150);
   evidence.remainingDialogs = remaining.dialogs.length;
   evidence.remainingBackdropCount = remaining.backdropCount;
+  evidence.remainingDialogsAbsent = remaining.dialogs.length === 0;
+  evidence.remainingBackdropAbsent = remaining.backdropCount === 0;
   return evidence;
 };
 
@@ -3074,22 +3079,35 @@ try {
       toolResultElementCount: modelCreation.toolResultElementCount,
       authoritativeStateElementCount: semanticState.authoritativeStateElementCount,
     });
-    // The first inline screenshot must never be captured under the supported
-    // project-directory onboarding; assert it is absent immediately before
-    // capture and fail closed with the serialized dialogs otherwise.
+    // The first inline screenshot is the host-visible screenshot gate: it must
+    // never be captured while the supported project-directory onboarding is
+    // visible, while any visible [data-slot="dialog-overlay"] backdrop remains,
+    // or while any visible top-level role=dialog remains. Identity is decisive
+    // for the supported onboarding (a matching dialog with or without a usable
+    // close action is still present); a lingering backdrop and any unrelated
+    // visible host dialog are hard failures too. Unrelated dialogs are never
+    // auto-clicked — the gate fails closed with the serialized host state.
     const preScreenshotDialogs = await inspectHostOnboardingDialogs();
-    // Identity is decisive: a still-visible matching onboarding (with or
-    // without a usable close action) is still present and must fail closed.
-    const preScreenshotAbsent = !preScreenshotDialogs.dialogs.some((dialog) => isProjectDirectoryOnboardingText(dialog.text));
+    const occlusionVerdict = assessHostOcclusionFree(preScreenshotDialogs);
+    const preScreenshotAbsent = occlusionVerdict.matchingOnboardingAbsent;
+    const preScreenshotBackdropAbsent = occlusionVerdict.backdropAbsent;
+    const preScreenshotDialogsAbsent = occlusionVerdict.dialogsAbsent;
     assert.equal(
-      preScreenshotAbsent,
+      occlusionVerdict.pass,
       true,
-      `Supported project-directory onboarding is still visible before the inline screenshot: ${JSON.stringify(preScreenshotDialogs)}`,
+      `Host-level occlusion before the inline screenshot: ${JSON.stringify(occlusionVerdict)}; host dialog state: ${JSON.stringify(preScreenshotDialogs)}`,
     );
     const inlineScreenshot = await captureVisibleContentScreenshot('inline-preview');
     return {
       navigation,
-      projectDirectoryOnboarding: { ...onboarding, preScreenshotAbsent },
+      projectDirectoryOnboarding: {
+        ...onboarding,
+        preScreenshotAbsent,
+        preScreenshotBackdropAbsent,
+        preScreenshotDialogsAbsent,
+        occlusionVerdict,
+        serializedPreScreenshotDialogs: preScreenshotDialogs,
+      },
       revision: app.revision,
       surfaceContract: app.surfaceContract,
       authorityState: app.authorityState,

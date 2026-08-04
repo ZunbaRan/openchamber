@@ -593,8 +593,9 @@ bun run verify:opencode-cli:packaged
 > `bf12c7a79358ae763733d6e67de93af5d6715226`，而本轮通过测试的 OpenCode
 > 源码提交是 `67c454892fe47ed1906b41250a1eff4e499b0801`。本轮成功构建的 arm64
 > Electron 包明确使用了下节的 `local-override`，因此它是开发验收包，不是托管发布
-> 候选。若不设置覆盖变量，常规打包仍会下载 lock 所指向的旧制品。正式发布前必须从
-> `67c45489…` 构建并发布新的 CLI/SDK 版本，生成六个平台制品哈希，更新 lock 的
+> 候选；该候选在 prepare 时显式设置了 `OPENCODE_FORK_COMMIT`，所以 staged
+> `distribution.json` 的 `forkCommit` 直接报告 `67c454892fe47ed1906b41250a1eff4e499b0801`（见 8.4 样例）。若不设置覆盖变量，常规打包仍会下载 lock 所指向的旧制品。正式发布前必须从
+> `67c454892fe47ed1906b41250a1eff4e499b0801` 构建并发布新的 CLI/SDK 版本，生成六个平台制品哈希，更新 lock 的
 > `version`、`releaseTag`、`forkCommit`、SDK 哈希和平台哈希，再用**无 override**
 > 的常规路径重打包。仅修改 lock 中的 commit 字段会伪造 provenance，禁止这样做。
 
@@ -606,20 +607,20 @@ bun run verify:opencode-cli:packaged
 OPENCHAMBER_OPENCODE_CLI_PATH=/path/to/local/opencode bun run prepare:opencode-cli
 ```
 
-`prepare-opencode-cli.mjs` 的本地覆盖分支会检测此环境变量，读取二进制的真实版本，复制它而非从 GitHub 下载，并在 `resources/opencode-cli/distribution.json` 中标记 `"localOverride": true`。本地覆盖时 `forkCommit` 默认写为 `"local-uncommitted"`（除非显式设置 `OPENCODE_FORK_COMMIT`），因此精确源码 commit 必须**独立记录**：从 OpenCode 源码 worktree（如 `git rev-parse HEAD`）或该次构建的 provenance 取，作为与 CLI 版本并列的证据，不能从 `distribution.json` 推断。不要依赖固定行号；以该分支和分发清单为准。
+`prepare-opencode-cli.mjs` 的本地覆盖分支会检测此环境变量，读取二进制的真实版本，复制它而非从 GitHub 下载，并在 `resources/opencode-cli/distribution.json` 中标记 `"localOverride": true`。本地覆盖时 `forkCommit` 只有在 **`OPENCODE_FORK_COMMIT` 未设置**时才默认写为 `"local-uncommitted"`；显式设置 `OPENCODE_FORK_COMMIT` 时，prepare 把该值原样写入 `distribution.json`（本轮候选显式提供了 `OPENCODE_FORK_COMMIT=67c454892fe47ed1906b41250a1eff4e499b0801`，因而 `distribution.json` 直接报告该精确 SHA）。未显式设置时精确源码 commit 必须**独立记录**：从 OpenCode 源码 worktree（如 `git rev-parse HEAD`）或该次构建的 provenance 取，作为与 CLI 版本并列的证据，不能从 `distribution.json` 推断。不要依赖固定行号；以该分支和分发清单为准。
 
-验证器也必须区分两种真相来源：托管发布以 `opencode-cli.lock.json` 为准；本地覆盖以刚生成的 `distribution.json` 为准。如果运行时校验仍无条件拿 lock 中的 `forkCommit` 与本地二进制比较，它会在**正确打入新 fork** 时反而误报旧提交不匹配。可靠做法是先解析 staged `distribution.json`，校验签名前二进制 SHA-256，再用 `version` / `upstreamCommit` 核对 `/global/capabilities`；本地覆盖时 `distribution.json` 的 `forkCommit` 是 `"local-uncommitted"`，不参与对比，精确源码 commit 必须从源码 worktree / 构建 provenance 独立记录。这不是放宽门禁，而是让门禁绑定到本次实际分发物。
+验证器也必须区分两种真相来源：托管发布以 `opencode-cli.lock.json` 为准；本地覆盖以刚生成的 `distribution.json` 为准。如果运行时校验仍无条件拿 lock 中的 `forkCommit` 与本地二进制比较，它会在**正确打入新 fork** 时反而误报旧提交不匹配。可靠做法是先解析 staged `distribution.json`，校验签名前二进制 SHA-256，再用 `version` / `upstreamCommit` 核对 `/global/capabilities`；本地覆盖且**未设置** `OPENCODE_FORK_COMMIT` 时，`distribution.json` 的 `forkCommit` 是 `"local-uncommitted"`，不参与对比，精确源码 commit 必须从源码 worktree / 构建 provenance 独立记录（显式设置 `OPENCODE_FORK_COMMIT` 时则直接与 `distribution.json` 记录的精确 SHA 核对）。这不是放宽门禁，而是让门禁绑定到本次实际分发物。
 
 macOS 包还有第二层边界：`electron-builder` / `codesign` 会给嵌套 Mach-O 写入签名，因此 `.app` 内 CLI 的字节 SHA-256 可能与签名前 `distribution.json.sha256` 不同。发布校验应拆成两段：
 
 1. **签名前来源完整性**：staged CLI 必须精确匹配 `distribution.json.sha256`；
 2. **签名后包完整性**：验证 App/嵌套 CLI 的代码签名，另记签名后 SHA；实际启动包内 CLI，再用 `/global/capabilities` 核对 version/upstream/fork，并检查内置 Tool。
 
-不要因为签名后哈希变化就跳过校验，也不要把签名前哈希误称为包内最终文件哈希。本次 arm64 包的运行时核验确认 `1.18.10-oc.1`、upstream `e024e2ef…`、fork `67c45489…`，并发现 `html_artifact` / `interactive_ui` 两个内置 Tool。
+不要因为签名后哈希变化就跳过校验，也不要把签名前哈希误称为包内最终文件哈希。本次 arm64 包的运行时核验确认 `1.18.10-oc.1`、upstream `e024e2ef…`、fork `67c454892fe47ed1906b41250a1eff4e499b0801`，并发现 `html_artifact` / `interactive_ui` 两个内置 Tool。
 
 ### 8.4 分发清单（📦 仓库事实）
 
-`resources/opencode-cli/distribution.json` 由 prepare 脚本生成。托管发布模式会记录锁文件中的 `releaseTag` / `forkCommit`；本地覆盖模式会明确记录 `releaseTag: "local-override"`、`localOverride: true`，并且（除非显式设置 `OPENCODE_FORK_COMMIT`）`forkCommit` 为 `"local-uncommitted"`：
+`resources/opencode-cli/distribution.json` 由 prepare 脚本生成。托管发布模式会记录锁文件中的 `releaseTag` / `forkCommit`；本地覆盖模式会明确记录 `releaseTag: "local-override"`、`localOverride: true`。`forkCommit` 只有在 **`OPENCODE_FORK_COMMIT` 未设置**时才默认写为 `"local-uncommitted"`；本轮候选显式设置了 `OPENCODE_FORK_COMMIT`，因此实际 `distribution.json` 直接报告精确源码 SHA：
 
 ```json
 {
@@ -628,16 +629,18 @@ macOS 包还有第二层边界：`electron-builder` / `codesign` 会给嵌套 Ma
   "releaseTag": "local-override",
   "version": "1.18.10-oc.1",
   "upstreamCommit": "e024e2ef92293a81a06b6cc418422c52207ce85d",
-  "forkCommit": "local-uncommitted",
+  "forkCommit": "67c454892fe47ed1906b41250a1eff4e499b0801",
   "target": "darwin-arm64",
-  "sha256": "fa86f227...（由实际本地二进制计算；本次干净验收 worktree 实测为该值）",
+  "sha256": "fa86f2271100b57a522d0aa6d25ee75132381cb09c867c2258bec35a304b3d80",
   "localOverride": true
 }
 ```
 
-> 注意：上面的 `forkCommit: "local-uncommitted"` 是本地覆盖模式的真实取值，不代表
-> 源码 commit。精确源码 commit 必须从 OpenCode 源码 worktree / 构建 provenance
-> 独立记录（如 `git rev-parse HEAD`），并作为与 `distribution.json` 并列的证据保存。
+> 注意：上面的 `forkCommit` 是显式 `OPENCODE_FORK_COMMIT` 写入的真实值，等于本轮
+> OpenCode 源码 worktree 的 `git rev-parse HEAD`。若**未设置** `OPENCODE_FORK_COMMIT`，
+> 本地覆盖模式会把 `forkCommit` 写为 `"local-uncommitted"`，此时精确源码 commit 必须
+> 从 OpenCode 源码 worktree / 构建 provenance 独立记录（如 `git rev-parse HEAD`），
+> 并作为与 `distribution.json` 并列的证据保存。
 
 ### 8.5 重要说明（📦 仓库事实）
 
@@ -737,7 +740,7 @@ bug，而是验收 harness 的环境身份 bug：
 
 聚焦测试覆盖 helper 归一化（尾斜杠、Windows 分隔符、空值）与
 `configureAcceptanceProject` 的成功证据、非 2xx、malformed、mismatched 等失败路径；
-当前 `node --test scripts/lib/*.test.mjs` 60/60 通过。修复后的最终真实浏览器 E2E 通过
+当前 `node --test scripts/lib/*.test.mjs` 69/69 通过（acceptance 49 + orchestration 20）。修复后的最终真实浏览器 E2E 通过
 全部 11 个检查点（含 Pin/App Board fullscreen），47 次 AppBridge 交换、零
 runtime/console/page 错误、零 isError/fallback（本地示例证据目录：
 `.tmp/tldraw-mcp-app-browser-orchestrated/2026-08-04T18-19-09-153Z/`，不在仓库内）。
@@ -764,21 +767,29 @@ CDP/evaluate 直接进入 child iframe context 操作 DOM，绕过了宿主根 d
    （`isProjectDirectoryOnboardingText`：`Add project directory` / `添加项目目录` /
    `新增專案目錄`）；要求真实 `button[data-slot="dialog-close"]` connected、visible、
    enabled 且正 hit rect（`assessProjectDirectoryOnboarding`）；点击匹配 dialog 的真实
-   渲染按钮并断言点击成功，关闭后按弹窗身份等待消失；不使用 Escape 或 React 内部
-   状态，也不按 close-usability 掩盖遮挡。Helper：`dismissHostProjectDirectoryOnboarding`。
-3. **iframe 双层证据**：截图门槛必须同时证明两层——宿主根 document 在截图时刻没有
-   匹配的顶层 dialog（`preScreenshotAbsent`），且 child iframe 的 App surface 已就绪
-   （`.acceptance-shell` 的 `data-editor-ready` 契约与 `.tl-canvas` 正尺寸，见
-   `docs/MCP_2026_APP_DEVELOPMENT_LESSONS.md` 第 12 节）。**screenshot 是门槛而非
-   装饰**：先断言宿主侧可见性，再 `captureVisibleContentScreenshot('inline-preview')`，
-   不允许“先截后解释”。
+   渲染按钮并断言点击成功，关闭后**同时**等待两个条件——匹配弹窗消失 **且** 可见
+   `[data-slot="dialog-overlay"]` 计数归零（残留 backdrop 也是遮挡，必须 fail-closed）；
+   不使用 Escape 或 React 内部状态，也不按 close-usability 掩盖遮挡。Helper：
+   `dismissHostProjectDirectoryOnboarding`。
+3. **iframe 双层证据 / host-visible screenshot gate**：截图门槛必须同时证明两层——
+   宿主根 document 在截图时刻满足全部三个条件：无匹配的顶层 dialog
+   （`preScreenshotAbsent` / `matchingOnboardingAbsent`）、可见 backdrop 计数为零
+   （`preScreenshotBackdropAbsent`）、无任何可见顶层 dialog 残留
+   （`preScreenshotDialogsAbsent`；纯判定 `assessHostOcclusionFree` 汇总为一个
+   `occlusionVerdict`）；以及 child iframe 的 App surface 已就绪（`.acceptance-shell`
+   的 `data-editor-ready` 契约与 `.tl-canvas` 正尺寸，见
+   `docs/MCP_2026_APP_DEVELOPMENT_LESSONS.md` 第 12 节）。**残留 backdrop 或截图前
+   任何可见宿主 dialog 都是硬失败**，失败会把序列化 host dialog 状态作为证据抛出；
+   **screenshot 是门槛而非装饰**：先断言宿主侧可见性，再
+   `captureVisibleContentScreenshot('inline-preview')`，不允许“先截后解释”。
 
-聚焦测试（`scripts/lib/tldraw-mcp-app-browser-acceptance.test.mjs`，44 个用例）断言
+聚焦测试（`scripts/lib/tldraw-mcp-app-browser-acceptance.test.mjs`，49 个用例）断言
 `assessProjectDirectoryOnboarding` 对隐藏 / 零 rect / 缺失 / detached / disabled
-close 全部 fail-closed；inline 检查点顺序为 route 选择 → onboarding 关闭 → surface
-验收 → 截图前 absence；verifier 源码不含 `dispatchKeyEvent` / Escape / `__react`；
-wait 与 pre-screenshot absence 只按身份匹配。当前
-`node --test scripts/lib/*.test.mjs` 64/64 通过（acceptance 44 + orchestration 20）。
+close 全部 fail-closed；`assessHostOcclusionFree` 对残留 backdrop 与无关可见顶层
+dialog 均 fail-closed；inline 检查点顺序为 route 选择 → onboarding 关闭（等待匹配弹窗
+消失且 backdrop 归零）→ surface 验收 → 截图前 occlusion verdict；verifier 源码不含
+`dispatchKeyEvent` / Escape / `__react`；wait 与 pre-screenshot 门只按身份和计数匹配。
+当前 `node --test scripts/lib/*.test.mjs` 69/69 通过（acceptance 49 + orchestration 20）。
 
 最新真实 E2E（单一环境证据，2026-08-05）：11/11 检查点全绿，
 `projectDirectoryOnboarding` status=`dismissed`、dialogCount=`1`、backdropCount=`1`、
@@ -866,8 +877,8 @@ describe('MCP App sandbox bootstrap', () => {
 - [ ] `bun run verify:opencode-cli` 通过
 - [ ] `bun run verify:opencode-cli:packaged` 通过
 - [ ] 自包含浏览器门禁固定 `OPENCODE_BINARY`，并在 `/health.opencodeBinaryResolved` 不匹配时 fail-closed（`scripts/lib/tldraw-mcp-app-browser-orchestration.test.mjs` 在完整门禁前运行）
-- [ ] 自包含浏览器门禁在 `/health` 后、MCP 协商前 PUT `/api/config/settings` 注册唯一验收项目，并对回显 fail-closed 校验（`deriveWorkbenchProjectId` / `configureAcceptanceProject`，聚焦测试 60/60）
-- [ ] 自包含浏览器门禁在首个 inline 截图前检查宿主根 document 顶层可见 dialog，按受支持文案身份匹配并 fail-closed 关闭 `Add project directory` onboarding（`inspectHostOnboardingDialogs` / `dismissHostProjectDirectoryOnboarding` / `assessProjectDirectoryOnboarding` / `preScreenshotAbsent`；不使用 Escape 或 React 内部状态；`node --test scripts/lib/*.test.mjs` 64/64）
+- [ ] 自包含浏览器门禁在 `/health` 后、MCP 协商前 PUT `/api/config/settings` 注册唯一验收项目，并对回显 fail-closed 校验（`deriveWorkbenchProjectId` / `configureAcceptanceProject`，聚焦测试 69/69）
+- [ ] 自包含浏览器门禁在首个 inline 截图前检查宿主根 document 顶层可见 dialog：按受支持文案身份匹配并 fail-closed 关闭 `Add project directory` onboarding，关闭后同时等待匹配弹窗消失且可见 backdrop 计数归零（`inspectHostOnboardingDialogs` / `dismissHostProjectDirectoryOnboarding` / `assessProjectDirectoryOnboarding`）；截图前 `assessHostOcclusionFree` 的 occlusion verdict 要求匹配 onboarding 消失、可见 backdrop 计数为零、无任何可见顶层 dialog 残留——残留 backdrop 或任何可见宿主 dialog 都是硬失败（`preScreenshotAbsent` / `preScreenshotBackdropAbsent` / `preScreenshotDialogsAbsent`；不使用 Escape 或 React 内部状态；`node --test scripts/lib/*.test.mjs` 69/69）
 - [ ] 测试入口显式生成/拷贝被 `.gitignore` 忽略的产物（如 examples / templates 的 `dist/ui.mjs`），fixture tracked / self-contained；干净 worktree 不依赖主 checkout 的历史 `dist`（见 lessons 8.5；本次仅测试环境补齐，不视为仓库自包含性已修复）
 - [ ] 最终打包 Electron UI 验收（真实 Computer Use）完成（当前为 pending）
 - [ ] 无 `OPENCHAMBER_OPENCODE_CLI_PATH` 时，托管 lock 的 `forkCommit`、CLI/SDK 发布版本与 `/global/capabilities` 指向同一已发布提交（当前 `bf12…` vs `67c…` 尚未满足，故当前包不可作为正式发布候选）
