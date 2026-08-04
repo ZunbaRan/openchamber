@@ -791,10 +791,18 @@ dialog 均 fail-closed；inline 检查点顺序为 route 选择 → onboarding �
 `dispatchKeyEvent` / Escape / `__react`；wait 与 pre-screenshot 门只按身份和计数匹配。
 当前 `node --test scripts/lib/*.test.mjs` 69/69 通过（acceptance 49 + orchestration 20）。
 
-最新真实 E2E（单一环境证据，2026-08-05）：11/11 检查点全绿，
-`projectDirectoryOnboarding` status=`dismissed`、dialogCount=`1`、backdropCount=`1`、
-remainingDialogs=`0`、remainingBackdropCount=`0`、preScreenshotAbsent=`true`；47 次
-AppBridge 交换，0 isError、0 fallback。**这是测试原则 + OpenChamber 具体实现参考，
+最新真实 E2E（单一环境证据，2026-08-05；`generatedAt=2026-08-04T19:24:42.106Z`）：
+本地、未跟踪的证据文件 `.tmp/tldraw-mcp-app-browser-orchestrated/2026-08-04T19-23-36-871Z/browser/report.json`
+（`ok=true`、`requiredCheckpointOk=true`），11/11 检查点 status 全为 `pass`。
+`projectDirectoryOnboarding`：status=`dismissed`、dialogCount=`1`、backdropCount=`1`、
+remainingDialogs=`0`、remainingBackdropCount=`0`、remainingDialogsAbsent=`true`、
+remainingBackdropAbsent=`true`、preScreenshotAbsent=`true`、preScreenshotBackdropAbsent=`true`、
+preScreenshotDialogsAbsent=`true`；截图前 occlusionVerdict.pass=`true`
+（reasons=`[]`、dialogCount=`0`、backdropCount=`0`）、
+serializedPreScreenshotDialogs=`{dialogs:[],backdropCount:0}`。47 次 AppBridge 交换，
+0 isError、0 fallback；诊断日志 matchingLines 总计 0；screenshots 共 11 张，
+其中 `01-inline-preview.png` 经 root 人工检查确认无 onboarding / backdrop / 可见
+顶层 dialog（人工检查证据，非普遍保证）。**这是测试原则 + OpenChamber 具体实现参考，
 不是“所有宿主都一定有该弹窗”的泛化**：任何宿主顶层 overlay 都不允许覆盖首张截图。
 它仍然不是打包 Electron / Computer Use 验收；打包桌面环境与真实 Computer Use 验收
 仍为 pending（见 8.6 四个门禁表）。

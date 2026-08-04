@@ -720,10 +720,18 @@ OpenCode + 浏览器 + 精确 CLI + 单 remote MCP 配置下的宿主行为（�
   未使用 `dispatchKeyEvent` / Escape / `__react` 内部状态，并断言 wait 与截图前
   absence 只按弹窗身份匹配、不按 close 可用性掩盖遮挡。
 
-最新真实 E2E（单一环境证据，2026-08-05）：11/11 检查点全绿，
-`projectDirectoryOnboarding` status=`dismissed`、dialogCount=`1`、backdropCount=`1`、
-remainingDialogs=`0`、remainingBackdropCount=`0`、preScreenshotAbsent=`true`；47 次
-AppBridge 交换，0 isError、0 fallback。**不要**把这次单一环境证据泛化成“所有宿主都
+最新真实 E2E（单一环境证据，2026-08-05；`generatedAt=2026-08-04T19:24:42.106Z`）：
+本地、未跟踪的证据文件 `.tmp/tldraw-mcp-app-browser-orchestrated/2026-08-04T19-23-36-871Z/browser/report.json`
+（`ok=true`、`requiredCheckpointOk=true`），11/11 检查点 status 全为 `pass`。
+`projectDirectoryOnboarding`：status=`dismissed`、dialogCount=`1`、backdropCount=`1`、
+remainingDialogs=`0`、remainingBackdropCount=`0`、remainingDialogsAbsent=`true`、
+remainingBackdropAbsent=`true`、preScreenshotAbsent=`true`、preScreenshotBackdropAbsent=`true`、
+preScreenshotDialogsAbsent=`true`；截图前 occlusionVerdict.pass=`true`
+（reasons=`[]`、dialogCount=`0`、backdropCount=`0`）、
+serializedPreScreenshotDialogs=`{dialogs:[],backdropCount:0}`。47 次 AppBridge 交换，
+0 isError、0 fallback；诊断日志 matchingLines 总计 0；screenshots 共 11 张，
+其中 `01-inline-preview.png` 经 root 人工检查确认无 onboarding / backdrop / 可见
+顶层 dialog（人工检查证据，非普遍保证）。**不要**把这次单一环境证据泛化成“所有宿主都
 一定有该弹窗”：正确写法是测试原则加 OpenChamber 具体实现参考——任何宿主顶层
 overlay 都不允许覆盖验收截图，是否真的出现该弹窗取决于宿主环境。这也仍然不是打包
 Electron / Computer Use 验收（仍 pending，见 8.6 四个门禁）。
