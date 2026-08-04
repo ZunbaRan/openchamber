@@ -30,6 +30,7 @@ import {
   validatePngBuffer,
   validateSvgBuffer,
 } from './lib/tldraw-mcp-app-browser-acceptance.mjs';
+import { deriveWorkbenchProjectId } from './lib/tldraw-mcp-app-browser-orchestration.mjs';
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const baseUrl = (
@@ -51,7 +52,9 @@ const reportPath = path.join(outputDirectory, 'report.json');
 const chromeDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'openchamber-tldraw-browser-'));
 const canvasId = `oc-acceptance-${Date.now()}`;
 const sessionTitle = `tldraw MCP App acceptance · ${runId}`;
-const projectId = `path_${Buffer.from(projectRoot, 'utf8').toString('base64url')}`;
+// Workbench boards are keyed by path_<base64url(abs path)>; the shared helper
+// guarantees the polled board is the board the host Pin action persists into.
+const projectId = deriveWorkbenchProjectId(projectRoot);
 const renamedGatewayLabel = 'Browser Gateway';
 const expectedExportedLabels = [renamedGatewayLabel, 'Order Service', 'Payment Service'];
 const secondaryPageName = 'Acceptance Detail';

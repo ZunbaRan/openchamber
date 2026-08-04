@@ -11,6 +11,8 @@ import {
   assessAcceptanceOpenCodeCliMismatch,
   buildAcceptanceMcpConfigContent,
   captureSpawnedProcessEvidence,
+  configureAcceptanceProject,
+  deriveWorkbenchProjectId,
   readAcceptanceOpenCodeCliVersion,
   selectAcceptanceOpenCodeCliPath,
   validateAcceptanceMcpUrl,
@@ -230,5 +232,215 @@ test('MCP config URL validation accepts http(s) and rejects invalid or other sch
   ]) {
     assert.throws(() => validateAcceptanceMcpUrl(bad), undefined, `validate ${JSON.stringify(bad)}`);
     assert.throws(() => buildAcceptanceMcpConfigContent({ mcpUrl: bad }), undefined, `build ${JSON.stringify(bad)}`);
+  }
+});
+
+// Regression: the self-contained browser gate reached the Pin checkpoint with a
+// healthy revision-5 tldraw iframe and an enabled host Pin button, yet
+// button.click() produced zero /api/interactive-ui/workbench/* requests because
+// the isolated demo settings.json only carried recap/suggestion flags. The Pin
+// button's resolveWorkbenchPinProject intentionally returns null for an
+// authoritative message directory (projectRoot) unrelated to any registered
+// project, so the acceptance must register that exact project in the isolated
+// settings before the browser verifier starts. These tests pin the shared
+// project-id helper and the fail-closed settings configuration contract.
+
+test('workbench project id derives the canonical path_<base64url> identity used by server and UI', () => {
+  // The verifier previously inlined this Buffer expression; the helper must be
+  // byte-identical to it so the polled board is the configured board.
+  const projectRoot = path.resolve('/some/worktree/openchamber');
+  assert.equal(
+    deriveWorkbenchProjectId(projectRoot),
+    `path_${Buffer.from(projectRoot, 'utf8').toString('base64url')}`,
+  );
+
+  // Matches packages/web/server/lib/projects/project-id.js normalization so the
+  // settings entry the server persists is the id the acceptance computes.
+  assert.equal(
+    deriveWorkbenchProjectId('/tmp/acceptance board v2'),
+    `path_${Buffer.from('/tmp/acceptance board v2', 'utf8').toString('base64url')}`,
+  );
+  assert.equal(
+    deriveWorkbenchProjectId('/tmp/project/'),
+    deriveWorkbenchProjectId('/tmp/project'),
+  );
+  assert.equal(
+    deriveWorkbenchProjectId('C:\\Users\\me\\project'),
+    deriveWorkbenchProjectId('C:/Users/me/project'),
+  );
+  assert.equal(deriveWorkbenchProjectId(''), '');
+  assert.equal(deriveWorkbenchProjectId('   '), '');
+  assert.equal(deriveWorkbenchProjectId(undefined), '');
+  assert.equal(deriveWorkbenchProjectId(null), '');
+});
+
+test('configureAcceptanceProject PUTs an exact project entry and returns auditable evidence', async () => {
+  const root = await makeFixtureRoot();
+  try {
+    const projectRoot = path.join(root, 'project');
+    await fs.promises.mkdir(projectRoot);
+    const baseUrl = 'http://127.0.0.1:39512';
+    const calls = [];
+    const fetchImpl = async (url, options) => {
+      calls.push({ url, options });
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          projects: [{ id: deriveWorkbenchProjectId(projectRoot), path: projectRoot }],
+          activeProjectId: deriveWorkbenchProjectId(projectRoot),
+          lastDirectory: projectRoot,
+        }),
+      };
+    };
+
+    const evidence = await configureAcceptanceProject({ baseUrl, projectRoot, fetchImpl });
+
+    assert.equal(calls.length, 1);
+    const { url, options } = calls[0];
+    assert.equal(url, `${baseUrl}/api/config/settings`);
+    assert.equal(options.method, 'PUT');
+    assert.equal(options.headers['Content-Type'], 'application/json');
+    assert.equal(options.headers.Accept, 'application/json');
+    assert.ok(options.signal instanceof AbortSignal, 'request carries a timeout signal');
+    const projectId = deriveWorkbenchProjectId(projectRoot);
+    assert.deepEqual(JSON.parse(options.body), {
+      projects: [{ id: projectId, path: projectRoot }],
+      activeProjectId: projectId,
+      lastDirectory: projectRoot,
+    });
+    assert.deepEqual(evidence, {
+      endpoint: `${baseUrl}/api/config/settings`,
+      method: 'PUT',
+      projectRoot,
+      projectId,
+      request: {
+        projects: [{ id: projectId, path: projectRoot }],
+        activeProjectId: projectId,
+        lastDirectory: projectRoot,
+      },
+      response: {
+        status: 200,
+        project: { id: projectId, path: projectRoot },
+        activeProjectId: projectId,
+        lastDirectory: projectRoot,
+      },
+    });
+  } finally {
+    await fs.promises.rm(root, { recursive: true, force: true });
+  }
+});
+
+test('configureAcceptanceProject fails closed on non-2xx responses', async () => {
+  const root = await makeFixtureRoot();
+  try {
+    const fetchImpl = async () => ({
+      ok: false,
+      status: 500,
+      text: async () => 'boom',
+      json: async () => ({}),
+    });
+    await assert.rejects(
+      configureAcceptanceProject({ baseUrl: 'http://127.0.0.1:1', projectRoot: root, fetchImpl }),
+      (error) => /PUT .*\/api\/config\/settings failed \(500\)/.test(error.message),
+    );
+  } finally {
+    await fs.promises.rm(root, { recursive: true, force: true });
+  }
+});
+
+test('configureAcceptanceProject fails closed on malformed responses', async () => {
+  const root = await makeFixtureRoot();
+  try {
+    const projectRoot = path.join(root, 'project');
+    await fs.promises.mkdir(projectRoot);
+    for (const malformed of [
+      { json: async () => { throw new Error('not json'); }, text: async () => '<html>' },
+      { json: async () => null },
+      { json: async () => [] },
+      { json: async () => 'string' },
+      { json: async () => ({ projects: 'nope', activeProjectId: 'x' }) },
+    ]) {
+      const fetchImpl = async () => ({ ok: true, status: 200, ...malformed });
+      await assert.rejects(
+        configureAcceptanceProject({ baseUrl: 'http://127.0.0.1:1', projectRoot, fetchImpl }),
+        undefined,
+        `malformed ${JSON.stringify(malformed)}`,
+      );
+    }
+  } finally {
+    await fs.promises.rm(root, { recursive: true, force: true });
+  }
+});
+
+test('configureAcceptanceProject fails closed on mismatched project identity', async () => {
+  const root = await makeFixtureRoot();
+  try {
+    const projectRoot = path.join(root, 'project');
+    const otherRoot = path.join(root, 'other');
+    await fs.promises.mkdir(projectRoot);
+    await fs.promises.mkdir(otherRoot);
+    const cases = [
+      {
+        name: 'entry id not present',
+        payload: {
+          projects: [{ id: deriveWorkbenchProjectId(otherRoot), path: otherRoot }],
+          activeProjectId: deriveWorkbenchProjectId(projectRoot),
+          lastDirectory: projectRoot,
+        },
+      },
+      {
+        name: 'entry path differs from the requested projectRoot',
+        payload: {
+          projects: [{ id: deriveWorkbenchProjectId(projectRoot), path: otherRoot }],
+          activeProjectId: deriveWorkbenchProjectId(projectRoot),
+          lastDirectory: projectRoot,
+        },
+      },
+      {
+        name: 'activeProjectId differs',
+        payload: {
+          projects: [{ id: deriveWorkbenchProjectId(projectRoot), path: projectRoot }],
+          activeProjectId: deriveWorkbenchProjectId(otherRoot),
+          lastDirectory: projectRoot,
+        },
+      },
+      {
+        name: 'lastDirectory missing',
+        payload: {
+          projects: [{ id: deriveWorkbenchProjectId(projectRoot), path: projectRoot }],
+          activeProjectId: deriveWorkbenchProjectId(projectRoot),
+        },
+      },
+      {
+        name: 'lastDirectory differs from the requested projectRoot',
+        payload: {
+          projects: [{ id: deriveWorkbenchProjectId(projectRoot), path: projectRoot }],
+          activeProjectId: deriveWorkbenchProjectId(projectRoot),
+          lastDirectory: otherRoot,
+        },
+      },
+      {
+        name: 'extra unrelated project entry present',
+        payload: {
+          projects: [
+            { id: deriveWorkbenchProjectId(projectRoot), path: projectRoot },
+            { id: deriveWorkbenchProjectId(otherRoot), path: otherRoot },
+          ],
+          activeProjectId: deriveWorkbenchProjectId(projectRoot),
+          lastDirectory: projectRoot,
+        },
+      },
+    ];
+    for (const { name, payload } of cases) {
+      const fetchImpl = async () => ({ ok: true, status: 200, json: async () => payload });
+      await assert.rejects(
+        configureAcceptanceProject({ baseUrl: 'http://127.0.0.1:1', projectRoot, fetchImpl }),
+        undefined,
+        name,
+      );
+    }
+  } finally {
+    await fs.promises.rm(root, { recursive: true, force: true });
   }
 });

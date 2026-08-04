@@ -11,6 +11,7 @@ import {
   assessAcceptanceOpenCodeCliMismatch,
   buildAcceptanceMcpConfigContent,
   captureSpawnedProcessEvidence,
+  configureAcceptanceProject,
   readAcceptanceOpenCodeCliVersion,
   selectAcceptanceOpenCodeCliPath,
   validateAcceptanceMcpUrl,
@@ -225,6 +226,7 @@ let authSource = null;
 let acceptanceOpenCodeCli = null;
 let opencodeCliEvidence = null;
 let mcpConfigEvidence = null;
+let acceptanceProjectEvidence = null;
 
 const cleanup = () => {
   if (cleanupPromise) return cleanupPromise;
@@ -374,6 +376,17 @@ try {
     }
     return health;
   }, 'OpenChamber and managed OpenCode', 120_000);
+  // The isolated demo settings.json only carries recap/suggestion flags, so the
+  // Pin button would resolve no project for the authoritative message directory
+  // and return before any network request. Register the acceptance projectRoot
+  // as the exact workbench project before the browser verifier launches (and
+  // before MCP negotiation so a Pin failure can never be misattributed to MCP
+  // state). The identity is recorded for the orchestration report.
+  acceptanceProjectEvidence = await configureAcceptanceProject({
+    baseUrl: openChamberUrl,
+    projectRoot,
+  });
+  console.log(`[acceptance] Registered acceptance project ${acceptanceProjectEvidence.projectId} in isolated settings`);
   await waitFor(async () => {
     assertChildRunning(openChamberProcess, 'OpenChamber demo');
     const response = await fetch(`${openChamberUrl}/api/mcp?directory=${encodeURIComponent(projectRoot)}`, {
@@ -457,6 +470,7 @@ try {
     },
     opencodeCli: opencodeCliEvidence,
     mcpConfig: mcpConfigEvidence,
+    acceptanceProject: acceptanceProjectEvidence,
     processes: {
       tldrawMcp: captureSpawnedProcessEvidence(tldrawProcess, 'tldraw-mcp'),
       openChamberDemo: captureSpawnedProcessEvidence(openChamberProcess, 'openchamber-demo'),
