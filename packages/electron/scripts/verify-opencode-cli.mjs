@@ -1,44 +1,30 @@
-import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readOpenCodeCliLock } from './opencode-cli-lock.mjs';
+import { assertOpenCodeCliBinary } from './opencode-cli-self-check.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const electronRoot = path.resolve(__dirname, '..');
 const binaryName = () => process.platform === 'win32' ? 'opencode.exe' : 'opencode';
 
-const runVersion = (binaryPath) => {
-  const result = spawnSync(binaryPath, ['--version'], {
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'pipe'],
-    timeout: 15000,
-    windowsHide: true,
-  });
-  if (result.status !== 0) {
-    const stderr = result.stderr ? `\n${result.stderr.trim()}` : '';
-    const stdout = result.stdout ? `\n${result.stdout.trim()}` : '';
-    throw new Error(`Failed to run bundled OpenCode CLI: ${binaryPath}${stderr}${stdout}`);
-  }
-  return (result.stdout || '').trim().split(/\s+/)[0] || '';
-};
+const expectedVersionFor = (binaryPath, lock) => {
+  if (!process.env.OPENCHAMBER_OPENCODE_CLI_PATH?.trim()) return lock.version;
 
-const assertBinary = (binaryPath, expectedVersion) => {
-  if (!fs.existsSync(binaryPath)) {
-    throw new Error(`Bundled OpenCode CLI not found: ${binaryPath}`);
+  const distributionPath = path.join(path.dirname(binaryPath), 'distribution.json');
+  if (!fs.existsSync(distributionPath)) {
+    throw new Error(`Local OpenCode CLI distribution metadata not found: ${distributionPath}`);
   }
-  const stat = fs.statSync(binaryPath);
-  if (!stat.isFile()) {
-    throw new Error(`Bundled OpenCode CLI is not a file: ${binaryPath}`);
+  const distribution = JSON.parse(fs.readFileSync(distributionPath, 'utf8'));
+  if (
+    distribution?.localOverride !== true ||
+    distribution.releaseTag !== 'local-override' ||
+    typeof distribution.version !== 'string' ||
+    !/^\S+$/.test(distribution.version)
+  ) {
+    throw new Error(`Invalid local OpenCode CLI distribution metadata: ${distributionPath}`);
   }
-  if (process.platform !== 'win32' && (stat.mode & 0o111) === 0) {
-    throw new Error(`Bundled OpenCode CLI is not executable: ${binaryPath}`);
-  }
-  const actualVersion = runVersion(binaryPath);
-  if (actualVersion !== expectedVersion) {
-    throw new Error(`Bundled OpenCode CLI version mismatch at ${binaryPath}: expected ${expectedVersion}, got ${actualVersion || '(empty)'}`);
-  }
-  console.log(`[electron] verified bundled OpenCode CLI ${actualVersion}: ${binaryPath}`);
+  return distribution.version;
 };
 
 const findPackagedBinaries = () => {
@@ -74,9 +60,10 @@ const main = () => {
   const mode = process.argv[2];
   if (mode !== '--staged' && mode !== '--packaged') usage();
 
-  const expectedVersion = readOpenCodeCliLock().version;
+  const lock = readOpenCodeCliLock();
   if (mode === '--staged') {
-    assertBinary(path.join(electronRoot, 'resources', 'opencode-cli', binaryName()), expectedVersion);
+    const binaryPath = path.join(electronRoot, 'resources', 'opencode-cli', binaryName());
+    assertOpenCodeCliBinary(binaryPath, expectedVersionFor(binaryPath, lock));
     return;
   }
 
@@ -85,7 +72,7 @@ const main = () => {
     throw new Error('No packaged OpenCode CLI found under packages/electron/dist');
   }
   for (const packagedBinary of packagedBinaries) {
-    assertBinary(packagedBinary, expectedVersion);
+    assertOpenCodeCliBinary(packagedBinary, expectedVersionFor(packagedBinary, lock));
   }
 };
 

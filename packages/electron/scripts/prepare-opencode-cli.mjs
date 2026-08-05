@@ -5,6 +5,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { resolveTargetArchitecture } from './target-architecture.mjs';
 import { artifactForTarget, readOpenCodeCliLock } from './opencode-cli-lock.mjs';
+import { assertOpenCodeCliBinary, readBinaryVersion } from './opencode-cli-self-check.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const electronRoot = path.resolve(__dirname, '..');
@@ -27,18 +28,6 @@ const run = (command, args, options = {}) => {
 };
 
 const outputBinaryPath = (binaryName) => path.join(outputDir, binaryName);
-
-const readBinaryVersion = (binaryPath) => {
-  if (!fs.existsSync(binaryPath)) return null;
-  const result = spawnSync(binaryPath, ['--version'], {
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'pipe'],
-    timeout: 15000,
-    windowsHide: true,
-  });
-  if (result.status !== 0) return null;
-  return (result.stdout || '').trim().split(/\s+/)[0] || null;
-};
 
 const ensureExecutable = (filePath) => {
   if (process.platform !== 'win32') {
@@ -122,6 +111,7 @@ const main = async () => {
     if (!localVersion) {
       throw new Error(`Local OpenCode CLI override is missing or not executable: ${sourceBinary}`);
     }
+    assertOpenCodeCliBinary(sourceBinary, localVersion);
 
     fs.mkdirSync(outputDir, { recursive: true });
     for (const entry of fs.readdirSync(outputDir)) {
@@ -151,6 +141,7 @@ const main = async () => {
 
   const existingVersion = readBinaryVersion(outputBinary);
   if (existingVersion === version) {
+    assertOpenCodeCliBinary(outputBinary, version);
     console.log(`[electron] bundled OpenCode CLI already prepared: ${outputBinary} (${version})`);
     return;
   }
@@ -180,10 +171,7 @@ const main = async () => {
   fs.copyFileSync(extractedBinary, outputBinary);
   ensureExecutable(outputBinary);
 
-  const preparedVersion = readBinaryVersion(outputBinary);
-  if (preparedVersion !== version) {
-    throw new Error(`Prepared OpenCode CLI version mismatch: expected ${version}, got ${preparedVersion || 'unknown'}`);
-  }
+  assertOpenCodeCliBinary(outputBinary, version);
 
   fs.writeFileSync(
     path.join(outputDir, 'distribution.json'),

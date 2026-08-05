@@ -70,10 +70,11 @@ bun run electron:build
 That runs, in order:
 
 1. `build:web-assets` to build the web UI and copy it into `packages/electron/resources/web-dist`.
-2. `prepare:opencode-cli` to download/cache the pinned OpenCode CLI and copy it into `packages/electron/resources/opencode-cli`.
+2. `prepare:opencode-cli` to download/cache the pinned OpenCode CLI, verify its built-in Generative Widget prompt/skill, and copy it into `packages/electron/resources/opencode-cli`.
 3. `bundle:main` to create `packages/electron/dist-bundle/main.mjs`.
 4. `rebuild:native` to rebuild native modules for Electron.
 5. `package.mjs` to run `electron-builder`; its `afterPack` hook stages the rebuilt `better-sqlite3` binary that Electron Builder's Bun dependency collector otherwise omits.
+6. `verify:opencode-cli:packaged` to execute the final packaged OpenCode binary and verify the same prompt/skill self-check.
 
 Build output goes to `packages/electron/dist`.
 
@@ -105,7 +106,7 @@ The macOS menu bar item is enabled by default and can be disabled in General set
 
 ## Bundled OpenCode CLI
 
-Packaged Desktop builds include the OpenChamber-managed OpenCode fork pinned by `opencode-cli.lock.json`. `prepare:opencode-cli` downloads only the platform-specific `ZunbaRan/opencode` release artifact named in that lock, verifies its SHA256, caches it under `packages/electron/.cache/opencode-cli`, stages `opencode` or `opencode.exe` into `resources/opencode-cli`, and verifies `opencode --version` before packaging. Re-running the step is fast when the staged binary already matches the locked version.
+Packaged Desktop builds include the OpenChamber-managed OpenCode fork pinned by `opencode-cli.lock.json`. `prepare:opencode-cli` downloads only the platform-specific `ZunbaRan/opencode` release artifact named in that lock, verifies its SHA256, caches it under `packages/electron/.cache/opencode-cli`, stages `opencode` or `opencode.exe` into `resources/opencode-cli`, and executes both `opencode --version` and the isolated Generative Widget asset self-check before packaging. The self-check proves the runtime system prompt contains the exact built-in wire-format prompt and that `generative-widget-guidelines` resolves to the exact built-in skill body. The final packaged binary is checked again after `electron-builder` copies resources. Re-running the step is fast when the staged binary already matches the locked version.
 
 Managed local Desktop startup prefers OpenCode binaries in this order:
 
