@@ -53,6 +53,53 @@ import { createHTMLArtifactStore } from '../interactive-ui/artifact-store.js';
 import { createBuiltInInteractiveUIRuntime } from '../interactive-ui/builtin-runtime.js';
 import { createInteractiveUIWorkbenchStore } from '../interactive-ui/workbench-store.js';
 
+// Production wiring seam for the Interactive UI runtime (module-private: the
+// public surface is createFeatureRoutesRuntime(...).registerRoutes): binds the
+// manager-owned Remote Phase R2 resource resolver so the shared runtime can
+// lazily resolve ONE declared signed Remote resource on the first actual load,
+// forwarding the captured authority context (resolved root, canonical
+// extension-document hash, signed-manifest hash, opaque provenance generation)
+// exactly as the runtime captured it at manifest read time. Null results are
+// allowed ONLY for ordinary configured/built-in roots and authorized current
+// Local installs (their exact disk path); Hosted and Remote manager-owned
+// bytes are ALWAYS returned as verified Buffers from inside the manager
+// mutation queue. Runtimes without a manager resolver stay non-Remote.
+const createInteractiveUIRuntimeForRoutes = ({
+  fsPromises,
+  path,
+  crypto,
+  fetchImpl,
+  environment,
+  connectionStore,
+  logger,
+  manager,
+  builtInRootDirectory,
+  configuredRoots,
+}) => createInteractiveUIRuntime({
+  fsPromises,
+  path,
+  crypto,
+  fetchImpl,
+  extensionRoots: async () => [
+    builtInRootDirectory,
+    ...await manager.getEnabledExtensionRoots(),
+    ...configuredRoots,
+  ],
+  environment,
+  connectionStore,
+  logger,
+  resolveExtensionResource: (extensionId, relativePath, authority) => (
+    manager.resolveExtensionResource(extensionId, relativePath, authority)
+  ),
+  // The runtime authorizes EVERY discovered manifest against the manager
+  // BEFORE any metadata/operation exposure (same central classifier as the
+  // resolver), so a configured root can never resurrect a disabled or
+  // quarantined manager extension id.
+  authorizeExtensionAuthority: (extensionId, authority) => (
+    manager.authorizeExtensionAuthority(extensionId, authority)
+  ),
+});
+
 export const createFeatureRoutesRuntime = (dependencies) => {
   const {
     clientReloadDelayMs,
@@ -180,18 +227,16 @@ export const createFeatureRoutesRuntime = (dependencies) => {
       artifactStore: htmlArtifactStore,
       workbenchStore: interactiveUIWorkbenchStore,
       uiAuthController,
-      runtime: createInteractiveUIRuntime({
+      runtime: createInteractiveUIRuntimeForRoutes({
         fsPromises,
         path,
         crypto,
-        extensionRoots: async () => [
-          builtInInteractiveUIRuntime.rootDirectory,
-          ...await interactiveUIExtensionManager.getEnabledExtensionRoots(),
-          ...configuredInteractiveUIRoots,
-        ],
         environment: processLike.env,
         connectionStore: interactiveUIConnectionStore,
         logger: console,
+        manager: interactiveUIExtensionManager,
+        builtInRootDirectory: builtInInteractiveUIRuntime.rootDirectory,
+        configuredRoots: configuredInteractiveUIRoots,
       }),
     });
 

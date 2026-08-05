@@ -9,10 +9,17 @@ export const HOSTED_OCIX_SIGNED_MANIFEST_FILE = '.openchamber.hosted-manifest.js
 const ID_PATTERN = /^[a-z0-9]+(?:[._-][a-z0-9]+)+$/i;
 const SEMVER_PATTERN = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
 const SHA256_PATTERN = /^sha256-[A-Za-z0-9+/]{43}=$/;
-const MAX_MANIFEST_BYTES = 2 * 1024 * 1024;
+// Single-source internal bound for the Hosted signed-manifest TRANSPORT: the
+// manifest fetch size cap AND the runtime's signed-manifest authority capture
+// both use this exact constant (the runtime's openchamber.extension.json cap
+// stays at 512 KiB). Do not loosen.
+export const HOSTED_OCIX_MAX_MANIFEST_BYTES = 2 * 1024 * 1024;
+const MAX_MANIFEST_BYTES = HOSTED_OCIX_MAX_MANIFEST_BYTES;
 const MAX_RESOURCE_BYTES = 8 * 1024 * 1024;
 const MAX_TOTAL_RESOURCE_BYTES = 16 * 1024 * 1024;
 const MAX_RESOURCES = 512;
+const MAX_REDIRECTS = 5;
+const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
 const DEFAULT_TTL_SECONDS = 15 * 60;
 const MIN_TTL_SECONDS = 60;
 const MAX_TTL_SECONDS = 24 * 60 * 60;
@@ -40,7 +47,10 @@ const canonicalize = (value) => {
   );
 };
 
-const canonicalStringify = (value) => JSON.stringify(canonicalize(value));
+// Stable canonical JSON serialization (key-sorted, undefined-dropping) shared
+// by the Hosted kernel, the manager, and the runtime's captured authority
+// hashing so all sides compute byte-identical canonical digests.
+export const canonicalStringify = (value) => JSON.stringify(canonicalize(value));
 
 const sha256 = (cryptoImpl, value) => `sha256-${cryptoImpl.createHash('sha256').update(value).digest('base64')}`;
 
@@ -368,11 +378,57 @@ export const verifyHostedOcixManifest = ({
   };
 };
 
+// Best-effort async disposal of a response body BEFORE a pre-consumption
+// rejection: cancels the underlying stream so hostile/unbounded bodies are
+// not retained across retries. Cancellation failure is ignored — it must
+// never mask the authoritative HostedOcixError and never causes a forbidden
+// next-hop contact.
+const discardResponseBody = async (response) => {
+  try {
+    if (response?.body?.cancel) await response.body.cancel();
+  } catch {
+    // Best-effort only.
+  }
+};
+
 const readResponseBytes = async (response, limit, label) => {
-  const length = Number(response.headers.get('content-length'));
+  const length = Number(response.headers?.get?.('content-length'));
   if (Number.isFinite(length) && length > limit) {
+    await discardResponseBody(response);
     throw new HostedOcixError(`${label} exceeds its size limit`, 'hosted_payload_too_large', 413);
   }
+  const body = response.body;
+  if (body && typeof body.getReader === 'function') {
+    // Streaming-bounded read: accumulate only up to the limit and cancel
+    // immediately on overflow so an unbounded/chunked body is never fully
+    // consumed into memory. The reader lock is ALWAYS released in finally,
+    // including after cancel() on overflow; a release failure must never
+    // mask the original outcome.
+    const reader = body.getReader();
+    const chunks = [];
+    let total = 0;
+    try {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        total += value.byteLength;
+        if (total > limit) {
+          await reader.cancel().catch(() => {});
+          throw new HostedOcixError(`${label} exceeds its size limit`, 'hosted_payload_too_large', 413);
+        }
+        chunks.push(value);
+      }
+    } finally {
+      try {
+        reader.releaseLock();
+      } catch {
+        // Already released or invalid: never mask the original error.
+      }
+    }
+    return Buffer.concat(chunks, total);
+  }
+  // Fallback for test-only or non-stream responses: read the whole body and
+  // then post-check the size (never returns oversized bytes).
   const bytes = Buffer.from(await response.arrayBuffer());
   if (bytes.length > limit) {
     throw new HostedOcixError(`${label} exceeds its size limit`, 'hosted_payload_too_large', 413);
@@ -380,33 +436,130 @@ const readResponseBytes = async (response, limit, label) => {
   return bytes;
 };
 
+// Resolves a redirect Location against the current URL and enforces the
+// ORIGINAL requested origin plus the existing HTTPS/loopback-http/no-credential
+// URL policy BEFORE any next-hop request is made. Throws a stable
+// HostedOcixError; a forbidden next hop is never contacted.
+const resolveRedirectTarget = ({
+  location,
+  currentUrl,
+  originalOrigin,
+  label,
+  code,
+  status,
+}) => {
+  if (typeof location !== 'string' || !location.trim()) {
+    throw new HostedOcixError(`${label} redirected without a valid Location`, code, status);
+  }
+  let target;
+  try {
+    target = new URL(location, currentUrl);
+  } catch {
+    throw new HostedOcixError(`${label} redirect Location is invalid`, code, status);
+  }
+  if (target.origin !== originalOrigin) {
+    throw new HostedOcixError(`${label} redirected to a different origin`, code, status);
+  }
+  normalizeHttpsUrl(target.toString(), label);
+  return target;
+};
+
+// Bounded manual redirect loop shared by the Hosted manifest and resource
+// transports: every next hop is validated (original origin + URL policy)
+// BEFORE it is contacted; redirect bodies are discarded; an unexpected
+// cross-origin response.url is rejected defensively (covers custom fetch
+// implementations that ignore redirect: 'manual'). GET/Accept/timeout
+// semantics are kept; the redirect count is bounded by MAX_REDIRECTS.
+const fetchWithManualRedirects = async ({
+  url,
+  fetchImpl,
+  headers,
+  label,
+  originChangedCode,
+  originChangedStatus,
+  failedCode,
+  failedStatus,
+}) => {
+  const original = new URL(url);
+  const originalOrigin = original.origin;
+  let current = original;
+  for (let attempt = 0; attempt <= MAX_REDIRECTS; attempt += 1) {
+    let response;
+    try {
+      response = await fetchImpl(current, {
+        headers,
+        signal: AbortSignal.timeout(15_000),
+        redirect: 'manual',
+      });
+    } catch {
+      throw new HostedOcixError(`${label} request failed`, failedCode, failedStatus);
+    }
+    // Defensive: a custom fetch that followed redirects despite
+    // redirect: 'manual' must never hand back a cross-origin response. The
+    // body is discarded before the rejection so it is not retained.
+    if (typeof response?.url === 'string' && response.url) {
+      let responseUrl;
+      try {
+        responseUrl = new URL(response.url);
+      } catch {
+        await discardResponseBody(response);
+        throw new HostedOcixError(`${label} returned an invalid response URL`, originChangedCode, originChangedStatus);
+      }
+      if (responseUrl.origin !== originalOrigin) {
+        await discardResponseBody(response);
+        throw new HostedOcixError(`${label} redirected to a different origin`, originChangedCode, originChangedStatus);
+      }
+    }
+    if (REDIRECT_STATUSES.has(response.status)) {
+      if (attempt >= MAX_REDIRECTS) {
+        await discardResponseBody(response);
+        throw new HostedOcixError(`${label} exceeded its redirect limit`, originChangedCode, originChangedStatus);
+      }
+      // Await best-effort cancellation of the redirect body BEFORE issuing
+      // the next same-origin hop; cancellation failure may be ignored but
+      // never blocks or masks, and a forbidden next hop is still never
+      // contacted (resolveRedirectTarget validates before contact).
+      try {
+        if (response.body?.cancel) await response.body.cancel();
+      } catch {
+        // Best-effort: cancellation failure is ignored.
+      }
+      current = resolveRedirectTarget({
+        location: response.headers?.get?.('location'),
+        currentUrl: current,
+        originalOrigin,
+        label,
+        code: originChangedCode,
+        status: originChangedStatus,
+      });
+      continue;
+    }
+    return response;
+  }
+  throw new HostedOcixError(`${label} exceeded its redirect limit`, originChangedCode, originChangedStatus);
+};
+
 export const fetchHostedOcixManifest = async ({
   manifestUrl,
   fetchImpl = globalThis.fetch,
 }) => {
   const requested = normalizeHttpsUrl(manifestUrl, 'Hosted manifest URL');
-  let response;
-  try {
-    response = await fetchImpl(requested, {
-      headers: { Accept: 'application/vnd.openchamber.hosted-ocix+json, application/json' },
-      signal: AbortSignal.timeout(15_000),
-      redirect: 'follow',
-    });
-  } catch {
-    throw new HostedOcixError('Hosted manifest request failed', 'hosted_manifest_unavailable', 502);
-  }
+  const response = await fetchWithManualRedirects({
+    url: requested,
+    fetchImpl,
+    headers: { Accept: 'application/vnd.openchamber.hosted-ocix+json, application/json' },
+    label: 'Hosted manifest',
+    originChangedCode: 'hosted_manifest_origin_changed',
+    originChangedStatus: 403,
+    failedCode: 'hosted_manifest_unavailable',
+    failedStatus: 502,
+  });
   if (!response.ok) {
+    await discardResponseBody(response);
     throw new HostedOcixError(
       `Hosted manifest request failed (${response.status})`,
       'hosted_manifest_unavailable',
       502,
-    );
-  }
-  if (response.url && new URL(response.url).origin !== requested.origin) {
-    throw new HostedOcixError(
-      'Hosted manifest redirected to a different origin',
-      'hosted_manifest_origin_changed',
-      403,
     );
   }
   const bytes = await readResponseBytes(response, MAX_MANIFEST_BYTES, 'Hosted manifest');
@@ -415,6 +568,78 @@ export const fetchHostedOcixManifest = async ({
   } catch {
     throw new HostedOcixError('Hosted manifest is not valid JSON', 'invalid_hosted_manifest', 502);
   }
+};
+
+// Single-resource fetch verification shared by full Hosted materialization and
+// the Remote lazy resource cache: bounded HTTP fetch, same-origin redirect
+// enforcement, normalized Content-Type against the signed mimeType, size
+// limit, and exact signed sha256. Returns the verified bytes or throws a
+// stable HostedOcixError; never returns bytes that failed any check.
+export const fetchVerifiedHostedResource = async ({
+  resource,
+  fetchImpl = globalThis.fetch,
+  cryptoImpl = nodeCrypto,
+  maxBytes = MAX_RESOURCE_BYTES,
+}) => {
+  if (!isRecord(resource) || typeof resource.url !== 'string' || !SHA256_PATTERN.test(resource.sha256 ?? '')) {
+    throw new HostedOcixError('Hosted resource metadata is invalid', 'invalid_hosted_resource');
+  }
+  // Normalize/enforce the initial resource URL with the existing URL policy
+  // (HTTPS, loopback-only HTTP, no credentials/fragments) BEFORE the first
+  // request: a signed-manifest caller already normalized it, but the shared
+  // exported verifier fails closed itself so an unsafe URL is never contacted.
+  const resourceUrl = normalizeHttpsUrl(resource.url, `Hosted resource ${resource.path}`);
+  const response = await fetchWithManualRedirects({
+    url: resourceUrl,
+    fetchImpl,
+    headers: { Accept: resource.mimeType },
+    label: `Hosted resource ${resource.path}`,
+    originChangedCode: 'hosted_resource_unavailable',
+    originChangedStatus: 502,
+    failedCode: 'hosted_resource_unavailable',
+    failedStatus: 502,
+  });
+  if (!response.ok) {
+    await discardResponseBody(response);
+    throw new HostedOcixError(
+      `Hosted resource request failed: ${resource.path}`,
+      'hosted_resource_unavailable',
+      502,
+    );
+  }
+  let responseMimeType;
+  try {
+    responseMimeType = normalizeMediaType(
+      response.headers?.get?.('content-type'),
+      `Hosted resource response MIME type for ${resource.path}`,
+    );
+  } catch {
+    await discardResponseBody(response);
+    throw new HostedOcixError(
+      `Hosted resource response is missing a valid Content-Type: ${resource.path}`,
+      'hosted_resource_mime_mismatch',
+      403,
+      { expected: resource.mimeType, actual: response.headers?.get?.('content-type') ?? null },
+    );
+  }
+  if (responseMimeType !== resource.mimeType) {
+    await discardResponseBody(response);
+    throw new HostedOcixError(
+      `Hosted resource Content-Type does not match its signed manifest: ${resource.path}`,
+      'hosted_resource_mime_mismatch',
+      403,
+      { expected: resource.mimeType, actual: responseMimeType },
+    );
+  }
+  const bytes = await readResponseBytes(response, maxBytes, `Hosted resource ${resource.path}`);
+  if (sha256(cryptoImpl, bytes) !== resource.sha256) {
+    throw new HostedOcixError(
+      `Hosted resource integrity check failed: ${resource.path}`,
+      'hosted_resource_integrity_failed',
+      403,
+    );
+  }
+  return bytes;
 };
 
 const atomicWrite = async (fsImpl, pathImpl, cryptoImpl, target, bytes) => {
@@ -454,60 +679,10 @@ export const materializeHostedOcix = async ({
   try {
     await fsImpl.mkdir(staging, { recursive: true, mode: 0o700 });
     for (const resource of verified.resources) {
-      let response;
-      try {
-        response = await fetchImpl(resource.url, {
-          headers: { Accept: resource.mimeType },
-          signal: AbortSignal.timeout(15_000),
-          redirect: 'follow',
-        });
-      } catch {
-        throw new HostedOcixError(
-          `Hosted resource request failed: ${resource.path}`,
-          'hosted_resource_unavailable',
-          502,
-        );
-      }
-      if (!response.ok || new URL(response.url || resource.url).origin !== new URL(resource.url).origin) {
-        throw new HostedOcixError(
-          `Hosted resource request failed or redirected across origins: ${resource.path}`,
-          'hosted_resource_unavailable',
-          502,
-        );
-      }
-      let responseMimeType;
-      try {
-        responseMimeType = normalizeMediaType(
-          response.headers?.get?.('content-type'),
-          `Hosted resource response MIME type for ${resource.path}`,
-        );
-      } catch {
-        throw new HostedOcixError(
-          `Hosted resource response is missing a valid Content-Type: ${resource.path}`,
-          'hosted_resource_mime_mismatch',
-          403,
-          { expected: resource.mimeType, actual: response.headers?.get?.('content-type') ?? null },
-        );
-      }
-      if (responseMimeType !== resource.mimeType) {
-        throw new HostedOcixError(
-          `Hosted resource Content-Type does not match its signed manifest: ${resource.path}`,
-          'hosted_resource_mime_mismatch',
-          403,
-          { expected: resource.mimeType, actual: responseMimeType },
-        );
-      }
-      const bytes = await readResponseBytes(response, MAX_RESOURCE_BYTES, `Hosted resource ${resource.path}`);
+      const bytes = await fetchVerifiedHostedResource({ resource, fetchImpl, cryptoImpl });
       total += bytes.length;
       if (total > MAX_TOTAL_RESOURCE_BYTES) {
         throw new HostedOcixError('Hosted resources exceed the total size limit', 'hosted_payload_too_large', 413);
-      }
-      if (sha256(cryptoImpl, bytes) !== resource.sha256) {
-        throw new HostedOcixError(
-          `Hosted resource integrity check failed: ${resource.path}`,
-          'hosted_resource_integrity_failed',
-          403,
-        );
       }
       await atomicWrite(
         fsImpl,

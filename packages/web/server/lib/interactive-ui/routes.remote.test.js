@@ -48,11 +48,17 @@ const createRemoteManifest = (keys) => {
     id: 'com.acme.remote.overview',
     layout: { type: 'text', value: 'Remote' },
   }));
+  const iconBytes = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"><rect width="10" height="10"/></svg>');
   const resources = [{
     path: 'ui/overview.view.json',
     url: 'https://apps.example.com/ui/overview.view.json',
     mimeType: 'application/json',
     sha256: `sha256-${crypto.createHash('sha256').update(view).digest('base64')}`,
+  }, {
+    path: 'ui/icon.svg',
+    url: 'https://apps.example.com/ui/icon.svg',
+    mimeType: 'image/svg+xml',
+    sha256: `sha256-${crypto.createHash('sha256').update(iconBytes).digest('base64')}`,
   }];
   const unsigned = {
     $schema: HOSTED_OCIX_MANIFEST_SCHEMA,
@@ -79,6 +85,7 @@ const createRemoteManifest = (keys) => {
       id: 'com.acme.remote',
       name: 'Acme Remote',
       version: '1.0.0',
+      icon: 'ui/icon.svg',
       agentRouting: {
         domain: 'remote',
         intents: ['remote.overview'],
@@ -120,6 +127,7 @@ const createRemoteManifest = (keys) => {
       ...unsigned,
       signature: { algorithm: 'ed25519', keyId: 'release-2026', value: signature },
     },
+    icon: iconBytes,
   };
 };
 
@@ -134,13 +142,35 @@ const createApp = async ({
   const keys = generatePublisherKeyPair();
   const manifest = createRemoteManifest(keys);
   const requested = [];
-  const fetchImpl = async (url) => {
+  const requests = [];
+  let resourceMode = 'ok';
+  const fetchImpl = async (url, init = {}) => {
     const value = String(url);
     requested.push(value);
+    requests.push({ url: value, headers: { ...(init?.headers ?? {}) } });
     if (value === 'https://apps.example.com/manifest.json') {
       return new Response(JSON.stringify(manifest.document), {
         status: 200,
         headers: { 'Content-Type': 'application/json' },
+      });
+    }
+    if (value === 'https://apps.example.com/ui/overview.view.json') {
+      const headers = resourceMode === 'mime'
+        ? { 'Content-Type': 'text/plain' }
+        : { 'Content-Type': 'application/json' };
+      return new Response(JSON.stringify({
+        $schema: 'openchamber://declarative-view/v1',
+        id: 'com.acme.remote.overview',
+        layout: { type: 'text', value: 'Remote' },
+      }), {
+        status: 200,
+        headers,
+      });
+    }
+    if (value === 'https://apps.example.com/ui/icon.svg') {
+      return new Response(manifest.icon, {
+        status: 200,
+        headers: { 'Content-Type': 'image/svg+xml' },
       });
     }
     return new Response('not found', { status: 404 });
@@ -164,6 +194,12 @@ const createApp = async ({
     fetchImpl,
     extensionRoots: async () => [...await manager.getEnabledExtensionRoots()],
     connectionStore,
+    // Production wiring (feature-routes-runtime.js): the shared runtime
+    // receives the manager-owned Remote Phase R2 lazy resource resolver with
+    // the captured authority context forwarded exactly.
+    resolveExtensionResource: (extensionId, relativePath, authority) => (
+      manager.resolveExtensionResource(extensionId, relativePath, authority)
+    ),
   });
   const app = express();
   if (beforeRoutes) beforeRoutes(app);
@@ -200,8 +236,12 @@ const createApp = async ({
     dataDirectory,
     opencodeConfigDirectory,
     requested,
+    requests,
     runtime,
     manager,
+    setResourceMode: (mode) => {
+      resourceMode = mode;
+    },
   };
 };
 
@@ -259,6 +299,16 @@ describe('Remote OCIX routes', () => {
     });
     expect(JSON.stringify(response.body)).not.toContain('sk-route-secret');
     expect(JSON.stringify(response.body)).not.toContain('trustAdded');
+    // The ACTUAL installation identity is hidden behind the opaque capability:
+    // the connect HTTP body never contains the stored installationId value or
+    // the field name, while the installation-bound credential IS stored.
+    const storedId = JSON.parse(await fs.readFile(
+      path.join(dataDirectory, 'interactive-ui', 'connection-secrets.json'),
+      'utf8',
+    )).connections['com.acme.remote:crm'].installationId;
+    expect(typeof storedId).toBe('string');
+    expect(JSON.stringify(response.body)).not.toContain(storedId);
+    expect(JSON.stringify(response.body)).not.toContain('installationId');
 
     const connections = await request(app).get('/api/interactive-ui/connections');
     expect(connections.body.connections).toEqual([expect.objectContaining({
@@ -722,5 +772,109 @@ describe('Remote OCIX routes', () => {
     expect(responseA.body.credential.configured).toBe(true);
     expect(JSON.stringify(responseA.body)).not.toContain('sk-a');
     expect(JSON.stringify(responseA.body)).not.toContain('installationId');
+  });
+
+  test('a connected Remote view and icon are lazily fetched and served through the runtime APIs', async () => {
+    const { app, requested } = await createApp({});
+    const inspection = await request(app)
+      .post('/api/interactive-ui/manager/remote/inspect')
+      .send({ appEntryUrl: 'https://apps.example.com/manifest.json' });
+    const connect = await request(app)
+      .post('/api/interactive-ui/manager/remote/connect')
+      .send(connectBody(inspection));
+    expect(connect.status).toBe(201);
+    // Connect/list remain metadata-only: no resource URL was requested.
+    expect(requested.some((url) => url.includes('/ui/'))).toBe(false);
+
+    // The registry lists the metadata-only shell without fetching resources.
+    const registry = await request(app).get('/api/interactive-ui/extensions');
+    expect(registry.status).toBe(200);
+    expect(registry.body.extensions[0]).toMatchObject({ id: 'com.acme.remote', iconPath: '/api/interactive-ui/extensions/com.acme.remote/icon' });
+    expect(requested.some((url) => url.includes('/ui/'))).toBe(false);
+
+    // The first actual view load fetches ONLY the declared view resource and
+    // serves it through the existing descriptor route.
+    const view = await request(app).get('/api/interactive-ui/views/com.acme.remote.overview?tool=remote_open');
+    expect(view.status).toBe(200);
+    expect(view.body.declarative).toMatchObject({ $schema: 'openchamber://declarative-view/v1' });
+    expect(requested.filter((url) => url === 'https://apps.example.com/ui/overview.view.json')).toHaveLength(1);
+    expect(requested.some((url) => url === 'https://apps.example.com/ui/icon.svg')).toBe(false);
+
+    // A repeated load inside the TTL is a verified cache hit: no second fetch.
+    const again = await request(app).get('/api/interactive-ui/views/com.acme.remote.overview?tool=remote_open');
+    expect(again.status).toBe(200);
+    expect(requested.filter((url) => url === 'https://apps.example.com/ui/overview.view.json')).toHaveLength(1);
+
+    // The icon is a separate lazy fetch served through the existing icon route.
+    const icon = await request(app).get('/api/interactive-ui/extensions/com.acme.remote/icon');
+    expect(icon.status).toBe(200);
+    expect(icon.headers['content-type']).toBe('image/svg+xml');
+    // Icon responses are binary: assert on the raw body, never on .text.
+    const iconBody = Buffer.isBuffer(icon.body) ? icon.body : Buffer.from(icon.text ?? '');
+    expect(iconBody.toString('utf8')).toContain('<svg');
+    expect(requested.filter((url) => url === 'https://apps.example.com/ui/icon.svg')).toHaveLength(1);
+
+    // The metadata-only shell still has no materialized resource tree.
+    const managerSnapshot = await request(app).get('/api/interactive-ui/manager');
+    expect(managerSnapshot.body.extensions[0].integrity).toEqual({ status: 'ready' });
+  });
+
+  test('a failing Remote resource load returns a stable sanitized error and never serves or caches bytes', async () => {
+    const { app, requested, setResourceMode } = await createApp({});
+    const inspection = await request(app)
+      .post('/api/interactive-ui/manager/remote/inspect')
+      .send({ appEntryUrl: 'https://apps.example.com/manifest.json' });
+    const connect = await request(app)
+      .post('/api/interactive-ui/manager/remote/connect')
+      .send(connectBody(inspection));
+    expect(connect.status).toBe(201);
+
+    // The upstream serves a Content-Type that does not match the signed
+    // mimeType: the route must fail closed with a stable sanitized error that
+    // never leaks upstream details.
+    setResourceMode('mime');
+    const failing = await request(app).get('/api/interactive-ui/views/com.acme.remote.overview?tool=remote_open');
+    expect(failing.status).toBe(403);
+    expect(failing.body.code).toBe('hosted_resource_mime_mismatch');
+    expect(failing.body.error).toBe('Remote extension resource is unavailable');
+    expect(JSON.stringify(failing.body)).not.toContain('apps.example.com');
+
+    // The failed attempt left no usable cache: a corrected upstream refetches.
+    setResourceMode('ok');
+    const retry = await request(app).get('/api/interactive-ui/views/com.acme.remote.overview?tool=remote_open');
+    expect(retry.status).toBe(200);
+    expect(requested.filter((url) => url === 'https://apps.example.com/ui/overview.view.json')).toHaveLength(2);
+  });
+
+  test('Remote resource fetches, cache bytes, and served bytes never contain the connector Access Key', async () => {
+    const { app, dataDirectory, requests } = await createApp({});
+    const inspection = await request(app)
+      .post('/api/interactive-ui/manager/remote/inspect')
+      .send({ appEntryUrl: 'https://apps.example.com/manifest.json' });
+    const connect = await request(app)
+      .post('/api/interactive-ui/manager/remote/connect')
+      .send(connectBody(inspection, 'sk-lazy-secret-42'));
+    expect(connect.status).toBe(201);
+
+    // Sanity: the connector Access Key IS stored, owned by the connection.
+    const secretsPath = path.join(dataDirectory, 'interactive-ui', 'connection-secrets.json');
+    expect(JSON.parse(await fs.readFile(secretsPath, 'utf8')).connections['com.acme.remote:crm'].accessKey)
+      .toBe('sk-lazy-secret-42');
+
+    // Lazy resource loads through the runtime APIs.
+    const view = await request(app).get('/api/interactive-ui/views/com.acme.remote.overview?tool=remote_open');
+    const icon = await request(app).get('/api/interactive-ui/extensions/com.acme.remote/icon');
+    expect(icon.status).toBe(200);
+
+    // The Access Key never enters resource request URLs or headers or served
+    // responses. The Remote cache is manager-owned, process-lifetime, and
+    // IN-MEMORY: no on-disk cache directory is ever created.
+    for (const record of requests) {
+      expect(record.url).not.toContain('sk-lazy-secret-42');
+      expect(JSON.stringify(record.headers)).not.toContain('sk-lazy-secret-42');
+    }
+    expect(JSON.stringify(view.body)).not.toContain('sk-lazy-secret-42');
+    await expect(fs.stat(path.join(dataDirectory, 'interactive-ui', 'remote-cache')))
+      .rejects.toMatchObject({ code: 'ENOENT' });
   });
 });

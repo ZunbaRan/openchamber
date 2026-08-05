@@ -16,8 +16,29 @@ import {
   isWorkbenchVersionCompatible,
   toWorkbenchCompatibleVersion,
 } from './workbench-version.js';
+import nodeFs from 'node:fs';
+import { HOSTED_OCIX_MAX_MANIFEST_BYTES, HOSTED_OCIX_SIGNED_MANIFEST_FILE, canonicalStringify } from './hosted-ocix.js';
 
 const MANIFEST_FILE = 'openchamber.extension.json';
+
+// No-follow/no-block open flags for the sibling signed-manifest capture where
+// the platform supports them (0 on Windows, degrading safely to O_RDONLY).
+const O_NOFOLLOW = typeof nodeFs.constants?.O_NOFOLLOW === 'number' ? nodeFs.constants.O_NOFOLLOW : 0;
+const O_NONBLOCK = typeof nodeFs.constants?.O_NONBLOCK === 'number' ? nodeFs.constants.O_NONBLOCK : 0;
+const SIBLING_SIGNED_MANIFEST_READ_FLAGS = O_NOFOLLOW | O_NONBLOCK;
+
+// Captured extension authority binding: the runtime records, at the exact
+// moment it reads and parses openchamber.extension.json, (1) the resolved
+// extension root/directory, (2) the canonical SHA-256 of the captured
+// extension document BEFORE normalization, and (3) the SHA-256 of the sibling
+// signed Hosted manifest bytes when present. Keyed by the normalized
+// extension object in a WeakMap so it travels with the extension internally
+// and never leaks into registry/views/API responses.
+const extensionAuthorities = new WeakMap();
+
+// Canonical sha256 digest in the same `sha256-<base64>` format the manager
+// uses for signed hashes so captured authority values compare exactly.
+const sha256Digest = (cryptoImpl, value) => `sha256-${cryptoImpl.createHash('sha256').update(value).digest('base64')}`;
 const MAX_MANIFEST_BYTES = 512 * 1024;
 const MAX_VIEW_BYTES = 512 * 1024;
 const MAX_NATIVE_BUNDLE_BYTES = 2 * 1024 * 1024;
@@ -28,6 +49,26 @@ const CONNECTION_TEST_TIMEOUT_MS = 10_000;
 const CONFIRMATION_TTL_MS = 60_000;
 const MAX_PENDING_CONFIRMATIONS = 1024;
 const EXTENSION_ID_PATTERN = /^[a-z0-9]+(?:[._-][a-z0-9]+)+$/i;
+const EXTENSION_LOAD_ERROR_CODE_PATTERN = /^[a-z0-9_]+$/;
+
+// Reusable public load-error sanitizer: public runtime results (registry,
+// Workbench catalog, connection APIs) must contain ONLY a stable allow-shaped
+// code (the controlled error.code when safe, otherwise extension_load_failed)
+// and a fixed non-sensitive message, plus an optional safe extension id.
+// Absolute manifest paths, directories, raw filesystem error text, data/
+// versions/configured roots, and secret/internal authority material never
+// reach public output — the full path and raw message stay in internal logger
+// calls only.
+const sanitizeExtensionLoadError = (error, extensionId = null) => {
+  const code = typeof error?.code === 'string' && EXTENSION_LOAD_ERROR_CODE_PATTERN.test(error.code)
+    ? error.code
+    : 'extension_load_failed';
+  const result = { code, message: 'Extension could not be loaded' };
+  if (typeof extensionId === 'string' && EXTENSION_ID_PATTERN.test(extensionId)) {
+    result.extensionId = extensionId;
+  }
+  return result;
+};
 const ACTION_ID_PATTERN = /^[a-z0-9]+(?:[._-][a-z0-9]+)+$/i;
 const ENV_REFERENCE_PATTERN = /^\$\{([A-Z][A-Z0-9_]*)\}$/;
 const HEADER_NAME_PATTERN = /^[A-Za-z][A-Za-z0-9-]{0,63}$/;
@@ -69,11 +110,62 @@ const readLimitedText = async (fsPromises, filePath, maxBytes) => {
   return fsPromises.readFile(filePath, 'utf8');
 };
 
-const readLimitedBuffer = async (fsPromises, filePath, maxBytes) => {
-  const stat = await fsPromises.stat(filePath);
+// Reads one extension entry with the Remote resolver as AUTHORITATIVE source:
+// when resolveExtensionResource is configured it is consulted FIRST for
+// extension.id + the exact manifest entry path, BEFORE any disk read. If it
+// returns a Buffer, those bytes are used (after the existing per-kind size
+// limit) even if a disk file exists — a file/symlink inserted after root
+// verification can never win over verified resolver bytes; Hosted and Remote
+// manager-owned entries ALWAYS arrive as verified Buffers. If it throws, the
+// stable sanitized Remote runtime error is surfaced and disk is NEVER used.
+// ONLY a null result (ordinary configured/built-in roots and authorized
+// current Local installs) falls back to the existing exact disk path
+// behavior. Resolver bytes still undergo the existing per-kind size limit
+// and, at call sites, the existing semantic validation.
+const readExtensionEntry = async ({
+  fsPromises,
+  entryPath,
+  extensionId,
+  entry,
+  maxBytes,
+  resolveExtensionResource,
+  authority = null,
+  encoding = null,
+}) => {
+  if (typeof resolveExtensionResource === 'function') {
+    let resolved;
+    try {
+      resolved = await resolveExtensionResource(extensionId, entry, authority);
+    } catch (resolveError) {
+      throw new InteractiveUIRuntimeError(
+        'Remote extension resource is unavailable',
+        Number.isInteger(resolveError?.status) && resolveError.status >= 400 && resolveError.status < 600
+          ? resolveError.status
+          : 502,
+        typeof resolveError?.code === 'string' && /^[a-z0-9_]+$/.test(resolveError.code)
+          ? resolveError.code
+          : 'remote_resource_unavailable',
+      );
+    }
+    if (Buffer.isBuffer(resolved)) {
+      if (resolved.length > maxBytes) {
+        throw new InteractiveUIRuntimeError('Extension entry exceeds the size limit', 413, 'entry_too_large');
+      }
+      return encoding ? resolved.toString(encoding) : resolved;
+    }
+    if (resolved != null) {
+      // Non-Buffer, non-null: never serve unverified bytes.
+      throw new InteractiveUIRuntimeError('Remote extension resource is unavailable', 502, 'remote_resource_unavailable');
+    }
+    // resolved === null: ordinary configured/built-in roots and authorized
+    // current Local installs only — use the exact disk path (Hosted and
+    // Remote manager-owned bytes are always returned as verified Buffers).
+  }
+  const stat = await fsPromises.stat(entryPath);
   if (!stat.isFile()) throw new InteractiveUIRuntimeError('Extension entry is not a file', 400, 'invalid_entry');
   if (stat.size > maxBytes) throw new InteractiveUIRuntimeError('Extension entry exceeds the size limit', 413, 'entry_too_large');
-  return fsPromises.readFile(filePath);
+  const bytes = await fsPromises.readFile(entryPath);
+  return encoding ? bytes.toString(encoding) : bytes;
 };
 
 const parseJson = (text, label) => {
@@ -447,6 +539,14 @@ export const createInteractiveUIRuntime = ({
   environment = process.env,
   connectionStore = null,
   logger = console,
+  resolveExtensionResource = null,
+  // Optional manager-owned authorization callback: awaited for EVERY
+  // discovered manifest (after the authority is captured, before the
+  // extension is exposed to any metadata/operation consumer). An
+  // authorization error skips that manifest through the existing errors path
+  // so a configured root can never resurrect a disabled/quarantined manager
+  // extension id.
+  authorizeExtensionAuthority = null,
 } = {}) => {
   if (!fsPromises || !path || !crypto || typeof fetchImpl !== 'function') {
     throw new Error('Interactive UI runtime dependencies are incomplete');
@@ -524,8 +624,24 @@ export const createInteractiveUIRuntime = ({
       throw new InteractiveUIRuntimeError('Extension roots are unavailable', 500, 'extension_roots_unavailable');
     }
     for (const rootValue of rootValues) {
-      if (typeof rootValue !== 'string' || !rootValue.trim()) continue;
-      const root = path.resolve(rootValue.trim());
+      // Ordinary string roots (built-in/configured/test) carry no provenance;
+      // structured manager roots ({ directory, provenance: { generation } })
+      // carry the manager-issued lifecycle generation, captured with the
+      // manifest authority and never exposed in public output.
+      let directoryValue;
+      let provenance = null;
+      if (typeof rootValue === 'string') {
+        directoryValue = rootValue;
+      } else if (isRecord(rootValue) && typeof rootValue.directory === 'string') {
+        directoryValue = rootValue.directory;
+        if (isRecord(rootValue.provenance) && typeof rootValue.provenance.generation === 'string') {
+          provenance = { generation: rootValue.provenance.generation };
+        }
+      } else {
+        continue;
+      }
+      if (!directoryValue.trim()) continue;
+      const root = path.resolve(directoryValue.trim());
       let stat;
       try {
         stat = await fsPromises.stat(root);
@@ -534,13 +650,13 @@ export const createInteractiveUIRuntime = ({
         continue;
       }
       if (stat.isFile() && path.basename(root) === MANIFEST_FILE) {
-        manifests.push(root);
+        manifests.push({ manifestPath: root, provenance });
         continue;
       }
       if (!stat.isDirectory()) continue;
       const directManifest = path.join(root, MANIFEST_FILE);
       try {
-        if ((await fsPromises.stat(directManifest)).isFile()) manifests.push(directManifest);
+        if ((await fsPromises.stat(directManifest)).isFile()) manifests.push({ manifestPath: directManifest, provenance });
       } catch {
       }
       const children = await fsPromises.readdir(root, { withFileTypes: true }).catch(() => []);
@@ -548,25 +664,117 @@ export const createInteractiveUIRuntime = ({
         if (!child.isDirectory()) continue;
         const manifestPath = path.join(root, child.name, MANIFEST_FILE);
         try {
-          if ((await fsPromises.stat(manifestPath)).isFile()) manifests.push(manifestPath);
+          if ((await fsPromises.stat(manifestPath)).isFile()) manifests.push({ manifestPath, provenance });
         } catch {
         }
       }
     }
-    return Array.from(new Set(manifests));
+    // Deduplicate by manifest path, keeping the first provenance.
+    const seen = new Map();
+    for (const entry of manifests) {
+      if (!seen.has(entry.manifestPath)) seen.set(entry.manifestPath, entry);
+    }
+    return [...seen.values()];
+  };
+
+  // Genuinely bounded, single-open-handle read of the optional sibling signed
+  // Hosted manifest: the final path is opened read-only with O_NOFOLLOW +
+  // O_NONBLOCK (where supported), the OPEN handle is statted, the file must be
+  // a regular non-empty file within HOSTED_OCIX_MAX_MANIFEST_BYTES BEFORE any
+  // allocation/read, at most that verified size is read through the SAME
+  // handle (fixed buffer loop; never handle.readFile to EOF), and the handle
+  // closes in finally. A symlinked/non-regular/oversized/empty input, a short
+  // read (file shrank), or a file that grew after stat (detected by a
+  // re-stat) fails closed with null — a partial/prefix hash is never accepted.
+  const readSiblingSignedManifestHash = async (signedPath) => {
+    let handle;
+    try {
+      handle = await fsPromises.open(signedPath, SIBLING_SIGNED_MANIFEST_READ_FLAGS);
+    } catch (error) {
+      if (error?.code === 'ENOENT' || error?.code === 'ELOOP' || error?.code === 'EISDIR') return null;
+      throw error;
+    }
+    try {
+      const stat = await handle.stat();
+      if (!stat.isFile() || stat.size === 0 || stat.size > HOSTED_OCIX_MAX_MANIFEST_BYTES) return null;
+      const buffer = Buffer.alloc(stat.size);
+      let offset = 0;
+      while (offset < stat.size) {
+        const { bytesRead } = await handle.read(buffer, offset, stat.size - offset, offset);
+        if (bytesRead === 0) return null; // file shrank under the open handle
+        offset += bytesRead;
+      }
+      const afterStat = await handle.stat();
+      if (afterStat.size !== stat.size || !afterStat.isFile()) return null; // grew/changed
+      return sha256Digest(crypto, buffer);
+    } finally {
+      await handle.close().catch(() => {});
+    }
+  };
+
+  // Captures the authority context for ONE extension manifest at read time:
+  // resolved directory, the TRUE canonical SHA-256 of the captured parsed
+  // extension document (key-sorted canonicalStringify of the parsed
+  // pre-normalization document, so key order and whitespace cannot change
+  // it), and SHA-256 of the sibling signed Hosted manifest when present. The
+  // signed manifest is read with the single-source Hosted 2 MiB transport
+  // bound through one open handle; an absent or oversized signed manifest
+  // yields null (Remote resolution then fails closed against the accepted
+  // manifest hash).
+  const captureExtensionAuthority = async (manifestPath, parsedDocument, provenance) => {
+    const directory = path.dirname(manifestPath);
+    const signedPath = path.join(directory, HOSTED_OCIX_SIGNED_MANIFEST_FILE);
+    const signedManifestHash = await readSiblingSignedManifestHash(signedPath);
+    return {
+      directory,
+      extensionHash: sha256Digest(crypto, Buffer.from(canonicalStringify(parsedDocument))),
+      signedManifestHash,
+      // Manager-issued root provenance (opaque to the runtime): carried with
+      // the exact manifest authority and never exposed in public output.
+      provenance,
+    };
   };
 
   const loadExtensions = async () => {
     const extensions = [];
     const errors = [];
-    for (const manifestPath of await discoverManifestPaths()) {
+    for (const { manifestPath, provenance } of await discoverManifestPaths()) {
       try {
         const text = await readLimitedText(fsPromises, manifestPath, MAX_MANIFEST_BYTES);
-        extensions.push(normalizeManifest(parseJson(text, MANIFEST_FILE), path.dirname(manifestPath), environment));
+        // Parse ONCE: hash the canonical form of the parsed pre-normalization
+        // document, then normalize that same parsed object.
+        const parsed = parseJson(text, MANIFEST_FILE);
+        const extension = normalizeManifest(parsed, path.dirname(manifestPath), environment);
+        const authority = await captureExtensionAuthority(manifestPath, parsed, provenance);
+        // Manager authorization BEFORE exposure: a disabled/quarantined
+        // manager-owned extension id (or a stale managed root) re-discovered
+        // from a configured root is skipped here, so listExtensions, Workbench
+        // catalogs, routing capabilities, connections, findView/findArtifact/
+        // findConnector, configure/provision/test, and invokeAction can only
+        // ever see authorized extensions.
+        if (typeof authorizeExtensionAuthority === 'function') {
+          try {
+            await authorizeExtensionAuthority(extension.id, authority);
+          } catch (error) {
+            errors.push(sanitizeExtensionLoadError(error, extension.id));
+            // Full manifest path + raw diagnostic detail stay server-internal.
+            logger.warn?.(
+              '[InteractiveUI] Extension was skipped:',
+              manifestPath,
+              error instanceof Error ? error.message : String(error),
+            );
+            continue;
+          }
+        }
+        extensionAuthorities.set(extension, authority);
+        extensions.push(extension);
       } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        errors.push({ manifest: manifestPath, error: message });
-        logger.warn?.('[InteractiveUI] Extension was skipped:', message);
+        errors.push(sanitizeExtensionLoadError(error));
+        logger.warn?.(
+          '[InteractiveUI] Extension was skipped:',
+          manifestPath,
+          error instanceof Error ? error.message : String(error),
+        );
       }
     }
     const ids = new Set();
@@ -876,14 +1084,32 @@ export const createInteractiveUIRuntime = ({
     };
     if (view.runtime === 'declarative') {
       const entryPath = resolveEntryPath(path, extension.directory, view.entry, ['.json']);
-      const definition = parseJson(await readLimitedText(fsPromises, entryPath, MAX_VIEW_BYTES), `Declarative view ${view.id}`);
+      const definition = parseJson(await readExtensionEntry({
+        fsPromises,
+        entryPath,
+        extensionId: extension.id,
+        entry: view.entry,
+        maxBytes: MAX_VIEW_BYTES,
+        resolveExtensionResource,
+        authority: extensionAuthorities.get(extension) ?? null,
+        encoding: 'utf8',
+      }), `Declarative view ${view.id}`);
       if (!isRecord(definition) || definition.$schema !== 'openchamber://declarative-view/v1' || definition.id !== view.id || !isRecord(definition.layout)) {
         throw new InteractiveUIRuntimeError(`Declarative view ${view.id} does not match its manifest`, 400, 'invalid_view');
       }
       return { ...base, declarative: definition };
     }
     const bundlePath = resolveEntryPath(path, extension.directory, view.entry, ['.mjs', '.js']);
-    const source = await readLimitedText(fsPromises, bundlePath, MAX_NATIVE_BUNDLE_BYTES);
+    const source = await readExtensionEntry({
+      fsPromises,
+      entryPath: bundlePath,
+      extensionId: extension.id,
+      entry: view.entry,
+      maxBytes: MAX_NATIVE_BUNDLE_BYTES,
+      resolveExtensionResource,
+      authority: extensionAuthorities.get(extension) ?? null,
+      encoding: 'utf8',
+    });
     const integrity = `sha256-${crypto.createHash('sha256').update(source).digest('base64')}`;
     return {
       ...base,
@@ -901,7 +1127,16 @@ export const createInteractiveUIRuntime = ({
       throw new InteractiveUIRuntimeError('Native extension asset was not found', 404, 'asset_not_found');
     }
     const entryPath = resolveEntryPath(path, extension.directory, view.entry, ['.mjs', '.js']);
-    const source = await readLimitedText(fsPromises, entryPath, MAX_NATIVE_BUNDLE_BYTES);
+    const source = await readExtensionEntry({
+      fsPromises,
+      entryPath,
+      extensionId: extension.id,
+      entry: view.entry,
+      maxBytes: MAX_NATIVE_BUNDLE_BYTES,
+      resolveExtensionResource,
+      authority: extensionAuthorities.get(extension) ?? null,
+      encoding: 'utf8',
+    });
     return {
       source,
       integrity: `sha256-${crypto.createHash('sha256').update(source).digest('base64')}`,
@@ -914,7 +1149,16 @@ export const createInteractiveUIRuntime = ({
       throw new InteractiveUIRuntimeError(`Tool ${toolName || '(missing)'} is not bound to HTML Artifact ${artifactId}`, 403, 'tool_artifact_mismatch');
     }
     const entryPath = resolveEntryPath(path, extension.directory, artifact.entry, ['.html']);
-    const source = await readLimitedText(fsPromises, entryPath, MAX_INSTALLED_ARTIFACT_BYTES);
+    const source = await readExtensionEntry({
+      fsPromises,
+      entryPath,
+      extensionId: extension.id,
+      entry: artifact.entry,
+      maxBytes: MAX_INSTALLED_ARTIFACT_BYTES,
+      resolveExtensionResource,
+      authority: extensionAuthorities.get(extension) ?? null,
+      encoding: 'utf8',
+    });
     createInstalledHTMLArtifactDocument(source);
     logger.info?.('[InteractiveUI] Agent routing outcome', {
       extensionId: extension.id,
@@ -947,7 +1191,15 @@ export const createInteractiveUIRuntime = ({
       throw new InteractiveUIRuntimeError('Extension icon was not found', 404, 'asset_not_found');
     }
     const entryPath = resolveEntryPath(path, extension.directory, extension.icon, ['.svg', '.png']);
-    const content = await readLimitedBuffer(fsPromises, entryPath, 256 * 1024);
+    const content = await readExtensionEntry({
+      fsPromises,
+      entryPath,
+      extensionId: extension.id,
+      entry: extension.icon,
+      maxBytes: 256 * 1024,
+      resolveExtensionResource,
+      authority: extensionAuthorities.get(extension) ?? null,
+    });
     try {
       validateExtensionIconAsset(extension.icon, content);
     } catch (error) {
@@ -1128,7 +1380,16 @@ export const createInteractiveUIRuntime = ({
       throw new InteractiveUIRuntimeError('Installed HTML Artifact asset was not found', 404, 'asset_not_found');
     }
     const entryPath = resolveEntryPath(path, extension.directory, artifact.entry, ['.html']);
-    const source = await readLimitedText(fsPromises, entryPath, MAX_INSTALLED_ARTIFACT_BYTES);
+    const source = await readExtensionEntry({
+      fsPromises,
+      entryPath,
+      extensionId: extension.id,
+      entry: artifact.entry,
+      maxBytes: MAX_INSTALLED_ARTIFACT_BYTES,
+      resolveExtensionResource,
+      authority: extensionAuthorities.get(extension) ?? null,
+      encoding: 'utf8',
+    });
     const document = createInstalledHTMLArtifactDocument(source);
     return {
       source: document,

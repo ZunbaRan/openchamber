@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { createInteractiveUIConnectionStore } from './connection-store.js';
 import { createInteractiveUIRuntime } from './runtime.js';
+import { HOSTED_OCIX_MAX_MANIFEST_BYTES, HOSTED_OCIX_SIGNED_MANIFEST_FILE, canonicalStringify } from './hosted-ocix.js';
 
 const temporaryDirectories = [];
 const viewTool = { id: 'runtime-test-view-tool', name: 'crm_open' };
@@ -165,7 +166,7 @@ const createFixture = async (fetchImpl, {
     ...(environment ? { environment } : {}),
     logger: { info() {}, warn() {} },
   });
-  return { runtime };
+  return { runtime, root, dataDirectory };
 };
 
 describe('Interactive UI connector authentication', () => {
@@ -484,11 +485,15 @@ describe('Interactive UI connector authentication', () => {
     expect(calls[1].init.headers.get('X-API-Key')).toBe('server-issued-secret');
   });
 
-  it('rejects unsafe credential headers during manifest validation', async () => {
+  it('rejects unsafe credential headers during manifest validation with sanitized public errors', async () => {
     const { runtime } = await createFixture(async () => new Response('{}'), { headerName: 'Cookie' });
     const registry = await runtime.listExtensions();
     expect(registry.extensions).toEqual([]);
-    expect(registry.errors[0].error).toContain('unsafe credential header');
+    // Public load errors carry only a stable code + fixed message, never the
+    // manifest path or raw filesystem/validator text.
+    expect(registry.errors[0]).toMatchObject({ code: 'invalid_manifest', message: 'Extension could not be loaded' });
+    expect(JSON.stringify(registry.errors)).not.toContain('unsafe credential header');
+    expect(JSON.stringify(registry.errors)).not.toContain('/');
   });
 
   it('rejects cross-extension action contexts before contacting the business system', async () => {
@@ -562,13 +567,554 @@ describe('Interactive UI connector authentication', () => {
     });
     const missingPermissionRegistry = await missingNetworkPermission.listExtensions();
     expect(missingPermissionRegistry.extensions).toEqual([]);
-    expect(missingPermissionRegistry.errors[0].error).toContain('not declared in permissions.network');
+    // Public load errors: allow-shaped stable code + fixed message only.
+    expect(missingPermissionRegistry.errors[0]).toMatchObject({
+      code: 'network_not_allowed',
+      message: 'Extension could not be loaded',
+    });
+    expect(JSON.stringify(missingPermissionRegistry.errors)).not.toContain('not declared in permissions.network');
 
     const { runtime: escapingAction } = await createFixture(async () => new Response('{}'), {
       actionPath: '/../admin',
     });
     const escapingActionRegistry = await escapingAction.listExtensions();
     expect(escapingActionRegistry.extensions).toEqual([]);
-    expect(escapingActionRegistry.errors[0].error).toContain('fixed connector-relative path');
+    expect(escapingActionRegistry.errors[0]).toMatchObject({
+      code: expect.stringMatching(/^[a-z0-9_]+$/),
+      message: 'Extension could not be loaded',
+    });
+    expect(JSON.stringify(escapingActionRegistry.errors)).not.toContain('fixed connector-relative path');
+  });
+});
+
+describe('Interactive UI runtime Remote lazy resolution', () => {
+  const declarativeBytes = Buffer.from(JSON.stringify({
+    $schema: 'openchamber://declarative-view/v1',
+    id: 'com.acme.remote.overview',
+    layout: { type: 'text', value: 'Remote' },
+  }));
+  const nativeBytes = Buffer.from('export const extension = () => null;\n');
+  const artifactBytes = Buffer.from('<!doctype html><html><body><button>Load</button><script>document.body.dataset.ready="true"</script></body></html>');
+  const iconSvgBytes = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"><rect width="10" height="10"/></svg>');
+  const iconPngBytes = Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    Buffer.alloc(4),
+    Buffer.from('IHDR'),
+    Buffer.from([0, 0, 0, 8]),
+    Buffer.from([0, 0, 0, 8]),
+  ]);
+
+  // A Remote shell: manifest (and host-managed Agent Runtime) exist on disk,
+  // but every runtime resource entry is missing — the lazy resolver supplies
+  // them exactly as the manager-owned Remote cache does.
+  const createRemoteShellRoot = async ({ iconEntry = 'ui/icon.svg' } = {}) => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ocix-runtime-remote-shell-'));
+    temporaryDirectories.push(root);
+    await fs.writeFile(path.join(root, 'openchamber.extension.json'), JSON.stringify({
+      $schema: 'openchamber://extension/v1',
+      id: 'com.acme.remote',
+      name: 'Acme Remote',
+      version: '1.0.0',
+      icon: iconEntry,
+      agentRouting: {
+        domain: 'remote',
+        intents: ['remote.overview', 'remote.dashboard', 'remote.explore'],
+        examples: { en: ['Open Acme Remote'] },
+        dataAuthority: 'user-provided',
+      },
+      connectors: [{
+        id: 'crm',
+        type: 'http',
+        baseUrl: 'https://api.example.com',
+        auth: { type: 'api-key' },
+      }],
+      views: [
+        {
+          id: 'com.acme.remote.overview',
+          runtime: 'declarative',
+          entry: 'ui/view.json',
+          tools: ['remote_open'],
+          routing: { intents: ['remote.overview'], priority: 80, operation: 'read' },
+          displayModes: ['inline', 'workspace'],
+        },
+        {
+          id: 'com.acme.remote.dashboard',
+          runtime: 'native',
+          entry: 'ui/native.mjs',
+          tools: ['remote_dashboard'],
+          routing: { intents: ['remote.dashboard'], priority: 81, operation: 'read' },
+          displayModes: ['inline', 'workspace'],
+        },
+      ],
+      artifacts: [{
+        id: 'com.acme.remote.explorer',
+        title: 'Remote Explorer',
+        entry: 'ui/artifact.html',
+        tools: ['remote_explore'],
+        routing: { intents: ['remote.explore'], priority: 82, operation: 'read' },
+        displayModes: ['inline', 'workspace'],
+        inlineHeight: 420,
+        capabilities: { scripts: true, businessActions: [] },
+      }],
+      actions: [],
+      permissions: { network: ['https://api.example.com'] },
+      trust: { mode: 'native-code', signature: 'production' },
+    }));
+    return root;
+  };
+
+  const createRemoteRuntime = async ({
+    resolveExtensionResource,
+    root,
+    fsImpl = fs,
+  }) => {
+    const shellRoot = root ?? await createRemoteShellRoot();
+    return {
+      runtime: createInteractiveUIRuntime({
+        fsPromises: fsImpl,
+        path,
+        crypto,
+        fetchImpl: async () => {
+          throw new Error('runtime fetch must not be used for Remote resources');
+        },
+        extensionRoots: [shellRoot],
+        resolveExtensionResource,
+        logger: { info() {}, warn() {} },
+      }),
+    };
+  };
+
+  const defaultResolver = (calls) => async (extensionId, entry) => {
+    calls.push([extensionId, entry]);
+    const bytes = {
+      'ui/view.json': declarativeBytes,
+      'ui/native.mjs': nativeBytes,
+      'ui/artifact.html': artifactBytes,
+      'ui/icon.svg': iconSvgBytes,
+    }[entry];
+    return bytes ?? null;
+  };
+
+  it('resolves a missing-on-disk declarative view through the resolver and keeps the existing semantic validation', async () => {
+    const calls = [];
+    const { runtime } = await createRemoteRuntime({ resolveExtensionResource: defaultResolver(calls) });
+
+    const descriptor = await runtime.getViewDescriptor('com.acme.remote.overview', 'remote_open');
+    expect(descriptor.view.runtime).toBe('declarative');
+    expect(descriptor.declarative).toMatchObject({ $schema: 'openchamber://declarative-view/v1' });
+    expect(calls).toEqual([['com.acme.remote', 'ui/view.json']]);
+
+    // The existing semantic validation still applies after resolution: invalid
+    // JSON is rejected, and so is a definition that does not match the view.
+    const invalid = await createRemoteRuntime({
+      resolveExtensionResource: async () => Buffer.from('{not json'),
+    });
+    await expect(invalid.runtime.getViewDescriptor('com.acme.remote.overview', 'remote_open'))
+      .rejects.toMatchObject({ code: 'invalid_json', status: 400 });
+    const mismatched = await createRemoteRuntime({
+      resolveExtensionResource: async () => Buffer.from(JSON.stringify({
+        $schema: 'openchamber://declarative-view/v1',
+        id: 'com.acme.remote.other',
+        layout: { type: 'text', value: 'x' },
+      })),
+    });
+    await expect(mismatched.runtime.getViewDescriptor('com.acme.remote.overview', 'remote_open'))
+      .rejects.toMatchObject({ code: 'invalid_view', status: 400 });
+  });
+
+  it('resolves missing-on-disk native bundles (descriptor and asset route) through the resolver with size checks', async () => {
+    const calls = [];
+    const { runtime } = await createRemoteRuntime({ resolveExtensionResource: defaultResolver(calls) });
+
+    const descriptor = await runtime.getViewDescriptor('com.acme.remote.dashboard', 'remote_dashboard');
+    expect(descriptor.view.runtime).toBe('native');
+    expect(descriptor.native.integrity).toBe(
+      `sha256-${crypto.createHash('sha256').update(nativeBytes).digest('base64')}`,
+    );
+    const bundle = await runtime.getNativeBundle('com.acme.remote', 'com.acme.remote.dashboard');
+    expect(bundle.source).toBe(nativeBytes.toString('utf8'));
+    expect(bundle.integrity).toBe(descriptor.native.integrity);
+    expect(calls).toEqual([
+      ['com.acme.remote', 'ui/native.mjs'],
+      ['com.acme.remote', 'ui/native.mjs'],
+    ]);
+
+    // The existing native bundle size limit still applies after resolution.
+    const oversize = await createRemoteRuntime({
+      resolveExtensionResource: async () => Buffer.alloc(2 * 1024 * 1024 + 1),
+    });
+    await expect(oversize.runtime.getViewDescriptor('com.acme.remote.dashboard', 'remote_dashboard'))
+      .rejects.toMatchObject({ code: 'entry_too_large', status: 413 });
+  });
+
+  it('resolves missing-on-disk HTML Artifacts (descriptor and document) through the resolver with semantic validation', async () => {
+    const calls = [];
+    const { runtime } = await createRemoteRuntime({ resolveExtensionResource: defaultResolver(calls) });
+
+    const descriptor = await runtime.getInstalledArtifactDescriptor('com.acme.remote.explorer', 'remote_explore');
+    expect(descriptor.artifact.title).toBe('Remote Explorer');
+    expect(descriptor.integrity).toBe(
+      `sha256-${crypto.createHash('sha256').update(artifactBytes).digest('base64')}`,
+    );
+    const document = await runtime.getInstalledArtifactDocument('com.acme.remote', 'com.acme.remote.explorer');
+    expect(document.source).toContain('openchamberArtifact');
+    expect(calls).toEqual([
+      ['com.acme.remote', 'ui/artifact.html'],
+      ['com.acme.remote', 'ui/artifact.html'],
+    ]);
+
+    // The existing HTML hardening still applies after resolution.
+    const invalidHtml = await createRemoteRuntime({
+      resolveExtensionResource: async () => Buffer.from('<script>fetch("https://evil.example.com")</script>'),
+    });
+    await expect(invalidHtml.runtime.getInstalledArtifactDescriptor('com.acme.remote.explorer', 'remote_explore'))
+      .rejects.toMatchObject({ code: 'prohibited_artifact_capability' });
+  });
+
+  it('resolves missing-on-disk SVG and PNG icons through the resolver with existing validation', async () => {
+    const calls = [];
+    const { runtime } = await createRemoteRuntime({ resolveExtensionResource: defaultResolver(calls) });
+
+    const icon = await runtime.getExtensionIcon('com.acme.remote');
+    expect(icon.content).toEqual(iconSvgBytes);
+    expect(icon.contentType).toBe('image/svg+xml');
+    expect(calls).toEqual([['com.acme.remote', 'ui/icon.svg']]);
+
+    // PNG icons pass the existing signature/dimension validation.
+    const pngRuntime = await createRemoteRuntime({
+      root: await createRemoteShellRoot({ iconEntry: 'ui/icon.png' }),
+      resolveExtensionResource: async () => iconPngBytes,
+    });
+    const png = await pngRuntime.runtime.getExtensionIcon('com.acme.remote');
+    expect(png.contentType).toBe('image/png');
+    expect(png.content).toEqual(iconPngBytes);
+
+    // Active/external SVG content is rejected after resolution.
+    const activeSvg = await createRemoteRuntime({
+      resolveExtensionResource: async () => Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>'),
+    });
+    await expect(activeSvg.runtime.getExtensionIcon('com.acme.remote'))
+      .rejects.toMatchObject({ code: 'invalid_extension_icon', status: 400 });
+
+    // The existing icon size limit still applies after resolution.
+    const oversize = await createRemoteRuntime({
+      resolveExtensionResource: async () => Buffer.alloc(256 * 1024 + 1),
+    });
+    await expect(oversize.runtime.getExtensionIcon('com.acme.remote'))
+      .rejects.toMatchObject({ code: 'entry_too_large', status: 413 });
+  });
+
+  it('consults the resolver first and falls back to disk only when it returns null (authorized Local only)', async () => {
+    const calls = [];
+    const resolver = async (extensionId, entry) => {
+      calls.push([extensionId, entry]);
+      return null; // authorized current Local: authoritative null -> exact disk path.
+    };
+    const { root } = await createFixture(async () => new Response('{}'), { artifacts: true });
+    const diskRuntime = createInteractiveUIRuntime({
+      fsPromises: fs,
+      path,
+      crypto,
+      fetchImpl: async () => new Response('{}'),
+      extensionRoots: [root],
+      resolveExtensionResource: resolver,
+      logger: { info() {}, warn() {} },
+    });
+    await expect(diskRuntime.getViewDescriptor('com.acme.crm.overview', 'crm_open')).resolves.toMatchObject({
+      view: { runtime: 'declarative' },
+    });
+    await expect(diskRuntime.getInstalledArtifactDescriptor('com.acme.crm.explorer', 'crm_open_explorer'))
+      .resolves.toMatchObject({ artifact: { title: 'CRM Explorer' } });
+    // The resolver is authoritative and was consulted for every entry kind
+    // (declarative view, artifact descriptor); it returned null without any
+    // remote fetch/cache and disk bytes were served.
+    expect(calls).toEqual([
+      ['com.acme.crm', 'ui/view.json'],
+      ['com.acme.crm', 'ui/explorer.html'],
+    ]);
+    // A fixture without an icon still fails at the manifest level as before.
+    await expect(diskRuntime.getExtensionIcon('com.acme.crm')).rejects.toMatchObject({ code: 'asset_not_found' });
+  });
+
+  it('ignores disk-present malicious files in favor of authoritative resolver bytes', async () => {
+    // A Remote shell whose runtime entries EXIST on disk with hostile content:
+    // the resolver is authoritative, so its verified bytes win over disk and
+    // an inserted file/symlink can never serve unverified bytes.
+    const calls = [];
+    const resolver = async (extensionId, entry) => {
+      calls.push([extensionId, entry]);
+      return {
+        'ui/view.json': declarativeBytes,
+        'ui/native.mjs': nativeBytes,
+        'ui/artifact.html': artifactBytes,
+        'ui/icon.svg': iconSvgBytes,
+      }[entry] ?? null;
+    };
+    const shellRoot = await createRemoteShellRoot();
+    // Disk-present hostile versions of every resource kind.
+    await fs.mkdir(path.join(shellRoot, 'ui'), { recursive: true });
+    await fs.writeFile(path.join(shellRoot, 'ui', 'view.json'), JSON.stringify({
+      $schema: 'openchamber://declarative-view/v1',
+      id: 'com.acme.remote.evil',
+      layout: { type: 'text', value: 'evil' },
+    }));
+    await fs.writeFile(path.join(shellRoot, 'ui', 'native.mjs'), 'export const extension = () => { throw new Error("evil native executed"); };\n');
+    await fs.writeFile(path.join(shellRoot, 'ui', 'artifact.html'), '<script>fetch("https://evil.example.com")</script>');
+    await fs.writeFile(path.join(shellRoot, 'ui', 'icon.svg'), '<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>');
+    const { runtime } = await createRemoteRuntime({ root: shellRoot, resolveExtensionResource: resolver });
+
+    // Declarative view: resolver bytes win over the disk-present evil file.
+    const descriptor = await runtime.getViewDescriptor('com.acme.remote.overview', 'remote_open');
+    expect(descriptor.declarative).toMatchObject({ $schema: 'openchamber://declarative-view/v1', id: 'com.acme.remote.overview' });
+    // Native bundle: resolver bytes win over the disk-present evil bundle.
+    const native = await runtime.getViewDescriptor('com.acme.remote.dashboard', 'remote_dashboard');
+    expect(native.native.integrity).toBe(
+      `sha256-${crypto.createHash('sha256').update(nativeBytes).digest('base64')}`,
+    );
+    const bundle = await runtime.getNativeBundle('com.acme.remote', 'com.acme.remote.dashboard');
+    expect(bundle.source).toBe(nativeBytes.toString('utf8'));
+    // Installed HTML Artifact: resolver bytes win over the disk-present evil file.
+    const artifact = await runtime.getInstalledArtifactDescriptor('com.acme.remote.explorer', 'remote_explore');
+    expect(artifact.integrity).toBe(
+      `sha256-${crypto.createHash('sha256').update(artifactBytes).digest('base64')}`,
+    );
+    // Icon: resolver bytes win over the disk-present active-SVG file.
+    const icon = await runtime.getExtensionIcon('com.acme.remote');
+    expect(icon.content).toEqual(iconSvgBytes);
+    expect(calls).toEqual([
+      ['com.acme.remote', 'ui/view.json'],
+      ['com.acme.remote', 'ui/native.mjs'],
+      ['com.acme.remote', 'ui/native.mjs'],
+      ['com.acme.remote', 'ui/artifact.html'],
+      ['com.acme.remote', 'ui/icon.svg'],
+    ]);
+  });
+
+  it('fails sanitized instead of serving disk when the resolver throws with a disk-present file', async () => {
+    const shellRoot = await createRemoteShellRoot();
+    // A disk-present file that WOULD be loadable if disk-first were used.
+    await fs.mkdir(path.join(shellRoot, 'ui'), { recursive: true });
+    await fs.writeFile(path.join(shellRoot, 'ui', 'view.json'), JSON.stringify({
+      $schema: 'openchamber://declarative-view/v1',
+      id: 'com.acme.remote.overview',
+      layout: { type: 'text', value: 'disk-present' },
+    }));
+    const { runtime } = await createRemoteRuntime({
+      root: shellRoot,
+      resolveExtensionResource: async () => {
+        const error = new Error('secret upstream detail: /var/lib/openchamber/secrets/key.txt');
+        error.code = 'hosted_resource_integrity_failed';
+        error.status = 403;
+        throw error;
+      },
+    });
+    // The resolver is authoritative: its failure is a stable sanitized error
+    // and the disk-present file is NEVER served.
+    await expect(runtime.getViewDescriptor('com.acme.remote.overview', 'remote_open'))
+      .rejects.toMatchObject({ code: 'hosted_resource_integrity_failed', status: 403 });
+    try {
+      await runtime.getViewDescriptor('com.acme.remote.overview', 'remote_open');
+    } catch (error) {
+      expect(error.message).toBe('Remote extension resource is unavailable');
+      expect(error.message).not.toContain('secret upstream detail');
+      expect(error.message).not.toContain('/var/lib/openchamber');
+    }
+    // Native and icon entries are equally protected: resolver failure never
+    // falls back to a disk-present file.
+    const failingResolver = async () => {
+      const error = new Error('raw failure');
+      error.code = 'hosted_resource_unavailable';
+      error.status = 502;
+      throw error;
+    };
+    const { runtime: nativeRuntime } = await createRemoteRuntime({
+      root: await createRemoteShellRoot(),
+      resolveExtensionResource: failingResolver,
+    });
+    await expect(nativeRuntime.getViewDescriptor('com.acme.remote.dashboard', 'remote_dashboard'))
+      .rejects.toMatchObject({ code: 'hosted_resource_unavailable', status: 502 });
+    await expect(nativeRuntime.getExtensionIcon('com.acme.remote'))
+      .rejects.toMatchObject({ code: 'hosted_resource_unavailable', status: 502 });
+  });
+
+  it('preserves the non-Remote missing-file failure when the resolver is absent or returns null', async () => {
+    const { runtime: noResolver } = await createRemoteRuntime({});
+    await expect(noResolver.getViewDescriptor('com.acme.remote.overview', 'remote_open'))
+      .rejects.toMatchObject({ code: 'ENOENT' });
+
+    const { runtime: nullResolver } = await createRemoteRuntime({
+      resolveExtensionResource: async () => null,
+    });
+    await expect(nullResolver.getViewDescriptor('com.acme.remote.overview', 'remote_open'))
+      .rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it('turns resolver failures into a stable sanitized runtime error', async () => {
+    const { runtime } = await createRemoteRuntime({
+      resolveExtensionResource: async () => {
+        const error = new Error('secret upstream detail: /var/lib/openchamber/secrets/key.txt');
+        error.code = 'hosted_resource_integrity_failed';
+        error.status = 403;
+        throw error;
+      },
+    });
+    await expect(runtime.getViewDescriptor('com.acme.remote.overview', 'remote_open'))
+      .rejects.toMatchObject({
+        code: 'hosted_resource_integrity_failed',
+        status: 403,
+      });
+    try {
+      await runtime.getViewDescriptor('com.acme.remote.overview', 'remote_open');
+    } catch (error) {
+      expect(error.message).toBe('Remote extension resource is unavailable');
+      expect(error.message).not.toContain('secret upstream detail');
+      expect(error.message).not.toContain('/var/lib/openchamber');
+    }
+
+    // Failures without a stable code/status collapse to the generic code.
+    const { runtime: generic } = await createRemoteRuntime({
+      resolveExtensionResource: async () => {
+        throw new Error('raw failure');
+      },
+    });
+    await expect(generic.getViewDescriptor('com.acme.remote.overview', 'remote_open'))
+      .rejects.toMatchObject({ code: 'remote_resource_unavailable', status: 502 });
+  });
+
+  it('captures the authority extensionHash as the canonical hash of the parsed manifest document (key-order/whitespace invariant)', async () => {
+    // The authority hash must be the TRUE canonical JSON digest of the parsed
+    // pre-normalization document: key order and whitespace differences in the
+    // shell manifest cannot change it (and never leak into responses).
+    const reverseKeys = (value) => {
+      if (Array.isArray(value)) return value.map(reverseKeys);
+      if (value && typeof value === 'object') {
+        const out = {};
+        for (const key of Object.keys(value).sort().reverse()) out[key] = reverseKeys(value[key]);
+        return out;
+      }
+      return value;
+    };
+    const canonicalHashOf = (text) => `sha256-${crypto.createHash('sha256').update(
+      Buffer.from(canonicalStringify(JSON.parse(text))),
+    ).digest('base64')}`;
+
+    const shellRoot = await createRemoteShellRoot();
+    const originalText = await fs.readFile(path.join(shellRoot, 'openchamber.extension.json'), 'utf8');
+    const canonicalHash = canonicalHashOf(originalText);
+
+    // Rewrite the same manifest with reversed key order and compact
+    // whitespace: semantically identical, different bytes.
+    const reorderedText = JSON.stringify(reverseKeys(JSON.parse(originalText)));
+    expect(reorderedText).not.toBe(originalText);
+    expect(canonicalHashOf(reorderedText)).toBe(canonicalHash);
+    await fs.writeFile(path.join(shellRoot, 'openchamber.extension.json'), reorderedText);
+
+    let forwarded;
+    const { runtime } = await createRemoteRuntime({
+      root: shellRoot,
+      resolveExtensionResource: async (extensionId, entry, authority) => {
+        forwarded = authority;
+        return null; // disk fallback (the entry is missing on disk)
+      },
+    });
+    await expect(runtime.getViewDescriptor('com.acme.remote.overview', 'remote_open'))
+      .rejects.toMatchObject({ code: 'ENOENT' });
+    expect(forwarded).toBeTruthy();
+    // The forwarded authority hash is the canonical hash of the captured
+    // parsed document and is invariant to key order/whitespace.
+    expect(forwarded.extensionHash).toBe(canonicalHash);
+    expect(forwarded.extensionHash).toBe(canonicalHashOf(reorderedText));
+    expect(forwarded.directory).toBe(shellRoot);
+  });
+
+  it('captures the sibling signed-manifest hash only through a bounded single open handle (oversized/symlinked/shrunk fail closed)', async () => {
+    // A forwarding resolver that records the captured authority and falls back
+    // to disk (the entries are missing), so we can inspect what was captured.
+    const capturingResolver = (captured) => async (extensionId, entry, authority) => {
+      captured.push(authority);
+      return null;
+    };
+    const shaOf = async (filePath) => `sha256-${crypto.createHash('sha256').update(await fs.readFile(filePath)).digest('base64')}`;
+
+    // Valid sibling: the exact digest is forwarded.
+    {
+      const captured = [];
+      const shellRoot = await createRemoteShellRoot();
+      const signedPath = path.join(shellRoot, HOSTED_OCIX_SIGNED_MANIFEST_FILE);
+      await fs.writeFile(signedPath, Buffer.from('{"valid":true}'));
+      const { runtime } = await createRemoteRuntime({
+        root: shellRoot,
+        resolveExtensionResource: capturingResolver(captured),
+      });
+      await expect(runtime.getViewDescriptor('com.acme.remote.overview', 'remote_open'))
+        .rejects.toMatchObject({ code: 'ENOENT' });
+      expect(captured[0].signedManifestHash).toBe(await shaOf(signedPath));
+    }
+
+    // Oversized sibling (> 2 MiB): never allocated/read; capture is null.
+    {
+      const captured = [];
+      const shellRoot = await createRemoteShellRoot();
+      const signedPath = path.join(shellRoot, HOSTED_OCIX_SIGNED_MANIFEST_FILE);
+      const handle = await fs.open(signedPath, 'w');
+      await handle.truncate(HOSTED_OCIX_MAX_MANIFEST_BYTES + 1);
+      await handle.close();
+      const { runtime } = await createRemoteRuntime({
+        root: shellRoot,
+        resolveExtensionResource: capturingResolver(captured),
+      });
+      await expect(runtime.getViewDescriptor('com.acme.remote.overview', 'remote_open'))
+        .rejects.toMatchObject({ code: 'ENOENT' });
+      expect(captured[0].signedManifestHash).toBeNull();
+    }
+
+    // Symlinked sibling: never followed; capture is null and the target is
+    // untouched.
+    {
+      const captured = [];
+      const shellRoot = await createRemoteShellRoot();
+      const signedPath = path.join(shellRoot, HOSTED_OCIX_SIGNED_MANIFEST_FILE);
+      const outside = path.join(shellRoot, 'outside-signed.json');
+      await fs.writeFile(outside, Buffer.from('{"outside":true}'));
+      await fs.symlink(outside, signedPath);
+      const { runtime } = await createRemoteRuntime({
+        root: shellRoot,
+        resolveExtensionResource: capturingResolver(captured),
+      });
+      await expect(runtime.getViewDescriptor('com.acme.remote.overview', 'remote_open'))
+        .rejects.toMatchObject({ code: 'ENOENT' });
+      expect(captured[0].signedManifestHash).toBeNull();
+      await expect(fs.stat(outside)).resolves.toBeTruthy();
+    }
+
+    // Shrunk-under-open (short read): the single-handle read fails closed with
+    // null instead of hashing a partial prefix.
+    {
+      const captured = [];
+      const shellRoot = await createRemoteShellRoot();
+      await fs.writeFile(path.join(shellRoot, HOSTED_OCIX_SIGNED_MANIFEST_FILE), Buffer.from('{"valid":true}'));
+      const fsImpl = {
+        ...fs,
+        async open(target, flags, mode) {
+          const handle = await fs.open(target, flags, mode);
+          if (String(target).includes(HOSTED_OCIX_SIGNED_MANIFEST_FILE)) {
+            const originalRead = handle.read.bind(handle);
+            handle.read = async (buffer, offset, length, position) => {
+              if (position === 0 && length > 0) return { bytesRead: 0, buffer };
+              return originalRead(buffer, offset, length, position);
+            };
+          }
+          return handle;
+        },
+      };
+      const { runtime } = await createRemoteRuntime({
+        root: shellRoot,
+        fsImpl,
+        resolveExtensionResource: capturingResolver(captured),
+      });
+      await expect(runtime.getViewDescriptor('com.acme.remote.overview', 'remote_open'))
+        .rejects.toMatchObject({ code: 'ENOENT' });
+      expect(captured[0].signedManifestHash).toBeNull();
+    }
   });
 });

@@ -380,21 +380,18 @@ export const registerInteractiveUIRoutes = (app, {
           appEntryUrl: req.body.appEntryUrl,
           confirmedPublisherFingerprint: req.body.confirmedPublisherFingerprint,
           confirmedManifestHash: req.body.confirmedManifestHash,
-        });
-        // trustAdded and installationId are internal rollback bookkeeping and
-        // never leave the route.
-        const { trustAdded, installationId, ...connectedPublic } = connected;
+        }, runtime);
+        // The route uses ONLY the opaque manager-owned capability bound to
+        // this exact installation AND this exact runtime (configure/remove/
+        // rollback operations with zero redirection); raw installationId/
+        // trustAdded are never destructured, passed, or serialized.
         try {
-          const credential = await runtime.configureRemoteConnection(
-            connected.extension.id,
-            connected.connector.id,
-            installationId,
-            accessKey,
-          );
+          const credential = await connected.capability.configureCredential(accessKey);
           return {
             status: 201,
             body: {
-              ...connectedPublic,
+              extension: connected.extension,
+              connector: connected.connector,
               credential: credential.credential,
             },
           };
@@ -408,11 +405,7 @@ export const registerInteractiveUIRoutes = (app, {
           // access key never appear in the response or logs.
           const recovery = { credentialRemoved: false, extensionRemoved: false, trustRolledBack: false };
           try {
-            const removed = await runtime.removeRemoteConnection(
-              connected.extension.id,
-              connected.connector.id,
-              installationId,
-            );
+            const removed = await connected.capability.removeCredential();
             recovery.credentialRemoved = removed?.removed === true;
             if (removed?.mismatch === true) recovery.credentialMismatch = true;
           } catch (rollbackError) {
@@ -421,10 +414,7 @@ export const registerInteractiveUIRoutes = (app, {
               : 'remote_credential_rollback_failed';
           }
           try {
-            const rollback = await manager.rollbackRemoteConnect(connected.extension.id, {
-              trustAdded: trustAdded === true,
-              installationId,
-            });
+            const rollback = await connected.capability.rollback();
             recovery.extensionRemoved = rollback?.removed === true;
             recovery.trustRolledBack = rollback?.trustRolledBack === true;
           } catch (rollbackError) {
