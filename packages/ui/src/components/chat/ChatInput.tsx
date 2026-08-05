@@ -11,6 +11,7 @@ import {
 } from "@/stores/messageQueueStore";
 import { useAutoReviewStore } from "@/stores/useAutoReviewStore";
 import { useSessionUIStore } from "@/sync/session-ui-store";
+import { setGenerativeWidgetSendHandler } from "@/lib/generative-widget";
 import { useSelectionStore } from "@/sync/selection-store";
 import { useInputStore } from "@/sync/input-store";
 import {
@@ -442,6 +443,31 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   const currentProviderId = useConfigStore((state) => state.currentProviderId);
   const currentModelId = useConfigStore((state) => state.currentModelId);
   const getModelMetadata = useConfigStore((state) => state.getModelMetadata);
+
+  // Generative Widget drill-down: iframe calls window.__widgetSendMessage(text).
+  React.useEffect(() => {
+    setGenerativeWidgetSendHandler((text) => {
+      const sessionId = useSessionUIStore.getState().currentSessionId;
+      const providerID = useConfigStore.getState().currentProviderId;
+      const modelID = useConfigStore.getState().currentModelId;
+      const agent = useConfigStore.getState().currentAgentName;
+      const variant = useConfigStore.getState().currentVariant;
+      if (!sessionId || !providerID || !modelID || !text.trim()) return;
+      void sendMessage(
+        text.trim(),
+        providerID,
+        modelID,
+        agent,
+        [],
+        undefined,
+        undefined,
+        variant,
+        "normal",
+        { sessionId },
+      );
+    });
+    return () => setGenerativeWidgetSendHandler(null);
+  }, [sendMessage]);
   // Subscribe to both sources read by getModelMetadata so async metadata and provider updates are observed.
   useConfigStore((state) => state.modelsMetadata);
   useConfigStore((state) => state.providers);
