@@ -10,11 +10,17 @@ Claude/CodePilot-style conversation widgets via `show-widget` fences.
 ## Tests
 
 ```bash
-bun test packages/ui/src/lib/generative-widget/parseShowWidget.test.ts
-bun test packages/ui/src/lib/generative-widget/sanitizer.test.ts
+bun test packages/ui/src/lib/generative-widget/
 ```
 
-## Prompt injection
+## Prompt injection (OpenCode fork)
 
-Use `GENERATIVE_WIDGET_WIRE_FORMAT` + `GENERATIVE_WIDGET_SYSTEM_PROMPT` from
-`@/lib/generative-widget/guidelines` in OpenCode instructions when enabling the feature for models.
+| Layer | Where | Size |
+|---|---|---|
+| **Always-on** | `opencode/.../session/prompt/generative-widget.txt` injected in `session/system.ts` | ~1.5KB / ~350–600 tokens |
+| **On-demand** | Built-in skill `generative-widget-guidelines` in `opencode/.../skill/index.ts` | ~8KB / ~2k+ tokens |
+
+OpenChamber keeps parity helpers in `lib/generative-widget/guidelines.ts`:
+
+- `getAlwaysOnGenerativeWidgetPrompt()`
+- `getGuidelines(modules)` / `getAllGuidelines()`
