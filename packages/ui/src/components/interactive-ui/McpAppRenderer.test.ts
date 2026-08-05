@@ -2389,8 +2389,11 @@ describe('MCP App sandbox bootstrap', () => {
     expect(unsupported.hostContext.displayMode).toBe('fullscreen');
   });
 
-  test('intersects Host display modes with modes declared by the initialized App', () => {
-    expect(resolveMcpAppDisplayMode('inline', 'fullscreen', undefined)).toBe('inline');
+  test('allows undeclared display modes but honors an explicit App mode list', () => {
+    // The stable Apps spec only forbids modes outside availableDisplayModes
+    // when that optional capability is set. Official Excalidraw v0.3.2 omits
+    // the list and still requests fullscreen from its Edit button.
+    expect(resolveMcpAppDisplayMode('inline', 'fullscreen', undefined)).toBe('fullscreen');
     expect(resolveMcpAppDisplayMode('inline', 'fullscreen', {
       availableDisplayModes: ['inline'],
     })).toBe('inline');
@@ -4000,7 +4003,9 @@ describe('MCP App protocol readiness (standards-only App)', () => {
         method: 'ui/initialize',
         params: {
           appInfo: { name: 'excalidraw-standards-only', version: '1' },
-          appCapabilities: { availableDisplayModes: ['inline'] },
+          // Official Excalidraw v0.3.2 initializes with capabilities: {}, then
+          // requests fullscreen when its inline Edit button is clicked.
+          appCapabilities: {},
           protocolVersion: '2026-01-26',
         },
       });
@@ -4030,6 +4035,29 @@ describe('MCP App protocol readiness (standards-only App)', () => {
       expect(outbound.some((message) => (
         String((message as { method?: unknown }).method).includes('size-changed')
       ))).toBe(false);
+
+      runtime.sendAppMessage({
+        jsonrpc: '2.0',
+        id: 2,
+        method: 'ui/request-display-mode',
+        params: { mode: 'fullscreen' },
+      });
+      await act(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      expect(runtime.appMessages.find((message) => (
+        (message as { id?: unknown }).id === 2
+      ))).toEqual({
+        jsonrpc: '2.0',
+        id: 2,
+        result: { mode: 'fullscreen' },
+      });
+      const fullscreenDialog = dom.find('dialog');
+      expect(fullscreenDialog?.getAttribute('data-mcp-app-display-mode')).toBe('fullscreen');
+      expect(fullscreenDialog?.getAttribute('role')).toBe('dialog');
+      expect(fullscreenDialog?.getAttribute('aria-modal')).toBe('true');
+      expect(fullscreenDialog?.open).toBe(true);
 
       // The instance stays mounted and shows no error: it is ready and remains
       // ready without any proprietary evidence (the retired 4s watchdog is

@@ -104,8 +104,13 @@ export const resolveMcpAppDisplayMode = (
 ): McpAppHostDisplayMode => {
   if (requestedMode === currentMode) return currentMode;
   if (requestedMode !== 'inline' && requestedMode !== 'fullscreen') return currentMode;
-  const declaredModes = appCapabilities?.availableDisplayModes ?? ['inline'];
-  return declaredModes.includes(requestedMode) ? requestedMode : currentMode;
+  const declaredModes = appCapabilities?.availableDisplayModes;
+  // The stable Apps contract only makes this list restrictive when it is set.
+  // Some conforming third-party Apps (including official Excalidraw v0.3.2)
+  // omit the optional list and discover a Host-offered mode by requesting it.
+  return !declaredModes || declaredModes.includes(requestedMode)
+    ? requestedMode
+    : currentMode;
 };
 
 interface McpAppPresentationLayoutOptions {
