@@ -18,7 +18,14 @@ import {
   verifyHostedOcixManifest,
 } from './hosted-ocix.js';
 import { reconcileOpenCodeAgentRuntime } from './agent-runtime.js';
-import { createInteractiveUIRuntime } from './runtime.js';
+import { createInteractiveUIRuntime, normalizeExtensionManifest } from './runtime.js';
+import {
+  fetchRemoteOcixManifest,
+  hostedSurfaceBindings,
+  selectRemoteConnector,
+  verifyRemoteOcixManifest,
+} from './remote-ocix.js';
+import { safeRelativePath } from './hosted-ocix.js';
 
 const STATE_SCHEMA = 'openchamber://extension-manager-state/v1';
 const TRUST_SCHEMA = 'openchamber://extension-trust-store/v1';
@@ -30,11 +37,6 @@ const ID_PATTERN = /^[a-z0-9]+(?:[._-][a-z0-9]+)+$/i;
 const KEY_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 const SEMVER_PATTERN = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
 const SHA256_PATTERN = /^sha256-[A-Za-z0-9+/]{43}=$/;
-const HOSTED_TOOL_NAME_PATTERN = /^[a-z][a-z0-9_]*$/;
-const RESERVED_TOOL_NAMES = new Set([
-  'apply_patch', 'bash', 'edit', 'glob', 'grep', 'html_artifact', 'interactive_ui',
-  'list', 'read', 'skill', 'task', 'todo', 'webfetch', 'write',
-]);
 const BLOCKED_KEY_IDS = new Set(['__proto__', 'prototype', 'constructor']);
 
 const compareSemver = (left, right) => {
@@ -197,12 +199,168 @@ const sanitizeMarketplaces = (marketplaces) => ({
   marketplaces: Object.values(marketplaces.marketplaces ?? {}).map(({ publicKey: _publicKey, ...marketplace }) => marketplace),
 });
 
+const summarizeRemoteReview = (remote, trusted) => ({
+  extension: {
+    id: remote.extensionId,
+    name: typeof remote.extension?.name === 'string' ? remote.extension.name : remote.extensionId,
+    version: remote.version,
+  },
+  publisher: {
+    id: remote.publisher.id,
+    name: remote.publisher.name,
+    keyId: remote.publisher.keyId,
+    fingerprint: remote.publisher.fingerprint,
+    trusted,
+  },
+  permissions: clone(remote.permissions),
+  manifest: {
+    appEntryUrl: remote.appEntryUrl,
+    manifestHash: remote.manifestHash,
+    publishedAt: remote.publishedAt,
+  },
+  connector: remote.connector,
+});
+
+// trusted means the stored trust record for this publisher/keyId carries the
+// SAME key as the candidate: the stored public key is re-normalized and
+// re-fingerprinted locally and compared against the candidate fingerprint. A
+// same publisher/keyId slot occupied by a different key is NOT trusted.
+const remotePublisherTrusted = (trust, publisher, cryptoImpl) => {
+  const stored = trust?.publishers?.[publisher?.id]?.keys?.[publisher?.keyId];
+  if (!isRecord(stored) || typeof stored.publicKey !== 'string' || !stored.publicKey) return false;
+  try {
+    return publicKeyFingerprint(stored.publicKey, cryptoImpl) === publisher?.fingerprint;
+  } catch {
+    return false;
+  }
+};
+
+// Metadata-only validation of the signed Remote manifest's extension document
+// using the SAME single-sourced runtime normalization used at load time. It
+// validates connectors (auth type/placement/baseUrl vs
+// extension.permissions.network), actions and connector references,
+// views/artifacts/dashboard/routing, Native trust.mode, duplicate identities,
+// and every other pure-metadata rule — without reading any entry/resource
+// bytes and without fetching resources. Runtime schema errors keep their
+// stable codes (e.g. network_not_allowed, invalid_manifest).
+const validateRemoteExtensionMetadata = (extension, environment) => {
+  try {
+    return normalizeExtensionManifest(extension, environment);
+  } catch (error) {
+    throw new InteractiveUIExtensionManagerError(
+      `Remote extension metadata is invalid: ${error instanceof Error ? error.message : 'invalid manifest'}`,
+      typeof error?.code === 'string' ? error.code : 'invalid_manifest',
+      error?.status ?? 400,
+    );
+  }
+};
+
+// Runtime entry extension allowlists, mirroring resolveEntryPath exactly.
+const REMOTE_ENTRY_EXTENSIONS = {
+  declarative: ['.json'],
+  native: ['.mjs', '.js'],
+  artifact: ['.html'],
+  icon: ['.svg', '.png'],
+};
+
+// Every shell-consumed resource reference (view/artifact/icon entries) must be
+// a safe declared resources[] path using the SAME path rules as the Hosted
+// OCIX kernel (safeRelativePath) and the runtime entry extension rules. This
+// rejects traversal such as ../../escape.txt and missing/ambiguous resource
+// references without reading or fetching any resource bytes.
+const validateRemoteResourceEntries = (extension, resources) => {
+  const resourceByPath = new Map(resources.map((resource) => [resource.path, resource]));
+  const requireDeclaredResource = (entry, label, allowedExtensions) => {
+    if (typeof entry !== 'string' || !entry.trim()) {
+      throw new InteractiveUIExtensionManagerError(
+        `Remote extension ${label} entry is missing`,
+        'invalid_hosted_resource',
+        400,
+      );
+    }
+    const normalizedPath = safeRelativePath(entry);
+    if (!normalizedPath) {
+      throw new InteractiveUIExtensionManagerError(
+        `Remote extension ${label} entry is not a safe relative path: ${entry}`,
+        'invalid_hosted_resource',
+        400,
+        { path: entry },
+      );
+    }
+    if (allowedExtensions && !allowedExtensions.some((extension) => normalizedPath.endsWith(extension))) {
+      throw new InteractiveUIExtensionManagerError(
+        `Remote extension ${label} entry has an unsupported file type: ${normalizedPath}`,
+        'invalid_entry',
+        400,
+        { path: normalizedPath },
+      );
+    }
+    if (!resourceByPath.has(normalizedPath)) {
+      throw new InteractiveUIExtensionManagerError(
+        `Remote extension ${label} entry is not declared in the manifest resources: ${normalizedPath}`,
+        'invalid_hosted_resource',
+        400,
+        { path: normalizedPath },
+      );
+    }
+  };
+  for (const view of Array.isArray(extension?.views) ? extension.views : []) {
+    if (!isRecord(view) || typeof view.id !== 'string') continue;
+    requireDeclaredResource(
+      view.entry,
+      `view ${view.id}`,
+      REMOTE_ENTRY_EXTENSIONS[view.runtime === 'native' ? 'native' : 'declarative'],
+    );
+  }
+  for (const artifact of Array.isArray(extension?.artifacts) ? extension.artifacts : []) {
+    if (!isRecord(artifact) || typeof artifact.id !== 'string') continue;
+    requireDeclaredResource(artifact.entry, `artifact ${artifact.id}`, REMOTE_ENTRY_EXTENSIONS.artifact);
+  }
+  if (typeof extension?.icon === 'string' && extension.icon.trim()) {
+    requireDeclaredResource(extension.icon, 'icon', REMOTE_ENTRY_EXTENSIONS.icon);
+  }
+};
+
+// Single write-free Remote preflight shared by inspectRemote and connectRemote:
+// complete runtime metadata validation, shell-consumed resource entry
+// validation against the declared resources[], and the exact hosted Agent
+// Runtime surface-tool binding constraints. Metadata-only: reads/fetches zero
+// resource bytes. Runs before trust, staging, Manager state, Agent Runtime,
+// or Secret Store writes.
+const preflightRemoteShellMetadata = (remote, environment) => {
+  const normalizedExtension = validateRemoteExtensionMetadata(remote.extension, environment);
+  validateRemoteResourceEntries(remote.extension, remote.resources);
+  hostedSurfaceBindings(remote.extension);
+  return normalizedExtension;
+};
+
+// Phase R1 exact-one-api-key policy applied against the validated metadata:
+// the normalized connector list must contain exactly the selected raw
+// connector, with api-key auth. Keeps the raw selection (selectRemoteConnector)
+// authoritative while preventing drift between the two validation layers.
+const assertRemoteConnectorMatchesValidation = (connector, normalizedExtension) => {
+  const normalizedConnectors = Array.isArray(normalizedExtension?.connectors)
+    ? normalizedExtension.connectors
+    : [];
+  if (normalizedConnectors.length !== 1
+    || normalizedConnectors[0]?.id !== connector.id
+    || normalizedConnectors[0]?.auth?.type !== 'api-key') {
+    throw new InteractiveUIExtensionManagerError(
+      'Remote app connector does not match its validated metadata',
+      'remote_connector_ambiguous',
+      409,
+    );
+  }
+  return normalizedConnectors[0];
+};
+
 const sanitizeExtensions = (state, integrityByExtension = {}) => Object.values(state.extensions ?? {}).map((extension) => {
   const result = clone(extension);
   for (const version of Object.values(result.versions ?? {})) {
     if (isRecord(version)) {
       delete version.fileHashes;
       if (isRecord(version.hosted?.lastGood)) delete version.hosted.lastGood.integrity;
+      if (isRecord(version.remote)) delete version.remote.installationId;
     }
   }
   result.integrity = clone(integrityByExtension[extension.id] ?? { status: 'unknown' });
@@ -508,6 +666,10 @@ export const createInteractiveUIExtensionManager = ({
         const hostedIntegrity = await inspectHostedCacheIntegrity(extension, active);
         if (hostedIntegrity.status !== 'ready') extension.enabled = false;
       }
+      if (active.delivery === 'remote' && extension.enabled) {
+        const remoteIntegrity = await inspectRemoteShellIntegrity(extension, active);
+        if (remoteIntegrity.status !== 'ready') extension.enabled = false;
+      }
     }
     return runtimeState;
   };
@@ -585,47 +747,6 @@ export const createInteractiveUIExtensionManager = ({
       );
     }
     return hosted;
-  };
-
-  const hostedSurfaceBindings = (extension) => {
-    const bindings = new Map();
-    for (const [kind, surfaces] of [
-      ['view', Array.isArray(extension.views) ? extension.views : []],
-      ['artifact', Array.isArray(extension.artifacts) ? extension.artifacts : []],
-    ]) {
-      for (const surface of surfaces) {
-        if (!isRecord(surface) || typeof surface.id !== 'string') continue;
-        for (const name of Array.isArray(surface.tools) ? surface.tools : []) {
-          if (typeof name !== 'string'
-            || !HOSTED_TOOL_NAME_PATTERN.test(name)
-            || RESERVED_TOOL_NAMES.has(name)) {
-            throw new InteractiveUIExtensionManagerError(
-              `Hosted surface ${surface.id} declares an invalid or reserved Agent Tool`,
-              'invalid_hosted_agent_tool',
-            );
-          }
-          const existing = bindings.get(name);
-          if (existing && (existing.surfaceId !== surface.id || existing.kind !== kind)) {
-            throw new InteractiveUIExtensionManagerError(
-              `Hosted Agent Tool ${name} is bound to more than one surface`,
-              'invalid_hosted_agent_tool',
-            );
-          }
-          bindings.set(name, {
-            name,
-            kind,
-            surfaceId: surface.id,
-            title: typeof surface.title === 'string' && surface.title.trim()
-              ? surface.title.trim()
-              : surface.id,
-            defaultContext: isRecord(surface.dashboard?.defaultContext)
-              ? clone(surface.dashboard.defaultContext)
-              : {},
-          });
-        }
-      }
-    }
-    return [...bindings.values()];
   };
 
   const hostedToolSource = (binding) => {
@@ -835,6 +956,207 @@ export default tool({
     cryptoImpl,
     validate: (directory) => validateExtensionRoot(directory, hosted.extensionId, hosted.extension),
   });
+
+  const verifyRemoteShellRoot = async (extension, metadata) => {
+    const remote = metadata.remote;
+    if (!isRecord(remote)
+      || typeof remote.appEntryUrl !== 'string'
+      || !isRecord(remote.acceptedManifest)
+      || !SHA256_PATTERN.test(remote.acceptedManifest.manifestHash ?? '')
+      || typeof remote.acceptedManifest.keyId !== 'string'
+      || typeof remote.installationId !== 'string'
+      || !remote.installationId
+      || remote.installationId.length > 128
+      || !isRecord(metadata.publisher)
+      || !ID_PATTERN.test(metadata.publisher.id ?? '')
+      || !KEY_ID_PATTERN.test(metadata.publisher.keyId ?? '')
+      || !SHA256_PATTERN.test(metadata.publisher.fingerprint ?? '')) {
+      throw new InteractiveUIExtensionManagerError(
+        `${extension.id}@${metadata.version} has no valid Remote state`,
+        'remote_shell_integrity_failed',
+        409,
+      );
+    }
+    await verifyInstalledVersionIntegrity(
+      extension,
+      metadata,
+      pathImpl.join(versionsDirectory, extension.id, metadata.version),
+    );
+    const trust = await readTrust();
+    const storedKey = trust.publishers?.[metadata.publisher.id]
+      ?.keys?.[metadata.publisher.keyId];
+    if (!isRecord(storedKey) || typeof storedKey.publicKey !== 'string' || !storedKey.publicKey) {
+      throw new InteractiveUIExtensionManagerError(
+        'Remote OCIX publisher key is no longer trusted',
+        'publisher_untrusted',
+        403,
+      );
+    }
+    // The shell must be signed by the CURRENT trusted key: normalize the
+    // stored trust-record public key and derive its fingerprint locally, then
+    // require the reverified embedded publisher identity to match it exactly.
+    let trustedKeyPem;
+    let trustedFingerprint;
+    try {
+      trustedKeyPem = normalizeEd25519PublicKey(storedKey.publicKey, cryptoImpl);
+      trustedFingerprint = publicKeyFingerprint(trustedKeyPem, cryptoImpl);
+    } catch {
+      throw new InteractiveUIExtensionManagerError(
+        'Remote OCIX publisher key is no longer trusted',
+        'publisher_untrusted',
+        403,
+      );
+    }
+    let signedDocument;
+    try {
+      signedDocument = JSON.parse(await fsImpl.readFile(
+        pathImpl.join(versionsDirectory, extension.id, metadata.version, HOSTED_OCIX_SIGNED_MANIFEST_FILE),
+        'utf8',
+      ));
+    } catch (error) {
+      throw new InteractiveUIExtensionManagerError(
+        error?.code === 'ENOENT'
+          ? 'Remote OCIX shell is missing its signed manifest'
+          : 'Remote OCIX shell signed manifest is invalid JSON',
+        'remote_shell_integrity_failed',
+        409,
+      );
+    }
+    const reverified = verifyRemoteOcixManifest({ document: signedDocument, cryptoImpl });
+    if (reverified.extensionId !== extension.id
+      || reverified.version !== metadata.version
+      || reverified.manifestHash !== remote.acceptedManifest.manifestHash
+      || reverified.publisher.id !== metadata.publisher.id
+      || reverified.publisher.keyId !== metadata.publisher.keyId
+      || reverified.publisher.keyId !== remote.acceptedManifest.keyId
+      || reverified.publisher.fingerprint !== metadata.publisher.fingerprint
+      || reverified.publisher.fingerprint !== trustedFingerprint
+      || reverified.publisher.publicKey !== trustedKeyPem) {
+      throw new InteractiveUIExtensionManagerError(
+        'Remote OCIX shell was not signed by the currently trusted publisher key',
+        'remote_shell_integrity_failed',
+        409,
+      );
+    }
+    return pathImpl.join(versionsDirectory, extension.id, metadata.version);
+  };
+
+  const inspectRemoteShellIntegrity = async (extension, metadata) => {
+    try {
+      await verifyRemoteShellRoot(extension, metadata);
+      return { status: 'ready' };
+    } catch (error) {
+      if (error?.code === 'remote_shell_integrity_failed') {
+        return { status: 'failed', code: error.code };
+      }
+      return {
+        status: 'failed',
+        code: typeof error?.code === 'string' ? error.code : 'remote_shell_integrity_failed',
+      };
+    }
+  };
+
+  const installRemoteShell = async ({
+    remote,
+    appEntryUrl,
+    connector,
+    installationId,
+    previousState,
+    nextState,
+  }) => {
+    const { id, name, version } = summarizeRemoteReview(remote, false).extension;
+    if (id === builtInRuntime?.extensionId) {
+      throw new InteractiveUIExtensionManagerError('Built-in Interactive UI cannot be replaced by an OCIX package', 'reserved_extension', 409);
+    }
+    const destination = pathImpl.join(versionsDirectory, id, version);
+    if (nextState.extensions[id]?.versions?.[version]) {
+      throw new InteractiveUIExtensionManagerError(
+        `${id}@${version} is already installed from a different delivery`,
+        'version_conflict',
+        409,
+      );
+    }
+    const stagingPath = pathImpl.join(stagingDirectory, cryptoImpl.randomUUID());
+    let moved = false;
+    try {
+      await fsImpl.mkdir(stagingPath, { recursive: true, mode: 0o700 });
+      await fsImpl.writeFile(
+        pathImpl.join(stagingPath, HOSTED_OCIX_SIGNED_MANIFEST_FILE),
+        Buffer.from(canonicalStringify(remote.signedDocument)),
+        { flag: 'wx', mode: 0o600 },
+      );
+      await fsImpl.writeFile(
+        pathImpl.join(stagingPath, 'openchamber.extension.json'),
+        Buffer.from(`${JSON.stringify(remote.extension, null, 2)}\n`),
+        { flag: 'wx', mode: 0o600 },
+      );
+      const agentRuntime = await installHostedAgentRuntime(stagingPath, remote);
+      const fileHashes = Object.fromEntries(await Promise.all(
+        (await collectInstalledFiles(stagingPath)).map(async (relativePath) => [
+          relativePath,
+          packageHash(cryptoImpl, await fsImpl.readFile(
+            pathImpl.join(stagingPath, ...relativePath.split('/')),
+          )),
+        ]),
+      ));
+      await fsImpl.mkdir(pathImpl.dirname(destination), { recursive: true, mode: 0o700 });
+      await fsImpl.rename(stagingPath, destination);
+      moved = true;
+
+      const installedAt = new Date().toISOString();
+      const next = {
+        id,
+        name,
+        enabled: true,
+        activeVersion: version,
+        activationHistory: [],
+        versions: {},
+      };
+      next.versions[version] = {
+        version,
+        packageHash: remote.manifestHash,
+        installedAt,
+        source: { type: 'remote', appEntryUrl },
+        publisher: {
+          id: remote.publisher.id,
+          name: remote.publisher.name,
+          keyId: remote.publisher.keyId,
+          fingerprint: remote.publisher.fingerprint,
+        },
+        delivery: 'remote',
+        agentRuntime,
+        fileHashes,
+        remote: {
+          appEntryUrl,
+          installationId,
+          connectorRefs: [{
+            id: connector.id,
+            origin: connector.origin,
+            authType: connector.authType,
+          }],
+          acceptedManifest: {
+            version: remote.version,
+            manifestHash: remote.manifestHash,
+            publishedAt: remote.publishedAt,
+            keyId: remote.publisher.keyId,
+            fetchedAt: installedAt,
+          },
+          approvedPermissions: clone(remote.permissions),
+          status: 'active',
+          connectedAt: installedAt,
+          lastConsentAt: installedAt,
+        },
+      };
+      nextState.extensions[id] = next;
+      await verifyRemoteShellRoot(next, next.versions[version]);
+      const openCode = await commitStateWithAgentRuntime(previousState, nextState);
+      return { extension: clone(next), installed: true, openCode };
+    } catch (error) {
+      if (moved) await fsImpl.rm(destination, { recursive: true, force: true }).catch(() => {});
+      await fsImpl.rm(stagingPath, { recursive: true, force: true }).catch(() => {});
+      throw error;
+    }
+  };
 
   const trustPublisherInDocument = (trust, { id, name, keyId, publicKey, source = 'manual' }) => {
     const publisherId = assertNamespacedId(id, 'Publisher id');
@@ -1221,6 +1543,18 @@ export default tool({
         }
         continue;
       }
+      if (active.delivery === 'remote') {
+        try {
+          roots.push(await verifyRemoteShellRoot(extension, active));
+        } catch (error) {
+          const quarantineKey = `${extension.id}@${extension.activeVersion}:${error?.code ?? 'remote_shell_integrity_failed'}`;
+          if (!reportedQuarantines.has(quarantineKey)) {
+            reportedQuarantines.add(quarantineKey);
+            logger.warn?.(`[InteractiveUI] Remote OCIX ${extension.id} is unavailable: ${error?.code ?? error}`);
+          }
+        }
+        continue;
+      }
       if ((await fsImpl.stat(directory)).isDirectory()) {
         roots.push(directory);
       }
@@ -1288,10 +1622,16 @@ export default tool({
           return [extension.id, { status: 'failed', code: 'extension_integrity_failed' }];
         }
         const packageIntegrity = await inspectInstalledVersionIntegrity(extension, active);
-        if (packageIntegrity.status !== 'ready' || active.delivery !== 'hosted') {
+        if (packageIntegrity.status !== 'ready') {
           return [extension.id, packageIntegrity];
         }
-        return [extension.id, await inspectHostedCacheIntegrity(extension, active)];
+        if (active.delivery === 'hosted') {
+          return [extension.id, await inspectHostedCacheIntegrity(extension, active)];
+        }
+        if (active.delivery === 'remote') {
+          return [extension.id, await inspectRemoteShellIntegrity(extension, active)];
+        }
+        return [extension.id, packageIntegrity];
       }),
     ));
     return {
@@ -1328,6 +1668,187 @@ export default tool({
 
   const installPackage = (buffer, options) => mutate(() => installPackageInternal(buffer, options));
 
+  const inspectRemote = async (appEntryUrlValue) => {
+    const appEntryUrl = normalizeRemoteUrl(appEntryUrlValue, 'Remote app entry URL');
+    const remote = await fetchRemoteOcixManifest({ appEntryUrl, fetchImpl, cryptoImpl });
+    // Single write-free preflight (metadata + resource entries + Agent Runtime
+    // tool bindings) before any trust/install/secret write.
+    const normalizedExtension = preflightRemoteShellMetadata(remote, environment);
+    const connector = selectRemoteConnector(remote.extension);
+    assertRemoteConnectorMatchesValidation(connector, normalizedExtension);
+    const trust = await readTrust();
+    const trusted = remotePublisherTrusted(trust, remote.publisher, cryptoImpl);
+    return summarizeRemoteReview({ ...remote, appEntryUrl, connector }, trusted);
+  };
+
+  const connectRemote = (input) => mutate(async () => {
+    const appEntryUrl = normalizeRemoteUrl(input?.appEntryUrl, 'Remote app entry URL');
+    // TOCTOU safe: connect always refetches and reverifies the signed
+    // manifest instead of trusting the earlier inspection response.
+    const remote = await fetchRemoteOcixManifest({ appEntryUrl, fetchImpl, cryptoImpl });
+    // Single write-free preflight BEFORE trust, shell, Manager state,
+    // Agent Runtime, or Secret Store writes.
+    const normalizedExtension = preflightRemoteShellMetadata(remote, environment);
+    const previousState = await readState();
+    if (previousState.extensions[remote.extensionId]) {
+      throw new InteractiveUIExtensionManagerError(
+        `Remote app ${remote.extensionId} is already installed`,
+        'remote_extension_installed',
+        409,
+      );
+    }
+    const connector = selectRemoteConnector(remote.extension);
+    assertRemoteConnectorMatchesValidation(connector, normalizedExtension);
+    const originalTrust = await readTrust();
+    const trusted = remotePublisherTrusted(originalTrust, remote.publisher, cryptoImpl);
+    const review = summarizeRemoteReview({ ...remote, appEntryUrl, connector }, trusted);
+    if (input?.confirmedPublisherFingerprint !== remote.publisher.fingerprint
+      || input?.confirmedManifestHash !== remote.manifestHash) {
+      throw new InteractiveUIExtensionManagerError(
+        'Remote app publisher fingerprint and manifest hash must be confirmed before connecting',
+        'remote_confirmation_required',
+        403,
+        review,
+      );
+    }
+    const trust = clone(originalTrust);
+    const trustResult = trustPublisherInDocument(trust, {
+      id: remote.publisher.id,
+      name: remote.publisher.name,
+      keyId: remote.publisher.keyId,
+      publicKey: remote.publisher.publicKey,
+      source: 'remote-confirmation',
+    });
+    if (trustResult.added) {
+      await atomicWriteJson(fsImpl, pathImpl, cryptoImpl, trustPath, trust);
+    }
+    // One cryptographically random installation identity per connect
+    // operation. It binds the Remote shell metadata, the credential record,
+    // and the failure-atomic rollback; it is route-internal bookkeeping and
+    // never appears in public snapshots, responses, logs, or errors.
+    const installationId = cryptoImpl.randomUUID();
+    try {
+      const nextState = clone(previousState);
+      const installed = await installRemoteShell({
+        remote,
+        appEntryUrl,
+        connector,
+        installationId,
+        previousState,
+        nextState,
+      });
+      return {
+        extension: {
+          id: installed.extension.id,
+          name: installed.extension.name,
+          version: installed.extension.activeVersion,
+        },
+        connector,
+        installationId,
+        trustAdded: trustResult.added,
+      };
+    } catch (error) {
+      if (trustResult.added) {
+        await atomicWriteJson(fsImpl, pathImpl, cryptoImpl, trustPath, originalTrust).catch((rollbackError) => {
+          logger.error?.('[InteractiveUI] Failed to roll back Remote publisher trust', rollbackError);
+        });
+      }
+      throw error;
+    }
+  });
+
+  const rollbackRemoteConnect = (extensionId, options = {}) => mutate(async () => {
+    assertNamespacedId(extensionId, 'Extension id');
+    const installationId = options.installationId;
+    if (typeof installationId !== 'string' || !installationId || installationId.length > 128) {
+      throw new InteractiveUIExtensionManagerError(
+        'Remote rollback requires its installation identity',
+        'remote_rollback_installation_changed',
+        409,
+      );
+    }
+    const previousState = await readState();
+    const nextState = clone(previousState);
+    const extension = nextState.extensions[extensionId];
+    if (!extension) throw new InteractiveUIExtensionManagerError('Extension was not found', 'extension_not_found', 404);
+    const metadata = extension.versions?.[extension.activeVersion];
+    if (!metadata || metadata.delivery !== 'remote') {
+      throw new InteractiveUIExtensionManagerError(
+        'Extension was not installed by Remote connect; refusing to remove it',
+        'remote_rollback_unavailable',
+        409,
+      );
+    }
+    // Refuse all mutation when the current active Remote metadata belongs to
+    // a different installation: a stale rollback must never remove a
+    // replacement shell or its trust.
+    if (metadata.remote?.installationId !== installationId) {
+      throw new InteractiveUIExtensionManagerError(
+        'Remote installation changed since this connect; rollback refused',
+        'remote_rollback_installation_changed',
+        409,
+      );
+    }
+    const source = pathImpl.join(versionsDirectory, extensionId);
+    const trash = pathImpl.join(trashDirectory, `${extensionId}-${Date.now()}-${cryptoImpl.randomUUID()}`);
+    let moved = false;
+    await fsImpl.mkdir(trashDirectory, { recursive: true, mode: 0o700 });
+    try {
+      await fsImpl.rename(source, trash);
+      moved = true;
+    } catch (error) {
+      if (error?.code !== 'ENOENT') throw error;
+    }
+    delete nextState.extensions[extensionId];
+    try {
+      const openCode = await commitStateWithAgentRuntime(previousState, nextState);
+      let trustRolledBack = false;
+      let trustRetainedInUse = false;
+      if (options.trustAdded === true) {
+        // Race-safe: this key may only be removed when no remaining installed
+        // version references this publisher id/keyId after this extension is
+        // gone. nextState is the authoritative post-removal state because all
+        // mutations share the serialized mutation queue.
+        const publisherId = metadata.publisher?.id;
+        const keyId = metadata.publisher?.keyId;
+        const stillInUse = Object.values(nextState.extensions ?? {}).some((candidate) => (
+          isRecord(candidate)
+          && Object.values(candidate.versions ?? {}).some((version) => (
+            isRecord(version)
+            && version.publisher?.id === publisherId
+            && version.publisher?.keyId === keyId
+          ))
+        ));
+        if (!stillInUse) {
+          try {
+            const trust = await readTrust();
+            const publisher = trust.publishers?.[publisherId];
+            if (publisher?.keys?.[keyId]) {
+              delete publisher.keys[keyId];
+              if (Object.keys(publisher.keys).length === 0) delete trust.publishers[publisherId];
+              await atomicWriteJson(fsImpl, pathImpl, cryptoImpl, trustPath, trust);
+              trustRolledBack = true;
+            }
+          } catch (error) {
+            logger.error?.('[InteractiveUI] Failed to roll back Remote publisher trust', error);
+          }
+        } else {
+          trustRetainedInUse = true;
+        }
+      }
+      await fsImpl.rm(trash, { recursive: true, force: true }).catch(() => {});
+      return {
+        removed: true,
+        trustRolledBack,
+        ...(trustRetainedInUse ? { trustRetainedInUse: true } : {}),
+        openCode,
+      };
+    } catch (error) {
+      if (moved) await fsImpl.rename(trash, source).catch(() => {});
+      throw error;
+    }
+  });
+
   const setEnabled = (id, enabled) => mutate(async () => {
     assertNamespacedId(id, 'Extension id');
     if (typeof enabled !== 'boolean') throw new InteractiveUIExtensionManagerError('Enabled must be a boolean', 'invalid_enabled');
@@ -1353,6 +1874,9 @@ export default tool({
             refreshed.pendingUpdate,
           );
         }
+      }
+      if (active.delivery === 'remote') {
+        await verifyRemoteShellRoot(extension, active);
       }
     }
     extension.enabled = enabled;
@@ -1559,6 +2083,9 @@ export default tool({
     removeTrustedPublisherKey,
     inspectPackage,
     installPackage,
+    inspectRemote,
+    connectRemote,
+    rollbackRemoteConnect,
     setEnabled,
     refreshHosted,
     rollback,

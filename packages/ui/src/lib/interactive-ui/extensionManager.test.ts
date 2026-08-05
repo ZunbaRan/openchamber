@@ -6,6 +6,8 @@ import {
   normalizeConnectionSnapshot,
   normalizeMarketplaceInspection,
   normalizePackageInspection,
+  normalizeRemoteInspection,
+  normalizeRemoteConnectResult,
 } from './extensionManager';
 
 describe('classifyCatalogInstallState', () => {
@@ -85,6 +87,125 @@ describe('normalizeManagerSnapshot', () => {
     expect(inspection?.permissions.nativeCode).toBe(true);
     expect(inspection?.permissions.sandboxedArtifacts).toBe(true);
     expect(normalizePackageInspection({ extension: {}, publisher: {} })).toBeNull();
+  });
+
+  test('normalizes Remote delivery metadata without accepting secret material', () => {
+    const snapshot = normalizeManagerSnapshot({
+      extensions: [{
+        id: 'com.acme.remote',
+        name: 'Acme Remote',
+        enabled: true,
+        activeVersion: '1.0.0',
+        integrity: { status: 'ready' },
+        versions: {
+          '1.0.0': {
+            version: '1.0.0',
+            delivery: 'remote',
+            source: { type: 'remote', appEntryUrl: 'https://apps.example.com/manifest.json', accessKey: 'must-not-survive' },
+            publisher: { id: 'com.acme.publisher', name: 'Acme', keyId: 'release-2026', fingerprint: 'sha256-value' },
+            remote: {
+              appEntryUrl: 'https://apps.example.com/manifest.json',
+              connectorRefs: [{ id: 'crm', origin: 'https://api.example.com', authType: 'api-key' }, null],
+              acceptedManifest: { version: '1.0.0', manifestHash: 'sha256-value' },
+              status: 'active',
+            },
+          },
+        },
+      }],
+    });
+    const version = snapshot.extensions[0]?.versions['1.0.0'];
+    expect(version?.delivery).toBe('remote');
+    expect(version?.source).toEqual({ type: 'remote', appEntryUrl: 'https://apps.example.com/manifest.json' });
+    expect(version?.remote).toEqual({
+      appEntryUrl: 'https://apps.example.com/manifest.json',
+      connectorIds: ['crm'],
+      acceptedManifestVersion: '1.0.0',
+      acceptedManifestHash: 'sha256-value',
+      status: 'active',
+    });
+    expect(JSON.stringify(version)).not.toContain('must-not-survive');
+  });
+
+  test('normalizes a Remote inspection review with the complete Hosted permission summary', () => {
+    const inspection = normalizeRemoteInspection({
+      extension: { id: 'com.acme.remote', name: 'Remote CRM', version: '1.0.0' },
+      publisher: { id: 'com.acme.publisher', name: 'Acme', keyId: 'release-2026', fingerprint: 'sha256-value', trusted: false, publicKey: 'must-not-survive' },
+      permissions: {
+        resourceOrigins: ['https://apps.example.com'],
+        networkOrigins: ['https://api.example.com'],
+        externalLinkOrigins: [],
+        credentialScopes: ['crm.read'],
+        actionIds: ['com.acme.remote.read'],
+        agentToolNames: ['remote_open'],
+        clipboard: false,
+        popups: true,
+        nativeCode: true,
+      },
+      manifest: { appEntryUrl: 'https://apps.example.com/manifest.json', manifestHash: 'sha256-value', publishedAt: '2026-08-05T00:00:00.000Z' },
+      connector: { id: 'crm', origin: 'https://api.example.com', authType: 'api-key' },
+      accessKey: 'must-not-survive',
+    });
+    expect(inspection).toEqual({
+      extension: { id: 'com.acme.remote', name: 'Remote CRM', version: '1.0.0' },
+      publisher: { id: 'com.acme.publisher', name: 'Acme', keyId: 'release-2026', fingerprint: 'sha256-value', trusted: false },
+      permissions: {
+        resourceOrigins: ['https://apps.example.com'],
+        networkOrigins: ['https://api.example.com'],
+        externalLinkOrigins: [],
+        credentialScopes: ['crm.read'],
+        actionIds: ['com.acme.remote.read'],
+        agentToolNames: ['remote_open'],
+        clipboard: false,
+        popups: true,
+        nativeCode: true,
+      },
+      manifest: { appEntryUrl: 'https://apps.example.com/manifest.json', manifestHash: 'sha256-value', publishedAt: '2026-08-05T00:00:00.000Z' },
+      connector: { id: 'crm', origin: 'https://api.example.com', authType: 'api-key' },
+    });
+    expect(JSON.stringify(inspection)).not.toContain('must-not-survive');
+    expect(normalizeRemoteInspection({ extension: {}, publisher: {}, manifest: {}, connector: {} })).toBeNull();
+  });
+
+  test('normalizes a Remote connect result without exposing the access key or trust bookkeeping', () => {
+    const result = normalizeRemoteConnectResult({
+      extension: { id: 'com.acme.remote', name: 'Remote CRM', version: '1.0.0' },
+      connector: { id: 'crm', origin: 'https://api.example.com', authType: 'api-key' },
+      credential: { configured: true, expired: false, source: 'manual', configuredAt: '2026-08-05T00:00:00.000Z', accessKey: 'must-not-survive' },
+      trustAdded: true,
+    });
+    expect(result).toEqual({
+      extension: { id: 'com.acme.remote', name: 'Remote CRM', version: '1.0.0' },
+      connector: { id: 'crm', origin: 'https://api.example.com', authType: 'api-key' },
+      credential: { configured: true, expired: false, source: 'manual', configuredAt: '2026-08-05T00:00:00.000Z' },
+    });
+    expect(JSON.stringify(result)).not.toContain('must-not-survive');
+    expect(JSON.stringify(result)).not.toContain('trustAdded');
+  });
+
+  test('keeps hosted permission normalization in sync with nativeCode exposure', () => {
+    const inspection = normalizePackageInspection({
+      extension: { id: 'com.acme.operations', name: 'Operations', version: '1.0.0' },
+      publisher: { id: 'com.acme.publisher', name: 'Acme', keyId: 'release', fingerprint: 'sha256-value', trusted: true },
+      hosted: {
+        manifestUrl: 'https://apps.example.com/manifest.json',
+        ttlSeconds: 600,
+        manifestHash: 'sha256-value',
+        version: '2.0.0',
+        publishedAt: '2026-08-05T00:00:00.000Z',
+        permissions: {
+          resourceOrigins: ['https://apps.example.com'],
+          networkOrigins: [],
+          externalLinkOrigins: [],
+          credentialScopes: [],
+          actionIds: [],
+          agentToolNames: [],
+          clipboard: false,
+          popups: false,
+          nativeCode: true,
+        },
+      },
+    });
+    expect(inspection?.hosted?.permissions.nativeCode).toBe(true);
   });
 
   test('normalizes self-described marketplace review metadata', () => {

@@ -44,7 +44,7 @@ const canonicalStringify = (value) => JSON.stringify(canonicalize(value));
 
 const sha256 = (cryptoImpl, value) => `sha256-${cryptoImpl.createHash('sha256').update(value).digest('base64')}`;
 
-const normalizeMediaType = (value, label) => {
+export const normalizeMediaType = (value, label) => {
   const mediaType = typeof value === 'string'
     ? value.split(';', 1)[0].trim().toLowerCase()
     : '';
@@ -54,7 +54,7 @@ const normalizeMediaType = (value, label) => {
   return mediaType;
 };
 
-const safeRelativePath = (value) => {
+export const safeRelativePath = (value) => {
   if (typeof value !== 'string' || !value || value.includes('\\') || value.includes('\0')) return null;
   const normalized = nodePath.posix.normalize(value);
   if (normalized !== value || normalized.startsWith('/') || normalized === '..' || normalized.startsWith('../')) return null;

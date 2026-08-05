@@ -12,6 +12,7 @@ const MAX_CONNECTION_NAME_LENGTH = 200;
 const MAX_ENDPOINT_LENGTH = 4 * 1024;
 const MAX_HEADER_COUNT = 32;
 const MAX_HEADER_VALUE_LENGTH = 8 * 1024;
+const MAX_INSTALLATION_ID_LENGTH = 128;
 const HEADER_NAME_PATTERN = /^[A-Za-z][A-Za-z0-9-]{0,63}$/;
 const BLOCKED_HEADERS = new Set([
   'connection',
@@ -47,6 +48,19 @@ const assertIdentity = (extensionId, connectorId) => {
   }
 };
 
+// Installation ids are opaque non-empty strings bound to one Remote connect
+// operation. They are never exposed through summaries/status/list responses;
+// only exact equality against the stored record matters.
+const assertInstallationId = (value) => {
+  if (typeof value !== 'string'
+    || value.length === 0
+    || value.length > MAX_INSTALLATION_ID_LENGTH
+    || /[\r\n\0]/.test(value)) {
+    throw new InteractiveUIConnectionError('Connection installation id is invalid', 400, 'invalid_installation_id');
+  }
+  return value;
+};
+
 const normalizeSecret = (value, label, maximumLength) => {
   if (typeof value !== 'string' || !value.trim()) {
     throw new InteractiveUIConnectionError(`${label} is required`, 400, 'credential_required');
@@ -56,6 +70,27 @@ const normalizeSecret = (value, label, maximumLength) => {
     throw new InteractiveUIConnectionError(`${label} is invalid`, 400, 'invalid_credential');
   }
   return normalized;
+};
+
+// Opaque Remote access-key contract. Remote keys are exact strings: ordinary
+// leading/trailing spaces are valid credential material and MUST be preserved
+// byte-for-byte/code-unit-for-code-unit — no trim, no Unicode normalization,
+// no coercion. Only length and unsafe C0/DEL control characters are rejected
+// with a stable sanitized 400. This is the SINGLE validator used by both the
+// Remote connect route (before any Manager write) and setRemoteCredential, so
+// the two can never drift.
+const UNSAFE_ACCESS_KEY_CONTROL = /[\u0000-\u001F\u007F]/;
+export const validateRemoteAccessKey = (value) => {
+  if (typeof value !== 'string' || value.length === 0) {
+    throw new InteractiveUIConnectionError('Remote app access key is required', 400, 'remote_access_key_required');
+  }
+  if (value.length > MAX_ACCESS_KEY_LENGTH) {
+    throw new InteractiveUIConnectionError('Remote app access key is too long', 400, 'remote_access_key_invalid');
+  }
+  if (UNSAFE_ACCESS_KEY_CONTROL.test(value)) {
+    throw new InteractiveUIConnectionError('Remote app access key contains unsafe control characters', 400, 'remote_access_key_invalid');
+  }
+  return value;
 };
 
 const normalizeExpiresAt = (value) => {
@@ -341,6 +376,54 @@ export const createInteractiveUIConnectionStore = ({
     return { removed: true };
   });
 
+  // Remote connect credentials are bound to the installationId of the connect
+  // operation that created them. The setter refuses to overwrite a record that
+  // belongs to a DIFFERENT installation, and the conditional remover deletes
+  // only the record of the exact installation that requests cleanup. This
+  // keeps a stale connect's failure path from deleting a replacement
+  // credential that a later connect stored for the same extension/connector.
+  const setRemoteCredential = (extensionId, connectorId, installationId, accessKey) => mutate(async () => {
+    assertIdentity(extensionId, connectorId);
+    const normalizedInstallationId = assertInstallationId(installationId);
+    const store = await readStore();
+    const key = recordKey(extensionId, connectorId);
+    const existing = store.connections[key];
+    if (existing && existing.installationId !== normalizedInstallationId) {
+      throw new InteractiveUIConnectionError(
+        'Connection belongs to a different Remote installation',
+        409,
+        'remote_installation_conflict',
+      );
+    }
+    const record = {
+      extensionId,
+      connectorId,
+      accessKey: validateRemoteAccessKey(accessKey),
+      source: 'manual',
+      configuredAt: new Date().toISOString(),
+      installationId: normalizedInstallationId,
+    };
+    store.connections[key] = record;
+    await writeStore(store);
+    return summarize(record);
+  });
+
+  const removeRemoteCredential = (extensionId, connectorId, installationId) => mutate(async () => {
+    assertIdentity(extensionId, connectorId);
+    const normalizedInstallationId = assertInstallationId(installationId);
+    const store = await readStore();
+    const key = recordKey(extensionId, connectorId);
+    const record = store.connections[key];
+    if (!record) return { removed: false };
+    if (record.installationId !== normalizedInstallationId) {
+      // Non-sensitive indicator only: the actual ids are never exposed.
+      return { removed: false, mismatch: true };
+    }
+    delete store.connections[key];
+    await writeStore(store);
+    return { removed: true };
+  });
+
   const removeExtensionCredentials = (extensionId) => mutate(async () => {
     if (typeof extensionId !== 'string' || !ID_PATTERN.test(extensionId)) {
       throw new InteractiveUIConnectionError('Extension id is invalid', 400, 'invalid_extension_id');
@@ -361,8 +444,10 @@ export const createInteractiveUIConnectionStore = ({
     getConfiguration,
     resolveCredential,
     setManualCredential,
+    setRemoteCredential,
     provisionCredential,
     removeCredential,
+    removeRemoteCredential,
     removeExtensionCredentials,
   };
 };

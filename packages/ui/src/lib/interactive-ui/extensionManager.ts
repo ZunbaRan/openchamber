@@ -2,15 +2,22 @@ export interface InstalledVersion {
   version: string;
   installedAt: string;
   packageHash: string;
-  source: { type: string; marketplaceId?: string };
+  source: { type: string; marketplaceId?: string; appEntryUrl?: string };
   publisher: { id: string; name: string; keyId: string; fingerprint: string };
   agentRuntime: AgentRuntimeSummary;
-  delivery: 'local' | 'hosted';
+  delivery: 'local' | 'hosted' | 'remote';
   hosted?: {
     manifestUrl: string;
     lastGoodVersion?: string;
     pendingManifestHash?: string;
     lastErrorCode?: string;
+  };
+  remote?: {
+    appEntryUrl: string;
+    connectorIds: string[];
+    acceptedManifestVersion?: string;
+    acceptedManifestHash?: string;
+    status?: string;
   };
 }
 
@@ -53,6 +60,32 @@ export interface HostedPermissions {
   agentToolNames: string[];
   clipboard: boolean;
   popups: boolean;
+  nativeCode: boolean;
+}
+
+export interface RemoteConnectorBinding {
+  id: string;
+  origin: string;
+  authType: 'api-key';
+}
+
+export interface RemoteInspection {
+  extension: { id: string; name: string; version: string };
+  publisher: { id: string; name: string; keyId: string; fingerprint: string; trusted: boolean };
+  permissions: HostedPermissions;
+  manifest: { appEntryUrl: string; manifestHash: string; publishedAt: string };
+  connector: RemoteConnectorBinding;
+}
+
+export interface RemoteConnectResult {
+  extension: { id: string; name: string; version: string };
+  connector: RemoteConnectorBinding;
+  credential: {
+    configured: boolean;
+    expired: boolean;
+    source?: string;
+    configuredAt?: string;
+  };
 }
 
 export interface MarketplaceInspection {
@@ -206,6 +239,7 @@ const normalizeHostedPermissions = (value: unknown): HostedPermissions => {
     agentToolNames: strings(permissions.agentToolNames),
     clipboard: permissions.clipboard === true,
     popups: permissions.popups === true,
+    nativeCode: permissions.nativeCode === true,
   };
 };
 
@@ -246,7 +280,10 @@ const normalizeVersion = (value: unknown, fallbackVersion: string): InstalledVer
   const lastGood = hosted && isRecord(hosted.lastGood) ? hosted.lastGood : null;
   const pendingUpdate = hosted && isRecord(hosted.pendingUpdate) ? hosted.pendingUpdate : null;
   const lastError = hosted && isRecord(hosted.lastError) ? hosted.lastError : null;
+  const remote = isRecord(value.remote) ? value.remote : null;
+  const remoteManifest = remote && isRecord(remote.acceptedManifest) ? remote.acceptedManifest : null;
   if (!version) return null;
+  const delivery = value.delivery === 'hosted' || value.delivery === 'remote' ? value.delivery : 'local';
   return {
     version,
     installedAt: stringValue(value.installedAt),
@@ -254,6 +291,7 @@ const normalizeVersion = (value: unknown, fallbackVersion: string): InstalledVer
     source: {
       type: stringValue(source.type, 'unknown'),
       ...(typeof source.marketplaceId === 'string' ? { marketplaceId: source.marketplaceId } : {}),
+      ...(typeof source.appEntryUrl === 'string' ? { appEntryUrl: source.appEntryUrl } : {}),
     },
     publisher: {
       id: stringValue(publisher.id),
@@ -262,13 +300,24 @@ const normalizeVersion = (value: unknown, fallbackVersion: string): InstalledVer
       fingerprint: stringValue(publisher.fingerprint),
     },
     agentRuntime: normalizeAgentRuntime(value.agentRuntime),
-    delivery: value.delivery === 'hosted' ? 'hosted' : 'local',
+    delivery,
     ...(hosted ? {
       hosted: {
         manifestUrl: stringValue(hosted.manifestUrl),
         ...(typeof lastGood?.version === 'string' ? { lastGoodVersion: lastGood.version } : {}),
         ...(typeof pendingUpdate?.manifestHash === 'string' ? { pendingManifestHash: pendingUpdate.manifestHash } : {}),
         ...(typeof lastError?.code === 'string' ? { lastErrorCode: lastError.code } : {}),
+      },
+    } : {}),
+    ...(remote ? {
+      remote: {
+        appEntryUrl: stringValue(remote.appEntryUrl),
+        connectorIds: Array.isArray(remote.connectorRefs)
+          ? remote.connectorRefs.flatMap((ref) => (isRecord(ref) && typeof ref.id === 'string' ? [ref.id] : []))
+          : [],
+        ...(remoteManifest && typeof remoteManifest.version === 'string' ? { acceptedManifestVersion: remoteManifest.version } : {}),
+        ...(remoteManifest && typeof remoteManifest.manifestHash === 'string' ? { acceptedManifestHash: remoteManifest.manifestHash } : {}),
+        ...(typeof remote.status === 'string' ? { status: remote.status } : {}),
       },
     } : {}),
   };
@@ -355,6 +404,54 @@ export const normalizeMarketplaceInspection = (value: unknown): MarketplaceInspe
     catalogUrl,
     fingerprint,
     extensionCount: Number.isSafeInteger(value.extensionCount) ? value.extensionCount as number : 0,
+  };
+};
+
+export const normalizeRemoteInspection = (value: unknown): RemoteInspection | null => {
+  if (!isRecord(value) || !isRecord(value.extension) || !isRecord(value.publisher) || !isRecord(value.manifest) || !isRecord(value.connector)) return null;
+  const id = stringValue(value.extension.id);
+  const fingerprint = stringValue(value.publisher.fingerprint);
+  const manifestHash = stringValue(value.manifest.manifestHash);
+  const connectorId = stringValue(value.connector.id);
+  const appEntryUrl = stringValue(value.manifest.appEntryUrl);
+  if (!id || !fingerprint || !manifestHash || !connectorId || !appEntryUrl) return null;
+  return {
+    extension: { id, name: stringValue(value.extension.name, id), version: stringValue(value.extension.version) },
+    publisher: {
+      id: stringValue(value.publisher.id),
+      name: stringValue(value.publisher.name, stringValue(value.publisher.id)),
+      keyId: stringValue(value.publisher.keyId),
+      fingerprint,
+      trusted: value.publisher.trusted === true,
+    },
+    permissions: normalizeHostedPermissions(value.permissions),
+    manifest: { appEntryUrl, manifestHash, publishedAt: stringValue(value.manifest.publishedAt) },
+    connector: {
+      id: connectorId,
+      origin: stringValue(value.connector.origin),
+      authType: 'api-key',
+    },
+  };
+};
+
+export const normalizeRemoteConnectResult = (value: unknown): RemoteConnectResult | null => {
+  if (!isRecord(value) || !isRecord(value.extension) || !isRecord(value.connector) || !isRecord(value.credential)) return null;
+  const id = stringValue(value.extension.id);
+  const connectorId = stringValue(value.connector.id);
+  if (!id || !connectorId) return null;
+  return {
+    extension: { id, name: stringValue(value.extension.name, id), version: stringValue(value.extension.version) },
+    connector: {
+      id: connectorId,
+      origin: stringValue(value.connector.origin),
+      authType: 'api-key',
+    },
+    credential: {
+      configured: value.credential.configured === true,
+      expired: value.credential.expired === true,
+      ...(typeof value.credential.source === 'string' ? { source: value.credential.source } : {}),
+      ...(typeof value.credential.configuredAt === 'string' ? { configuredAt: value.credential.configuredAt } : {}),
+    },
   };
 };
 

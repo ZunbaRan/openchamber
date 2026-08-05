@@ -46,6 +46,14 @@ const SETTINGS_SEARCH_ITEMS: readonly SettingsSearchItem[] = [
     isAvailable: (ctx) => !ctx.isVSCode,
   },
   {
+    id: 'interactive-ui.remote',
+    page: 'interactive-ui.extensions',
+    titleKey: 'settings.interactiveUI.remote.title',
+    descriptionKey: 'settings.interactiveUI.remote.description',
+    keywords: ['remote', 'connect', 'manifest url', 'access key', 'signed app', 'fingerprint'],
+    isAvailable: (ctx) => !ctx.isVSCode,
+  },
+  {
     id: 'interactive-ui.routing-inspector',
     page: 'interactive-ui.extensions',
     titleKey: 'settings.interactiveUI.routingInspector.title',

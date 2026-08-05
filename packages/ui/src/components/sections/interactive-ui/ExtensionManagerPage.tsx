@@ -31,14 +31,21 @@ import {
   normalizeManagerSnapshot,
   normalizeMarketplaceInspection,
   normalizePackageInspection,
+  normalizeRemoteInspection,
+  normalizeRemoteConnectResult,
   type CatalogEntry,
   type ConnectionSnapshot,
   type InstalledExtension,
   type ManagerSnapshot,
   type MarketplaceInspection,
   type PackageInspection,
+  type RemoteConnectResult,
   type HostedPermissions,
 } from '@/lib/interactive-ui/extensionManager';
+import {
+  INITIAL_REMOTE_REVIEW_STATE,
+  remoteReviewReducer,
+} from '@/lib/interactive-ui/remoteReview';
 import { RoutingInspectorSection } from './RoutingInspectorSection';
 
 class RequestError extends Error {
@@ -89,6 +96,9 @@ export const ExtensionManagerPage: React.FC = () => {
   const [pendingPackage, setPendingPackage] = React.useState<{ packageBase64: string; inspection: PackageInspection } | null>(null);
   const [marketplaceUrl, setMarketplaceUrl] = React.useState('');
   const [pendingMarketplace, setPendingMarketplace] = React.useState<MarketplaceInspection | null>(null);
+  const [remoteReviewState, dispatchRemoteReview] = React.useReducer(remoteReviewReducer, INITIAL_REMOTE_REVIEW_STATE);
+  const pendingRemote = remoteReviewState.review;
+  const [remoteFingerprintCopied, setRemoteFingerprintCopied] = React.useState(false);
   const [pendingHostedUpdate, setPendingHostedUpdate] = React.useState<{
     extension: InstalledExtension;
     manifestHash: string;
@@ -194,6 +204,86 @@ export const ExtensionManagerPage: React.FC = () => {
       setBusy(null);
     }
   }, [marketplaceUrl, t]);
+
+  const inspectRemote = React.useCallback(async () => {
+    // Explicit attempt identity: capture the normalized URL and the EXACT
+    // current Access Key as an immutable snapshot BEFORE the request. The
+    // request uses the captured URL; success binds the inspection only to the
+    // captured key for the same requestId, never to mutable draft state.
+    const requestId = crypto.randomUUID();
+    const url = remoteReviewState.draftUrl.trim();
+    const accessKey = remoteReviewState.draftAccessKey;
+    dispatchRemoteReview({ type: 'beginInspect', requestId, url, accessKey });
+    setBusy('remote:inspect');
+    try {
+      const inspection = normalizeRemoteInspection(await requestJson('/api/interactive-ui/manager/remote/inspect', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ appEntryUrl: url }),
+      }));
+      if (!inspection) throw new Error(t('settings.interactiveUI.errors.invalidRemoteInspection'));
+      dispatchRemoteReview({ type: 'inspectSucceeded', requestId, inspection });
+    } catch (error) {
+      dispatchRemoteReview({ type: 'inspectFailed', requestId });
+      toast.error(t('settings.interactiveUI.toast.actionFailed'), { description: error instanceof Error ? error.message : undefined });
+    } finally {
+      setBusy(null);
+    }
+  }, [remoteReviewState.draftUrl, remoteReviewState.draftAccessKey, t]);
+
+  const connectRemote = React.useCallback(async () => {
+    if (!pendingRemote) return;
+    // Connect completion is requestId-bound: capture a non-secret identity
+    // BEFORE the request and require it on success/failure so a late
+    // completion for a closed or superseded review can never clear or rebind
+    // a newer review/key. The Access Key sent remains the exact snapshot
+    // captured in pendingRemote.accessKey.
+    const requestId = crypto.randomUUID();
+    dispatchRemoteReview({ type: 'beginConnect', requestId });
+    setBusy('remote:connect');
+    try {
+      const result = await requestJson('/api/interactive-ui/manager/remote/connect', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          appEntryUrl: pendingRemote.inspection.manifest.appEntryUrl,
+          accessKey: pendingRemote.accessKey,
+          confirmedPublisherFingerprint: pendingRemote.inspection.publisher.fingerprint,
+          confirmedManifestHash: pendingRemote.inspection.manifest.manifestHash,
+        }),
+      });
+      const normalized: RemoteConnectResult | null = normalizeRemoteConnectResult(result);
+      if (!normalized) {
+        throw new Error(t('settings.interactiveUI.errors.invalidRemoteInspection'));
+      }
+      // Clear the review (and its captured key) plus the draft state.
+      dispatchRemoteReview({ type: 'connectSucceeded', requestId });
+      clearInteractiveUIRoutingCache();
+      toast.success(t('settings.interactiveUI.toast.remoteConnected'));
+      await refresh();
+    } catch (error) {
+      // A failed connect is a clearing terminal path: drop the attempt, the
+      // review (and its captured key), and the draft key immediately so the
+      // key never lingers in UI state after a failure.
+      dispatchRemoteReview({ type: 'connectFailed', requestId });
+      toast.error(t('settings.interactiveUI.toast.actionFailed'), { description: error instanceof Error ? error.message : undefined });
+    } finally {
+      setBusy(null);
+    }
+  }, [pendingRemote, refresh, t]);
+
+  const copyRemoteFingerprint = React.useCallback(async () => {
+    if (!pendingRemote) return;
+    try {
+      await navigator.clipboard.writeText(pendingRemote.inspection.publisher.fingerprint);
+      setRemoteFingerprintCopied(true);
+      setTimeout(() => setRemoteFingerprintCopied(false), 2000);
+    } catch {
+      toast.error(t('settings.interactiveUI.toast.actionFailed'), {
+        description: t('settings.interactiveUI.remoteReview.copyFailed'),
+      });
+    }
+  }, [pendingRemote, t]);
 
   const loadCatalog = React.useCallback(async (marketplaceId: string) => {
     setBusy(`catalog:${marketplaceId}`);
@@ -346,10 +436,20 @@ export const ExtensionManagerPage: React.FC = () => {
                   <div className={SETTINGS_FIELD_LABEL_CLASS}>{extension.name}</div>
                   <div className={SETTINGS_HELPER_CLASS}>{extension.id} · {extension.activeVersion}</div>
                   <div className={SETTINGS_HELPER_CLASS}>
-                    {extension.versions[extension.activeVersion]?.delivery === 'hosted' ? 'Hosted OCIX' : 'Local OCIX'}
-                    {extension.versions[extension.activeVersion]?.hosted?.lastGoodVersion
-                      ? ` · remote ${extension.versions[extension.activeVersion]?.hosted?.lastGoodVersion}`
-                      : ''}
+                    {(() => {
+                      const active = extension.versions[extension.activeVersion];
+                      const deliveryKey = active?.delivery === 'hosted'
+                        ? 'settings.interactiveUI.installed.deliveryHosted'
+                        : active?.delivery === 'remote'
+                          ? 'settings.interactiveUI.installed.deliveryRemote'
+                          : 'settings.interactiveUI.installed.deliveryLocal';
+                      return [
+                        t(deliveryKey),
+                        ...(active?.hosted?.lastGoodVersion
+                          ? [t('settings.interactiveUI.installed.remoteVersion', { version: active.hosted.lastGoodVersion })]
+                          : []),
+                      ].join(' · ');
+                    })()}
                   </div>
                   <div className={SETTINGS_HELPER_CLASS}>
                     {t('settings.interactiveUI.installed.publisher', { publisher: extension.versions[extension.activeVersion]?.publisher.name ?? '—' })}
@@ -432,6 +532,96 @@ export const ExtensionManagerPage: React.FC = () => {
             ))}
           </div>
         )}
+      </SettingsSection>
+
+      <SettingsSection
+        settingsItem="interactive-ui.remote"
+        title={t('settings.interactiveUI.remote.title')}
+        description={t('settings.interactiveUI.remote.description')}
+      >
+        {snapshot.extensions.some((extension) => extension.versions[extension.activeVersion]?.delivery === 'remote') ? (
+          <div className="divide-y divide-border/60">
+            {snapshot.extensions.filter((extension) => extension.versions[extension.activeVersion]?.delivery === 'remote').map((extension) => {
+              const active = extension.versions[extension.activeVersion];
+              return (
+                <div key={extension.id} className="flex items-center justify-between gap-4 py-3 first:pt-0">
+                  <div className="min-w-0">
+                    <div className={SETTINGS_FIELD_LABEL_CLASS}>{extension.name}</div>
+                    <div className={`${SETTINGS_HELPER_CLASS} truncate`}>{extension.id} · {active?.remote?.appEntryUrl}</div>
+                    <div className={SETTINGS_HELPER_CLASS}>
+                      {t('settings.interactiveUI.installed.publisher', { publisher: active?.publisher.name ?? '—' })}
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Switch
+                      checked={extension.enabled && extension.integrity.status !== 'unavailable' && extension.integrity.status !== 'failed'}
+                      aria-label={t('settings.interactiveUI.actions.enableAria', { name: extension.name })}
+                      disabled={extension.integrity.status === 'unavailable' || extension.integrity.status === 'failed' || busy === `toggle:${extension.id}`}
+                      onCheckedChange={(enabled) => void runMutation(`toggle:${extension.id}`, () => requestJson(`/api/interactive-ui/manager/extensions/${encodeURIComponent(extension.id)}`, {
+                        method: 'PATCH',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ enabled }),
+                      }), enabled ? 'settings.interactiveUI.toast.enabled' : 'settings.interactiveUI.toast.disabled')}
+                    />
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      disabled={busy === `uninstall:${extension.id}`}
+                      onClick={() => setConfirmUninstall(extension)}
+                    >
+                      {t('settings.interactiveUI.actions.disconnect')}
+                    </Button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <p className={SETTINGS_HELPER_CLASS}>{t('settings.interactiveUI.remote.empty')}</p>
+        )}
+        <div className="mt-6 space-y-4">
+          <SettingsStackedField
+            label={t('settings.interactiveUI.fields.appEntryUrl')}
+            info={t('settings.interactiveUI.remote.urlInfo')}
+          >
+            <div className="flex max-w-[40rem] gap-2">
+              <Input
+                type="url"
+                className="h-8"
+                value={remoteReviewState.draftUrl}
+                disabled={busy === 'remote:inspect'}
+                onChange={(event) => dispatchRemoteReview({ type: 'setDraftUrl', url: event.target.value })}
+                placeholder={t('settings.interactiveUI.fields.appEntryUrlPlaceholder')}
+                aria-label={t('settings.interactiveUI.fields.appEntryUrl')}
+                autoComplete="url"
+              />
+              <Button
+                size="sm"
+                disabled={!remoteReviewState.draftUrl.trim() || busy === 'remote:inspect'}
+                onClick={() => void inspectRemote()}
+              >
+                {t('settings.interactiveUI.actions.reviewRemote')}
+              </Button>
+            </div>
+          </SettingsStackedField>
+          <SettingsStackedField
+            label={t('settings.interactiveUI.fields.accessKey')}
+            info={t('settings.interactiveUI.remote.accessKeyInfo')}
+          >
+            <div className="flex max-w-[40rem] gap-2">
+              <Input
+                type="password"
+                autoComplete="new-password"
+                className="h-8"
+                value={remoteReviewState.draftAccessKey}
+                disabled={busy === 'remote:inspect'}
+                onChange={(event) => dispatchRemoteReview({ type: 'setDraftAccessKey', accessKey: event.target.value })}
+                placeholder={t('settings.interactiveUI.fields.accessKeyPlaceholder')}
+                aria-label={t('settings.interactiveUI.fields.accessKey')}
+              />
+            </div>
+          </SettingsStackedField>
+        </div>
       </SettingsSection>
 
       <SettingsSection
@@ -782,8 +972,119 @@ export const ExtensionManagerPage: React.FC = () => {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={pendingMarketplace !== null} onOpenChange={(open) => { if (!open) setPendingMarketplace(null); }}>
+      <Dialog open={pendingRemote !== null} onOpenChange={(open) => { if (!open) dispatchRemoteReview({ type: 'closeReview' }); }}>
         <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{t('settings.interactiveUI.remoteReview.title')}</DialogTitle>
+            <DialogDescription>
+              {pendingRemote?.inspection.publisher.trusted
+                ? t('settings.interactiveUI.remoteReview.trustedDescription')
+                : t('settings.interactiveUI.remoteReview.untrustedDescription')}
+            </DialogDescription>
+          </DialogHeader>
+          {pendingRemote && (
+            <div className="space-y-3 text-sm">
+              <div>
+                <div className={SETTINGS_FIELD_LABEL_CLASS}>{pendingRemote.inspection.extension.name} · {pendingRemote.inspection.extension.version}</div>
+                <div className={SETTINGS_HELPER_CLASS}>{pendingRemote.inspection.extension.id}</div>
+              </div>
+              <div>
+                <div className={SETTINGS_FIELD_LABEL_CLASS}>{t('settings.interactiveUI.remoteReview.publisher')}</div>
+                <div className={SETTINGS_HELPER_CLASS}>{pendingRemote.inspection.publisher.name} · {pendingRemote.inspection.publisher.id} · {pendingRemote.inspection.publisher.keyId}</div>
+                <div className="flex items-start gap-2">
+                  <span className={`${SETTINGS_HELPER_CLASS} min-w-0 flex-1 break-all`}>{pendingRemote.inspection.publisher.fingerprint}</span>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="shrink-0"
+                    onClick={() => void copyRemoteFingerprint()}
+                  >
+                    <Icon name={remoteFingerprintCopied ? 'check' : 'file-copy'} className="h-3.5 w-3.5" />
+                    {remoteFingerprintCopied
+                      ? t('settings.interactiveUI.remoteReview.copied')
+                      : t('settings.interactiveUI.remoteReview.copyFingerprint')}
+                  </Button>
+                </div>
+              </div>
+              <div>
+                <div className={SETTINGS_FIELD_LABEL_CLASS}>{t('settings.interactiveUI.remoteReview.manifest')}</div>
+                <div className={`${SETTINGS_HELPER_CLASS} break-all`}>{pendingRemote.inspection.manifest.appEntryUrl}</div>
+                <div className={`${SETTINGS_HELPER_CLASS} break-all`}>{pendingRemote.inspection.manifest.manifestHash}</div>
+              </div>
+              <div>
+                <div className={SETTINGS_FIELD_LABEL_CLASS}>{t('settings.interactiveUI.remoteReview.connector')}</div>
+                <div className={SETTINGS_HELPER_CLASS}>
+                  {pendingRemote.inspection.connector.id}{pendingRemote.inspection.connector.origin ? ` · ${pendingRemote.inspection.connector.origin}` : ''}
+                </div>
+              </div>
+              <div className="space-y-1 rounded-lg border border-border/60 p-3">
+                <div className={SETTINGS_FIELD_LABEL_CLASS}>{t('settings.interactiveUI.remoteReview.permissionsTitle')}</div>
+                <div className={SETTINGS_HELPER_CLASS}>
+                  {t('settings.interactiveUI.remoteReview.resourceOrigins')}: {pendingRemote.inspection.permissions.resourceOrigins.join(', ') || '—'}
+                </div>
+                <div className={SETTINGS_HELPER_CLASS}>
+                  {t('settings.interactiveUI.remoteReview.networkOrigins')}: {pendingRemote.inspection.permissions.networkOrigins.join(', ') || '—'}
+                </div>
+                <div className={SETTINGS_HELPER_CLASS}>
+                  {t('settings.interactiveUI.remoteReview.externalLinkOrigins')}: {pendingRemote.inspection.permissions.externalLinkOrigins.join(', ') || '—'}
+                </div>
+                <div className={SETTINGS_HELPER_CLASS}>
+                  {t('settings.interactiveUI.remoteReview.actionIds')}: {pendingRemote.inspection.permissions.actionIds.join(', ') || '—'}
+                </div>
+                <div className={SETTINGS_HELPER_CLASS}>
+                  {t('settings.interactiveUI.remoteReview.credentialScopes')}: {pendingRemote.inspection.permissions.credentialScopes.join(', ') || '—'}
+                </div>
+                <div className={SETTINGS_HELPER_CLASS}>
+                  {t('settings.interactiveUI.remoteReview.agentToolNames')}: {pendingRemote.inspection.permissions.agentToolNames.join(', ') || '—'}
+                </div>
+                <div className={SETTINGS_HELPER_CLASS}>
+                  {t('settings.interactiveUI.remoteReview.clipboard')}: {pendingRemote.inspection.permissions.clipboard
+                    ? t('settings.interactiveUI.packageReview.nativeYes')
+                    : t('settings.interactiveUI.packageReview.nativeNo')}
+                </div>
+                <div className={SETTINGS_HELPER_CLASS}>
+                  {t('settings.interactiveUI.remoteReview.popups')}: {pendingRemote.inspection.permissions.popups
+                    ? t('settings.interactiveUI.packageReview.nativeYes')
+                    : t('settings.interactiveUI.packageReview.nativeNo')}
+                </div>
+                <div className={pendingRemote.inspection.permissions.nativeCode ? 'text-sm text-status-warning' : SETTINGS_HELPER_CLASS}>
+                  {t('settings.interactiveUI.remoteReview.nativeCode')}: {pendingRemote.inspection.permissions.nativeCode
+                    ? t('settings.interactiveUI.packageReview.nativeYes')
+                    : t('settings.interactiveUI.packageReview.nativeNo')}
+                </div>
+              </div>
+              <p className="rounded-lg border border-border/60 p-3 text-sm text-[var(--surface-foreground)]">
+                {t('settings.interactiveUI.remoteReview.keyWarning')}
+              </p>
+              <SettingsStackedField
+                label={t('settings.interactiveUI.fields.accessKey')}
+                info={t('settings.interactiveUI.remote.accessKeyInfo')}
+              >
+                <Input
+                  type="password"
+                  autoComplete="new-password"
+                  className="h-8"
+                  value={pendingRemote.accessKey}
+                  onChange={(event) => dispatchRemoteReview({ type: 'setReviewAccessKey', accessKey: event.target.value })}
+                  placeholder={t('settings.interactiveUI.fields.accessKeyPlaceholder')}
+                  aria-label={t('settings.interactiveUI.fields.accessKey')}
+                />
+              </SettingsStackedField>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => dispatchRemoteReview({ type: 'closeReview' })}>{t('settings.interactiveUI.actions.cancel')}</Button>
+            <Button
+              disabled={!pendingRemote?.accessKey || busy === 'remote:connect'}
+              onClick={() => void connectRemote()}
+            >
+              {t('settings.interactiveUI.actions.connect')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={pendingMarketplace !== null} onOpenChange={(open) => { if (!open) setPendingMarketplace(null); }}>        <DialogContent>
           <DialogHeader>
             <DialogTitle>{t('settings.interactiveUI.marketplaceReview.title')}</DialogTitle>
             <DialogDescription>{t('settings.interactiveUI.marketplaceReview.description')}</DialogDescription>

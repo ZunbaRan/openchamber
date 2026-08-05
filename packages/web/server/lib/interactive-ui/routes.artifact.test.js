@@ -511,9 +511,11 @@ describe('HTML Artifact routes', () => {
       workbench: { removed: 2, projects: 1 },
     });
     expect(calls).toEqual([
-      { kind: 'extension', extensionId: 'com.acme.crm' },
+      // All fallible external cleanup runs first while the shell still exists;
+      // manager.uninstall is only called after cleanup succeeds.
       { kind: 'credentials', extensionId: 'com.acme.crm' },
       { kind: 'tiles', extensionId: 'com.acme.crm' },
+      { kind: 'extension', extensionId: 'com.acme.crm' },
     ]);
   });
 

@@ -3,7 +3,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { createInteractiveUIConnectionStore } from './connection-store.js';
+import { createInteractiveUIConnectionStore, validateRemoteAccessKey } from './connection-store.js';
 
 const temporaryDirectories = [];
 
@@ -27,6 +27,46 @@ const createStore = async (options = {}) => {
 };
 
 describe('Interactive UI connection secret store', () => {
+  it('validates opaque Remote access keys byte-for-byte and rejects unsafe controls', async () => {
+    // Exact preservation: spaces and empty-looking strings are credential
+    // material and must survive untouched.
+    expect(validateRemoteAccessKey(' key ')).toBe(' key ');
+    expect(validateRemoteAccessKey('   ')).toBe('   ');
+    expect(validateRemoteAccessKey('sk-opaque-key')).toBe('sk-opaque-key');
+    expect(validateRemoteAccessKey('a'.repeat(16 * 1024))).toBe('a'.repeat(16 * 1024));
+
+    expect(() => validateRemoteAccessKey(undefined)).toThrow(expect.objectContaining({
+      code: 'remote_access_key_required',
+      status: 400,
+    }));
+    expect(() => validateRemoteAccessKey('')).toThrow(expect.objectContaining({ code: 'remote_access_key_required' }));
+    expect(() => validateRemoteAccessKey(42)).toThrow(expect.objectContaining({ code: 'remote_access_key_required' }));
+    expect(() => validateRemoteAccessKey('a'.repeat(16 * 1024 + 1))).toThrow(expect.objectContaining({
+      code: 'remote_access_key_invalid',
+      status: 400,
+    }));
+    for (const unsafe of ['key\r\nmore', 'key\0more', 'key\tmore', 'key\x1bmore', 'key\x7fmore']) {
+      expect(() => validateRemoteAccessKey(unsafe)).toThrow(expect.objectContaining({ code: 'remote_access_key_invalid' }));
+    }
+  });
+
+  it('setRemoteCredential stores the exact Remote access key without trimming', async () => {
+    const { dataDirectory, store } = await createStore();
+    const status = await store.setRemoteCredential('com.acme.remote', 'crm', 'installation-a', ' key ');
+    expect(status).toMatchObject({ configured: true, source: 'manual' });
+    expect(await store.resolveCredential('com.acme.remote', 'crm')).toEqual({ accessKey: ' key ' });
+    const filePath = path.join(dataDirectory, 'interactive-ui', 'connection-secrets.json');
+    expect(JSON.parse(await fs.readFile(filePath, 'utf8')).connections['com.acme.remote:crm'].accessKey)
+      .toBe(' key ');
+    // The same validator rejects unsafe keys at the store too.
+    await expect(store.setRemoteCredential('com.acme.remote', 'crm', 'installation-a', 'key\0more'))
+      .rejects.toMatchObject({ code: 'remote_access_key_invalid', status: 400 });
+    await expect(store.setRemoteCredential('com.acme.remote', 'crm', 'installation-a', ''))
+      .rejects.toMatchObject({ code: 'remote_access_key_required', status: 400 });
+    // The original exact key is untouched after rejected replacements.
+    expect(await store.resolveCredential('com.acme.remote', 'crm')).toEqual({ accessKey: ' key ' });
+  });
+
   it('persists manual keys with owner-only permissions and never returns the key in status', async () => {
     const { dataDirectory, store } = await createStore();
     const status = await store.setManualCredential('com.acme.crm', 'crm-api', 'top-secret-key');
@@ -103,6 +143,59 @@ describe('Interactive UI connection secret store', () => {
     await expect(store.provisionCredential('com.acme.crm', connector, 'second-code'))
       .rejects.toMatchObject({ code: 'invalid_credential_response' });
     expect(await store.resolveCredential('com.acme.crm', 'crm-api')).toEqual({ accessKey: 'issued-secret' });
+  });
+
+  it('binds Remote credentials to their installation id and keeps it private', async () => {
+    const { dataDirectory, store } = await createStore();
+    const status = await store.setRemoteCredential('com.acme.remote', 'crm', 'installation-a', 'key-a');
+    expect(status).toMatchObject({ configured: true, source: 'manual' });
+    expect(JSON.stringify(status)).not.toContain('installation-a');
+    expect(await store.resolveCredential('com.acme.remote', 'crm')).toEqual({ accessKey: 'key-a' });
+    expect(JSON.stringify(await store.getStatus('com.acme.remote', 'crm'))).not.toContain('installation-a');
+    expect(JSON.stringify(await store.getConfiguration('com.acme.remote', 'crm'))).not.toContain('installation-a');
+    const filePath = path.join(dataDirectory, 'interactive-ui', 'connection-secrets.json');
+    expect(JSON.parse(await fs.readFile(filePath, 'utf8')).connections['com.acme.remote:crm'].installationId)
+      .toBe('installation-a');
+  });
+
+  it('refuses to overwrite a Remote credential that belongs to a different installation', async () => {
+    const { store } = await createStore();
+    await store.setRemoteCredential('com.acme.remote', 'crm', 'installation-a', 'key-a');
+    await expect(store.setRemoteCredential('com.acme.remote', 'crm', 'installation-b', 'key-b'))
+      .rejects.toMatchObject({ code: 'remote_installation_conflict', status: 409 });
+    // The original record and its key are untouched.
+    expect(await store.resolveCredential('com.acme.remote', 'crm')).toEqual({ accessKey: 'key-a' });
+    // The same installation may replace its own credential.
+    await store.setRemoteCredential('com.acme.remote', 'crm', 'installation-a', 'key-a-replacement');
+    expect(await store.resolveCredential('com.acme.remote', 'crm')).toEqual({ accessKey: 'key-a-replacement' });
+  });
+
+  it('conditional removal deletes only the exact installation record', async () => {
+    const { store } = await createStore();
+    await store.setRemoteCredential('com.acme.remote', 'crm', 'installation-a', 'key-a');
+    // A stale installation's cleanup cannot delete the current credential.
+    expect(await store.removeRemoteCredential('com.acme.remote', 'crm', 'installation-stale'))
+      .toEqual({ removed: false, mismatch: true });
+    expect(await store.resolveCredential('com.acme.remote', 'crm')).toEqual({ accessKey: 'key-a' });
+    // The owning installation removes it.
+    expect(await store.removeRemoteCredential('com.acme.remote', 'crm', 'installation-a'))
+      .toEqual({ removed: true });
+    expect(await store.resolveCredential('com.acme.remote', 'crm')).toBeNull();
+    expect(await store.removeRemoteCredential('com.acme.remote', 'crm', 'installation-a'))
+      .toEqual({ removed: false });
+  });
+
+  it('an old conditional cleanup cannot delete a replacement credential', async () => {
+    const { store } = await createStore();
+    // Installation A stores its key, then the extension is uninstalled
+    // (removing all credentials) and reconnected as installation B.
+    await store.setRemoteCredential('com.acme.remote', 'crm', 'installation-a', 'key-a');
+    await store.removeExtensionCredentials('com.acme.remote');
+    await store.setRemoteCredential('com.acme.remote', 'crm', 'installation-b', 'key-b');
+    // A's late cleanup must leave B's credential intact.
+    expect(await store.removeRemoteCredential('com.acme.remote', 'crm', 'installation-a'))
+      .toEqual({ removed: false, mismatch: true });
+    expect(await store.resolveCredential('com.acme.remote', 'crm')).toEqual({ accessKey: 'key-b' });
   });
 
   it('removes every credential owned by an uninstalled extension', async () => {

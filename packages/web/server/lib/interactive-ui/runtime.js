@@ -428,6 +428,16 @@ const normalizeManifest = (raw, directory, environment) => {
   };
 };
 
+// Metadata-only manifest normalization: validates the COMPLETE connector,
+// action, surface, dashboard, routing, and Native trust metadata without
+// reading any entry/resource bytes and without fetching resources. This is
+// the single-sourced seam used by the Extension Manager to reject
+// signed-but-runtime-invalid Remote manifests before any trust, shell,
+// Manager state, Agent Runtime, or Secret Store write.
+export const normalizeExtensionManifest = (raw, environment = process.env) => (
+  normalizeManifest(raw, '', environment)
+);
+
 export const createInteractiveUIRuntime = ({
   fsPromises,
   path,
@@ -748,6 +758,28 @@ export const createInteractiveUIRuntime = ({
     return { extensionId, connectorId, credential };
   };
 
+  // Remote connect uses installation-bound store methods: the credential
+  // record is created under the connect operation's installationId and only
+  // that installation's cleanup path may remove it.
+  const configureRemoteConnection = async (extensionId, connectorId, installationId, accessKey) => {
+    const { connector } = await findConnector(extensionId, connectorId);
+    if (connector.auth.type !== 'api-key' || !connectionStore?.setRemoteCredential) {
+      throw new InteractiveUIRuntimeError('Connector does not accept a manually configured access key', 409, 'manual_configuration_unsupported');
+    }
+    const credential = await connectionStore.setRemoteCredential(extensionId, connectorId, installationId, accessKey);
+    resetConnectionHealth(extensionId, connectorId);
+    return { extensionId, connectorId, credential };
+  };
+
+  const removeRemoteConnection = async (extensionId, connectorId, installationId) => {
+    // Credential deletion is installation-identity bound and must work even
+    // after the extension shell/manifest is gone (orphan cleanup); only the
+    // Secret Store's exact installation match matters.
+    resetConnectionHealth(extensionId, connectorId);
+    if (!connectionStore?.removeRemoteCredential) return { removed: false };
+    return connectionStore.removeRemoteCredential(extensionId, connectorId, installationId);
+  };
+
   const provisionConnection = async (extensionId, connectorId, input) => {
     const { connector } = await findConnector(extensionId, connectorId);
     if (connector.auth.type !== 'issued-key' || !connectionStore?.provisionCredential) {
@@ -759,7 +791,10 @@ export const createInteractiveUIRuntime = ({
   };
 
   const removeConnection = async (extensionId, connectorId) => {
-    await findConnector(extensionId, connectorId);
+    // Credential deletion must not require the extension shell/manifest to
+    // still exist: after an uninstall or a partial connect, the Secret Store
+    // can still clear the exact extension/connector record. Store identity
+    // validation is sufficient; configuring still requires a valid connector.
     resetConnectionHealth(extensionId, connectorId);
     if (!connectionStore?.removeCredential) return { removed: false };
     return connectionStore.removeCredential(extensionId, connectorId);
@@ -1356,8 +1391,10 @@ export const createInteractiveUIRuntime = ({
     getRoutingCapabilities,
     listConnections,
     configureConnection,
+    configureRemoteConnection,
     provisionConnection,
     removeConnection,
+    removeRemoteConnection,
     removeExtensionConnections,
     testConnection,
     getViewDescriptor,

@@ -1,8 +1,40 @@
 import { InteractiveUIRuntimeError } from './runtime.js';
+import { validateRemoteAccessKey } from './connection-store.js';
 import { isWorkbenchVersionCompatible } from './workbench-version.js';
 
 const isRecord = (value) => typeof value === 'object' && value !== null && !Array.isArray(value);
 const WORKBENCH_SNAPSHOT_REF_PATTERN = /^snapshot_[a-f0-9]{64}$/;
+
+// Serializes cross-subsystem Interactive UI connection mutations: the ENTIRE
+// Remote connect transaction (Manager install, Secret Store configuration,
+// conditional cleanup, Manager/trust rollback), extension uninstall including
+// credential/workbench cleanup, generic connection PUT, issued-key provision,
+// and generic connection DELETE. Read-only inspect/list/test/action routes do
+// not use it. The chain always advances after completion or failure, so a
+// failed operation can never poison later ones; responses are sent only after
+// the whole operation (including rollback) has finished.
+//
+// Coordinators are scoped per manager instance (WeakMap keyed by the manager
+// object): two route registrations sharing the same manager serialize, but
+// unrelated manager/runtime/data-directory instances never block one another.
+const createMutationCoordinator = () => {
+  let tail = Promise.resolve();
+  const runExclusive = (operation) => {
+    const pending = tail.then(operation, operation);
+    tail = pending.then(() => undefined, () => undefined);
+    return pending;
+  };
+  return { runExclusive };
+};
+const coordinatorByManager = new WeakMap();
+const coordinatorFor = (manager) => {
+  let coordinator = coordinatorByManager.get(manager);
+  if (!coordinator) {
+    coordinator = createMutationCoordinator();
+    coordinatorByManager.set(manager, coordinator);
+  }
+  return coordinator;
+};
 
 const sendError = (res, error) => {
   if (error instanceof InteractiveUIRuntimeError || (Number.isInteger(error?.status) && typeof error?.code === 'string')) {
@@ -315,6 +347,102 @@ export const registerInteractiveUIRoutes = (app, {
     }
   });
 
+  app.post('/api/interactive-ui/manager/remote/inspect', express.json({ limit: '16kb' }), async (req, res) => {
+    try {
+      res.setHeader('Cache-Control', 'no-store');
+      res.json(await manager.inspectRemote(req.body?.appEntryUrl));
+    } catch (error) {
+      sendError(res, error);
+    }
+  });
+
+  app.post('/api/interactive-ui/manager/remote/connect', express.json({ limit: '64kb' }), async (req, res) => {
+    try {
+      if (!isRecord(req.body)) {
+        const error = new Error('Remote connect body is invalid');
+        error.code = 'remote_connect_body_invalid';
+        error.status = 400;
+        throw error;
+      }
+      // Validate the opaque Access Key with the shared Remote validator BEFORE
+      // entering manager.connectRemote — before any trust, staging, Manager
+      // state, Agent Runtime, or Secret Store write. The validator preserves
+      // the exact string byte-for-byte (leading/trailing spaces are valid
+      // credential material and are never trimmed); this exact value is the
+      // only one captured by the coordinated transaction and forwarded to
+      // runtime.configureRemoteConnection.
+      const accessKey = validateRemoteAccessKey(req.body.accessKey);
+      // The whole transaction (Manager install + Secret Store configuration +
+      // conditional cleanup + Manager/trust rollback) runs under the mutation
+      // coordinator so no other connection mutation can interleave.
+      const outcome = await coordinatorFor(manager).runExclusive(async () => {
+        const connected = await manager.connectRemote({
+          appEntryUrl: req.body.appEntryUrl,
+          confirmedPublisherFingerprint: req.body.confirmedPublisherFingerprint,
+          confirmedManifestHash: req.body.confirmedManifestHash,
+        });
+        // trustAdded and installationId are internal rollback bookkeeping and
+        // never leave the route.
+        const { trustAdded, installationId, ...connectedPublic } = connected;
+        try {
+          const credential = await runtime.configureRemoteConnection(
+            connected.extension.id,
+            connected.connector.id,
+            installationId,
+            accessKey,
+          );
+          return {
+            status: 201,
+            body: {
+              ...connectedPublic,
+              credential: credential.credential,
+            },
+          };
+        } catch (error) {
+          // Failure-atomic for the newly connected extension, bound to THIS
+          // connect's installation identity: conditionally remove only that
+          // installation's credential, then uninstall the new shell, and drop
+          // the publisher trust only when this operation added it and no other
+          // installed version uses it. The original error is preserved and only
+          // sanitized recovery details are added; the installation id and the
+          // access key never appear in the response or logs.
+          const recovery = { credentialRemoved: false, extensionRemoved: false, trustRolledBack: false };
+          try {
+            const removed = await runtime.removeRemoteConnection(
+              connected.extension.id,
+              connected.connector.id,
+              installationId,
+            );
+            recovery.credentialRemoved = removed?.removed === true;
+            if (removed?.mismatch === true) recovery.credentialMismatch = true;
+          } catch (rollbackError) {
+            recovery.credentialRollbackError = typeof rollbackError?.code === 'string'
+              ? rollbackError.code
+              : 'remote_credential_rollback_failed';
+          }
+          try {
+            const rollback = await manager.rollbackRemoteConnect(connected.extension.id, {
+              trustAdded: trustAdded === true,
+              installationId,
+            });
+            recovery.extensionRemoved = rollback?.removed === true;
+            recovery.trustRolledBack = rollback?.trustRolledBack === true;
+          } catch (rollbackError) {
+            recovery.rollbackError = typeof rollbackError?.code === 'string'
+              ? rollbackError.code
+              : 'remote_rollback_failed';
+          }
+          error.details = { ...(error.details ?? {}), ...recovery };
+          throw error;
+        }
+      });
+      res.setHeader('Cache-Control', 'no-store');
+      res.status(outcome.status).json(outcome.body);
+    } catch (error) {
+      sendError(res, error);
+    }
+  });
+
   app.patch('/api/interactive-ui/manager/extensions/:extensionId', express.json({ limit: '16kb' }), async (req, res) => {
     try {
       res.json(await manager.setEnabled(req.params.extensionId, req.body?.enabled));
@@ -355,22 +483,30 @@ export const registerInteractiveUIRoutes = (app, {
 
   app.delete('/api/interactive-ui/manager/extensions/:extensionId', async (req, res) => {
     try {
-      const result = await manager.uninstall(req.params.extensionId);
-      try {
+      // Uninstall (credential/workbench cleanup + shell removal) is a
+      // cross-subsystem mutation and runs under the manager-scoped coordinator
+      // so it cannot interleave with a Remote connect transaction. ALL
+      // fallible external cleanup runs FIRST while the shell still exists, so
+      // any remaining secret still has an owner; manager.uninstall is only
+      // called after cleanup succeeds.
+      const outcome = await coordinatorFor(manager).runExclusive(async () => {
         const credentials = await runtime.removeExtensionConnections(req.params.extensionId);
         const workbench = workbenchStore
           ? await workbenchStore.removeExtensionTiles(req.params.extensionId)
           : { removed: 0, projects: 0 };
-        res.json({
+        const result = await manager.uninstall(req.params.extensionId);
+        return {
           ...result,
           credentials,
           workbench,
-        });
-      } catch (error) {
-        error.details = { ...(error.details ?? {}), extensionRemoved: true, recoveryPath: result.recoveryPath ?? null };
-        sendError(res, error);
-      }
+        };
+      });
+      res.json(outcome);
     } catch (error) {
+      // Cleanup or uninstall failure leaves the managed extension installed
+      // (manager.uninstall restores from trash on its own failure), so the
+      // response never claims extension removal.
+      error.details = { ...(error.details ?? {}), extensionRemoved: false };
       sendError(res, error);
     }
   });
@@ -643,7 +779,10 @@ export const registerInteractiveUIRoutes = (app, {
   app.put('/api/interactive-ui/connections/:extensionId/:connectorId', express.json({ limit: '32kb' }), async (req, res) => {
     try {
       res.setHeader('Cache-Control', 'no-store');
-      res.json(await runtime.configureConnection(req.params.extensionId, req.params.connectorId, req.body));
+      const result = await coordinatorFor(manager).runExclusive(() => (
+        runtime.configureConnection(req.params.extensionId, req.params.connectorId, req.body)
+      ));
+      res.json(result);
     } catch (error) {
       sendError(res, error);
     }
@@ -652,7 +791,10 @@ export const registerInteractiveUIRoutes = (app, {
   app.post('/api/interactive-ui/connections/:extensionId/:connectorId/provision', express.json({ limit: '16kb' }), async (req, res) => {
     try {
       res.setHeader('Cache-Control', 'no-store');
-      res.json(await runtime.provisionConnection(req.params.extensionId, req.params.connectorId, req.body));
+      const result = await coordinatorFor(manager).runExclusive(() => (
+        runtime.provisionConnection(req.params.extensionId, req.params.connectorId, req.body)
+      ));
+      res.json(result);
     } catch (error) {
       sendError(res, error);
     }
@@ -670,7 +812,10 @@ export const registerInteractiveUIRoutes = (app, {
   app.delete('/api/interactive-ui/connections/:extensionId/:connectorId', async (req, res) => {
     try {
       res.setHeader('Cache-Control', 'no-store');
-      res.json(await runtime.removeConnection(req.params.extensionId, req.params.connectorId));
+      const result = await coordinatorFor(manager).runExclusive(() => (
+        runtime.removeConnection(req.params.extensionId, req.params.connectorId)
+      ));
+      res.json(result);
     } catch (error) {
       sendError(res, error);
     }
