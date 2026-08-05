@@ -440,7 +440,7 @@ describe('MCP App runtime model (P0-A diagnostics)', () => {
   });
 
   test('ignores stale events from a superseded binding epoch', () => {
-    let state = createMcpAppRuntimeState(epoch('new'));
+    const state = createMcpAppRuntimeState(epoch('new'));
     const stale = reduceMcpAppRuntime(state, {
       type: 'failed',
       epoch: epoch('old'),

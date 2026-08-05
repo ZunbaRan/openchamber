@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 
-import { resolveWorkbenchPinProject } from './WorkbenchPinButton';
+import { resolveWorkbenchPinProject } from './workbenchPinProject';
 
 const projects = [
   { id: 'home', path: '/Users/example' },

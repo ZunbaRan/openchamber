@@ -176,6 +176,7 @@ const WidgetRendererInner: React.FC<WidgetRendererProps> = ({
   }, [iframeReady]);
 
   const showLoadingOverlay = hasCDN && !isStreaming && iframeReady && !finalized;
+  const visibleTitle = title?.trim();
 
   return (
     <div
@@ -187,50 +188,58 @@ const WidgetRendererInner: React.FC<WidgetRendererProps> = ({
       }}
     >
       <style>{`@keyframes widget-shimmer{0%{background-position:200% 0}100%{background-position:-200% 0}}`}</style>
-      <iframe
-        ref={iframeRef}
-        sandbox="allow-scripts"
-        srcDoc={srcdoc}
-        title={title || 'Widget'}
-        onLoad={() => setIframeReady(true)}
-        style={{
-          width: '100%',
-          height: iframeHeight || (isStreaming ? 120 : 0),
-          border: 'none',
-          display: showCode ? 'none' : 'block',
-          overflow: 'hidden',
-          colorScheme: 'auto',
-          borderRadius: 8,
-        }}
-      />
-
-      {(showLoadingOverlay || showOverlay) && (
-        <div
-          className="pointer-events-none absolute inset-4 rounded-lg"
+      <div className="mb-2 flex min-h-7 items-center gap-2">
+        {visibleTitle ? (
+          <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">
+            {visibleTitle}
+          </span>
+        ) : (
+          <span className="flex-1" />
+        )}
+        <button
+          type="button"
+          onClick={() => setShowCode((value) => !value)}
+          className="inline-flex h-7 shrink-0 items-center justify-center rounded-md px-2 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+        >
+          {showCode ? 'Hide code' : 'Show code'}
+        </button>
+      </div>
+      <div className="relative">
+        <iframe
+          ref={iframeRef}
+          sandbox="allow-scripts"
+          srcDoc={srcdoc}
+          title={visibleTitle || 'Widget'}
+          onLoad={() => setIframeReady(true)}
           style={{
-            background:
-              'linear-gradient(90deg, transparent 0%, color-mix(in oklch, var(--muted-foreground) 12%, transparent) 50%, transparent 100%)',
-            backgroundSize: '200% 100%',
-            animation: 'widget-shimmer 1.5s ease-in-out infinite',
+            width: '100%',
+            height: iframeHeight || (isStreaming ? 120 : 0),
+            border: 'none',
+            display: showCode ? 'none' : 'block',
+            overflow: 'hidden',
+            colorScheme: 'auto',
+            borderRadius: 8,
           }}
         />
-      )}
+
+        {(showLoadingOverlay || showOverlay) && (
+          <div
+            className="pointer-events-none absolute inset-0 rounded-lg"
+            style={{
+              background:
+                'linear-gradient(90deg, transparent 0%, color-mix(in oklch, var(--muted-foreground) 12%, transparent) 50%, transparent 100%)',
+              backgroundSize: '200% 100%',
+              animation: 'widget-shimmer 1.5s ease-in-out infinite',
+            }}
+          />
+        )}
+      </div>
 
       {showCode ? (
         <pre className="max-h-80 overflow-auto rounded-lg border border-border/30 bg-background/60 p-3 text-xs">
           <code>{widgetCode}</code>
         </pre>
       ) : null}
-
-      <div className="absolute right-2 top-2 flex items-center gap-1">
-        <button
-          type="button"
-          onClick={() => setShowCode((value) => !value)}
-          className="inline-flex h-7 items-center justify-center rounded-md px-2 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-        >
-          {showCode ? 'Hide code' : 'Show code'}
-        </button>
-      </div>
     </div>
   );
 };

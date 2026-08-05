@@ -3973,7 +3973,7 @@ describe('MCP App protocol readiness (standards-only App)', () => {
       toolOutput: '',
       metadata: {},
     });
-    let mounted = true;
+    const mounted = true;
     let runtime: ReturnType<typeof executeMountedGeneratedBrokerRuntime> | null = null;
     try {
       await act(async () => {
@@ -4113,7 +4113,7 @@ describe('MCP App protocol readiness (standards-only App)', () => {
       toolOutput: '',
       metadata: {},
     });
-    let mounted = true;
+    const mounted = true;
     let runtime: ReturnType<typeof executeMountedGeneratedBrokerRuntime> | null = null;
     try {
       await act(async () => {
@@ -4238,7 +4238,7 @@ describe('MCP App mounted production authority', () => {
       toolOutput: 'ready',
       metadata: {},
     });
-    let mounted = true;
+    const mounted = true;
     let runtime: ReturnType<typeof executeMountedGeneratedBrokerRuntime> | null = null;
     try {
       await act(async () => {
