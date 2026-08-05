@@ -2306,8 +2306,10 @@ export const McpAppRenderer = React.forwardRef<McpAppRendererHandle, McpAppRende
     });
     bridge.onsizechange = ({ height: nextHeight }) => {
       if (!hasActiveAuthority()) return;
-      // ui/notifications/size-changed is optional layout information (Apps
-      // with autoResize disabled never emit it) and is not readiness proof.
+      // ui/notifications/size-changed is optional layout information (autoResize
+      // false disables automatic size notification setup; sendSizeChanged stays
+      // available manually, and a compliant App may send none) and is not
+      // readiness proof.
       // Preserve the size-based inline-height behavior for Apps that do
       // report their preferred height.
       if (

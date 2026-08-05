@@ -924,10 +924,10 @@ describe('MCP App sandbox bootstrap', () => {
 3. 在 DevTools 控制台中验证：无 CSP 违规（`[Report Only]` 除外）、无 `Script error.`、AppBridge 初始化完成。
 4. 验证 `ui/notifications/sandbox-proxy-ready` 和 `ui/notifications/sandbox-resource-ready` 消息已交换。
 5. 验证就绪按协议对齐生命周期进行（见 3.4）：`ui/notifications/initialized` 后初始
-   Tool input/result 送达成功即进入 ready 并保持；Excalidraw 这类禁用 autoResize、
-   不发专有 model context 的 standards-only App 不得出现
-   “MCP App unavailable / initialized but shows no visible content”，也不能在
-   初始化后 4 秒被替换成错误页。
+   Tool input/result 送达成功即进入 ready 并保持；Excalidraw 这类不承诺
+   size-changed 或专有 model-context 就绪回执的 standards-only App，宿主不得
+   要求其中任何一项；此类 App 不得出现 “MCP App unavailable / initialized but
+   shows no visible content”，也不能在初始化后 4 秒被替换成错误页。
 
 ---
 
@@ -945,8 +945,8 @@ describe('MCP App sandbox bootstrap', () => {
 
 ### 10.2 测试层面
 
-- [ ] `bun test packages/ui/src/components/interactive-ui/McpAppRenderer.test.ts` → 71 pass
-- [ ] `bun test packages/ui/src/lib/interactive-ui/mcpApp.test.ts` → 26 pass
+- [ ] `bun test packages/ui/src/components/interactive-ui/McpAppRenderer.test.ts` → 72 pass
+- [ ] `bun test packages/ui/src/lib/interactive-ui/mcpApp.test.ts` → 25 pass
 - [ ] 协议就绪回归：Excalidraw 风格 standards-only App（无 autoResize/size-change、
   无专有 model context）初始化 + 成功送达通知 → ready 并保持；送达失败 →
   fail-closed 不假 ready；ready 只由 AppBridge oninitialized 初始送达路径在
