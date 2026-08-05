@@ -9,9 +9,12 @@ import {
   verifySignedExtensionCatalog,
 } from './package-format.js';
 import {
+  HOSTED_OCIX_SIGNED_MANIFEST_FILE,
+  createHostedOcixCacheIntegrity,
   fetchHostedOcixManifest,
   hostedPermissionExpansion,
   materializeHostedOcix,
+  verifyHostedOcixCacheIntegrity,
   verifyHostedOcixManifest,
 } from './hosted-ocix.js';
 import { reconcileOpenCodeAgentRuntime } from './agent-runtime.js';
@@ -67,6 +70,16 @@ const emptyTrust = () => ({ $schema: TRUST_SCHEMA, publishers: {} });
 const emptyMarketplaces = () => ({ $schema: MARKETPLACES_SCHEMA, marketplaces: {} });
 const isRecord = (value) => typeof value === 'object' && value !== null && !Array.isArray(value);
 const clone = (value) => JSON.parse(JSON.stringify(value));
+const canonicalize = (value) => {
+  if (Array.isArray(value)) return value.map(canonicalize);
+  if (!isRecord(value)) return value;
+  return Object.fromEntries(
+    Object.keys(value).sort().flatMap((key) => value[key] === undefined
+      ? []
+      : [[key, canonicalize(value[key])]]),
+  );
+};
+const canonicalStringify = (value) => JSON.stringify(canonicalize(value));
 const packageHash = (cryptoImpl, value) => `sha256-${cryptoImpl.createHash('sha256').update(value).digest('base64')}`;
 
 const assertNamespacedId = (value, label) => {
@@ -187,7 +200,10 @@ const sanitizeMarketplaces = (marketplaces) => ({
 const sanitizeExtensions = (state, integrityByExtension = {}) => Object.values(state.extensions ?? {}).map((extension) => {
   const result = clone(extension);
   for (const version of Object.values(result.versions ?? {})) {
-    if (isRecord(version)) delete version.fileHashes;
+    if (isRecord(version)) {
+      delete version.fileHashes;
+      if (isRecord(version.hosted?.lastGood)) delete version.hosted.lastGood.integrity;
+    }
   }
   result.integrity = clone(integrityByExtension[extension.id] ?? { status: 'unknown' });
   return result;
@@ -247,8 +263,12 @@ const summarizeVerifiedPackage = (verified, hosted = null) => ({
     network: Array.isArray(verified.manifest.permissions?.network)
       ? verified.manifest.permissions.network.filter((value) => typeof value === 'string')
       : [],
-    nativeCode: verified.manifest.trust?.mode === 'native-code',
-    sandboxedArtifacts: Array.isArray(verified.manifest.artifacts) && verified.manifest.artifacts.length > 0,
+    nativeCode: hosted
+      ? hosted.permissions.nativeCode === true
+      : verified.manifest.trust?.mode === 'native-code',
+    sandboxedArtifacts: Array.isArray(hosted?.extension?.artifacts)
+      ? hosted.extension.artifacts.length > 0
+      : Array.isArray(verified.manifest.artifacts) && verified.manifest.artifacts.length > 0,
   },
   agentRouting: summarizeAgentRouting(verified.manifest),
   agentRuntime: clone(verified.agentRuntime),
@@ -484,13 +504,9 @@ export const createInteractiveUIExtensionManager = ({
       if (!active) continue;
       const integrity = await inspectInstalledVersionIntegrity(extension, active);
       if (integrity.status !== 'ready') extension.enabled = false;
-      if (active.delivery === 'hosted') {
-        const hostedRoot = typeof active.hosted?.lastGood?.version === 'string'
-          ? pathImpl.join(hostedCacheDirectory, extension.id, active.hosted.lastGood.version)
-          : null;
-        if (!hostedRoot || !(await fsImpl.stat(hostedRoot).catch(() => null))?.isDirectory()) {
-          extension.enabled = false;
-        }
+      if (active.delivery === 'hosted' && extension.enabled) {
+        const hostedIntegrity = await inspectHostedCacheIntegrity(extension, active);
+        if (hostedIntegrity.status !== 'ready') extension.enabled = false;
       }
     }
     return runtimeState;
@@ -663,14 +679,39 @@ export default tool({
         unresolvedViewTools: [],
       };
     }
-    const agentDirectory = pathImpl.join(directory, 'agent-runtime', 'tools');
-    await fsImpl.mkdir(agentDirectory, { recursive: true, mode: 0o700 });
-    for (const binding of tools) {
-      await fsImpl.writeFile(
-        pathImpl.join(agentDirectory, `${binding.name}.ts`),
-        hostedToolSource(binding),
-        { flag: 'wx', mode: 0o600 },
-      );
+    const runtimeDirectory = pathImpl.join(directory, 'agent-runtime');
+    const agentDirectory = pathImpl.join(runtimeDirectory, 'tools');
+    try {
+      await fsImpl.mkdir(runtimeDirectory, { mode: 0o700 });
+    } catch (error) {
+      if (error?.code === 'EEXIST') {
+        throw new InteractiveUIExtensionManagerError(
+          'Hosted OCIX Agent Runtime conflicts with an existing host-managed path',
+          'hosted_agent_runtime_conflict',
+          409,
+        );
+      }
+      throw error;
+    }
+    try {
+      await fsImpl.mkdir(agentDirectory, { mode: 0o700 });
+      for (const binding of tools) {
+        await fsImpl.writeFile(
+          pathImpl.join(agentDirectory, `${binding.name}.ts`),
+          hostedToolSource(binding),
+          { flag: 'wx', mode: 0o600 },
+        );
+      }
+    } catch (error) {
+      await fsImpl.rm(runtimeDirectory, { recursive: true, force: true }).catch(() => {});
+      if (['EEXIST', 'EISDIR', 'ENOTDIR'].includes(error?.code)) {
+        throw new InteractiveUIExtensionManagerError(
+          'Hosted OCIX Agent Runtime conflicts with an existing host-managed path',
+          'hosted_agent_runtime_conflict',
+          409,
+        );
+      }
+      throw error;
     }
     return {
       tools: tools.map(({ name }) => ({ name, entry: `agent-runtime/tools/${name}.ts` })),
@@ -678,6 +719,111 @@ export default tool({
       unresolvedSurfaceTools: [],
       unresolvedViewTools: [],
     };
+  };
+
+  const createHostedCacheIntegrity = (hosted) => createHostedOcixCacheIntegrity({
+    verified: hosted,
+    additionalFiles: new Map(hostedSurfaceBindings(hosted.extension).map((binding) => [
+      `agent-runtime/tools/${binding.name}.ts`,
+      hostedToolSource(binding),
+    ])),
+    cryptoImpl,
+  });
+
+  const verifyHostedCacheRoot = async (extension, metadata) => {
+    const lastGood = metadata.hosted?.lastGood;
+    const integrity = lastGood?.integrity;
+    if (!isRecord(lastGood)
+      || !isRecord(integrity)
+      || integrity.extensionId !== extension.id
+      || integrity.version !== lastGood.version
+      || integrity.manifestHash !== lastGood.manifestHash) {
+      throw new InteractiveUIExtensionManagerError(
+        `${extension.id}@${metadata.version} has no valid Hosted cache integrity record; refresh or reinstall the extension`,
+        'hosted_cache_integrity_unavailable',
+        409,
+      );
+    }
+    const directory = pathImpl.join(hostedCacheDirectory, extension.id, lastGood.version);
+    try {
+      const trust = await readTrust();
+      const trustedKey = trust.publishers?.[metadata.publisher?.id]
+        ?.keys?.[metadata.publisher?.keyId]?.publicKey;
+      if (!trustedKey) {
+        throw new InteractiveUIExtensionManagerError(
+          'Hosted OCIX publisher key is no longer trusted',
+          'publisher_untrusted',
+          403,
+        );
+      }
+      let signedDocument;
+      try {
+        signedDocument = JSON.parse(await fsImpl.readFile(
+          pathImpl.join(directory, HOSTED_OCIX_SIGNED_MANIFEST_FILE),
+          'utf8',
+        ));
+      } catch (error) {
+        throw new InteractiveUIExtensionManagerError(
+          error?.code === 'ENOENT'
+            ? 'Hosted OCIX cache is missing its signed manifest'
+            : 'Hosted OCIX cached signed manifest is invalid JSON',
+          'hosted_cache_integrity_failed',
+          409,
+        );
+      }
+      const reverified = verifyHostedOcixManifest({
+        document: signedDocument,
+        extensionId: extension.id,
+        publisherKeyId: metadata.publisher.keyId,
+        publisherPublicKey: trustedKey,
+        cryptoImpl,
+      });
+      if (reverified.version !== lastGood.version
+        || reverified.manifestHash !== lastGood.manifestHash) {
+        throw new InteractiveUIExtensionManagerError(
+          'Hosted OCIX cached signed manifest does not match the active last-good version',
+          'hosted_cache_integrity_failed',
+          409,
+        );
+      }
+      const expectedIntegrity = createHostedCacheIntegrity(reverified);
+      if (canonicalStringify(expectedIntegrity) !== canonicalStringify(integrity)) {
+        throw new InteractiveUIExtensionManagerError(
+          'Hosted OCIX cache integrity record does not match the reverified signed manifest',
+          'hosted_cache_integrity_failed',
+          409,
+        );
+      }
+      await verifyHostedOcixCacheIntegrity({
+        directory,
+        integrity,
+        fsImpl,
+        pathImpl,
+        cryptoImpl,
+      });
+    } catch (error) {
+      throw new InteractiveUIExtensionManagerError(
+        error instanceof Error ? error.message : 'Hosted OCIX cache integrity verification failed',
+        typeof error?.code === 'string' ? error.code : 'hosted_cache_integrity_failed',
+        error?.status ?? 409,
+      );
+    }
+    return directory;
+  };
+
+  const inspectHostedCacheIntegrity = async (extension, metadata) => {
+    try {
+      await verifyHostedCacheRoot(extension, metadata);
+      return { status: 'ready' };
+    } catch (error) {
+      if (error?.code === 'hosted_cache_integrity_unavailable') {
+        return { status: 'unavailable', code: error.code };
+      }
+      return {
+        status: 'failed',
+        code: typeof error?.code === 'string' ? error.code : 'hosted_cache_integrity_failed',
+      };
+    }
   };
 
   const materializeHostedCandidate = async (hosted) => materializeHostedOcix({
@@ -736,6 +882,23 @@ export default tool({
           existingVersion,
           destination,
         );
+        if (hosted) {
+          const hostedRoot = await materializeHostedCandidate(hosted);
+          existingVersion.agentRuntime = await installHostedAgentRuntime(hostedRoot, hosted);
+          existingVersion.hosted.approvedPermissions = clone(hosted.permissions);
+          existingVersion.hosted.lastGood = {
+            version: hosted.version,
+            manifestHash: hosted.manifestHash,
+            publishedAt: hosted.publishedAt,
+            fetchedAt: new Date().toISOString(),
+            expiresAt: new Date(Date.now() + verified.manifest.delivery.ttlSeconds * 1_000).toISOString(),
+            integrity: createHostedCacheIntegrity(hosted),
+          };
+          existingVersion.hosted.refreshAfter = existingVersion.hosted.lastGood.expiresAt;
+          existingVersion.hosted.pendingUpdate = null;
+          existingVersion.hosted.lastError = null;
+          await verifyHostedCacheRoot(nextState.extensions[id], existingVersion);
+        }
         const openCode = await commitStateWithAgentRuntime(previousState, nextState);
         return { extension: clone(nextState.extensions[id]), installed: false, openCode };
       }
@@ -749,9 +912,11 @@ export default tool({
       await writeVerifiedFiles(stagingPath, verified.files);
       let hostedRoot = null;
       let agentRuntime = clone(verified.agentRuntime);
+      let hostedIntegrity = null;
       if (hosted) {
         hostedRoot = await materializeHostedCandidate(hosted);
         agentRuntime = await installHostedAgentRuntime(hostedRoot, hosted);
+        hostedIntegrity = createHostedCacheIntegrity(hosted);
       } else {
         await validateStagedExtension(stagingPath, verified);
       }
@@ -804,6 +969,7 @@ export default tool({
               publishedAt: hosted.publishedAt,
               fetchedAt: installedAt,
               expiresAt: new Date(Date.now() + verified.manifest.delivery.ttlSeconds * 1_000).toISOString(),
+              integrity: hostedIntegrity,
             },
             pendingUpdate: null,
             lastError: null,
@@ -811,6 +977,7 @@ export default tool({
         } : {}),
       };
       nextState.extensions[id] = next;
+      if (hosted) await verifyHostedCacheRoot(next, next.versions[version]);
       const openCode = await commitStateWithAgentRuntime(previousState, nextState);
       return { extension: clone(next), installed: true, openCode };
     } catch (error) {
@@ -904,12 +1071,13 @@ export default tool({
       throw new InteractiveUIExtensionManagerError('Extension is not delivered as Hosted OCIX', 'hosted_extension_required', 409);
     }
     const now = Date.now();
-    const currentRoot = typeof metadata.hosted.lastGood?.version === 'string'
-      ? pathImpl.join(hostedCacheDirectory, extension.id, metadata.hosted.lastGood.version)
-      : null;
-    const usableCurrentRoot = currentRoot && (await fsImpl.stat(currentRoot).catch(() => null))?.isDirectory()
-      ? currentRoot
-      : null;
+    let usableCurrentRoot = null;
+    let currentIntegrityError = null;
+    try {
+      usableCurrentRoot = await verifyHostedCacheRoot(extension, metadata);
+    } catch (error) {
+      currentIntegrityError = error;
+    }
     const refreshAfter = Date.parse(metadata.hosted.refreshAfter ?? metadata.hosted.lastGood?.expiresAt ?? '');
     if (!force && usableCurrentRoot && Number.isFinite(refreshAfter) && refreshAfter > now) {
       return { root: usableCurrentRoot, changed: false, runtimeChanged: false, confirmationRequired: false };
@@ -982,7 +1150,9 @@ export default tool({
         publishedAt: candidate.publishedAt,
         fetchedAt: new Date(now).toISOString(),
         expiresAt: new Date(now + metadata.hosted.ttlSeconds * 1_000).toISOString(),
+        integrity: createHostedCacheIntegrity(candidate),
       };
+      await verifyHostedCacheRoot(extension, metadata);
       metadata.hosted.refreshAfter = metadata.hosted.lastGood.expiresAt;
       metadata.hosted.pendingUpdate = null;
       metadata.hosted.lastError = null;
@@ -1010,6 +1180,7 @@ export default tool({
           fallback: true,
         };
       }
+      if (currentIntegrityError) throw currentIntegrityError;
       throw error;
     }
   };
@@ -1113,9 +1284,14 @@ export default tool({
     const integrityByExtension = Object.fromEntries(await Promise.all(
       Object.values(state.extensions ?? {}).map(async (extension) => {
         const active = extension.versions?.[extension.activeVersion];
-        return [extension.id, active
-          ? await inspectInstalledVersionIntegrity(extension, active)
-          : { status: 'failed', code: 'extension_integrity_failed' }];
+        if (!active) {
+          return [extension.id, { status: 'failed', code: 'extension_integrity_failed' }];
+        }
+        const packageIntegrity = await inspectInstalledVersionIntegrity(extension, active);
+        if (packageIntegrity.status !== 'ready' || active.delivery !== 'hosted') {
+          return [extension.id, packageIntegrity];
+        }
+        return [extension.id, await inspectHostedCacheIntegrity(extension, active)];
       }),
     ));
     return {

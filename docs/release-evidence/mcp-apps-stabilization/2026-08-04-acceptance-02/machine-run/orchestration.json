@@ -1,0 +1,28 @@
+{
+  "$schema": "openchamber://tldraw-mcp-app-browser-orchestration/v1",
+  "generatedAt": "2026-08-04T04:03:37.320Z",
+  "runId": "2026-08-04T04-00-15-914Z",
+  "ok": false,
+  "interruptedSignal": null,
+  "repositories": {
+    "openchamber": "/Users/loloru/Documents/data/project/openChamber/openchamber",
+    "tldrawMcpApp": "/Users/loloru/Documents/data/project/openChamber/tldraw-mcp-app"
+  },
+  "runtime": {
+    "isolated": true,
+    "authSource": "file",
+    "removed": true,
+    "portsReleased": true,
+    "openChamberPort": 53738,
+    "tldrawPort": 53737
+  },
+  "evidence": {
+    "browserReport": "/Users/loloru/Documents/data/project/openChamber/openchamber/.tmp/tldraw-mcp-app-browser-orchestrated/2026-08-04T04-00-15-914Z/browser/report.json",
+    "logsDirectory": "/Users/loloru/Documents/data/project/openChamber/openchamber/.tmp/tldraw-mcp-app-browser-orchestrated/2026-08-04T04-00-15-914Z/logs"
+  },
+  "failure": {
+    "name": "Error",
+    "message": "tldraw browser verifier failed (1)",
+    "stack": "Error: tldraw browser verifier failed (1)\n    at file:///Users/loloru/Documents/data/project/openChamber/openchamber/scripts/run-tldraw-mcp-app-browser-acceptance.mjs:365:11\n    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)"
+  }
+}

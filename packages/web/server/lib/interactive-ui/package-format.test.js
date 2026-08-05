@@ -245,6 +245,74 @@ describe('OCIX signed package format', () => {
       keyId: 'release-2026',
     })).rejects.toMatchObject({ code: 'secret_file_detected' });
   });
+
+  it('round-trips a manifest-only Hosted OCIX thin package', async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'ocix-hosted-package-'));
+    temporaryDirectories.push(directory);
+    await fs.writeFile(path.join(directory, 'openchamber.extension.json'), JSON.stringify({
+      $schema: 'openchamber://extension/v1',
+      id: 'com.acme.hosted',
+      name: 'Acme Hosted',
+      version: '1.0.0',
+      delivery: {
+        type: 'hosted',
+        manifestUrl: 'https://apps.example.com/manifest.json',
+        ttlSeconds: 600,
+        minimumRuntimeVersion: '1.16.3',
+        initialPermissions: {
+          resourceOrigins: ['https://apps.example.com'],
+          nativeCode: false,
+        },
+      },
+    }));
+    const keys = generatePublisherKeyPair();
+    const packed = await createExtensionPackage({
+      extensionDirectory: directory,
+      privateKey: keys.privateKey,
+      publisherId: 'com.acme.publisher',
+      publisherName: 'Acme',
+      keyId: 'release-2026',
+    });
+    const verified = await verifyExtensionPackage({
+      buffer: packed.buffer,
+      resolveTrustedPublisherKey: async () => keys.publicKey,
+    });
+    expect(verified.manifest.delivery).toMatchObject({
+      type: 'hosted',
+      manifestUrl: 'https://apps.example.com/manifest.json',
+      ttlSeconds: 600,
+    });
+    expect(verified.files.size).toBe(1);
+    expect(verified.agentRuntime).toMatchObject({ tools: [], skills: [] });
+
+    await fs.writeFile(path.join(directory, 'embedded.html'), '<h1>not thin</h1>');
+    await expect(createExtensionPackage({
+      extensionDirectory: directory,
+      privateKey: keys.privateKey,
+      publisherId: 'com.acme.publisher',
+      publisherName: 'Acme',
+      keyId: 'release-2026',
+    })).rejects.toMatchObject({ code: 'hosted_thin_package_embeds_files' });
+  });
+
+  it('rejects Native surfaces that omit native-code trust metadata', async () => {
+    const directory = await createExtension();
+    const manifestPath = path.join(directory, 'openchamber.extension.json');
+    const manifest = JSON.parse(await fs.readFile(manifestPath, 'utf8'));
+    manifest.views[0].runtime = 'native';
+    await fs.writeFile(manifestPath, JSON.stringify(manifest));
+    const keys = generatePublisherKeyPair();
+    await expect(createExtensionPackage({
+      extensionDirectory: directory,
+      privateKey: keys.privateKey,
+      publisherId: 'com.acme.publisher',
+      publisherName: 'Acme',
+      keyId: 'release-2026',
+    })).rejects.toMatchObject({
+      code: 'native_code_trust_required',
+      status: 403,
+    });
+  });
 });
 
 describe('OCIX signed marketplace catalog', () => {

@@ -375,6 +375,14 @@ const normalizeManifest = (raw, directory, environment) => {
     : [];
   const viewIds = new Set(views.map((view) => view.id));
   if (viewIds.size !== views.length) throw new InteractiveUIRuntimeError(`Extension ${raw.id} has duplicate view IDs`, 409, 'duplicate_view');
+  if (views.some((view) => view.runtime === 'native')
+    && (!isRecord(raw.trust) || raw.trust.mode !== 'native-code')) {
+    throw new InteractiveUIRuntimeError(
+      `Extension ${raw.id} Native surfaces require trust.mode = native-code`,
+      403,
+      'native_code_trust_required',
+    );
+  }
 
   const connectors = Array.isArray(raw.connectors)
     ? raw.connectors.map((connector) => normalizeConnector(connector, raw, environment))

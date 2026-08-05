@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -8,6 +8,7 @@ import {
   generateSigningKeys,
   packExtension,
   scaffoldExtension,
+  scaffoldHostedExtension,
   validateExtension,
   verifyPackageFile,
 } from './interactive-ui-extension.mjs';
@@ -19,6 +20,60 @@ test('validates the bundled generated, Declarative, and Native examples', async 
   for (const name of examples) {
     const report = await validateExtension(path.join(repoRoot, 'examples', 'interactive-ui', name));
     assert.equal(report.warnings.length, 0, `${name} should not require validator exceptions`);
+  }
+});
+
+test('scaffolds, validates, signs, and verifies a Hosted OCIX thin package', async () => {
+  const temporaryRoot = await mkdtemp(path.join(os.tmpdir(), 'openchamber-hosted-ocix-'));
+  const target = path.join(temporaryRoot, 'hosted');
+  const keysDirectory = path.join(temporaryRoot, 'keys');
+  const packagePath = path.join(temporaryRoot, 'hosted.ocix');
+  try {
+    const scaffold = await scaffoldHostedExtension({
+      targetDirectory: target,
+      extensionId: 'com.acme.hosted',
+      name: 'Acme Hosted',
+      manifestUrl: 'https://apps.example.com/manifest.json',
+      ttlSeconds: 600,
+      minimumRuntimeVersion: '1.16.3',
+      initialPermissions: {
+        resourceOrigins: ['https://apps.example.com'],
+        nativeCode: false,
+      },
+    });
+    assert.equal(scaffold.delivery, 'hosted');
+    assert.deepEqual((await readdir(target)).sort(), ['openchamber.extension.json']);
+
+    const validation = await validateExtension(target);
+    assert.equal(validation.delivery, 'hosted');
+    assert.equal(validation.hosted.manifestUrl, 'https://apps.example.com/manifest.json');
+    assert.deepEqual(validation.agentRuntime, {
+      tools: [],
+      skills: [],
+      unresolvedSurfaceTools: [],
+      unresolvedViewTools: [],
+    });
+
+    const keys = await generateSigningKeys({ outputDirectory: keysDirectory });
+    const packed = await packExtension({
+      extensionDirectory: target,
+      outputPath: packagePath,
+      privateKeyPath: keys.privateKeyPath,
+      publisherId: 'com.acme.publisher',
+      publisherName: 'Acme',
+      keyId: 'release-2026',
+    });
+    const verified = await verifyPackageFile({
+      packagePath,
+      publicKeyPath: keys.publicKeyPath,
+      publisherId: 'com.acme.publisher',
+      keyId: 'release-2026',
+    });
+    assert.equal(packed.delivery, 'hosted');
+    assert.equal(verified.delivery, 'hosted');
+    assert.equal(verified.packageHash, packed.packageHash);
+  } finally {
+    await rm(temporaryRoot, { recursive: true, force: true });
   }
 });
 

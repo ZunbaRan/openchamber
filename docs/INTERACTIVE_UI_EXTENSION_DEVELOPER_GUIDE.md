@@ -1,7 +1,7 @@
 # OpenChamber OCIX：Interactive UI + HTML Artifact 开发手册
 
 > 规范：OCIX v1 Managed Distribution Preview<br>
-> 更新日期：2026-07-25<br>
+> 更新日期：2026-07-30<br>
 > 配套 Agent skill：`.agents/skills/build-openchamber-interactive-extension/`<br>
 > 架构背景：[Interactive UI 扩展架构](./INTERACTIVE_UI_EXTENSION_ARCHITECTURE.md)
 
@@ -23,6 +23,7 @@ OCIX 已经支持一个签名扩展同时携带 Third-party Interactive UI 与 T
 - 自描述签名 marketplace catalog 协议、URL-only 添加流程、客户端和静态目录生成 CLI。
 - OCIX Connector Authentication v1：Extension Manager 内配置/签发/测试/断开业务连接，服务端 Secret Store 与 Gateway Key 注入。
 - Extension Workbench：右侧扩展目录、项目级磁贴看板、四类 Pin、12 列拖拽/缩放、同 DOM Focus、生成结果快照和同扩展事件联动。
+- Hosted OCIX 薄包：官方 CLI 原生支持 `create → validate → pack → verify`；远程 manifest/resource 验签、MIME 校验、缓存重验、权限稳定自动更新及权限扩大再确认。
 
 这已经是一条可用于企业私有分发、内测渠道和静态公共目录的完整技术链，但不等于 OpenChamber 官方已经运营一个公共市场。公网域名/CDN、扩展审核组织、离线根密钥仪式、签名密钥吊销/透明日志、恶意软件响应、Native ABI 兼容窗口、VS Code Gateway 和远程 OpenCode 双端协商仍属于部署方或后续平台治理。业务 Key 的权限、RBAC/ABAC、撤销和审计由接入的第三方系统负责，不是 OpenChamber 要复制的一套多用户权限系统。
 
@@ -97,6 +98,45 @@ node scripts/interactive-ui-extension.mjs validate \
 - Native 开发信任声明和可静态识别的 activation contract。
 
 最后仍需要在真实 Host 中运行 Native 代码，静态校验不能证明组件不会抛错。
+
+### 3.1 创建 Hosted OCIX 薄包
+
+Hosted OCIX 的本地 `.ocix` 只保存连接、发布者与初始权限摘要，不内嵌 UI、Tool、Skill 或业务 API 代码：
+
+```bash
+node scripts/interactive-ui-extension.mjs create \
+  ./local-extensions/acme-hosted \
+  --delivery hosted \
+  --id com.acme.hosted \
+  --name "Acme Hosted" \
+  --manifest-url https://apps.example.com/manifest.json \
+  --ttl-seconds 900 \
+  --minimum-runtime-version 1.16.3 \
+  --initial-permissions ./hosted-permissions.json
+
+node scripts/interactive-ui-extension.mjs validate \
+  ./local-extensions/acme-hosted
+```
+
+`hosted-permissions.json` 是薄包允许远端 manifest 使用的权限上限，例如：
+
+```json
+{
+  "resourceOrigins": ["https://apps.example.com"],
+  "networkOrigins": ["https://api.example.com"],
+  "externalLinkOrigins": [],
+  "credentialScopes": ["operations.read"],
+  "actionIds": ["com.acme.hosted.incidents.read"],
+  "agentToolNames": ["hosted_open_overview"],
+  "clipboard": false,
+  "popups": false,
+  "nativeCode": false
+}
+```
+
+创建结果必须只包含 `openchamber.extension.json`。`validate`、`pack` 和 `verify` 都会拒绝任何额外文件，避免把 Hosted 薄包误做成本地代码包。每个远程资源的 HTTP `Content-Type`（忽略 `charset` 等参数）必须与签名 manifest 的 `mimeType` 相同。
+
+Hosted manifest 若新增 origin、action、credential scope、Agent Tool、剪贴板、弹窗或 `nativeCode`，Extension Manager 会进入待确认状态。Native Surface 同时必须声明 `trust.mode = "native-code"`；仅修改资源但不扩大权限时才允许自动更新。
 
 ## 4. 先定义业务 API
 
@@ -657,6 +697,8 @@ node scripts/interactive-ui-extension.mjs verify ./dist/acme-operations-1.0.0.oc
 ```
 
 `.ocix` 是 ZIP，但 Host 不信任 ZIP 目录本身。`openchamber.package.json` 的 Ed25519 签名覆盖扩展 ID/name/version、发布者、时间和所有文件的 path/size/SHA-256；安装器拒绝路径穿越、symlink、未签名额外文件、缺失文件、hash 不符、`.env`、私钥和超限包。压缩包当前上限 20 MB，解压总量 16 MB，单文件 8 MB，最多 512 个文件。
+
+Hosted OCIX 的远程资源下载成功后还会保存原始签名 manifest，并生成独立缓存完整性索引。OpenChamber 在 Enable、启动恢复、Runtime 暴露和 Agent Runtime 同步之前，先用当前信任的发布者公钥重新验证缓存 manifest 的 Ed25519 签名，再由该签名文档重建期望索引并逐文件重算哈希；本地同时篡改 manifest 与索引也不能绕过验签。缺失签名/索引、发布者已不受信任、额外文件、symlink 或任何字节变化都会隔离该 Hosted 版本并移除其受管 Tool。网络失败时只能回退到仍通过这次完整重验的 last-good，不能把“目录还在”当作可信缓存。
 
 ### 9.3 Extension Manager
 

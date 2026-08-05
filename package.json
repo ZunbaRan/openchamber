@@ -73,6 +73,7 @@
     "docs:validate": "node scripts/docs/validate-docs.mjs",
     "test:interactive-ui": "node scripts/interactive-ui-system-test.mjs",
     "test:interactive-ui-functional": "node scripts/verify-interactive-ui-unified-functional.mjs",
+    "test:hosted-ocix-functional": "node scripts/verify-hosted-ocix-functional.mjs",
     "test:interop-acceptance": "node scripts/interop-acceptance.mjs",
     "test:interactive-ui-security": "node scripts/verify-interactive-ui-security.mjs",
     "test:interactive-ui-runtime-performance": "node scripts/verify-interactive-ui-runtime-performance.mjs",

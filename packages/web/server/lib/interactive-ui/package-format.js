@@ -202,6 +202,20 @@ const parseManifest = (content) => {
     }
     manifest.delivery = hostedDelivery;
   } else {
+    const nativeViews = Array.isArray(manifest.views)
+      ? manifest.views.filter((view) => view?.runtime === 'native')
+      : [];
+    if (nativeViews.length > 0
+      && (!isRecord(manifest.trust)
+        || manifest.trust.mode !== 'native-code'
+        || typeof manifest.trust.signature !== 'string'
+        || !manifest.trust.signature.trim())) {
+      throw new InteractiveUIPackageError(
+        'Native surfaces require trust.mode = native-code and non-empty trust.signature metadata',
+        'native_code_trust_required',
+        403,
+      );
+    }
     try {
       normalizeInteractiveUIRouting(manifest);
     } catch (error) {
@@ -350,6 +364,13 @@ export const createExtensionPackage = async ({
   const manifestFile = files.find((file) => file.path === 'openchamber.extension.json');
   if (!manifestFile) throw new InteractiveUIPackageError('Extension package is missing openchamber.extension.json', 'missing_manifest');
   const manifest = parseManifest(manifestFile.content);
+  if (manifest.delivery?.type === 'hosted'
+    && (files.length !== 1 || files[0].path !== 'openchamber.extension.json')) {
+    throw new InteractiveUIPackageError(
+      'Hosted OCIX thin packages may contain only openchamber.extension.json',
+      'hosted_thin_package_embeds_files',
+    );
+  }
   const packagedFiles = new Map(files.map((file) => [file.path, file.content]));
   validateDashboardAssets(manifest, packagedFiles);
   const agentRuntime = inspectPackagedAgentRuntime(packagedFiles, manifest);
@@ -508,6 +529,13 @@ export const verifyExtensionPackage = async ({
   if (archiveFiles.size !== indexedFiles.size) throw new InteractiveUIPackageError('Extension archive is missing signed files', 'missing_package_file');
 
   const manifest = parseManifest(archiveFiles.get('openchamber.extension.json') ?? Buffer.alloc(0));
+  if (manifest.delivery?.type === 'hosted'
+    && (archiveFiles.size !== 1 || !archiveFiles.has('openchamber.extension.json'))) {
+    throw new InteractiveUIPackageError(
+      'Hosted OCIX thin packages may contain only openchamber.extension.json',
+      'hosted_thin_package_embeds_files',
+    );
+  }
   validateDashboardAssets(manifest, archiveFiles);
   if (manifest.id !== packageIndex.extension.id || manifest.version !== packageIndex.extension.version || manifest.name !== packageIndex.extension.name) {
     throw new InteractiveUIPackageError('Manifest identity does not match the signed package index', 'package_identity_mismatch', 403);

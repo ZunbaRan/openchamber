@@ -1389,7 +1389,6 @@ export const Header: React.FC<HeaderProps> = ({
     openContextPlan(directory);
   }, [closeContextPanel, openContextPlan, openDirectory]);
 
-  const desktopHeaderIconButtonClass = DESKTOP_HEADER_ICON_BUTTON_CLASS;
   const mobileHeaderIconButtonClass = MOBILE_HEADER_ICON_BUTTON_CLASS;
   const mobileActiveHeaderItem = React.useMemo(() => {
     if (isMobileRateLimitsOpen) {

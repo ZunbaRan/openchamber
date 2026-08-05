@@ -11,8 +11,60 @@ const runtimeDirectory = path.join(projectRoot, '.tmp', 'interactive-ui-demo');
 const stateFilePath = path.join(runtimeDirectory, 'state.json');
 const logFilePath = path.join(runtimeDirectory, 'demo.log');
 const readyPattern = /OpenChamber Agent demo: (http:\/\/127\.0\.0\.1:(\d+))/;
+const openCodeBinaryOverrideNames = [
+  'OPENCODE_BINARY',
+  'OPENCODE_PATH',
+  'OPENCHAMBER_OPENCODE_PATH',
+  'OPENCHAMBER_OPENCODE_BIN',
+];
 
 const delay = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
+
+const bundledOpenCodeBinaryPath = ({
+  root = projectRoot,
+  platform = process.platform,
+} = {}) => path.join(
+  root,
+  'packages',
+  'electron',
+  'resources',
+  'opencode-cli',
+  platform === 'win32' ? 'opencode.exe' : 'opencode',
+);
+
+const configureDemoOpenCodeBinary = ({
+  env = process.env,
+  root = projectRoot,
+  platform = process.platform,
+} = {}) => {
+  const explicitName = openCodeBinaryOverrideNames.find((name) => (
+    typeof env[name] === 'string' && env[name].trim().length > 0
+  ));
+  if (explicitName) {
+    return {
+      source: 'environment',
+      envName: explicitName,
+      path: env[explicitName].trim(),
+    };
+  }
+
+  const bundledPath = bundledOpenCodeBinaryPath({ root, platform });
+  const accessMode = platform === 'win32' ? fs.constants.F_OK : fs.constants.X_OK;
+  try {
+    fs.accessSync(bundledPath, accessMode);
+  } catch {
+    throw new Error(
+      `The Interactive UI demo requires the locked OpenChamber OpenCode fork at ${bundledPath}. `
+      + 'Prepare packages/electron/resources/opencode-cli first, or set OPENCODE_BINARY explicitly.',
+    );
+  }
+  env.OPENCODE_BINARY = bundledPath;
+  return {
+    source: 'bundled-fork',
+    envName: 'OPENCODE_BINARY',
+    path: bundledPath,
+  };
+};
 
 const isProcessRunning = (pid) => {
   if (!Number.isInteger(pid) || pid <= 0) return false;
@@ -338,7 +390,9 @@ const stopInteractiveUiDemo = async () => {
 };
 
 export {
+  bundledOpenCodeBinaryPath,
   commandRunsDemo,
+  configureDemoOpenCodeBinary,
   descendantsOf,
   logFilePath,
   parseProcessTable,

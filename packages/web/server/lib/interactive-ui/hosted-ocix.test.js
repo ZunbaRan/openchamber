@@ -5,10 +5,13 @@ import os from 'node:os';
 import path from 'node:path';
 import {
   HOSTED_OCIX_MANIFEST_SCHEMA,
+  HOSTED_OCIX_SIGNED_MANIFEST_FILE,
+  createHostedOcixCacheIntegrity,
   fetchHostedOcixManifest,
   hostedPermissionExpansion,
   materializeHostedOcix,
   normalizeHostedDelivery,
+  verifyHostedOcixCacheIntegrity,
   verifyHostedOcixManifest,
 } from './hosted-ocix.js';
 
@@ -170,6 +173,42 @@ describe('Hosted OCIX', () => {
     })).toThrow(/signature verification failed/);
   });
 
+  it('rejects remote resources in host-reserved namespaces', () => {
+    const { keys, document } = fixture();
+    for (const [resourcePath, reservedNamespace] of [
+      ['agent-runtime/tools/hosted_open.ts', 'agent-runtime'],
+      ['agent-runtime', 'agent-runtime'],
+      ['.openchamber/cache.json', '.openchamber'],
+      ['.openchamber.hosted-manifest.json', '.openchamber'],
+      ['openchamber.extension.json', 'openchamber.extension.json'],
+      ['openchamber.extension.json/ui.json', 'openchamber.extension.json'],
+    ]) {
+      const bytes = Buffer.from('reserved');
+      const reservedDocument = sign({
+        ...document,
+        resources: [
+          ...document.resources,
+          {
+            path: resourcePath,
+            url: `https://apps.example.com/${resourcePath}`,
+            mimeType: 'text/plain',
+            sha256: `sha256-${crypto.createHash('sha256').update(bytes).digest('base64')}`,
+          },
+        ],
+      }, keys.privateKey);
+      expect(() => verifyHostedOcixManifest({
+        document: reservedDocument,
+        extensionId: 'com.acme.hosted',
+        publisherKeyId: 'release-2026',
+        publisherPublicKey: keys.publicKey.export({ type: 'spki', format: 'pem' }),
+      })).toThrow(expect.objectContaining({
+        code: 'invalid_hosted_resource',
+        status: 400,
+        details: { path: resourcePath, reservedNamespace },
+      }));
+    }
+  });
+
   it('rejects a hosted manifest redirect to a different origin', async () => {
     await expect(fetchHostedOcixManifest({
       manifestUrl: 'https://apps.example.com/manifest.json',
@@ -197,9 +236,10 @@ describe('Hosted OCIX', () => {
       cacheDirectory: directory,
       fetchImpl: async (url) => {
         const body = bodies.get(String(url));
+        const contentType = String(url).endsWith('.html') ? 'text/html; charset=utf-8' : 'application/json';
         return new Response(body ?? 'missing', {
           status: body ? 200 : 404,
-          headers: { 'content-type': 'application/octet-stream' },
+          headers: { 'content-type': contentType },
         });
       },
       validate: async (root) => {
@@ -211,5 +251,131 @@ describe('Hosted OCIX', () => {
     expect(validated).toBe(true);
     expect(await fs.readFile(path.join(destination, 'ui/artifact.html'), 'utf8'))
       .toContain('Hosted CRM');
+    expect(JSON.parse(await fs.readFile(
+      path.join(destination, HOSTED_OCIX_SIGNED_MANIFEST_FILE),
+      'utf8',
+    )).signature).toMatchObject({
+      algorithm: 'ed25519',
+      keyId: 'release-2026',
+    });
+  });
+
+  it('rejects a resource whose HTTP Content-Type does not match the signed MIME type', async () => {
+    const { keys, document, bodies } = fixture();
+    const verified = verifyHostedOcixManifest({
+      document,
+      extensionId: 'com.acme.hosted',
+      publisherKeyId: 'release-2026',
+      publisherPublicKey: keys.publicKey.export({ type: 'spki', format: 'pem' }),
+    });
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'hosted-ocix-mime-'));
+    temporaryDirectories.push(directory);
+    await expect(materializeHostedOcix({
+      verified,
+      cacheDirectory: directory,
+      fetchImpl: async (url) => new Response(bodies.get(String(url)), {
+        status: 200,
+        headers: { 'content-type': 'text/plain' },
+      }),
+    })).rejects.toMatchObject({
+      code: 'hosted_resource_mime_mismatch',
+      status: 403,
+    });
+  });
+
+  it('requires explicit native-code trust and permission for Hosted Native surfaces', () => {
+    const { keys, document } = fixture();
+    const nativeDocument = sign({
+      ...document,
+      permissions: {
+        ...document.permissions,
+        nativeCode: true,
+      },
+      extension: {
+        ...document.extension,
+        trust: { mode: 'native-code', signature: 'hosted-release' },
+        views: document.extension.views.map((view) => ({ ...view, runtime: 'native' })),
+      },
+    }, keys.privateKey);
+    const verified = verifyHostedOcixManifest({
+      document: nativeDocument,
+      extensionId: 'com.acme.hosted',
+      publisherKeyId: 'release-2026',
+      publisherPublicKey: keys.publicKey.export({ type: 'spki', format: 'pem' }),
+    });
+    expect(verified.permissions.nativeCode).toBe(true);
+    expect(hostedPermissionExpansion({
+      ...verified.permissions,
+      nativeCode: false,
+    }, verified.permissions)).toEqual({ nativeCode: true });
+
+    const untrustedDocument = sign({
+      ...nativeDocument,
+      extension: {
+        ...nativeDocument.extension,
+        trust: { mode: 'declarative', signature: 'hosted-release' },
+      },
+    }, keys.privateKey);
+    expect(() => verifyHostedOcixManifest({
+      document: untrustedDocument,
+      extensionId: 'com.acme.hosted',
+      publisherKeyId: 'release-2026',
+      publisherPublicKey: keys.publicKey.export({ type: 'spki', format: 'pem' }),
+    })).toThrow(/trust\.mode = native-code/);
+  });
+
+  it('recomputes every materialized cache file before reuse', async () => {
+    const { keys, document, bodies } = fixture();
+    const verified = verifyHostedOcixManifest({
+      document,
+      extensionId: 'com.acme.hosted',
+      publisherKeyId: 'release-2026',
+      publisherPublicKey: keys.publicKey.export({ type: 'spki', format: 'pem' }),
+    });
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'hosted-ocix-cache-'));
+    temporaryDirectories.push(directory);
+    const destination = await materializeHostedOcix({
+      verified,
+      cacheDirectory: directory,
+      fetchImpl: async (url) => new Response(bodies.get(String(url)), {
+        status: 200,
+        headers: {
+          'content-type': String(url).endsWith('.html') ? 'text/html' : 'application/json',
+        },
+      }),
+    });
+    const toolSource = 'export default { description: "Hosted" };\n';
+    await fs.mkdir(path.join(destination, 'agent-runtime', 'tools'), { recursive: true });
+    await fs.writeFile(path.join(destination, 'agent-runtime', 'tools', 'hosted_open.ts'), toolSource);
+    const integrity = createHostedOcixCacheIntegrity({
+      verified,
+      additionalFiles: new Map([['agent-runtime/tools/hosted_open.ts', toolSource]]),
+    });
+    await expect(verifyHostedOcixCacheIntegrity({
+      directory: destination,
+      integrity,
+    })).resolves.toMatchObject({ status: 'ready' });
+
+    const signedManifestPath = path.join(destination, HOSTED_OCIX_SIGNED_MANIFEST_FILE);
+    const signedManifest = await fs.readFile(signedManifestPath);
+    await fs.writeFile(signedManifestPath, JSON.stringify({
+      ...document,
+      app: { ...document.app, version: '2.0.1' },
+    }));
+    await expect(verifyHostedOcixCacheIntegrity({
+      directory: destination,
+      integrity,
+    })).rejects.toMatchObject({ code: 'hosted_cache_integrity_failed' });
+    await fs.writeFile(signedManifestPath, signedManifest);
+    await expect(verifyHostedOcixCacheIntegrity({
+      directory: destination,
+      integrity,
+    })).resolves.toMatchObject({ status: 'ready' });
+
+    await fs.writeFile(path.join(destination, 'ui', 'artifact.html'), '<h1>Tampered</h1>');
+    await expect(verifyHostedOcixCacheIntegrity({
+      directory: destination,
+      integrity,
+    })).rejects.toMatchObject({ code: 'hosted_cache_integrity_failed' });
   });
 });

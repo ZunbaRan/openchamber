@@ -81,36 +81,13 @@ const ARTIFACT_HEARTBEAT_INTERVAL_MS = 1_000;
 const ARTIFACT_HEARTBEAT_TIMEOUT_MS = 20_000;
 const ARTIFACT_EXECUTION_LEASE_MS = 15 * 60_000;
 
-const OCIX_ARTIFACT_TOKENS = [
-  '--ocix-surface',
-  '--ocix-surface-muted',
-  '--ocix-surface-subtle',
-  '--ocix-foreground',
-  '--ocix-muted-foreground',
-  '--ocix-border',
-  '--ocix-selection',
-  '--ocix-selection-foreground',
-  '--ocix-focus-ring',
-  '--ocix-primary',
-  '--ocix-primary-foreground',
-  '--ocix-success',
-  '--ocix-success-background',
-  '--ocix-success-border',
-  '--ocix-warning',
-  '--ocix-warning-background',
-  '--ocix-warning-border',
-  '--ocix-error',
-  '--ocix-error-background',
-  '--ocix-error-border',
-  '--ocix-info',
-  '--ocix-info-background',
-  '--ocix-info-border',
-  '--ocix-chart-1',
-  '--ocix-chart-2',
-  '--ocix-chart-3',
-  '--ocix-chart-4',
-  '--ocix-chart-5',
-];
+const OCIX_ARTIFACT_TOKENS = (
+  'surface surface-muted surface-subtle foreground muted-foreground border '
+  + 'selection selection-foreground focus-ring primary primary-foreground '
+  + 'success success-background success-border warning warning-background warning-border '
+  + 'error error-background error-border info info-background info-border '
+  + 'chart-1 chart-2 chart-3 chart-4 chart-5'
+).split(' ').map((token) => `--ocix-${token}`);
 
 const createChannelId = (): string => {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') return crypto.randomUUID();
@@ -131,9 +108,8 @@ const collectThemeContext = (element: HTMLElement | null, themeOverride?: 'light
   return { tokens, theme: themeOverride ?? (dark ? 'dark' as const : 'light' as const) };
 };
 
-const hasRecentUserActivation = (): boolean => (
-  typeof navigator !== 'undefined'
-  && (navigator.userActivation?.isActive ?? false)
+const hasRecentUserActivation = (): boolean => Boolean(
+  globalThis.navigator?.userActivation?.isActive,
 );
 
 export const HTMLArtifactView = React.forwardRef<HTMLArtifactViewHandle, HTMLArtifactViewProps>(({

@@ -1,0 +1,294 @@
+name: openchamber-interop-acceptance-lab
+
+services:
+  gateway:
+    image: nginxinc/nginx-unprivileged:1.27.5-alpine
+    platform: linux/amd64
+    container_name: oc-interop-gateway
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 24m
+    mem_reservation: 12m
+    pids_limit: 64
+    ports:
+      - "127.0.0.1:9510:9510"
+    volumes:
+      - ./.runtime/generated/gateway/nginx.conf:/etc/nginx/nginx.conf:ro
+    tmpfs:
+      - /tmp:size=4m,mode=1777
+      - /var/cache/nginx:size=4m,mode=0755
+      - /var/run:size=1m,mode=0755
+    depends_on:
+      hosted-ocix:
+        condition: service_healthy
+      local-crm:
+        condition: service_healthy
+      legacy-mcp-http:
+        condition: service_healthy
+      legacy-mcp-sse:
+        condition: service_healthy
+      excalidraw:
+        condition: service_healthy
+      tldraw:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:9510/health"]
+      interval: 15s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+
+  hosted-ocix:
+    build:
+      context: .
+      dockerfile: services/ocix/Dockerfile
+    image: openchamber/interop-ocix:local
+    platform: linux/amd64
+    container_name: oc-hosted-ocix-lab
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    cap_add: [CHOWN, SETGID, SETUID]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 48m
+    mem_reservation: 24m
+    pids_limit: 64
+    environment:
+      PORT: "3000"
+      MODE: hosted-ops
+      NODE_OPTIONS: --max-old-space-size=28
+      HOSTED_RELEASE_STATE_FILE: /data/active-release.json
+      HOSTED_OPS_API_KEY_FILE: /tmp/openchamber-secrets/hosted_ops_api_key
+      HOSTED_OPS_READ_ONLY_KEY_FILE: /tmp/openchamber-secrets/hosted_ops_read_only_key
+    secrets:
+      - hosted_ops_api_key
+      - hosted_ops_read_only_key
+    tmpfs:
+      - /tmp:size=4m,mode=1777
+    volumes:
+      - hosted-ocix-state:/data
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3000/health').then(r=>{if(!r.ok)process.exit(1)})",
+        ]
+      interval: 15s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+
+  local-crm:
+    build:
+      context: .
+      dockerfile: services/ocix/Dockerfile
+    image: openchamber/interop-ocix:local
+    platform: linux/amd64
+    container_name: oc-local-crm-api
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    cap_add: [CHOWN, SETGID, SETUID]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 48m
+    mem_reservation: 24m
+    pids_limit: 64
+    environment:
+      PORT: "3000"
+      MODE: local-crm
+      NODE_OPTIONS: --max-old-space-size=28
+      LOCAL_CRM_API_KEY_FILE: /tmp/openchamber-secrets/local_crm_api_key
+      LOCAL_CRM_READ_ONLY_KEY_FILE: /tmp/openchamber-secrets/local_crm_read_only_key
+    secrets:
+      - local_crm_api_key
+      - local_crm_read_only_key
+    tmpfs:
+      - /tmp:size=4m,mode=1777
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3000/health').then(r=>{if(!r.ok)process.exit(1)})",
+        ]
+      interval: 15s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+
+  legacy-mcp-http:
+    build:
+      context: .
+      dockerfile: services/legacy-mcp/Dockerfile
+    image: openchamber/interop-legacy-mcp:local
+    platform: linux/amd64
+    container_name: oc-legacy-mcp-http
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 56m
+    mem_reservation: 28m
+    pids_limit: 64
+    environment:
+      PORT: "3000"
+      TRANSPORT_MODE: http
+      NODE_OPTIONS: --max-old-space-size=32
+    tmpfs:
+      - /tmp:size=4m,mode=1777
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3000/health').then(r=>{if(!r.ok)process.exit(1)})",
+        ]
+      interval: 15s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+
+  legacy-mcp-sse:
+    image: openchamber/interop-legacy-mcp:local
+    platform: linux/amd64
+    container_name: oc-legacy-mcp-sse
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 56m
+    mem_reservation: 28m
+    pids_limit: 64
+    environment:
+      PORT: "3000"
+      TRANSPORT_MODE: sse
+      NODE_OPTIONS: --max-old-space-size=32
+      SSE_PUBLIC_ENDPOINT: /${PUBLIC_GATE_PATH:?run scripts/init-env.mjs}/mcp/legacy/message
+    tmpfs:
+      - /tmp:size=4m,mode=1777
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3000/health').then(r=>{if(!r.ok)process.exit(1)})",
+        ]
+      interval: 15s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+
+  excalidraw:
+    build:
+      context: .
+      dockerfile: services/excalidraw/Dockerfile
+    image: openchamber/interop-excalidraw-mcp:local
+    platform: linux/amd64
+    container_name: oc-excalidraw-mcp
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 136m
+    mem_reservation: 68m
+    pids_limit: 96
+    environment:
+      PORT: "3000"
+      UPSTREAM_PORT: "3001"
+      NODE_OPTIONS: --max-old-space-size=80
+    tmpfs:
+      - /tmp:size=8m,mode=1777
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3000/health').then(r=>{if(!r.ok)process.exit(1)})",
+        ]
+      interval: 15s
+      timeout: 4s
+      retries: 8
+      start_period: 12s
+
+  tldraw:
+    image: ${INTEROP_TLDRAW_MCP_IMAGE:-tldraw-mcp-app:local}
+    platform: linux/amd64
+    container_name: oc-tldraw-mcp-2026
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 96m
+    mem_reservation: 48m
+    pids_limit: 64
+    environment:
+      HOST: "0.0.0.0"
+      PORT: "3000"
+      NODE_OPTIONS: --max-old-space-size=56
+    tmpfs:
+      - /tmp:size=4m,mode=1777
+    volumes:
+      - tldraw-state:/data
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3000/health').then(r=>{if(!r.ok)process.exit(1)})",
+        ]
+      interval: 15s
+      timeout: 3s
+      retries: 5
+      start_period: 8s
+
+  tunnel:
+    profiles: [tunnel]
+    image: cloudflare/cloudflared:2026.5.0@sha256:59bab8d3aceec09bf6bdb07d6beca0225ca5cd7ab79436a87ea97978fe1dc4f9
+    platform: linux/amd64
+    container_name: oc-interop-tunnel
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 24m
+    mem_reservation: 12m
+    pids_limit: 64
+    command:
+      [
+        "tunnel",
+        "--no-autoupdate",
+        "--protocol",
+        "http2",
+        "--metrics",
+        "0.0.0.0:2000",
+        "--url",
+        "http://gateway:9510",
+      ]
+    depends_on:
+      gateway:
+        condition: service_healthy
+
+volumes:
+  hosted-ocix-state:
+    name: oc-interop-hosted-ocix-state
+  tldraw-state:
+    name: oc-interop-tldraw-state
+
+secrets:
+  local_crm_api_key:
+    file: ./.runtime/secrets/local_crm_api_key
+  local_crm_read_only_key:
+    file: ./.runtime/secrets/local_crm_read_only_key
+  hosted_ops_api_key:
+    file: ./.runtime/secrets/hosted_ops_api_key
+  hosted_ops_read_only_key:
+    file: ./.runtime/secrets/hosted_ops_read_only_key

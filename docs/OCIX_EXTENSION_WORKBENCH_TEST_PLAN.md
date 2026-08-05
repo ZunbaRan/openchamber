@@ -1,8 +1,8 @@
 # OCIX 扩展工作台测试计划
 
 > 状态：**测试设计冻结；macOS arm64 首发统一报告已通过**  
-> 版本：Draft 3  
-> 更新：2026-07-25  
+> 版本：Draft 4
+> 更新：2026-08-02
 > 设计依据：[OCIX 扩展工作台设计](./OCIX_EXTENSION_WORKBENCH_DESIGN.md)  
 > 通用执行纪律：[Interactive UI / OCIX Agent 自主测试手册](./INTERACTIVE_UI_AGENT_AUTONOMOUS_TESTING.md)
 
@@ -29,6 +29,12 @@
 | `bun run test:artifact-runner-clipping-packaged` | 通过；滚动裁剪、Dialog 遮挡/恢复、workspace/fullscreen/inline 循环与同 Runner 实例保持 |
 | `bun run test:interactive-ui-model-routing` | 通过；Qwen3.7 Plus 17/17，业务/Generated/Artifact 准确率 100%，误选与重复主视图率 0 |
 | `bun run test:extension-workbench-unified` | 通过；8/8 本地门禁，`ok=true`、`complete=true`、`releaseCandidate=macos-arm64` |
+
+2026-08-02 新增的 MCP App Workbench 持久化与 iframe 生命周期回归已经进入聚焦
+自动化：服务器覆盖内容寻址 snapshot、Board CAS、binding 锁定和失败保留；UI 覆盖
+等价 metadata 不改变 App document policy、串行 model-context 持久化、focused 退出
+恢复 inline，以及 Web download 确认/取消/中止。它们是下一份统一报告必须纳入的
+增量门禁，不能用 2026-07-25 的旧统一报告代替本轮 Real Host 与 packaged 复验。
 
 统一报告：`.tmp/interactive-ui-unified-acceptance/report.json`。`capacitor-mobile`、`managed-desktop-windows`、`managed-desktop-linux` 仍写入 `unverifiedPlatforms`；它们不属于本计划的 macOS 首发阻断项，也不得宣称已经通过。
 
@@ -129,6 +135,21 @@
 | 订单详情 | Scripts HTML Artifact | 缺少 `orderId` 时不可手动启动；由 Link 接收 `SO-1001` 等真实 Context |
 
 它用于快速证明 Catalog、默认启动、参数门禁、真实查询、同 OCIX 联动、HTML 隔离和重启恢复。它不替代 3.1 的签名混合 CRM、3.2 的第二 OCIX、确认式写入、升级和 packaged desktop 资产。
+
+### 3.6 标准 MCP 2026 App
+
+使用一个可独立运行、严格协商 MCP `2026-07-28` 的 App（当前基准为本地 tldraw
+MCP App）验证 Workbench 复用能力。资产必须提供：
+
+- 一个模型可见的 open/create Tool，以及绑定 `ui://` resource；
+- App-only save/export Tool；
+- 稳定 entity/canvas ID、单调 revision 和可观察的 Server 状态；
+- `updateModelContext`，使每次成功 mutation 都能产生新的可持久化 Tool result；
+- inline preview、fullscreen editor、SVG/PNG download；
+- 同一 endpoint 在 OpenChamber 重启、MCP reconnect 和历史会话恢复后仍可读取。
+
+MCP App 不安装为 OCIX。它在 Catalog 中保持“MCP App”来源，Pin 后只复用 Board
+snapshot、布局和 Focus 基础设施。
 
 ## 4. 测试层级与责任
 
@@ -249,6 +270,26 @@ defaultContext → allowlisted Host Context → user input → validation
 
 Generated snapshot 只允许包含 sanitizer 后的安全内容。Installed Tile 只能保存 Context 和 Host 元数据。
 
+### 7.3 内容寻址 snapshot 与 CAS
+
+对 Generated Interactive UI、Generated HTML Artifact 和 MCP App 分别验证：
+
+- 相同 form + Envelope 得到同一个 snapshot ref，不重复发布不同内容文件；
+- snapshot ref 与实际规范化内容 digest 一致；文件缺失、JSON malformed、form/schema
+  不匹配、超限、内容与 ref 不匹配时读取 fail-closed；
+- 新 snapshot 是不可变文件，先完成写入再切换 Board pointer；模拟 snapshot 写失败时，
+  Board revision、Tile ref、Context digest 和旧 snapshot 都保持不变；
+- `replace-generated-snapshot` 必须携带当前 Board `expectedRevision`；两个并发写只有一个
+  成功，陈旧写返回 revision conflict，重新加载后不得覆盖较新的 ref；
+- installed Tile、form 不匹配、Tile 不存在和错误 source kind 都被拒绝；
+- MCP App 更新前后 `server`、`resourceUri`、`toolKey` 必须完全相同；逐字段篡改均返回
+  `workbench_snapshot_binding_mismatch`，且不产生可见的新 Board 状态；
+- Server 重启后重新读 Board 和 snapshot，digest、binding、revision 与退出前一致。
+
+UI mutation 还要验证同一项目内串行提交，以及 Runtime/project 切换后旧 completion
+不能写回新 Store。一次持久化失败必须让当前 `updateModelContext` 返回可观察错误，
+但后续合法更新仍可继续提交。
+
 ## 8. Catalog 与 Board 组件测试
 
 ### 8.1 Catalog
@@ -327,6 +368,20 @@ Keyboard：
 - 第二次 Pin 相同 Context 聚焦已有 Tile；
 - Pin 不同客户创建第二个 Tile；
 - Board 文件不保存业务响应。
+
+### 9.3 MCP App
+
+- 完成 MCP Tool 调用并渲染真实 `ui://` App 后点击 Pin；
+- Board snapshot 保留原 `sessionId`、`messageId`、Server、Resource 和 Tool binding；
+- App 内执行一次真实 mutation，使 revision 与 `structuredContent` 变化；
+- App 的 `updateModelContext` 只有在新 snapshot 和 Board pointer 持久化成功后才返回成功；
+- 连续发出两次更新时，第二次基于第一次已提交的 Envelope，不丢字段、不 revision 回退；
+- result/title/structuredContent 更新和等价 metadata JSON 重水合期间，iframe DOM 节点、
+  AppBridge nonce 和编辑器实例保持不变；
+- 改变有效 CSP 或 verified resource digest 时，旧 bridge 完整 teardown 后只重建一次；
+- 第二次 Pin 相同 binding/context 聚焦已有 Tile；不能通过 update 改绑另一个 MCP App；
+- 重启 OpenChamber、重新连接 MCP、刷新 Board 后，恢复同一 entity/canvas ID 与至少相同
+  revision；历史 snapshot 可先画 preview，但随后必须加载 Server 权威状态。
 
 ## 10. 联动 Event Broker 测试
 
@@ -455,6 +510,28 @@ HTML 必须通过真实 broker/Runner 消息链路，不能在测试里直接调
 - Workbench resize、Catalog collapse、Tile drag/resize 后 bounds 正确；
 - Focus 和 Popout 迁移期间没有旧 View 残留；
 - 回到 inline/tile 后控件和裁剪恢复。
+
+### 12.4 MCP App document、display mode 与下载生命周期
+
+使用一个能持续编辑、保存模型上下文并导出真实文件的 MCP 2026 App，逐项验证：
+
+- result、title、`structuredContent`、model context 和等价 binding metadata 更新时，
+  iframe DOM 节点、resource nonce、AppBridge 和编辑器实例均不变；连续 100 次更新不
+  产生额外 `load`、空白帧或未保存状态丢失；
+- 只有 verified resource identity/digest 或 effective CSP policy 变化，以及用户显式
+  Retry，才允许 teardown 并重新 materialize；重载前旧 bridge 必须关闭，旧 window
+  的后续消息被拒绝；
+- fullscreen 关闭按钮、Escape、backdrop、Workbench Focus 退出和外层 Dialog 关闭都
+  最终向 App 发布 `displayMode=inline`；退出后 inline preview 与 Edit 控件恢复，不能
+  留在半屏、隐藏 fullscreen 或陈旧 viewport 尺寸；
+- App 调用 `downloadFile` 后可以等待用户超过普通短 RPC timeout；Host 在等待期间
+  保持单个 pending confirmation，App 显示 exporting/等待状态而不是错误或无响应；
+- Web Host 的确认层由 Host 拥有，明确显示文件名、MIME、大小和不可信来源；Save
+  产生可打开且 digest 正确的真实文件，Cancel/Abort 返回可观察错误且不创建下载；
+- Desktop 选择路径、取消、写入失败和成功均回传明确结果；同一窗口第二个并发下载
+  被拒绝或排队，不能出现两个重叠保存流程；
+- 保存 model context、Pin 并重启 OpenChamber/OpenCode 后，Board 从相同 snapshot ref
+  恢复同一 entity/canvas ID 与 revision，重新连接 Server 后再安全收敛到权威状态。
 
 ## 13. Scripts Runner 资源测试
 
@@ -588,6 +665,19 @@ HTML 必须通过真实 broker/Runner 消息链路，不能在测试里直接调
 5. Popout，再关闭；
 6. 验证原 Tile 恢复且状态一致。
 
+### Flow G：MCP App 持久化、全屏与下载
+
+1. 使用真实 MCP 2026 App 创建可编辑实体，并 Pin 到 App Board；
+2. 在 fullscreen 修改内容并调用 `updateModelContext`，等待其持久化完成；
+3. 在等待过程中更新 Tool result，断言 iframe 未重载且草稿仍存在；
+4. 通过按钮、Escape 和外层关闭分别退出 fullscreen，断言每次均恢复 inline；
+5. 导出 SVG/PNG，故意延迟确认超过短 RPC timeout，再接受并检查真实文件；
+6. 再次导出并取消，断言无文件且 App 收到可见错误；
+7. 重启客户端、重连 MCP 并打开 Board，断言 entity/canvas、revision、binding 与退出前
+   一致；
+8. 篡改 snapshot binding 的 Server、Resource 和 Tool，断言三种请求都被拒绝且旧 Tile
+   仍可恢复。
+
 ## 16. 模型路由验收
 
 Workbench 不要求所有动作都经过模型，但 Agent Pin 流程必须证明普通模型可用。默认基线为 Qwen3.7 Plus，至少覆盖：
@@ -667,6 +757,9 @@ Golden 更新必须人工逐张确认，不允许测试脚本在普通运行中�
 - Workbench 开关 50 次；
 - Focus/restore 30 次；
 - Popout/restore 20 次。
+- 同一 MCP App 连续 100 次 result/model-context 更新且 iframe remount 为 0；
+- MCP resource/CSP 各变化 10 次，每次只允许一次受控 teardown/remount；
+- 下载确认延迟、接受、取消与中止各 20 次，无悬挂 promise、重复文件或确认层泄漏。
 
 发布阻断条件：
 
@@ -697,6 +790,11 @@ Golden 更新必须人工逐张确认，不允许测试脚本在普通运行中�
 - Installed 业务截图不落盘；
 - write confirmation 不可重放；
 - malformed Board 和恶意扩展不能让应用启动失败。
+- MCP snapshot 不能改绑 `server`、`resourceUri` 或 `toolKey`；跨 binding 更新返回明确
+  拒绝且 Board revision/ref 不变；
+- 旧 resource nonce、旧 iframe window 和 teardown 后的 AppBridge 调用均被拒绝；
+- Host download 必须经过 capability、文件约束与用户确认，App 不能用任意导航、外链
+  或自行构造下载绕过 Host。
 
 ## 20. 计划中的自动化入口
 
@@ -793,6 +891,8 @@ T1 manifest / store / reducer unit
 - 同 OCIX 多级联动与循环防护通过；
 - Gateway query 和 confirmation write 通过；
 - Board 重启、项目隔离和敏感信息检查通过；
+- MCP App 内容寻址 snapshot、Board CAS、精确 binding 锁定、无意外 iframe remount、
+  inline 恢复、Host download 等待/确认和重启恢复通过；
 - Focus、Popout、系统层级和 Runner 裁剪通过；
 - disable/enable/upgrade/uninstall 通过；
 - Qwen3.7 Plus 固定流程通过；

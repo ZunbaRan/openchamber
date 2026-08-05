@@ -1,0 +1,38 @@
+{
+  "runId": "2026-08-04-acceptance-02",
+  "date": "2026-08-04",
+  "decision": "NO-GO",
+  "candidate": {
+    "openchamber": {
+      "commit": "95b1954f3c77509e78129a3214142da0464ac46e",
+      "trackedDiffSha256": "abb1c3bb89fd100f8a5dd1080115cf4c1e33ac04846e5c410e957d52b075f7a3",
+      "worktreePorcelainEntries": 106,
+      "committed": false
+    },
+    "opencode": {
+      "commit": "bf12c7a79358ae763733d6e67de93af5d6715226",
+      "trackedDiffSha256": "e4b9ec8a88ec09f8c3e8df87b02a70c14a12df1bec721bfc741e41ee4d575959",
+      "worktreePorcelainEntries": 18,
+      "committed": false
+    },
+    "tldrawMcpApp": {
+      "commit": "cee989b07e4d71016537db997b2c539f96e6d4c3",
+      "clean": true,
+      "appHtmlSha256": "28a0d6a99d75e6f0ea767134782d1c569d6407977d80849d4fa06a2b6038839c",
+      "serverMjsSha256": "6941f2606ca97e321eb941f54eb39918d004f08cae828cab4b244e184fa96d3a"
+    }
+  },
+  "gates": {
+    "A": "PASS",
+    "B": "PASS",
+    "C": "FAIL",
+    "D": "NOT_RUN",
+    "E": "NOT_RUN"
+  },
+  "gateC": {
+    "machineRunId": "2026-08-04T04-00-15-914Z",
+    "ok": false,
+    "error": "Timed out waiting for return to latest revision 5"
+  },
+  "credentialLikeTextFiles": 0
+}

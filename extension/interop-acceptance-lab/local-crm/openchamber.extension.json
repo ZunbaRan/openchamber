@@ -1,0 +1,286 @@
+{
+  "$schema": "openchamber://extension/v1",
+  "id": "com.openchamber.interop.crm",
+  "name": "Interop Local CRM",
+  "shortName": "Interop CRM",
+  "version": "1.0.0",
+  "publisher": "OpenChamber Labs",
+  "agentRouting": {
+    "domain": "interop_crm",
+    "intents": [
+      "interop_crm.overview",
+      "interop_crm.customer.view",
+      "interop_crm.opportunity.advance",
+      "interop_crm.funnel"
+    ],
+    "examples": {
+      "zh-CN": [
+        "打开远程 CRM 概览",
+        "查看客户 CUS-1001",
+        "打开 CRM 销售漏斗",
+        "把商机推进到下一阶段"
+      ],
+      "en": [
+        "Open the local CRM overview",
+        "Show customer CUS-1001",
+        "Open the CRM sales funnel",
+        "Advance an opportunity to the next stage"
+      ]
+    },
+    "dataAuthority": "connected-business-system"
+  },
+  "connectors": [
+    {
+      "id": "crm-api",
+      "type": "http",
+      "baseUrl": "http://127.0.0.1:9510",
+      "auth": {
+        "type": "api-key",
+        "placement": {
+          "type": "header",
+          "name": "Authorization",
+          "prefix": "Bearer "
+        }
+      },
+      "test": {
+        "method": "GET",
+        "path": "/health/local-crm"
+      }
+    }
+  ],
+  "views": [
+    {
+      "id": "com.openchamber.interop.crm.overview",
+      "title": "CRM 概览",
+      "runtime": "declarative",
+      "entry": "ui/declarative/overview.view.json",
+      "tools": ["interop_crm_open_overview"],
+      "routing": {
+        "intents": ["interop_crm.overview"],
+        "priority": 92,
+        "operation": "read"
+      },
+      "displayModes": ["inline", "workspace", "fullscreen"],
+      "dashboard": {
+        "description": "真实客户、商机漏斗和重点跟进列表。",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "scope": { "type": "string", "minLength": 1, "maxLength": 80 }
+          },
+          "required": ["scope"]
+        },
+        "defaultContext": { "scope": "default" },
+        "layout": {
+          "columns": 6,
+          "rows": 6,
+          "minColumns": 4,
+          "maxColumns": 12,
+          "minRows": 4,
+          "maxRows": 14,
+          "overflow": "auto"
+        },
+        "instances": "byContext",
+        "refresh": {
+          "mode": "onFocus",
+          "minimumIntervalSeconds": 30
+        },
+        "events": {
+          "emits": [
+            {
+              "id": "customer.selected",
+              "payloadSchema": {
+                "type": "object",
+                "properties": {
+                  "customerId": { "type": "string", "minLength": 1, "maxLength": 80 }
+                },
+                "required": ["customerId"]
+              }
+            }
+          ],
+          "accepts": []
+        },
+        "popout": { "supported": true }
+      }
+    },
+    {
+      "id": "com.openchamber.interop.crm.customer",
+      "title": "客户工作台",
+      "runtime": "native",
+      "entry": "dist/ui.mjs",
+      "export": "extension",
+      "tools": ["interop_crm_open_customer"],
+      "routing": {
+        "intents": [
+          "interop_crm.customer.view",
+          "interop_crm.opportunity.advance"
+        ],
+        "priority": 95,
+        "operation": "mixed"
+      },
+      "displayModes": ["inline", "workspace"],
+      "dashboard": {
+        "description": "指定客户的联系人、商机和确认式阶段推进。",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "scope": { "type": "string", "minLength": 1, "maxLength": 80 },
+            "customerId": { "type": "string", "minLength": 1, "maxLength": 80 }
+          },
+          "required": ["scope", "customerId"]
+        },
+        "defaultContext": { "scope": "default" },
+        "layout": {
+          "columns": 6,
+          "rows": 7,
+          "minColumns": 4,
+          "maxColumns": 12,
+          "minRows": 4,
+          "maxRows": 16,
+          "overflow": "auto"
+        },
+        "instances": "byContext",
+        "refresh": {
+          "mode": "manual",
+          "minimumIntervalSeconds": 30
+        },
+        "events": {
+          "emits": [],
+          "accepts": ["customer.selected"]
+        },
+        "popout": { "supported": false }
+      }
+    }
+  ],
+  "artifacts": [
+    {
+      "id": "com.openchamber.interop.crm.funnel",
+      "title": "CRM 销售漏斗",
+      "entry": "ui/artifacts/funnel.html",
+      "tools": ["interop_crm_open_funnel"],
+      "routing": {
+        "intents": ["interop_crm.funnel"],
+        "priority": 90,
+        "operation": "read"
+      },
+      "displayModes": ["inline", "workspace", "fullscreen"],
+      "inlineHeight": 560,
+      "capabilities": {
+        "scripts": true,
+        "businessActions": [
+          "com.openchamber.interop.crm.overview.query"
+        ]
+      },
+      "dashboard": {
+        "description": "可点击客户卡片的商机阶段销售漏斗。",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "scope": { "type": "string", "minLength": 1, "maxLength": 80 }
+          },
+          "required": ["scope"]
+        },
+        "defaultContext": { "scope": "default" },
+        "layout": {
+          "columns": 6,
+          "rows": 8,
+          "minColumns": 4,
+          "maxColumns": 12,
+          "minRows": 5,
+          "maxRows": 18,
+          "overflow": "auto"
+        },
+        "instances": "byContext",
+        "refresh": {
+          "mode": "manual",
+          "minimumIntervalSeconds": 30
+        },
+        "events": {
+          "emits": [
+            {
+              "id": "customer.selected",
+              "payloadSchema": {
+                "type": "object",
+                "properties": {
+                  "customerId": { "type": "string", "minLength": 1, "maxLength": 80 }
+                },
+                "required": ["customerId"]
+              }
+            }
+          ],
+          "accepts": []
+        },
+        "popout": { "supported": true }
+      }
+    }
+  ],
+  "links": [
+    {
+      "id": "overview-customer-to-workspace",
+      "from": "com.openchamber.interop.crm.overview",
+      "event": "customer.selected",
+      "to": "com.openchamber.interop.crm.customer",
+      "map": {
+        "scope": "$source.context.scope",
+        "customerId": "$event.payload.customerId"
+      },
+      "relationship": "customer",
+      "placement": "adjacent"
+    },
+    {
+      "id": "funnel-customer-to-workspace",
+      "from": "com.openchamber.interop.crm.funnel",
+      "event": "customer.selected",
+      "to": "com.openchamber.interop.crm.customer",
+      "map": {
+        "scope": "$source.context.scope",
+        "customerId": "$event.payload.customerId"
+      },
+      "relationship": "customer",
+      "placement": "adjacent"
+    }
+  ],
+  "actions": [
+    {
+      "id": "com.openchamber.interop.crm.overview.query",
+      "connector": "crm-api",
+      "risk": "read",
+      "permission": "allow",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/overview"
+      }
+    },
+    {
+      "id": "com.openchamber.interop.crm.customer.query",
+      "connector": "crm-api",
+      "risk": "read",
+      "permission": "allow",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/customer"
+      }
+    },
+    {
+      "id": "com.openchamber.interop.crm.opportunity.advance",
+      "connector": "crm-api",
+      "risk": "write",
+      "permission": "ask",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/opportunity/advance"
+      },
+      "confirmation": {
+        "title": "推进该商机阶段？",
+        "description": "此操作会修改远程 CRM 中的商机阶段。"
+      }
+    }
+  ],
+  "permissions": {
+    "network": ["http://127.0.0.1:9510"]
+  },
+  "trust": {
+    "mode": "native-code",
+    "signature": "development"
+  }
+}

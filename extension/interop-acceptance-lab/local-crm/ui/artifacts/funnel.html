@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CRM 销售漏斗</title>
+  <style>
+    :root { color: var(--ocix-foreground); font: 14px/1.45 system-ui, sans-serif; }
+    * { box-sizing: border-box; }
+    body { margin: 0; padding: 16px; color: var(--ocix-foreground); background: var(--ocix-surface); }
+    header { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+    h1, h2 { margin: 0; }
+    h1 { font-size: 18px; }
+    h2 { font-size: 14px; }
+    p { margin: 4px 0 0; }
+    button { border: 1px solid var(--ocix-border); border-radius: 9px; padding: 7px 11px; color: var(--ocix-foreground); background: var(--ocix-surface-muted); cursor: pointer; }
+    button:hover { background: var(--ocix-selection); color: var(--ocix-selection-foreground); }
+    button:disabled { cursor: wait; opacity: .65; }
+    .subtle { color: var(--ocix-muted-foreground); }
+    .panel { margin-top: 14px; border: 1px solid var(--ocix-border); border-radius: 14px; background: var(--ocix-surface-muted); padding: 14px; }
+    .funnel { display: grid; gap: 9px; margin-top: 12px; }
+    .stage { display: grid; grid-template-columns: 110px minmax(80px, 1fr) 42px; align-items: center; gap: 10px; }
+    .track { height: 30px; border-radius: 9px; overflow: hidden; background: var(--ocix-surface); border: 1px solid var(--ocix-border); }
+    .fill { min-width: 4px; height: 100%; background: linear-gradient(90deg, var(--ocix-primary), var(--ocix-info)); }
+    .count { text-align: right; font-variant-numeric: tabular-nums; }
+    .customers { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 8px; margin-top: 12px; }
+    .customer { text-align: left; background: var(--ocix-surface); }
+    .customer strong, .customer span { display: block; }
+    .customer span { margin-top: 3px; color: var(--ocix-muted-foreground); }
+    #status { min-height: 22px; margin-top: 10px; color: var(--ocix-muted-foreground); }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <h1>CRM 销售漏斗</h1>
+      <p class="subtle">来自 Local CRM API 的阶段分布；点击客户可联动打开必填 customerId 的客户详情。</p>
+    </div>
+    <button id="refresh" type="button">刷新</button>
+  </header>
+  <section class="panel" aria-labelledby="funnel-title">
+    <h2 id="funnel-title">商机阶段</h2>
+    <div id="funnel" class="funnel"></div>
+  </section>
+  <section class="panel" aria-labelledby="customers-title">
+    <h2 id="customers-title">客户管道</h2>
+    <div id="customers" class="customers"></div>
+  </section>
+  <div id="status" aria-live="polite">等待 OpenChamber Host…</div>
+  <script>
+    const funnel = document.querySelector('#funnel');
+    const customers = document.querySelector('#customers');
+    const status = document.querySelector('#status');
+    const refresh = document.querySelector('#refresh');
+    const stages = [
+      ['lead', '线索'],
+      ['qualified', '已验证'],
+      ['proposal', '方案'],
+      ['negotiation', '谈判'],
+      ['won', '赢单'],
+    ];
+
+    const render = (payload) => {
+      const pipeline = payload && typeof payload.pipeline === 'object' ? payload.pipeline : {};
+      const max = Math.max(1, ...stages.map(([id]) => Number(pipeline[id]) || 0));
+      funnel.replaceChildren(...stages.map(([id, label]) => {
+        const count = Number(pipeline[id]) || 0;
+        const row = document.createElement('div');
+        row.className = 'stage';
+        const name = document.createElement('span');
+        name.textContent = label;
+        const track = document.createElement('div');
+        track.className = 'track';
+        const fill = document.createElement('div');
+        fill.className = 'fill';
+        fill.style.width = `${Math.max(4, (count / max) * 100)}%`;
+        track.append(fill);
+        const value = document.createElement('strong');
+        value.className = 'count';
+        value.textContent = String(count);
+        row.append(name, track, value);
+        return row;
+      }));
+
+      const records = Array.isArray(payload.customers) ? payload.customers : [];
+      customers.replaceChildren(...records.map((customer) => {
+        const card = document.createElement('button');
+        card.className = 'customer';
+        card.type = 'button';
+        const title = document.createElement('strong');
+        title.textContent = customer.name || customer.id;
+        const detail = document.createElement('span');
+        detail.textContent = `${customer.owner || '—'} · ¥${Number(customer.pipelineValue || 0).toLocaleString()}`;
+        card.append(title, detail);
+        card.addEventListener('click', () => {
+          window.openchamber.dashboard.emit('customer.selected', { customerId: customer.id });
+          status.textContent = `已请求打开 ${customer.name || customer.id}`;
+        });
+        return card;
+      }));
+      status.textContent = `已加载 ${records.length} 个客户、${Number(payload.activeOpportunityCount || 0)} 个活跃商机。`;
+    };
+
+    const load = async () => {
+      refresh.disabled = true;
+      status.textContent = '正在加载 Local CRM 销售漏斗…';
+      try {
+        const data = await window.openchamber.business.query(
+          'com.openchamber.interop.crm.overview.query',
+          { scope: 'default' },
+        );
+        render(data);
+      } catch (error) {
+        status.textContent = error instanceof Error ? error.message : '销售漏斗加载失败';
+      } finally {
+        refresh.disabled = false;
+      }
+    };
+
+    refresh.addEventListener('click', load);
+    addEventListener('openchamber:host-init', load, { once: true });
+  </script>
+</body>
+</html>

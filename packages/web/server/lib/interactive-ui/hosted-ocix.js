@@ -3,6 +3,8 @@ import fsPromises from 'node:fs/promises';
 import nodePath from 'node:path';
 
 export const HOSTED_OCIX_MANIFEST_SCHEMA = 'openchamber://hosted-ocix-manifest/v1';
+export const HOSTED_OCIX_CACHE_INTEGRITY_SCHEMA = 'openchamber://hosted-ocix-cache-integrity/v1';
+export const HOSTED_OCIX_SIGNED_MANIFEST_FILE = '.openchamber.hosted-manifest.json';
 
 const ID_PATTERN = /^[a-z0-9]+(?:[._-][a-z0-9]+)+$/i;
 const SEMVER_PATTERN = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
@@ -14,6 +16,7 @@ const MAX_RESOURCES = 512;
 const DEFAULT_TTL_SECONDS = 15 * 60;
 const MIN_TTL_SECONDS = 60;
 const MAX_TTL_SECONDS = 24 * 60 * 60;
+const MEDIA_TYPE_PATTERN = /^[a-z0-9!#$&^_.+-]+\/[a-z0-9!#$&^_.+-]+$/i;
 
 export class HostedOcixError extends Error {
   constructor(message, code = 'hosted_ocix_error', status = 400, details = undefined) {
@@ -41,11 +44,29 @@ const canonicalStringify = (value) => JSON.stringify(canonicalize(value));
 
 const sha256 = (cryptoImpl, value) => `sha256-${cryptoImpl.createHash('sha256').update(value).digest('base64')}`;
 
+const normalizeMediaType = (value, label) => {
+  const mediaType = typeof value === 'string'
+    ? value.split(';', 1)[0].trim().toLowerCase()
+    : '';
+  if (!MEDIA_TYPE_PATTERN.test(mediaType)) {
+    throw new HostedOcixError(`${label} is invalid`, 'invalid_hosted_resource');
+  }
+  return mediaType;
+};
+
 const safeRelativePath = (value) => {
   if (typeof value !== 'string' || !value || value.includes('\\') || value.includes('\0')) return null;
   const normalized = nodePath.posix.normalize(value);
   if (normalized !== value || normalized.startsWith('/') || normalized === '..' || normalized.startsWith('../')) return null;
   return normalized;
+};
+
+const hostedResourceReservedNamespace = (resourcePath) => {
+  const [root] = resourcePath.split('/');
+  if (root === 'agent-runtime') return 'agent-runtime';
+  if (root === '.openchamber' || root.startsWith('.openchamber.')) return '.openchamber';
+  if (root === 'openchamber.extension.json') return 'openchamber.extension.json';
+  return null;
 };
 
 const normalizeHttpsUrl = (value, label) => {
@@ -96,15 +117,22 @@ export const normalizeHostedDelivery = (manifest) => {
       'invalid_hosted_delivery',
     );
   }
+  const minimumRuntimeVersion = typeof manifest.delivery.minimumRuntimeVersion === 'string'
+    ? manifest.delivery.minimumRuntimeVersion.trim()
+    : undefined;
+  if (minimumRuntimeVersion !== undefined && !SEMVER_PATTERN.test(minimumRuntimeVersion)) {
+    throw new HostedOcixError(
+      'Hosted minimumRuntimeVersion must use semantic versioning',
+      'invalid_hosted_delivery',
+    );
+  }
   const initialPermissions = normalizeHostedPermissions(manifest.delivery.initialPermissions ?? {});
   return {
     type: 'hosted',
     manifestUrl,
     ttlSeconds,
     updatePolicy: 'permission-stable',
-    minimumRuntimeVersion: typeof manifest.delivery.minimumRuntimeVersion === 'string'
-      ? manifest.delivery.minimumRuntimeVersion.trim()
-      : undefined,
+    minimumRuntimeVersion,
     initialPermissions,
   };
 };
@@ -122,6 +150,7 @@ export const normalizeHostedPermissions = (value) => {
     agentToolNames: normalizeStringSet(value.agentToolNames, 'Hosted Agent Tool names'),
     clipboard: value.clipboard === true,
     popups: value.popups === true,
+    nativeCode: value.nativeCode === true,
   };
 };
 
@@ -143,6 +172,7 @@ export const hostedPermissionExpansion = (approvedValue, candidateValue) => {
   }
   if (!approved.clipboard && candidate.clipboard) added.clipboard = true;
   if (!approved.popups && candidate.popups) added.popups = true;
+  if (!approved.nativeCode && candidate.nativeCode) added.nativeCode = true;
   return Object.keys(added).length ? added : null;
 };
 
@@ -192,12 +222,29 @@ const derivePermissions = (document, resources) => {
     ].flatMap((surface) => Array.isArray(surface?.tools) ? surface.tools : []),
     'Hosted Agent Tool names',
   );
+  const nativeCode = Array.isArray(document.extension?.views)
+    && document.extension.views.some((view) => view?.runtime === 'native');
+  if (nativeCode && document.extension?.trust?.mode !== 'native-code') {
+    throw new HostedOcixError(
+      'Hosted Native surfaces require extension trust.mode = native-code',
+      'hosted_native_trust_required',
+      403,
+    );
+  }
+  if (nativeCode && !declared.nativeCode) {
+    throw new HostedOcixError(
+      'Hosted Native surfaces must declare nativeCode in their permission summary',
+      'hosted_permission_mismatch',
+      403,
+    );
+  }
   const merged = {
     ...declared,
     resourceOrigins: [...new Set([...declared.resourceOrigins, ...resourceOrigins])].sort(),
     networkOrigins: [...new Set([...declared.networkOrigins, ...extensionNetwork])].sort(),
     actionIds: [...new Set([...declared.actionIds, ...actionIds])].sort(),
     agentToolNames: [...new Set([...declared.agentToolNames, ...agentToolNames])].sort(),
+    nativeCode,
   };
   for (const origin of resourceOrigins) {
     if (!declared.resourceOrigins.includes(origin)) {
@@ -288,17 +335,25 @@ export const verifyHostedOcixManifest = ({
       throw new HostedOcixError('Hosted resource is invalid', 'invalid_hosted_resource');
     }
     const path = safeRelativePath(resource.path);
-    if (!path || path === 'openchamber.extension.json' || seen.has(path)) {
+    if (!path || seen.has(path)) {
       throw new HostedOcixError('Hosted resource path is invalid or duplicated', 'invalid_hosted_resource');
     }
+    const reservedNamespace = hostedResourceReservedNamespace(path);
+    if (reservedNamespace) {
+      throw new HostedOcixError(
+        `Hosted resource path conflicts with the host-reserved ${reservedNamespace} namespace: ${path}`,
+        'invalid_hosted_resource',
+        400,
+        { path, reservedNamespace },
+      );
+    }
     seen.add(path);
-    if (!SHA256_PATTERN.test(resource.sha256 ?? '')
-      || typeof resource.mimeType !== 'string'
-      || !resource.mimeType.trim()) {
+    if (!SHA256_PATTERN.test(resource.sha256 ?? '')) {
       throw new HostedOcixError(`Hosted resource metadata is invalid: ${path}`, 'invalid_hosted_resource');
     }
     const url = normalizeHttpsUrl(resource.url, `Hosted resource ${path}`).toString();
-    return { path, url, mimeType: resource.mimeType.trim(), sha256: resource.sha256 };
+    const mimeType = normalizeMediaType(resource.mimeType, `Hosted resource MIME type for ${path}`);
+    return { path, url, mimeType, sha256: resource.sha256 };
   });
   const permissions = derivePermissions(document, resources);
   return {
@@ -308,6 +363,7 @@ export const verifyHostedOcixManifest = ({
     extension: canonicalize(document.extension),
     resources,
     permissions,
+    signedDocument: canonicalize(document),
     manifestHash: sha256(cryptoImpl, Buffer.from(canonicalStringify(document))),
   };
 };
@@ -382,6 +438,16 @@ export const materializeHostedOcix = async ({
   cryptoImpl = nodeCrypto,
   validate = async () => {},
 }) => {
+  if (!isRecord(verified?.signedDocument)
+    || !SHA256_PATTERN.test(verified?.manifestHash ?? '')
+    || sha256(cryptoImpl, Buffer.from(canonicalStringify(verified.signedDocument)))
+      !== verified.manifestHash) {
+    throw new HostedOcixError(
+      'Hosted OCIX materialization requires its verified signed manifest',
+      'hosted_cache_integrity_unavailable',
+      409,
+    );
+  }
   const destination = pathImpl.join(cacheDirectory, verified.extensionId, verified.version);
   const staging = pathImpl.join(cacheDirectory, '.staging', cryptoImpl.randomUUID());
   let total = 0;
@@ -407,6 +473,28 @@ export const materializeHostedOcix = async ({
           `Hosted resource request failed or redirected across origins: ${resource.path}`,
           'hosted_resource_unavailable',
           502,
+        );
+      }
+      let responseMimeType;
+      try {
+        responseMimeType = normalizeMediaType(
+          response.headers?.get?.('content-type'),
+          `Hosted resource response MIME type for ${resource.path}`,
+        );
+      } catch {
+        throw new HostedOcixError(
+          `Hosted resource response is missing a valid Content-Type: ${resource.path}`,
+          'hosted_resource_mime_mismatch',
+          403,
+          { expected: resource.mimeType, actual: response.headers?.get?.('content-type') ?? null },
+        );
+      }
+      if (responseMimeType !== resource.mimeType) {
+        throw new HostedOcixError(
+          `Hosted resource Content-Type does not match its signed manifest: ${resource.path}`,
+          'hosted_resource_mime_mismatch',
+          403,
+          { expected: resource.mimeType, actual: responseMimeType },
         );
       }
       const bytes = await readResponseBytes(response, MAX_RESOURCE_BYTES, `Hosted resource ${resource.path}`);
@@ -436,6 +524,13 @@ export const materializeHostedOcix = async ({
       pathImpl.join(staging, 'openchamber.extension.json'),
       Buffer.from(`${JSON.stringify(verified.extension, null, 2)}\n`),
     );
+    await atomicWrite(
+      fsImpl,
+      pathImpl,
+      cryptoImpl,
+      pathImpl.join(staging, HOSTED_OCIX_SIGNED_MANIFEST_FILE),
+      Buffer.from(canonicalStringify(verified.signedDocument)),
+    );
     await validate(staging);
     await fsImpl.mkdir(pathImpl.dirname(destination), { recursive: true, mode: 0o700 });
     await fsImpl.rm(destination, { recursive: true, force: true });
@@ -445,4 +540,171 @@ export const materializeHostedOcix = async ({
     await fsImpl.rm(staging, { recursive: true, force: true }).catch(() => {});
     throw error;
   }
+};
+
+const collectCacheFiles = async ({
+  directory,
+  current = directory,
+  fsImpl,
+  pathImpl,
+  result = [],
+}) => {
+  const entries = await fsImpl.readdir(current, { withFileTypes: true });
+  for (const entry of entries) {
+    const absolute = pathImpl.join(current, entry.name);
+    const stat = await fsImpl.lstat(absolute);
+    if (stat.isSymbolicLink()) {
+      throw new HostedOcixError(
+        'Hosted OCIX cache contains a symbolic link',
+        'hosted_cache_integrity_failed',
+        409,
+      );
+    }
+    if (stat.isDirectory()) {
+      await collectCacheFiles({ directory, current: absolute, fsImpl, pathImpl, result });
+      continue;
+    }
+    if (!stat.isFile()) {
+      throw new HostedOcixError(
+        'Hosted OCIX cache contains an unsupported filesystem entry',
+        'hosted_cache_integrity_failed',
+        409,
+      );
+    }
+    result.push(pathImpl.relative(directory, absolute).split(pathImpl.sep).join('/'));
+  }
+  return result;
+};
+
+export const createHostedOcixCacheIntegrity = ({
+  verified,
+  additionalFiles = new Map(),
+  cryptoImpl = nodeCrypto,
+} = {}) => {
+  if (!isRecord(verified)
+    || !ID_PATTERN.test(verified.extensionId ?? '')
+    || !SEMVER_PATTERN.test(verified.version ?? '')
+    || !SHA256_PATTERN.test(verified.manifestHash ?? '')
+    || !isRecord(verified.signedDocument)
+    || sha256(cryptoImpl, Buffer.from(canonicalStringify(verified.signedDocument)))
+      !== verified.manifestHash) {
+    throw new HostedOcixError(
+      'Hosted OCIX cache integrity source is invalid',
+      'hosted_cache_integrity_unavailable',
+      409,
+    );
+  }
+  const files = {
+    [HOSTED_OCIX_SIGNED_MANIFEST_FILE]: verified.manifestHash,
+    'openchamber.extension.json': sha256(
+      cryptoImpl,
+      Buffer.from(`${JSON.stringify(verified.extension, null, 2)}\n`),
+    ),
+  };
+  for (const resource of verified.resources ?? []) {
+    if (!safeRelativePath(resource?.path) || !SHA256_PATTERN.test(resource?.sha256 ?? '')) {
+      throw new HostedOcixError(
+        'Hosted OCIX cache integrity resource is invalid',
+        'hosted_cache_integrity_unavailable',
+        409,
+      );
+    }
+    files[resource.path] = resource.sha256;
+  }
+  const entries = additionalFiles instanceof Map
+    ? additionalFiles.entries()
+    : Object.entries(additionalFiles ?? {});
+  for (const [relativePath, content] of entries) {
+    const normalized = safeRelativePath(relativePath);
+    if (!normalized || files[normalized] !== undefined) {
+      throw new HostedOcixError(
+        'Hosted OCIX cache integrity contains an invalid or duplicate path',
+        'hosted_cache_integrity_unavailable',
+        409,
+      );
+    }
+    files[normalized] = sha256(
+      cryptoImpl,
+      Buffer.isBuffer(content) ? content : Buffer.from(String(content)),
+    );
+  }
+  return {
+    $schema: HOSTED_OCIX_CACHE_INTEGRITY_SCHEMA,
+    extensionId: verified.extensionId,
+    version: verified.version,
+    manifestHash: verified.manifestHash,
+    files: Object.fromEntries(Object.entries(files).sort(([left], [right]) => left.localeCompare(right))),
+  };
+};
+
+export const verifyHostedOcixCacheIntegrity = async ({
+  directory,
+  integrity,
+  fsImpl = fsPromises,
+  pathImpl = nodePath,
+  cryptoImpl = nodeCrypto,
+} = {}) => {
+  if (!isRecord(integrity)
+    || integrity.$schema !== HOSTED_OCIX_CACHE_INTEGRITY_SCHEMA
+    || !ID_PATTERN.test(integrity.extensionId ?? '')
+    || !SEMVER_PATTERN.test(integrity.version ?? '')
+    || !SHA256_PATTERN.test(integrity.manifestHash ?? '')
+    || !isRecord(integrity.files)
+    || Object.keys(integrity.files).length === 0
+    || Object.entries(integrity.files).some(
+      ([filePath, hash]) => !safeRelativePath(filePath) || !SHA256_PATTERN.test(hash ?? ''),
+    )) {
+    throw new HostedOcixError(
+      'Hosted OCIX cache has no valid signed integrity record',
+      'hosted_cache_integrity_unavailable',
+      409,
+    );
+  }
+  const root = pathImpl.resolve(directory ?? '');
+  const expectedPaths = Object.keys(integrity.files).sort();
+  let actualPaths;
+  try {
+    actualPaths = (await collectCacheFiles({
+      directory: root,
+      fsImpl,
+      pathImpl,
+    })).sort();
+  } catch (error) {
+    if (error?.code === 'ENOENT') {
+      throw new HostedOcixError(
+        'Hosted OCIX cache is missing',
+        'hosted_cache_integrity_failed',
+        409,
+      );
+    }
+    throw error;
+  }
+  if (expectedPaths.length !== actualPaths.length
+    || expectedPaths.some((filePath, index) => filePath !== actualPaths[index])) {
+    throw new HostedOcixError(
+      'Hosted OCIX cache files do not match the signed integrity record',
+      'hosted_cache_integrity_failed',
+      409,
+    );
+  }
+  for (const relativePath of expectedPaths) {
+    const target = pathImpl.join(root, ...relativePath.split('/'));
+    const relative = pathImpl.relative(root, target);
+    if (!relative || relative.startsWith('..') || pathImpl.isAbsolute(relative)) {
+      throw new HostedOcixError(
+        'Hosted OCIX cache integrity path is invalid',
+        'hosted_cache_integrity_failed',
+        409,
+      );
+    }
+    const content = await fsImpl.readFile(target);
+    if (sha256(cryptoImpl, content) !== integrity.files[relativePath]) {
+      throw new HostedOcixError(
+        `Hosted OCIX cache file was modified: ${relativePath}`,
+        'hosted_cache_integrity_failed',
+        409,
+      );
+    }
+  }
+  return { status: 'ready', files: expectedPaths.length };
 };

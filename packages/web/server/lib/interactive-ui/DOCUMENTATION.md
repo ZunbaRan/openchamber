@@ -39,6 +39,11 @@ Managed packages have two delivery modes:
 - `GET /api/interactive-ui/artifacts/:artifactId/document`
 - `GET /api/interactive-ui/artifacts/:artifactId/metadata`
 - `DELETE /api/interactive-ui/artifacts/cache`
+- `POST /api/interactive-ui/workbench/snapshots`
+- `GET /api/interactive-ui/workbench/snapshots/:snapshotRef`
+- `GET /api/interactive-ui/workbench/boards/:projectId`
+- Workbench Tile creation, layout, migration, removal, and lifecycle routes under `/api/interactive-ui/workbench/boards/:projectId/*`
+- `POST /api/interactive-ui/workbench/boards/:projectId/tiles/:tileId/replace-generated-snapshot`
 
 The generated-Artifact capability response is runtime-specific. Managed Desktop defaults Scripts on and reports `scriptsMode: "supported"` because Electron supplies an independently terminable Runner; `OPENCHAMBER_HTML_ARTIFACTS_SCRIPTS=false` is its kill switch. Web remains default-off and reports `"experimental"` only after explicit opt-in. This gate does not control signed installed HTML Artifacts: those are package-reviewed surfaces, still isolated by the same opaque-origin sandbox and CSP.
 
@@ -69,14 +74,18 @@ These routes are registered before the generic OpenCode `/api` proxy. Only Nativ
 - For local managed OpenCode, enabled OCIX Tools are copied as OpenChamber-owned global Tools in `~/.config/opencode/tools`; Skills are copied to `~/.config/opencode/skills`. Persisted owner/version/hash metadata drives enable, disable, update, rollback, and uninstall.
 - Reconciliation never overwrites unmanaged or externally modified global files. Global file changes and manager-state writes roll back together on failure. A bounded allowlist of exact hashes for previously shipped OpenChamber built-ins supports one-time ownership migration and upgrade; a file with any other hash remains user-owned and produces a conflict.
 - Every OpenChamber-owned Tool/Skill write has a publisher/extension-namespaced ownership record under `<resolved-opencode-config>/openchamber`. Install records contain owner and install-time hash; update/uninstall changes only matching files. A user-modified global file is preserved and reported as a conflict.
-- Hosted OCIX accepts only HTTPS manifest/resource URLs (loopback HTTP is development-only), rejects cross-origin redirects, verifies publisher signature and every resource SHA256, validates minimum runtime, and materializes only normalized OCIX surfaces. A failed fetch, signature, hash, or compatibility check keeps the last verified version.
-- Hosted permission, origin, action, or credential-scope expansion creates a pending update and requires a new explicit confirmation. Permission-equivalent updates may advance automatically after TTL refresh.
+- Hosted OCIX accepts only HTTPS manifest/resource URLs (loopback HTTP is development-only), rejects cross-origin redirects, verifies publisher signature, every resource SHA256, and actual HTTP `Content-Type` against the signed `mimeType`, validates minimum runtime, and materializes only normalized OCIX surfaces. A failed fetch, signature, hash, MIME, or compatibility check may keep only a last-good version whose local cache still passes a fresh exact-file integrity scan.
+- Hosted cache integrity covers the original signed Hosted manifest, the generated runtime manifest, every signed remote resource, and every deterministic Agent Tool shim. Before enable, process initialization, runtime exposure, or Agent Runtime reconciliation, OpenChamber re-verifies the cached manifest with the currently trusted publisher key, rebuilds the expected integrity index from that signed document, and then hashes the exact local file set. A missing/untrusted signature, edited integrity record, symlink, extra file, missing file, or hash mismatch fails closed.
+- Hosted permission, origin, action, credential-scope, or Native-code expansion creates a pending update and requires a new explicit confirmation. Native surfaces also require `trust.mode = "native-code"`. Permission-equivalent updates may advance automatically after TTL refresh.
 - Hosted pages cannot call arbitrary network APIs. Resource loading is owned by the Hosted loader; business calls use a generated lightweight global Tool shim and the existing Business Gateway. Connector credentials remain server-side and the third-party server remains responsible for key RBAC/ABAC and revocation.
 - Optional `agentRouting`, `views[].routing`, and `artifacts[].routing` metadata is validated at package and runtime load. Identifiers, counts, priority, operation, data-authority enums, and multi-surface declarations are bounded.
 - The capability route exposes only extension/tool/intent/operation/data-authority IDs plus coarse connection state. It excludes examples, display names, Connector origins, credential identifiers, Keys, Tokens, and business response data.
 - The fixed routing prompt prioritizes matching business Tools over generic generated UI, caps output at 12,000 characters, and tells external runtimes to call only Tools actually present in their current Tool set.
 - Artifact envelopes use an independent exact schema and are revalidated on both client and server. The envelope is capped at 256 KiB, HTML at 192 KiB, markup at 4,000 elements, and display height at 120-900 px.
 - `artifact-store.js` stores content-addressed documents under the OpenChamber data directory with owner-only permissions and atomic directory replacement. The hash covers executable content, so title or display metadata cannot create duplicate documents.
+- `workbench-store.js` stores Generated Interactive UI, Generated HTML Artifact, and pinned MCP App envelopes as immutable, content-addressed snapshot records under the Workbench data root. A read recomputes the digest and rejects a malformed, missing, oversized, or content/reference-mismatched record; the mutable Board stores only the current snapshot reference.
+- Replacing a generated Tile snapshot is a compare-and-swap operation. The caller supplies the active Board `expectedRevision`; the Store runs under the project write lock, rechecks Tile ownership and form, writes the complete immutable snapshot first, and only then increments the Board revision and atomically publishes the new reference. A stale revision or failed snapshot write leaves the previous Board pointer authoritative.
+- A pinned MCP App snapshot cannot change its AppBridge authority while updating result/model context. `server`, `resourceUri`, and `toolKey` must exactly match the previously persisted snapshot or replacement fails with `workbench_snapshot_binding_mismatch`. Installed Tiles cannot use this generated-snapshot replacement route.
 - History replay calls `materialize` again. Cache deletion is safe because the Tool result remains the source of truth and deterministically recreates the same Artifact ID.
 - Cached metadata and document bytes are compared with the document deterministically derived from the authoritative Envelope. Missing or mismatched entries are atomically rebuilt instead of being trusted by ID alone.
 - Static documents reject non-fragment `href`/`xlink:href` targets at materialization. Relative subresources that remain useful in authored markup are still blocked by document CSP; the Chromium verifier asserts that no request reaches the loopback target.
@@ -97,6 +106,20 @@ Create and validate a repository-compatible mixed Interactive UI + HTML Artifact
 node scripts/interactive-ui-extension.mjs create /absolute/new/path --id com.acme.operations --name "Acme Operations" --tool-prefix operations
 node scripts/interactive-ui-extension.mjs validate /absolute/new/path
 ```
+
+Create and validate a manifest-only Hosted OCIX thin package:
+
+```bash
+node scripts/interactive-ui-extension.mjs create /absolute/new/hosted-path \
+  --delivery hosted \
+  --id com.acme.hosted \
+  --name "Acme Hosted" \
+  --manifest-url https://apps.example.com/manifest.json \
+  --initial-permissions /absolute/hosted-permissions.json
+node scripts/interactive-ui-extension.mjs validate /absolute/new/hosted-path
+```
+
+The same `pack` and `verify` commands handle Local and Hosted delivery. Hosted source validation and packaging reject every file other than `openchamber.extension.json`.
 
 Validation reuses this runtime for discovery, manifest normalization, entry containment, descriptor/bundle/HTML hardening checks, then adds static Declarative primitive/binding/action checks. It substitutes non-secret placeholder values for referenced environment variables, never calls upstream business APIs, and never executes Native code.
 

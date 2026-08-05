@@ -1,0 +1,92 @@
+{
+  "$schema": "openchamber://declarative-view/v1",
+  "id": "com.openchamber.interop.hosted-ops.incident-detail",
+  "title": "事件详情",
+  "queries": {
+    "incident": {
+      "action": "com.openchamber.interop.hosted-ops.incident.query",
+      "input": {
+        "incidentId": {
+          "$path": "context.incidentId"
+        },
+        "environment": {
+          "$path": "context.environment",
+          "fallback": "production"
+        }
+      }
+    }
+  },
+  "layout": {
+    "type": "stack",
+    "children": [
+      {
+        "type": "metric-grid",
+        "columns": { "default": 4 },
+        "items": [
+          {
+            "label": "事件",
+            "value": {
+              "$path": "query.incident.incident.id",
+              "fallback": "—"
+            }
+          },
+          {
+            "label": "级别",
+            "value": {
+              "$path": "query.incident.incident.severityLabel",
+              "fallback": "—"
+            }
+          },
+          {
+            "label": "状态",
+            "value": {
+              "$path": "query.incident.incident.statusLabel",
+              "fallback": "—"
+            }
+          },
+          {
+            "label": "修订",
+            "value": {
+              "$path": "query.incident.incident.revision",
+              "fallback": 0,
+              "format": "number"
+            }
+          }
+        ]
+      },
+      {
+        "type": "data-table",
+        "title": "事件记录",
+        "data": {
+          "$path": "query.incident.incidents",
+          "fallback": []
+        },
+        "rowKey": "id",
+        "columns": [
+          { "key": "title", "label": "标题" },
+          { "key": "serviceId", "label": "服务" },
+          { "key": "summary", "label": "摘要" },
+          { "key": "statusLabel", "label": "状态", "render": "status" }
+        ],
+        "rowActions": [
+          {
+            "id": "acknowledge-incident",
+            "label": "确认事件",
+            "type": "business",
+            "action": "com.openchamber.interop.hosted-ops.incident.acknowledge",
+            "input": {
+              "incidentId": { "$row": "id" },
+              "revision": { "$row": "revision" }
+            }
+          }
+        ]
+      },
+      {
+        "type": "callout",
+        "tone": "warning",
+        "title": "写操作确认",
+        "value": "确认事件会经过 OpenChamber 的 ask 权限流程，并携带当前 revision 防止覆盖并发更新。"
+      }
+    ]
+  }
+}

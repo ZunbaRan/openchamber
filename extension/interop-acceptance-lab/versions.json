@@ -1,0 +1,51 @@
+{
+  "hostedOcix": {
+    "baseline": "1.0.0",
+    "permissionEquivalentPatch": "1.0.1",
+    "permissionExpandedMinor": "1.1.0",
+    "negativeFixture": "tampered"
+  },
+  "legacyMcp": {
+    "repository": "https://github.com/modelcontextprotocol/servers",
+    "release": "2025.9.12",
+    "tagObject": "73b44d3bb470913d7cb3672e973e2cc3c74362a9",
+    "commit": "5e84bac41739971c85aeb41d7e04c71fbaa9f16a",
+    "npmPackage": "@modelcontextprotocol/server-everything@2025.9.12",
+    "npmIntegrity": "sha512-onwQ9KXyRVnC15ZrGIkcbsepONfAg6xjRAxYMjYz8rjRy8ILzvPEN40OEkiBlsjrRhbJLHJlW2/VNsrlvgQnUw=="
+  },
+  "excalidraw": {
+    "repository": "https://github.com/excalidraw/excalidraw-mcp",
+    "release": "v0.3.2",
+    "commit": "a617657e56337bf195a27612b9d595e539e35c55",
+    "asset": "excalidraw-mcp-app.mcpb",
+    "assetSha256": "2b494012b5fee5937f9f7b86f04a76cc4a91ec843ee3339b93e4e15e415274ff",
+    "officialRemote": "https://mcp.excalidraw.com/mcp"
+  },
+  "tldrawMcpApp": {
+    "distribution": "independent-repository",
+    "localRepositoryName": "tldraw-mcp-app",
+    "version": "0.1.0",
+    "defaultImage": "tldraw-mcp-app:local",
+    "protocolVersion": "2026-07-28",
+    "serverPackage": "@modelcontextprotocol/server@2.0.0",
+    "clientPackage": "@modelcontextprotocol/client@2.0.0",
+    "extAppsPackage": "@modelcontextprotocol/ext-apps@1.7.5",
+    "resourceUri": "ui://openchamber/interop-tldraw-contract-v5.0.2",
+    "appHtmlSha256": "dc088fdd59f90541748419f40b12848a6b2da6661d765e0b09be23c3710813c8",
+    "serverBundleBytes": 639990,
+    "serverBundleSha256": "39fe8f87595f4923efd13a7881d3d443c2cefe2596d97e35b9bae55fece05b05",
+    "upstreamTldraw": {
+      "repository": "https://github.com/tldraw/tldraw",
+      "release": "v5.0.2",
+      "tagObject": "daa23d861cd285491fb9f5c38c9da6133ef079ca",
+      "commit": "6aa92784896c465d2c185b50d9e5448b4f322986",
+      "sourceArchiveSha256": "fe6aca7ea06bb57aa13ea499cadf25a6027d7efcae6605b441161bd3c861b869"
+    },
+    "note": "OpenChamber consumes this service through an MCP URL or external image and no longer owns its implementation."
+  },
+  "quickTunnel": {
+    "image": "cloudflare/cloudflared:2026.5.0",
+    "digest": "sha256:59bab8d3aceec09bf6bdb07d6beca0225ca5cd7ab79436a87ea97978fe1dc4f9",
+    "profile": "tunnel"
+  }
+}

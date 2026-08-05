@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>服务依赖拓扑</title>
+  <style>
+    :root { color: var(--ocix-foreground); font: 14px/1.45 system-ui, sans-serif; }
+    * { box-sizing: border-box; }
+    body { margin: 0; padding: 16px; color: var(--ocix-foreground); background: var(--ocix-surface); }
+    header, .legend { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+    h1 { margin: 0; font-size: 18px; }
+    p { margin: 4px 0 0; }
+    button { border: 1px solid var(--ocix-border); border-radius: 9px; padding: 7px 11px; color: var(--ocix-foreground); background: var(--ocix-surface-muted); cursor: pointer; }
+    button:hover { background: var(--ocix-selection); color: var(--ocix-selection-foreground); }
+    button:disabled { cursor: wait; opacity: .65; }
+    .subtle { color: var(--ocix-muted-foreground); }
+    .panel { margin-top: 14px; overflow: auto; border: 1px solid var(--ocix-border); border-radius: 14px; background: var(--ocix-surface-muted); }
+    svg { display: block; min-width: 760px; width: 100%; height: 430px; }
+    .edge { stroke: var(--ocix-border); stroke-width: 2; }
+    .edge-label { fill: var(--ocix-muted-foreground); font-size: 11px; }
+    .node { cursor: pointer; }
+    .node rect { fill: var(--ocix-surface); stroke: var(--ocix-border); stroke-width: 2; rx: 14px; }
+    .node.healthy rect { stroke: var(--ocix-success); }
+    .node.degraded rect { stroke: var(--ocix-warning); }
+    .node.incident rect { stroke: var(--ocix-error); }
+    .node:hover rect, .node:focus rect { stroke-width: 4; }
+    text { fill: var(--ocix-foreground); font: 12px system-ui, sans-serif; pointer-events: none; }
+    .kind { display: inline-flex; align-items: center; gap: 5px; color: var(--ocix-muted-foreground); }
+    .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--ocix-border); }
+    .dot.healthy { background: var(--ocix-success); }
+    .dot.degraded { background: var(--ocix-warning); }
+    .dot.incident { background: var(--ocix-error); }
+    #status { min-height: 22px; margin-top: 10px; color: var(--ocix-muted-foreground); }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <h1>服务依赖拓扑</h1>
+      <p class="subtle">点击服务节点，在应用看板中联动打开服务工作台。</p>
+    </div>
+    <button id="refresh" type="button">刷新</button>
+  </header>
+  <div class="legend" aria-label="图例">
+    <span class="kind"><span class="dot healthy"></span>健康</span>
+    <span class="kind"><span class="dot degraded"></span>降级</span>
+    <span class="kind"><span class="dot incident"></span>事件中</span>
+    <span class="subtle">真实数据 · Business Gateway</span>
+  </div>
+  <main class="panel">
+    <svg id="graph" role="img" aria-label="服务依赖和健康拓扑"></svg>
+  </main>
+  <div id="status" aria-live="polite">等待 OpenChamber Host…</div>
+  <script>
+    const svg = document.querySelector('#graph');
+    const status = document.querySelector('#status');
+    const refresh = document.querySelector('#refresh');
+    const svgNs = 'http://www.w3.org/2000/svg';
+
+    const element = (name, attributes = {}) => {
+      const node = document.createElementNS(svgNs, name);
+      Object.entries(attributes).forEach(([key, value]) => node.setAttribute(key, String(value)));
+      return node;
+    };
+
+    const render = (payload) => {
+      const nodes = Array.isArray(payload.nodes) ? payload.nodes : [];
+      const edges = Array.isArray(payload.edges) ? payload.edges : [];
+      const byId = new Map(nodes.map((node) => [node.id, node]));
+      const fragment = document.createDocumentFragment();
+
+      edges.forEach((edge) => {
+        const source = byId.get(edge.source);
+        const target = byId.get(edge.target);
+        if (!source || !target) return;
+        fragment.append(element('line', {
+          class: 'edge',
+          x1: source.x,
+          y1: source.y,
+          x2: target.x,
+          y2: target.y,
+        }));
+        const label = element('text', {
+          class: 'edge-label',
+          'text-anchor': 'middle',
+          x: (source.x + target.x) / 2,
+          y: (source.y + target.y) / 2 - 6,
+        });
+        label.textContent = edge.label || '';
+        fragment.append(label);
+      });
+
+      nodes.forEach((node) => {
+        const displayName = node.label || node.name || node.id;
+        const group = element('g', {
+          class: `node ${node.status}`,
+          transform: `translate(${node.x} ${node.y})`,
+          tabindex: '0',
+          role: 'button',
+          'aria-label': `打开服务 ${displayName}`,
+        });
+        const open = () => {
+          window.openchamber.dashboard.emit('service.selected', { serviceId: node.id });
+          status.textContent = `已请求打开 ${displayName}`;
+        };
+        group.addEventListener('click', open);
+        group.addEventListener('keydown', (event) => {
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            open();
+          }
+        });
+        group.append(element('rect', { x: -68, y: -28, width: 136, height: 56 }));
+        const title = element('text', { 'text-anchor': 'middle', y: -2 });
+        title.textContent = displayName;
+        group.append(title);
+        const detail = element('text', {
+          'text-anchor': 'middle',
+          y: 16,
+          class: 'edge-label',
+        });
+        detail.textContent = `${node.p95Ms} ms · ${node.statusLabel}`;
+        group.append(detail);
+        fragment.append(group);
+      });
+
+      svg.replaceChildren(fragment);
+      status.textContent = `已加载 ${nodes.length} 个服务和 ${edges.length} 条依赖。`;
+    };
+
+    const load = async () => {
+      refresh.disabled = true;
+      status.textContent = '正在加载托管运维数据…';
+      try {
+        const data = await window.openchamber.business.query(
+          'com.openchamber.interop.hosted-ops.topology.query',
+          { environment: 'production' },
+        );
+        render(data);
+      } catch (error) {
+        status.textContent = error instanceof Error ? error.message : '拓扑加载失败';
+      } finally {
+        refresh.disabled = false;
+      }
+    };
+
+    refresh.addEventListener('click', load);
+    addEventListener('openchamber:host-init', load, { once: true });
+  </script>
+</body>
+</html>

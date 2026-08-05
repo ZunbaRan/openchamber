@@ -1,0 +1,7 @@
+.env
+.runtime/
+evidence/
+local-crm/dist/*.ocix
+*.key
+*.pem
+

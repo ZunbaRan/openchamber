@@ -1,0 +1,9 @@
+{
+  "name": "openchamber-interop-probes-build",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@modelcontextprotocol/client": "2.0.0",
+    "adm-zip": "0.5.16"
+  }
+}

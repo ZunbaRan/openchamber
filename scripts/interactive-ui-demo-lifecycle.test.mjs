@@ -1,11 +1,46 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  bundledOpenCodeBinaryPath,
   commandRunsDemo,
+  configureDemoOpenCodeBinary,
   descendantsOf,
   parseProcessTable,
   projectRoot,
 } from './lib/interactive-ui-demo-lifecycle.mjs';
+
+test('demo selects the bundled OpenChamber fork unless an explicit CLI override exists', () => {
+  const explicit = { OPENCODE_BINARY: '/custom/opencode' };
+  assert.deepEqual(configureDemoOpenCodeBinary({ env: explicit }), {
+    source: 'environment',
+    envName: 'OPENCODE_BINARY',
+    path: '/custom/opencode',
+  });
+
+  const bundled = {};
+  const expected = bundledOpenCodeBinaryPath();
+  assert.deepEqual(configureDemoOpenCodeBinary({ env: bundled }), {
+    source: 'bundled-fork',
+    envName: 'OPENCODE_BINARY',
+    path: expected,
+  });
+  assert.equal(bundled.OPENCODE_BINARY, expected);
+});
+
+test('demo preserves every supported external CLI override without replacing it', () => {
+  for (const envName of [
+    'OPENCODE_PATH',
+    'OPENCHAMBER_OPENCODE_PATH',
+    'OPENCHAMBER_OPENCODE_BIN',
+  ]) {
+    const env = { [envName]: `/custom/${envName.toLowerCase()}` };
+    const selected = configureDemoOpenCodeBinary({ env });
+    assert.equal(selected.source, 'environment');
+    assert.equal(selected.envName, envName);
+    assert.equal(selected.path, env[envName]);
+    assert.equal(env.OPENCODE_BINARY, undefined);
+  }
+});
 
 test('parseProcessTable preserves process tree identity and commands', () => {
   const table = parseProcessTable(`

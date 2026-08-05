@@ -1,0 +1,115 @@
+{
+  "$schema": "openchamber://declarative-view/v1",
+  "id": "com.openchamber.interop.crm.overview",
+  "title": "远程 CRM 概览",
+  "queries": {
+    "overview": {
+      "action": "com.openchamber.interop.crm.overview.query",
+      "input": {
+        "scope": { "$path": "context.scope", "fallback": "default" }
+      }
+    }
+  },
+  "layout": {
+    "type": "stack",
+    "children": [
+      {
+        "type": "metric-grid",
+        "columns": { "default": 4 },
+        "items": [
+          {
+            "label": "客户数",
+            "value": {
+              "$path": "query.overview.customerCount",
+              "fallback": 0,
+              "format": "number"
+            }
+          },
+          {
+            "label": "活跃商机",
+            "value": {
+              "$path": "query.overview.activeOpportunityCount",
+              "fallback": 0,
+              "format": "number"
+            }
+          },
+          {
+            "label": "商机金额",
+            "value": {
+              "$path": "query.overview.pipelineValue",
+              "fallback": 0,
+              "format": "currency:CNY"
+            }
+          },
+          {
+            "label": "加权预测",
+            "value": {
+              "$path": "query.overview.weightedForecast",
+              "fallback": 0,
+              "format": "currency:CNY"
+            }
+          }
+        ]
+      },
+      {
+        "type": "funnel",
+        "title": "商机漏斗",
+        "stages": [
+          {
+            "label": "线索",
+            "value": { "$path": "query.overview.pipeline.lead", "fallback": 0 }
+          },
+          {
+            "label": "已验证",
+            "value": { "$path": "query.overview.pipeline.qualified", "fallback": 0 }
+          },
+          {
+            "label": "方案",
+            "value": { "$path": "query.overview.pipeline.proposal", "fallback": 0 }
+          },
+          {
+            "label": "谈判",
+            "value": { "$path": "query.overview.pipeline.negotiation", "fallback": 0 }
+          },
+          {
+            "label": "赢单",
+            "value": { "$path": "query.overview.pipeline.won", "fallback": 0 }
+          }
+        ]
+      },
+      {
+        "type": "data-table",
+        "title": "重点客户",
+        "data": {
+          "$path": "query.overview.customers",
+          "fallback": []
+        },
+        "rowKey": "id",
+        "columns": [
+          { "key": "name", "label": "客户" },
+          { "key": "owner", "label": "负责人" },
+          { "key": "industry", "label": "行业" },
+          { "key": "health", "label": "健康度", "render": "status" },
+          { "key": "pipelineValue", "label": "商机金额", "format": "currency:CNY" }
+        ],
+        "rowActions": [
+          {
+            "id": "open-customer",
+            "label": "打开客户",
+            "type": "emit",
+            "event": "customer.selected",
+            "payload": {
+              "customerId": { "$row": "id" }
+            }
+          }
+        ]
+      },
+      {
+        "type": "callout",
+        "tone": "info",
+        "title": "数据来源",
+        "value": "该页面通过 OpenChamber Business Gateway 查询远程测试 CRM API。"
+      }
+    ]
+  }
+}

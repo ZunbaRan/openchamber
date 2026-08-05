@@ -1,0 +1,133 @@
+{
+  "$schema": "openchamber://declarative-view/v1",
+  "id": "com.openchamber.interop.hosted-ops.overview",
+  "title": "托管运维概览",
+  "queries": {
+    "overview": {
+      "action": "com.openchamber.interop.hosted-ops.overview.query",
+      "input": {
+        "environment": {
+          "$path": "context.environment",
+          "fallback": "production"
+        }
+      }
+    }
+  },
+  "layout": {
+    "type": "stack",
+    "children": [
+      {
+        "type": "metric-grid",
+        "columns": { "default": 4 },
+        "items": [
+          {
+            "label": "服务数",
+            "value": {
+              "$path": "query.overview.serviceCount",
+              "fallback": 0,
+              "format": "number"
+            }
+          },
+          {
+            "label": "健康服务",
+            "value": {
+              "$path": "query.overview.healthyCount",
+              "fallback": 0,
+              "format": "number"
+            }
+          },
+          {
+            "label": "未确认事件",
+            "value": {
+              "$path": "query.overview.openIncidentCount",
+              "fallback": 0,
+              "format": "number"
+            }
+          },
+          {
+            "label": "总体可用性",
+            "value": {
+              "$path": "query.overview.availability",
+              "fallback": 0,
+              "format": "percent"
+            }
+          }
+        ]
+      },
+      {
+        "type": "chart",
+        "title": "近 12 个采样点延迟",
+        "variant": "line",
+        "xKey": "time",
+        "series": [
+          { "key": "p50", "label": "P50 ms" },
+          { "key": "p95", "label": "P95 ms" }
+        ],
+        "data": {
+          "$path": "query.overview.latencyTrend",
+          "fallback": []
+        }
+      },
+      {
+        "type": "data-table",
+        "title": "服务健康",
+        "data": {
+          "$path": "query.overview.services",
+          "fallback": []
+        },
+        "rowKey": "id",
+        "columns": [
+          { "key": "name", "label": "服务" },
+          { "key": "team", "label": "团队" },
+          { "key": "statusLabel", "label": "状态", "render": "status" },
+          { "key": "availability", "label": "可用性", "format": "percent" },
+          { "key": "p95Ms", "label": "P95 ms", "format": "number" }
+        ],
+        "rowActions": [
+          {
+            "id": "open-service",
+            "label": "打开服务",
+            "type": "emit",
+            "event": "service.selected",
+            "payload": {
+              "serviceId": { "$row": "id" }
+            }
+          }
+        ]
+      },
+      {
+        "type": "data-table",
+        "title": "事件",
+        "data": {
+          "$path": "query.overview.incidents",
+          "fallback": []
+        },
+        "rowKey": "id",
+        "columns": [
+          { "key": "id", "label": "事件" },
+          { "key": "title", "label": "标题" },
+          { "key": "severityLabel", "label": "级别", "render": "status" },
+          { "key": "statusLabel", "label": "状态", "render": "status" },
+          { "key": "revision", "label": "修订", "format": "number" }
+        ],
+        "rowActions": [
+          {
+            "id": "open-incident",
+            "label": "查看事件",
+            "type": "emit",
+            "event": "incident.selected",
+            "payload": {
+              "incidentId": { "$row": "id" }
+            }
+          }
+        ]
+      },
+      {
+        "type": "callout",
+        "tone": "info",
+        "title": "实时测试服务",
+        "value": "页面数据来自服务器上的独立 Ops API；断开 SSH 隧道时应显示连接错误，而不是空数据。"
+      }
+    ]
+  }
+}

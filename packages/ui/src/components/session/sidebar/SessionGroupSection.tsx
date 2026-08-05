@@ -936,7 +936,7 @@ function SessionGroupSectionBase(props: Props): React.ReactNode {
   const groupBodyPaddingClass = 'pb-2';
 
   if (hideGroupLabel) {
-    return <div className="oc-group"><div className={cn('oc-group-body', groupBodyPaddingClass)}>{body}</div></div>;
+    return <div className="oc-group"><div className="oc-group-body">{body}</div></div>;
   }
 
   return (

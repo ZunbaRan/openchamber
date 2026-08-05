@@ -1,8 +1,8 @@
 # OCIX 扩展工作台（Extension Workbench）设计
 
 > 状态：**设计冻结；macOS arm64 首发范围已通过统一验收**  
-> 版本：Draft 3  
-> 更新：2026-07-25  
+> 版本：Draft 4
+> 更新：2026-08-02
 > 配套验收：[OCIX 扩展工作台测试计划](./OCIX_EXTENSION_WORKBENCH_TEST_PLAN.md)
 
 ## 0. 当前实现快照
@@ -12,9 +12,9 @@
 | 批次 | 当前状态 | 已有证据 | 尚未关闭的门禁 |
 |---|---|---|---|
 | W1 Manifest / Catalog | 已实现 | 新旧 OCIX normalize、validator、统一 Surface descriptor 单元测试 | 完整恶意 icon/schema corpus |
-| W2 Board / Pin | 已实现 | 项目隔离、revision、原子 JSON、去重、四类 Pin 路径测试 | 崩溃注入与大规模项目 soak |
+| W2 Board / Pin | 已实现 | 项目隔离、revision、原子 JSON、去重、四类 OCIX/Generated Pin；MCP App 内容寻址快照、Board CAS、binding 锁定和 model-context 持久化测试 | 崩溃注入与大规模项目 soak |
 | W3 Board UI | 已实现 | Right Sidebar Catalog、12 列布局、两列默认、drag/resize、真实 Host 手动启动；54 个视觉组合 / 62 张 Golden 通过 | 键盘 drag/resize 与大规模布局 soak |
-| W4 Focus / Popout | macOS 通过 | Focus/Escape/恢复；Declarative Popout 占位与恢复；HTML Runner 同一 `WebContentsView` 迁移；packaged Runner 裁剪、遮挡和 display-mode lifecycle 通过 | Windows/Linux 实机证据 |
+| W4 Focus / Popout | macOS 通过 | Focus/Escape/恢复；MCP App fullscreen/focused 退出强制恢复 inline；Declarative Popout 占位与恢复；HTML Runner 同一 `WebContentsView` 迁移；packaged Runner 裁剪、遮挡和 display-mode lifecycle 通过 | Windows/Linux 实机证据 |
 | W5 Events / Links | 已实现 | typed payload、同 OCIX mapping、去重/限流/TTL/hop/cycle；真实 Sales 列表 → HTML 详情 | 多级链和恶意 Origin 的完整安全套件 |
 | W6 生命周期 | 已实现 | compatible major range、Gateway block、受限声明式迁移、原子替换、卸载影响计数与定向清理；隔离 Host 中 install/upgrade/disable/enable/rollback/uninstall/reinstall 通过 | packaged 设置页逐按钮自动化仍可扩充 |
 | W7 脚手架 / Skill | 已实现 | 模板同时生成 Declarative、Native、HTML、dashboard/link；validator 和脚手架测试通过 | 第三方盲测样本扩充 |
@@ -41,6 +41,12 @@ OpenChamber 已经支持以下 2×2 能力：
 - 工作台关闭、应用重启或项目切换后，布局仍按明确规则恢复。
 
 该能力统一称为 **Extension Workbench（扩展工作台）**。Workbench 是 Surface 的组织与编排层，不是新的第五种渲染形式。
+
+标准 MCP App 仍由 OpenCode fork 与独立 MCP App Host 处理，不属于 OCIX 的 2×2
+Surface，也不会被转换成 OCIX；但完成 Tool 调用并得到 `ui://` binding 后，可以复用
+同一套 Pin、Board、Focus 和恢复基础设施。Workbench 将这类 Tile 标为 `mcp-app`，
+并持久化其可复现启动快照和原始会话 binding，而不是把第三方 Server 或 App 资源
+复制进 OCIX。
 
 ## 2. 设计目标
 
@@ -148,6 +154,10 @@ Right Sidebar 增加“扩展”标签。选择后：
 - 保持原逻辑实例，不应重新请求或丢失临时交互状态。
 - Overlay 层级必须高于 HTML Artifact Runner、对话内容和普通弹窗容器。
 - 退出后 Tile 回到原位置和尺寸，原按钮全部恢复。
+- MCP App 的放大由 AppBridge display-mode 协商完成。无论用户点击 Tile 标题栏的
+  退出按钮、App 内的退出 fullscreen、Escape，还是外层 Focus 被关闭，Host 都必须
+  向同一个 Renderer 请求 `inline` 并在真实 Tile content box 上重新发布 HostContext；
+  不能只关闭 Overlay 而把 iframe 留在 fullscreen 模式。
 
 #### Popout
 
@@ -501,6 +511,29 @@ Board 保存到跨平台 OpenChamber data root 下：
 
 Installed Tile 重启后使用 Context 重新查询。界面只可保存“上次更新时间”等 Host 元数据，不保存业务响应。Agent Generated 内容允许保存经过现有 sanitizer 的安全快照。
 
+### 7.4 MCP App 快照更新合同
+
+MCP App 在聊天或 App Board 中通过官方 `updateModelContext` 更新 result/structured
+content 时，Workbench 把变化写成新的不可变快照，而不是修改旧文件：
+
+1. 完整 Envelope 规范化后计算内容地址；相同内容复用同一 snapshot ref；
+2. 新快照先以 owner-only 权限完整写入并原子发布；
+3. Board mutation 携带当前 `expectedRevision`，在项目写锁内执行 compare-and-swap；
+4. 只有快照写入和所有身份校验成功后，Board 才切换 ref 并递增 revision；
+5. revision 冲突、写入失败或身份不匹配时，旧 Board ref 保持权威，客户端重新加载
+   Board 后再决定是否重试。
+
+Pinned MCP App 的 authority binding 在 Tile 生命周期内固定为
+`server + resourceUri + toolKey`。model-context/result 更新只能改变同一 App 的可持久化
+Envelope；任一 binding 字段变化都以 `workbench_snapshot_binding_mismatch` 拒绝，不能
+借一次普通 UI 更新把 Tile 转接到另一 Server、Resource 或 Tool。
+
+Renderer 也必须把“数据更新”和“文档重载”分开。result、structured content、标题或
+持久化后重新水合的等价 metadata 只更新 AppBridge/快照状态，不得重挂 4 MB 级 iframe。
+最终 App document 的生命周期键只由已验证 resource identity 与规范化后的有效 CSP
+policy 决定；只有 resource 或有效 CSP 改变、用户明确 Retry，才允许 teardown 后重载。
+旧 bridge teardown 必须完成后才能激活新 bridge，避免两个 App 实例同时拥有调用权。
+
 ## 8. Tile 身份、Pin 与实例规则
 
 ### 8.1 Canonical Context
@@ -520,7 +553,7 @@ extensionId + surfaceId + compatibleVersion + contextDigest
 
 相同键再次手动启动、Link 打开或 Pin 时，聚焦现有 Tile。Context 不同则创建新 Tile。
 
-### 8.2 四类 Pin 语义
+### 8.2 四类 OCIX / Generated Pin 语义
 
 | Surface | Pin 后行为 |
 |---|---|
@@ -536,6 +569,22 @@ extensionId + surfaceId + compatibleVersion + contextDigest
 - 尚未 Pin：创建或聚焦 Board Tile；
 - 已有相同去重键：只聚焦，不取消；
 - 移除操作只在 Tile 菜单中出现。
+
+### 8.3 MCP App Pin 语义
+
+- 只允许 Pin 已完成 ToolPart 中解析成功的 MCP App Envelope；
+- Tile 保留 `sessionId`、`messageId`、Server、Tool 和 `ui://` resource binding，以便
+  AppBridge 继续执行五重绑定校验；
+- Board 持久化的是内容寻址启动快照引用，不持久化 iframe、AppBridge transport、
+  resource HTML 或原生窗口句柄；
+- App 调用 `updateModelContext` 后，Host 必须等待 7.4 的持久化成功，再向 App 返回
+  成功。并发更新按提交顺序串行地基于最新已提交 Envelope 计算；一次失败只拒绝本次
+  请求，不能毒化后续队列；
+- 重启后先从 Board ref 恢复 snapshot，再以原 binding 读取当前 MCP resource 和
+  Server 权威状态。恢复不得生成新的 canvas/entity ID，也不得把历史快照误当成当前
+  Server 权威状态；
+- 同一 Renderer 中仅 result/model-context 变化时保持 iframe 与 AppBridge 实例；只有
+  resource identity 或有效 CSP 变化时才按 teardown barrier 重建。
 
 ## 9. 声明式联动
 
@@ -824,4 +873,8 @@ flowchart LR
 9. 关闭 Workbench、重启应用、切换项目、禁用、升级和卸载行为确定；
 10. Scripts Runner 配额、LRU、恢复和失败态有真实 Desktop 证据；
 11. macOS 当前构建完整通过配套测试计划；
-12. 未验收平台明确标注为 unverified。
+12. MCP App Pin 使用内容寻址 snapshot、Board CAS 和精确 binding 锁定，result/model-context
+    更新不 remount iframe，只有 resource/CSP 改变触发受控重载；
+13. MCP App focused/fullscreen 退出恢复 inline，Host download 支持等待确认、真实落盘、
+    取消/中止，并在重启后恢复相同 snapshot/entity/revision；
+14. 未验收平台明确标注为 unverified。

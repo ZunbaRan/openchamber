@@ -2,34 +2,32 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
+import {
+  DEMO_KEYS,
+  HYBRID_CRM_FIXTURE,
+  createHybridCrmPackage,
+  createHybridCrmPublisherKeys,
+  startHybridCrmApi,
+} from './lib/interactive-ui-hybrid-crm-fixture.mjs';
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const workspaceRoot = path.dirname(projectRoot);
-const extensionRoot = path.join(workspaceRoot, 'extension');
-const crmApiModulePath = path.join(extensionRoot, 'simple-crm-api', 'crm-api-server.mjs');
-const crmExtensionSourcePath = path.join(extensionRoot, 'simple-crm');
-const crmPublisherPrivateKeyPath = path.join(extensionRoot, '.offline-keys', 'simple-crm-publisher', 'publisher.private.pem');
-const crmPackagePaths = {
-  previous: path.join(extensionRoot, 'dist', 'com.demo.simple.crm-1.1.1.ocix'),
-  current: path.join(extensionRoot, 'dist', 'com.demo.simple.crm-1.2.0.ocix'),
-};
 const bundledOpenCodePath = path.join(projectRoot, 'packages', 'electron', 'resources', 'opencode-cli', 'opencode');
 const builtInManifestPath = path.join(projectRoot, 'packages', 'web', 'server', 'lib', 'interactive-ui', 'builtin', 'openchamber.extension.json');
 const corpusPath = path.join(projectRoot, 'examples', 'interactive-ui', 'unified-acceptance-corpus.json');
 const outputDirectory = path.join(projectRoot, '.tmp', 'interactive-ui-unified-functional');
 const reportPath = path.join(outputDirectory, 'report.json');
-const extensionId = 'com.demo.simple.crm';
-const connectorId = 'crm-api';
-const overviewViewId = 'com.demo.simple.crm.overview';
-const workspaceViewId = 'com.demo.simple.crm.workspace';
-const explorerArtifactId = 'com.demo.simple.crm.explorer';
-const queryActionId = 'com.demo.simple.crm.dashboard.query';
-const writeActionId = 'com.demo.simple.crm.opportunity.advance';
-const crmToolNames = ['simple_crm_open_overview', 'simple_crm_open_workspace'];
-const explorerToolName = 'simple_crm_open_explorer';
+const extensionId = HYBRID_CRM_FIXTURE.extensionId;
+const connectorId = HYBRID_CRM_FIXTURE.connectorId;
+const overviewViewId = HYBRID_CRM_FIXTURE.overviewViewId;
+const workspaceViewId = HYBRID_CRM_FIXTURE.workspaceViewId;
+const explorerArtifactId = HYBRID_CRM_FIXTURE.artifactId;
+const queryActionId = HYBRID_CRM_FIXTURE.queryActionId;
+const writeActionId = HYBRID_CRM_FIXTURE.writeActionId;
+const crmToolNames = HYBRID_CRM_FIXTURE.baseToolNames;
+const explorerToolName = HYBRID_CRM_FIXTURE.explorerToolName;
 const acceptanceToolNames = [...crmToolNames, explorerToolName];
-const crmSkillName = 'simple-crm-interactive-ui';
+const crmSkillName = HYBRID_CRM_FIXTURE.skillName;
 const builtInToolNames = ['interactive_ui', 'html_artifact'];
 const builtInExtensionVersion = JSON.parse(await fs.readFile(builtInManifestPath, 'utf8')).version;
 const forbiddenUpstreamMessages = [
@@ -113,11 +111,6 @@ const findOpportunity = (dashboard, opportunityId) => {
 };
 
 for (const requiredPath of [
-  crmApiModulePath,
-  crmExtensionSourcePath,
-  crmPublisherPrivateKeyPath,
-  crmPackagePaths.previous,
-  crmPackagePaths.current,
   bundledOpenCodePath,
   corpusPath,
 ]) {
@@ -171,65 +164,33 @@ let completed = false;
 let failure;
 
 try {
-  const [{ startCrmApiServer, DEMO_KEYS }, { startWebUiServer }, { createExtensionPackage }] = await Promise.all([
-    import(pathToFileURL(crmApiModulePath).href),
-    import('../packages/web/server/index.js'),
-    import('../packages/web/server/lib/interactive-ui/package-format.js'),
+  const { startWebUiServer } = await import('../packages/web/server/index.js');
+  crmApi = await startHybridCrmApi();
+  const secretValues = Object.values(crmApi.keys);
+  const publisherKeys = await createHybridCrmPublisherKeys();
+  const [previousPackage, currentPackage, acceptancePackage] = await Promise.all([
+    createHybridCrmPackage({
+      temporaryRoot,
+      crmApiUrl: crmApi.url,
+      version: '1.1.1',
+      includeArtifact: false,
+      publisherKeys,
+    }),
+    createHybridCrmPackage({
+      temporaryRoot,
+      crmApiUrl: crmApi.url,
+      version: '1.2.0',
+      includeArtifact: false,
+      publisherKeys,
+    }),
+    createHybridCrmPackage({
+      temporaryRoot,
+      crmApiUrl: crmApi.url,
+      version: '1.3.0',
+      includeArtifact: true,
+      publisherKeys,
+    }),
   ]);
-  const secretValues = Object.values(DEMO_KEYS);
-
-  crmApi = await startCrmApiServer({ host: '127.0.0.1', port: 0 });
-  const acceptanceExtensionDirectory = path.join(temporaryRoot, 'simple-crm-acceptance');
-  await fs.cp(crmExtensionSourcePath, acceptanceExtensionDirectory, { recursive: true });
-  const acceptanceManifestPath = path.join(acceptanceExtensionDirectory, 'openchamber.extension.json');
-  const acceptanceManifest = JSON.parse(await fs.readFile(acceptanceManifestPath, 'utf8'));
-  acceptanceManifest.version = '1.3.0';
-  acceptanceManifest.connectors[0].baseUrl = crmApi.url;
-  acceptanceManifest.permissions.network = [crmApi.url];
-  acceptanceManifest.agentRouting.intents.push('crm.explorer');
-  acceptanceManifest.agentRouting.examples['zh-CN'].push('打开 CRM 可视化探索器');
-  acceptanceManifest.agentRouting.examples.en.push('open the CRM visual explorer');
-  acceptanceManifest.artifacts = [{
-    id: explorerArtifactId,
-    title: 'Simple CRM Explorer',
-    entry: 'ui/artifacts/explorer.html',
-    tools: [explorerToolName],
-    routing: { intents: ['crm.explorer'], priority: 92, operation: 'mixed' },
-    displayModes: ['inline', 'workspace', 'fullscreen'],
-    inlineHeight: 520,
-    capabilities: { scripts: true, businessActions: [queryActionId, writeActionId] },
-  }];
-  await fs.writeFile(acceptanceManifestPath, `${JSON.stringify(acceptanceManifest, null, 2)}\n`, 'utf8');
-  await fs.mkdir(path.join(acceptanceExtensionDirectory, 'ui', 'artifacts'), { recursive: true });
-  await fs.writeFile(path.join(acceptanceExtensionDirectory, 'ui', 'artifacts', 'explorer.html'), `<!doctype html><html><body>
-    <h1>Simple CRM Explorer</h1><div id="status">Waiting for Host</div><div id="customers"></div>
-    <script>
-      addEventListener('openchamber:host-init', async (event) => {
-        const dashboard = await window.openchamber.business.query('${queryActionId}', { scope: event.detail.context?.scope || 'default' });
-        document.getElementById('customers').textContent = String(dashboard.customerCount);
-        document.getElementById('status').textContent = 'Connected';
-      }, { once: true });
-    </script>
-  </body></html>`, 'utf8');
-  await fs.writeFile(path.join(acceptanceExtensionDirectory, 'agent-runtime', 'tools', `${explorerToolName}.ts`), `import { tool } from '@opencode-ai/plugin';
-export default tool({
-  description: 'Open the installed Simple CRM HTML Artifact explorer for authoritative customer and pipeline exploration through the Business Gateway. Prefer this Tool for explicit CRM explorer or custom canvas requests; do not call generic html_artifact for the same business data.',
-  args: { scope: tool.schema.string().optional() },
-  async execute(args) {
-    return JSON.stringify({ $schema: 'openchamber://installed-html-artifact-result/v1', schemaVersion: 1,
-      artifact: '${explorerArtifactId}', mode: 'live', summary: 'Simple CRM explorer opened',
-      context: { scope: args.scope || 'default' }, updatedAt: new Date().toISOString() });
-  },
-});
-`, 'utf8');
-  const acceptancePackage = await createExtensionPackage({
-    extensionDirectory: acceptanceExtensionDirectory,
-    privateKey: await fs.readFile(crmPublisherPrivateKeyPath, 'utf8'),
-    publisherId: 'com.demo.simple.crm.publisher',
-    publisherName: 'Simple CRM Demo',
-    keyId: 'release-2026',
-    createdAt: '2026-07-21T00:00:00.000Z',
-  });
 
   openchamber = await startWebUiServer({
     host: '127.0.0.1',
@@ -256,6 +217,8 @@ export default tool({
       ready: tools.status === 200 && skills.status === 200,
       toolStatus: tools.status,
       skillStatus: skills.status,
+      toolPayload: tools.payload,
+      skillPayload: skills.payload,
       tools: Array.isArray(tools.payload) ? tools.payload : [],
       skills: Array.isArray(skills.payload?.skills) ? skills.payload.skills.map((skill) => skill?.name).filter(Boolean) : [],
     };
@@ -277,6 +240,8 @@ export default tool({
         ? {
             toolStatus: lastRuntime.toolStatus,
             skillStatus: lastRuntime.skillStatus,
+            toolError: Array.isArray(lastRuntime.toolPayload) ? null : lastRuntime.toolPayload,
+            skillError: lastRuntime.skillStatus === 200 ? null : lastRuntime.skillPayload,
             toolCount: lastRuntime.tools.length,
             skillCount: lastRuntime.skills.length,
             builtInTools: builtInToolNames.map((tool) => lastRuntime.tools.includes(tool)),
@@ -300,8 +265,8 @@ export default tool({
   assert.equal(initialManager.extensions.length, 0);
 
   const packageBuffers = {
-    previous: await fs.readFile(crmPackagePaths.previous),
-    current: await fs.readFile(crmPackagePaths.current),
+    previous: previousPackage.buffer,
+    current: currentPackage.buffer,
   };
   const inspectPackage = async (buffer, expectedVersion, expectedTools = crmToolNames) => {
     const inspection = expectStatus(await request('/api/interactive-ui/manager/packages/inspect', {

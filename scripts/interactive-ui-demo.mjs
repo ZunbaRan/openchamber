@@ -1,13 +1,30 @@
 import net from 'node:net';
 import fs from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { startMockBusinessServer } from '../examples/interactive-ui/mock-business-server.mjs';
+import { configureDemoOpenCodeBinary } from './lib/interactive-ui-demo-lifecycle.mjs';
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const demoProjectId = `path_${Buffer.from(projectRoot, 'utf8').toString('base64url')}`;
 const extensionDirectory = path.join(projectRoot, 'examples', 'interactive-ui');
 const agentRuntimeDirectory = path.join(extensionDirectory, 'agent-runtime');
-const demoRuntimeDirectory = path.join(projectRoot, '.tmp', 'interactive-ui-demo');
+const defaultDemoRuntimeDirectory = path.join(projectRoot, '.tmp', 'interactive-ui-demo');
+const requestedDemoRuntimeDirectory = process.env.OPENCHAMBER_INTERACTIVE_UI_DEMO_RUNTIME_DIR?.trim();
+const demoRuntimeDirectory = requestedDemoRuntimeDirectory
+  ? path.resolve(requestedDemoRuntimeDirectory)
+  : defaultDemoRuntimeDirectory;
+if (requestedDemoRuntimeDirectory) {
+  const allowedParents = [path.join(projectRoot, '.tmp'), os.tmpdir()].map((directory) => path.resolve(directory));
+  const isWithinAllowedParent = allowedParents.some((parent) => {
+    const relative = path.relative(parent, demoRuntimeDirectory);
+    return relative.length > 0 && !relative.startsWith('..') && !path.isAbsolute(relative);
+  });
+  if (!isWithinAllowedParent) {
+    throw new Error('OPENCHAMBER_INTERACTIVE_UI_DEMO_RUNTIME_DIR must be a child of the project .tmp directory or the platform temporary directory');
+  }
+}
 const demoDataDirectory = path.join(demoRuntimeDirectory, 'data');
 const demoOpenCodeConfigDirectory = path.join(demoRuntimeDirectory, 'opencode-config');
 const demoXdgConfigDirectory = path.join(demoRuntimeDirectory, 'xdg-config');
@@ -16,6 +33,7 @@ const demoExtensionDirectories = [
   path.join(extensionDirectory, 'acme-sales'),
 ];
 const demoSalesRuntimeDirectory = path.join(extensionDirectory, 'acme-sales', 'agent-runtime');
+const tldrawMcpUrl = process.env.OPENCHAMBER_TLDRAW_MCP_URL?.trim();
 const requestedPort = Number.parseInt(process.env.OPENCHAMBER_INTERACTIVE_UI_DEMO_PORT || '', 10);
 const hasRequestedPort = Number.isFinite(requestedPort) && requestedPort > 0;
 
@@ -75,9 +93,34 @@ await fs.mkdir(path.join(demoOpenCodeConfigDirectory, 'tools'), { recursive: tru
 await fs.mkdir(path.join(demoOpenCodeConfigDirectory, 'skills'), { recursive: true });
 await fs.mkdir(demoXdgConfigDirectory, { recursive: true });
 await fs.mkdir(demoDataDirectory, { recursive: true });
+if (tldrawMcpUrl) {
+  const parsedTldrawMcpUrl = new URL(tldrawMcpUrl);
+  if (!['http:', 'https:'].includes(parsedTldrawMcpUrl.protocol)) {
+    throw new Error('OPENCHAMBER_TLDRAW_MCP_URL must use http or https');
+  }
+  await fs.writeFile(path.join(demoOpenCodeConfigDirectory, 'config.json'), `${JSON.stringify({
+    $schema: 'https://opencode.ai/config.json',
+    mcp: {
+      'interop-tldraw-2026': {
+        type: 'remote',
+        url: parsedTldrawMcpUrl.toString(),
+        oauth: false,
+        timeout: 30_000,
+        enabled: true,
+      },
+    },
+  }, null, 2)}\n`, { mode: 0o600 });
+}
 await fs.writeFile(path.join(demoDataDirectory, 'settings.json'), `${JSON.stringify({
   sessionRecapEnabled: false,
   sessionSuggestionEnabled: false,
+  projects: [{
+    id: demoProjectId,
+    path: projectRoot,
+    addedAt: Date.now(),
+    lastOpenedAt: Date.now(),
+  }],
+  activeProjectId: demoProjectId,
 }, null, 2)}\n`, { mode: 0o600 });
 await fs.copyFile(
   path.join(agentRuntimeDirectory, 'tools', 'crm_open_dashboard.ts'),
@@ -120,6 +163,9 @@ delete process.env.OPENCODE_SKIP_START;
 delete process.env.OPENCHAMBER_SKIP_OPENCODE_START;
 delete process.env.OPENCODE_HOST;
 delete process.env.OPENCODE_PORT;
+
+const demoOpenCodeBinary = configureDemoOpenCodeBinary();
+console.log(`[interactive-ui-demo] OpenCode CLI: ${demoOpenCodeBinary.path} (${demoOpenCodeBinary.source})`);
 
 const { startWebUiServer } = await import('../packages/web/server/index.js');
 let openchamber;

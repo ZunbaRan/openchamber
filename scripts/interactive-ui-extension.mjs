@@ -14,6 +14,10 @@ import {
   verifyExtensionPackage,
   verifySignedExtensionCatalog,
 } from '../packages/web/server/lib/interactive-ui/package-format.js';
+import {
+  normalizeHostedDelivery,
+  normalizeHostedPermissions,
+} from '../packages/web/server/lib/interactive-ui/hosted-ocix.js';
 
 const REPO_ROOT = path.resolve(import.meta.dirname, '..');
 const TEMPLATE_ROOT = path.join(REPO_ROOT, 'templates', 'interactive-ui-extension');
@@ -97,6 +101,63 @@ export const scaffoldExtension = async ({ targetDirectory, extensionId, name, to
   return { target, extensionId, toolPrefix: normalizedToolPrefix };
 };
 
+export const scaffoldHostedExtension = async ({
+  targetDirectory,
+  extensionId,
+  name,
+  version = '1.0.0',
+  manifestUrl,
+  ttlSeconds = 15 * 60,
+  minimumRuntimeVersion,
+  initialPermissions = {},
+}) => {
+  if (!EXTENSION_ID_PATTERN.test(extensionId ?? '')) {
+    throw new Error('Extension id must be a namespaced identifier such as com.acme.operations');
+  }
+  if (typeof name !== 'string' || !name.trim()) throw new Error('Extension name is required');
+  if (typeof version !== 'string' || !/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(version)) {
+    throw new Error('Hosted thin-package version must use semantic versioning');
+  }
+  if (typeof targetDirectory !== 'string' || !targetDirectory.trim()) throw new Error('Target directory is required');
+  const target = path.resolve(targetDirectory);
+  if (target === REPO_ROOT || target === TEMPLATE_ROOT || target.startsWith(`${TEMPLATE_ROOT}${path.sep}`)) {
+    throw new Error('Target must be a new extension directory outside the bundled template');
+  }
+  await ensureMissingTarget(target);
+
+  const manifest = {
+    $schema: 'openchamber://extension/v1',
+    id: extensionId,
+    name: name.trim(),
+    version,
+    delivery: {
+      type: 'hosted',
+      manifestUrl,
+      ttlSeconds,
+      ...(minimumRuntimeVersion ? { minimumRuntimeVersion } : {}),
+      initialPermissions: normalizeHostedPermissions(initialPermissions),
+    },
+  };
+  manifest.delivery = normalizeHostedDelivery(manifest);
+  try {
+    await fsPromises.mkdir(target, { recursive: true, mode: 0o700 });
+    await fsPromises.writeFile(
+      path.join(target, 'openchamber.extension.json'),
+      `${JSON.stringify(manifest, null, 2)}\n`,
+      { encoding: 'utf8', flag: 'wx', mode: 0o644 },
+    );
+  } catch (error) {
+    await fsPromises.rm(target, { recursive: true, force: true }).catch(() => {});
+    throw error;
+  }
+  return {
+    target,
+    extensionId,
+    delivery: 'hosted',
+    manifestUrl: manifest.delivery.manifestUrl,
+  };
+};
+
 const readManifest = async (extensionDirectory) => {
   const directory = path.resolve(extensionDirectory);
   const manifestPath = path.join(directory, 'openchamber.extension.json');
@@ -122,6 +183,23 @@ const collectAgentRuntimeFiles = async (directory, relative = 'agent-runtime', f
     if (entry.isSymbolicLink()) throw new Error(`${nextRelative}: symbolic links are not allowed`);
     if (entry.isDirectory()) await collectAgentRuntimeFiles(directory, nextRelative, files);
     else if (entry.isFile()) files.set(nextRelative, await fsPromises.readFile(path.join(directory, ...nextRelative.split('/'))));
+  }
+  return files;
+};
+
+const collectSourceFiles = async (directory, current = '', files = []) => {
+  const target = current ? path.join(directory, ...current.split('/')) : directory;
+  const entries = await fsPromises.readdir(target, { withFileTypes: true });
+  for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
+    const relative = current ? `${current}/${entry.name}` : entry.name;
+    if (entry.isSymbolicLink()) throw new Error(`${relative}: symbolic links are not allowed`);
+    if (entry.isDirectory()) {
+      await collectSourceFiles(directory, relative, files);
+    } else if (entry.isFile()) {
+      files.push(relative);
+    } else {
+      throw new Error(`${relative}: unsupported filesystem entry`);
+    }
   }
   return files;
 };
@@ -263,8 +341,49 @@ export const validateExtension = async (extensionDirectory) => {
   let agentRuntime = { tools: [], skills: [], unresolvedSurfaceTools: [], unresolvedViewTools: [] };
 
   if (raw.$schema !== 'openchamber://extension/v1') errors.push(`${manifestPath}: $schema must be openchamber://extension/v1`);
+  if (!EXTENSION_ID_PATTERN.test(raw.id ?? '')) errors.push(`${manifestPath}: id must be a namespaced identifier`);
+  if (typeof raw.name !== 'string' || !raw.name.trim()) errors.push(`${manifestPath}: name is required`);
   if (typeof raw.version !== 'string' || !/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(raw.version)) {
     errors.push(`${manifestPath}: version must be semantic versioning compatible`);
+  }
+  let hostedDelivery = null;
+  try {
+    hostedDelivery = normalizeHostedDelivery(raw);
+  } catch (error) {
+    errors.push(`${manifestPath}: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  if (hostedDelivery) {
+    const forbidden = ['views', 'artifacts', 'connectors', 'actions'].some(
+      (key) => Array.isArray(raw[key]) && raw[key].length > 0,
+    );
+    if (forbidden || raw.icon !== undefined || raw.agentRouting !== undefined) {
+      errors.push(`${manifestPath}: Hosted OCIX thin packages cannot embed surfaces, connectors, actions, icons, or Agent routing`);
+    }
+    try {
+      const sourceFiles = await collectSourceFiles(directory);
+      if (sourceFiles.length !== 1 || sourceFiles[0] !== 'openchamber.extension.json') {
+        errors.push(`${directory}: Hosted OCIX thin packages may contain only openchamber.extension.json`);
+      }
+    } catch (error) {
+      errors.push(error instanceof Error ? error.message : String(error));
+    }
+    if (errors.length > 0) {
+      const error = new Error(`Interactive UI extension validation failed:\n- ${errors.join('\n- ')}`);
+      error.validation = { errors, warnings };
+      throw error;
+    }
+    return {
+      extensionId: raw.id,
+      version: raw.version,
+      delivery: 'hosted',
+      hosted: hostedDelivery,
+      declarativeViews: [],
+      nativeViews: [],
+      htmlArtifacts: [],
+      actions: [],
+      agentRuntime,
+      warnings,
+    };
   }
   try {
     const agentRuntimeFiles = await collectAgentRuntimeFiles(directory, 'agent-runtime/tools');
@@ -354,6 +473,7 @@ export const validateExtension = async (extensionDirectory) => {
   return {
     extensionId: extension.id,
     version: extension.version,
+    delivery: 'local',
     declarativeViews,
     nativeViews,
     htmlArtifacts,
@@ -403,6 +523,7 @@ export const packExtension = async ({ extensionDirectory, outputPath, privateKey
     outputPath: target,
     extensionId: packed.manifest.id,
     version: packed.manifest.version,
+    delivery: packed.manifest.delivery?.type === 'hosted' ? 'hosted' : 'local',
     packageHash: packed.packageHash,
     publisherFingerprint: publicKeyFingerprint(packed.packageIndex.publisher.publicKey),
     agentRuntime: packed.agentRuntime ?? validation.agentRuntime,
@@ -428,6 +549,7 @@ export const verifyPackageFile = async ({ packagePath, publicKeyPath, publisherI
   return {
     extensionId: verified.manifest.id,
     version: verified.manifest.version,
+    delivery: verified.manifest.delivery?.type === 'hosted' ? 'hosted' : 'local',
     packageHash: verified.packageHash,
     publisherFingerprint: verified.publisherFingerprint,
     publisherTrusted: verified.publisherTrusted,
@@ -492,6 +614,9 @@ const usage = `OpenChamber OCIX extension CLI
 Create a mixed Interactive UI + HTML Artifact starter:
   node scripts/interactive-ui-extension.mjs create <target> --id com.acme.operations --name "Acme Operations" [--tool-prefix operations]
 
+Create a Hosted OCIX thin-package starter:
+  node scripts/interactive-ui-extension.mjs create <target> --delivery hosted --id com.acme.operations --name "Acme Operations" --manifest-url https://apps.example.com/manifest.json [--initial-permissions permissions.json] [--ttl-seconds 900] [--minimum-runtime-version 1.16.3]
+
 Validate an extension without making network requests or executing Native code:
   node scripts/interactive-ui-extension.mjs validate <extension-directory>
 
@@ -510,22 +635,59 @@ Build a signed static marketplace catalog from an entries array:
 const main = async () => {
   const { command, positional, options } = parseCommandLine(process.argv.slice(2));
   if (command === 'create') {
-    const result = await scaffoldExtension({
-      targetDirectory: positional,
-      extensionId: options.id,
-      name: options.name,
-      toolPrefix: options['tool-prefix'],
-    });
+    if (options.delivery && options.delivery !== 'hosted' && options.delivery !== 'local') {
+      throw new Error('--delivery must be local or hosted');
+    }
+    let initialPermissions = {};
+    if (options['initial-permissions']) {
+      try {
+        initialPermissions = JSON.parse(
+          await fsPromises.readFile(path.resolve(options['initial-permissions']), 'utf8'),
+        );
+      } catch (error) {
+        if (error instanceof SyntaxError) throw new Error('--initial-permissions must reference valid JSON');
+        throw error;
+      }
+    }
+    const ttlSeconds = options['ttl-seconds'] === undefined
+      ? undefined
+      : Number(options['ttl-seconds']);
+    if (ttlSeconds !== undefined && !Number.isInteger(ttlSeconds)) {
+      throw new Error('--ttl-seconds must be an integer');
+    }
+    const result = options.delivery === 'hosted'
+      ? await scaffoldHostedExtension({
+          targetDirectory: positional,
+          extensionId: options.id,
+          name: options.name,
+          version: options.version,
+          manifestUrl: options['manifest-url'],
+          ttlSeconds,
+          minimumRuntimeVersion: options['minimum-runtime-version'],
+          initialPermissions,
+        })
+      : await scaffoldExtension({
+          targetDirectory: positional,
+          extensionId: options.id,
+          name: options.name,
+          toolPrefix: options['tool-prefix'],
+        });
     console.log(`Created ${result.extensionId} at ${result.target}`);
-    console.log(`Next: edit the API contract, then run node scripts/interactive-ui-extension.mjs validate ${result.target}`);
+    console.log(result.delivery === 'hosted'
+      ? `Next: publish and sign the remote manifest, then run node scripts/interactive-ui-extension.mjs validate ${result.target}`
+      : `Next: edit the API contract, then run node scripts/interactive-ui-extension.mjs validate ${result.target}`);
     return;
   }
   if (command === 'validate') {
     if (!positional) throw new Error('Extension directory is required');
     const result = await validateExtension(positional);
     console.log(`Valid OCIX extension ${result.extensionId}@${result.version}`);
-    console.log(`Interactive UI: ${result.declarativeViews.length} Declarative + ${result.nativeViews.length} Trusted Native; HTML Artifacts: ${result.htmlArtifacts.length}; actions: ${result.actions.length}`);
-    console.log(`Agent Runtime: ${result.agentRuntime.tools.length} tools; ${result.agentRuntime.skills.length} skills`);
+    if (result.delivery === 'hosted') {
+      console.log(`Delivery: Hosted thin package (${result.hosted.manifestUrl})`);
+    } else {
+      console.log(`Interactive UI: ${result.declarativeViews.length} Declarative + ${result.nativeViews.length} Trusted Native; HTML Artifacts: ${result.htmlArtifacts.length}; actions: ${result.actions.length}`);
+      console.log(`Agent Runtime: ${result.agentRuntime.tools.length} tools; ${result.agentRuntime.skills.length} skills`);
+    }
     for (const warning of result.warnings) console.warn(`Warning: ${warning}`);
     return;
   }
@@ -547,6 +709,7 @@ const main = async () => {
     console.log(`Created ${result.extensionId}@${result.version}: ${result.outputPath}`);
     console.log(`Package hash: ${result.packageHash}`);
     console.log(`Publisher fingerprint: ${result.publisherFingerprint}`);
+    console.log(`Delivery: ${result.delivery}`);
     return;
   }
   if (command === 'verify') {
@@ -559,6 +722,7 @@ const main = async () => {
     console.log(`Valid signed package ${result.extensionId}@${result.version}`);
     console.log(`Package hash: ${result.packageHash}`);
     console.log(`Publisher fingerprint: ${result.publisherFingerprint}`);
+    console.log(`Delivery: ${result.delivery}`);
     console.log(`Agent Runtime: ${result.agentRuntime.tools.length} tools; ${result.agentRuntime.skills.length} skills`);
     return;
   }

@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.17.1] - 2026-07-29
+
+- **Managed OpenCode fork:** OpenChamber now locks, verifies, and bundles the `ZunbaRan/opencode` fork instead of deriving or downloading an official OpenCode CLI. Startup performs a capability handshake, embedded CLI updates are disabled, and unsupported external CLIs fall back to chat and raw tool output with explicit diagnostics.
+- **MCP Apps:** added a separate sandboxed MCP App host with AppBridge tool calls, verified `ui://` resources, app-only tool isolation, historical-session recovery, conversation rendering, and App Board pinning. MCP Apps remain distinct from OCIX applications.
+- **Hosted OCIX:** signed thin packages can load verified remote Interactive UI and HTML Artifact surfaces, invoke declared actions through the credential-protecting Business Gateway, confirm permission expansion, and fall back to the last verified offline cache.
+- **Extension safety:** OCIX tool and skill installation now records namespace ownership and content hashes, rejects unauthorized collisions, and preserves user-modified files as actionable conflicts during upgrades and removal.
+- **Compatibility:** the managed fork keeps the standard OpenCode configuration, data, authentication, and session paths, disables channel-specific databases, and stores new MCP App state in generic tool metadata without fork-only schema migrations.
+
 ## [1.17.0] - 2026-07-28
 
 - **Context panel:** a new surface rail brings Changes, pull requests, files, terminal, notes, plans, previews, and side chats into one resizable panel. The pull-request surface now shows live checks and comments, and can attach failed checks or comments to a chat draft.

@@ -59,7 +59,6 @@ export const MainLayout: React.FC = () => {
   const RIGHT_SIDEBAR_AUTO_CLOSE_WIDTH = 1140;
   const RIGHT_SIDEBAR_AUTO_OPEN_WIDTH = 1220;
   const isSidebarOpen = useUIStore((state) => state.isSidebarOpen);
-  const isRightSidebarOpen = useUIStore((state) => state.isRightSidebarOpen);
   const setRightSidebarOpen = useUIStore((state) => state.setRightSidebarOpen);
   const setSidebarOpen = useUIStore((state) => state.setSidebarOpen);
   const activeMainTab = useUIStore((state) => state.activeMainTab);
