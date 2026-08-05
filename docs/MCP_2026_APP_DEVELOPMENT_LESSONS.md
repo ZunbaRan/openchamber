@@ -137,6 +137,8 @@ identity、UTF-8 byte 数和有界 chunk 完成传输握手；Loader 确认完�
 timeout 为 45 秒。初始化完成前由 Loader 被替换引发的竞态 load 可幂等处理，ready
 之后再次导航则立即撤销授权。聚焦测试用真实 4.4 MB 输入覆盖 chunk transfer、
 最终 `srcdoc` mount、双条件 readiness 和超时，但仍不能代替真实浏览器可见性验收。
+注意：这是“沙箱挂载”层 readiness；宿主运行时层的 `ready` 阶段还要求初始 Tool
+input/result 送达成功，见第 15 节，两层缺一不可。
 
 遇到“Tool 成功、resource 探针成功、宿主仍然空白”时，应先检查 CLI 的 resource
 size limit、Host bootstrap URL 是否意外包含完整 App，以及相关日志，再去修改 MCP
@@ -918,3 +920,53 @@ Chromium 可能把 Broker 文档的 policy container 继承到最终 `srcdoc` Ap
 自动化覆盖协议、visibility、source-authenticated Loader 到最终 `srcdoc` 的大型页面
 加载、CSP、atomic save、dirty-state 与下载契约；没有随本轮文档修改新增手工 UI 或
 实际文件落盘证据，发布时仍需按上述门禁补齐。
+
+## 15. 协议就绪只依赖 AppBridge 初始化 + Tool 数据送达
+
+打包客户端的真实 Computer Use 验收暴露过一个通用宿主生命周期 bug：官方 Excalidraw
+App 的可见画布渲染完全正确，4 秒后却被 OpenChamber 替换成
+“MCP App unavailable / initialized but shows no visible content”。根因是宿主在
+AppBridge initialized 之外还要求三种**可选的 / 专有的**证据才进入 `ready`：
+
+1. App 自己上报 `ui/notifications/size-changed`（且高度达到可见阈值）；
+2. Broker 观测到 iframe 的 `layout-visible`；
+3. OpenChamber 私有的 model-context payload（`openchamberContentReady` +
+   `renderedSemanticElementCount`）。
+
+协议合规的第三方 MCP App 一项都不需要发：`size-changed` 是可选布局信息
+（`autoResize: false` 只关闭自动上报，SDK 缺省 `autoResize: true` 才会用
+ResizeObserver 自动发送；App 仍可手动调用 `sendSizeChanged`，合规 App 也可能
+完全不发送任何 `size-changed` 通知），`update-model-context` 是可选模型上下文；
+不透明沙箱边界外也不存在任何通用的“首绘/像素/语义”证明。
+
+现在的协议对齐生命周期是：
+
+```text
+AppBridge initialized（标准 ui/notifications/initialized）
+  → delivering-tool-data：flush 已排队的初始 Tool input/result 通知
+  → 初始送达 flush 成功（idle/input/result）→ ready
+    （只由本次 AppBridge 的 oninitialized 初始送达路径授予，且必须通过该
+    bridge effect 的 hasActiveAuthority 校验：!disposed + initialized +
+    当前 binding epoch）
+  → flush 返回 cancelled → 保留既有 teardown 行为，永不进入 ready
+  → flush 被拒绝 / 协议违规 → 既有 protocol-violation 失败路径，永不进入 ready
+```
+
+- 异步 flush 完成必须用宿主既有的 ownership/activity guard 守护
+  （当前 binding epoch、bridge 活跃、未 teardown）；stale / unmounted / rebound
+  运行时的迟到结果不能推进 `ready`，迟到拒绝也不能使替换中的 bridge 失效；
+  后续 envelope/status 变化触发的普通 flush 只处理取消/违规，本身不再授予
+  `ready`；
+- `ui/notifications/size-changed` 仍用于 inline 高度行为（保留 size-based
+  inline-height），但不再作为就绪证据；broker `layout-visible` 只作为可选诊断
+  telemetry；
+- 可选的 model-context 持久化仍保留：所有 `ui/update-model-context` 请求都通过
+  共享的 update handler（`applyMcpAppModelContextUpdate`）落盘，tldraw 的
+  `openchamberContentReady` / `renderedSemanticElementCount` payload 与其它快照
+  一样持久化，不带任何就绪门禁；
+- 已退役，不得再加兼容回退：`waiting-first-paint`、`ready-but-blank`、
+  `MCP_APP_READY_BLANK_DEADLINE_MS`、`McpAppFirstPaintEvidence`、
+  `mcpAppFirstPaintVerdict`、`isMcpAppContentReadyUpdate`；
+- 回归覆盖（`McpAppRenderer.test.ts` / `mcpApp.test.ts`）用官方 Excalidraw 风格的
+  standards-only App 建模：初始化 + 成功送达通知（无 autoResize/size-change、无专有
+  model context）必须到达并保持 ready；送达失败必须 fail-closed，绝不假 ready。

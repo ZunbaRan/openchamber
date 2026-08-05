@@ -245,9 +245,57 @@ import { AppBridge, PostMessageTransport } from '@modelcontextprotocol/ext-apps/
 // 生命周期：
 // 1. new AppBridge(null, hostInfo, hostCapabilities, { hostContext })
 // 2. bridge.connect(transport) → Promise<void>
-// 3. bridge.oninitialized 回调
+// 3. bridge.oninitialized 回调（App 发送标准 ui/notifications/initialized 后触发）
 // 4. bridge.sendToolInput / sendToolResult / sendToolCancelled
+// 5. 就绪 = initialized + 初始 Tool 数据送达成功，见 3.4（无首绘证据门禁）
 ```
+
+### 3.4 协议就绪生命周期：无首绘证据门禁（📦 仓库事实）
+
+真实打包 Computer Use 验收发现：官方 Excalidraw App 的可见画布渲染正确，4 秒后却
+被宿主替换成 “MCP App unavailable / initialized but shows no visible content”。
+旧宿主在 AppBridge initialized 之外还要求三种**可选的 / 专有的**证据才进入
+`ready`：`ui/notifications/size-changed`（含可见高度阈值）、broker
+`layout-visible`、以及 OpenChamber 私有 model-context payload
+（`openchamberContentReady` + `renderedSemanticElementCount`）。协议合规的第三方
+App 一项都不需要发：`size-changed` 是可选布局信息（`autoResize: false` 只关闭
+自动上报，SDK 缺省 `autoResize: true` 才会用 ResizeObserver 自动发送；App 仍可
+手动调用 `sendSizeChanged`，合规 App 也可能完全不发送任何 `size-changed` 通知），
+`update-model-context` 是可选模型上下文，不透明沙箱外不存在通用的“首绘/像素/
+语义”证明。
+
+协议对齐的就绪定义（运行时 `ready` 阶段）：
+
+```text
+ui/notifications/initialized（标准 App 初始化通知）
+  → delivering-tool-data：flush 已排队的初始 Tool input/result
+  → 初始送达 flush 成功（idle/input/result）→ ready
+    （只由本次 AppBridge 的 oninitialized 初始送达路径授予，且必须通过该
+    bridge effect 的 hasActiveAuthority 校验：!disposed + initialized +
+    当前 binding epoch）
+  → flush 返回 cancelled → 保留既有 teardown，永不 ready
+  → flush 被拒绝 / 协议违规 → 既有 protocol-violation 失败路径，永不 ready
+```
+
+- `McpAppRuntimePhase` 在 `waiting-app-bridge` 与 `ready` 之间只有
+  `delivering-tool-data`；`waiting-first-paint` 已删除；
+- 异步完成必须经过宿主既有 ownership/activity guard（binding epoch、bridge 活跃、
+  未 teardown），stale / unmounted / rebound 的迟到结果不推进 ready；迟到拒绝
+  也不能使替换中的 bridge 失效；后续 envelope/status 变化触发的普通 flush 只处理
+  取消/违规，本身不再授予 ready；
+- `ui/notifications/size-changed` 继续驱动 inline 高度（size-based inline-height
+  行为保留），但不再是就绪证据；broker `layout-visible` 只是可选诊断 telemetry；
+- 可选的 model-context 持久化保留：所有 `ui/update-model-context` 请求都通过共享
+  的 update handler（`applyMcpAppModelContextUpdate`）落盘，tldraw 的
+  `openchamberContentReady` / `renderedSemanticElementCount` payload 与其它快照
+  一样持久化，不带任何就绪门禁；
+- 已退役且无兼容回退：`waiting-first-paint`、`ready-but-blank`、
+  `MCP_APP_READY_BLANK_DEADLINE_MS`、`McpAppFirstPaintEvidence`、
+  `mcpAppFirstPaintVerdict`、`isMcpAppContentReadyUpdate`。
+
+回归：`McpAppRenderer.test.ts` / `mcpApp.test.ts` 用 Excalidraw 风格 standards-only
+App 建模（初始化 + 成功送达、无 size-change / 专有 model context → ready 并保持；
+送达失败 → fail-closed，绝不假 ready）。
 
 ---
 
@@ -875,6 +923,11 @@ describe('MCP App sandbox bootstrap', () => {
 2. 触发 Excalidraw（或 Tldraw）MCP App 工具调用。
 3. 在 DevTools 控制台中验证：无 CSP 违规（`[Report Only]` 除外）、无 `Script error.`、AppBridge 初始化完成。
 4. 验证 `ui/notifications/sandbox-proxy-ready` 和 `ui/notifications/sandbox-resource-ready` 消息已交换。
+5. 验证就绪按协议对齐生命周期进行（见 3.4）：`ui/notifications/initialized` 后初始
+   Tool input/result 送达成功即进入 ready 并保持；Excalidraw 这类禁用 autoResize、
+   不发专有 model context 的 standards-only App 不得出现
+   “MCP App unavailable / initialized but shows no visible content”，也不能在
+   初始化后 4 秒被替换成错误页。
 
 ---
 
@@ -892,8 +945,15 @@ describe('MCP App sandbox bootstrap', () => {
 
 ### 10.2 测试层面
 
-- [ ] `bun test packages/ui/src/components/interactive-ui/McpAppRenderer.test.ts` → 68 pass
-- [ ] `bun test packages/ui/src/lib/interactive-ui/mcpApp.test.ts` → 通过
+- [ ] `bun test packages/ui/src/components/interactive-ui/McpAppRenderer.test.ts` → 71 pass
+- [ ] `bun test packages/ui/src/lib/interactive-ui/mcpApp.test.ts` → 26 pass
+- [ ] 协议就绪回归：Excalidraw 风格 standards-only App（无 autoResize/size-change、
+  无专有 model context）初始化 + 成功送达通知 → ready 并保持；送达失败 →
+  fail-closed 不假 ready；ready 只由 AppBridge oninitialized 初始送达路径在
+  hasActiveAuthority 校验下授予，普通 envelope/status flush 不授予
+  （`waiting-first-paint` / `ready-but-blank` /
+  `MCP_APP_READY_BLANK_DEADLINE_MS` / `McpAppFirstPaintEvidence` /
+  `mcpAppFirstPaintVerdict` / `isMcpAppContentReadyUpdate` 已退役，无兼容回退）
 - [ ] `bun run typecheck` 无错误
 - [ ] `bun run dead-code` 无新增死代码
 - [ ] `bun run verify:opencode-cli` 通过

@@ -11,19 +11,14 @@ import {
 } from '@modelcontextprotocol/ext-apps/app-bridge';
 import { cn } from '@/lib/utils';
 import {
-  MCP_APP_MIN_VISIBLE_HEIGHT,
-  MCP_APP_READY_BLANK_DEADLINE_MS,
   applyMcpAppModelContextUpdate,
   createMcpAppRuntimeState,
-  isMcpAppContentReadyUpdate,
-  mcpAppFirstPaintVerdict,
   mcpAppRuntimeFailureText,
   normalizeMcpAppConnectCspSource,
   normalizeMcpAppCspSource,
   reduceMcpAppRuntime,
   sanitizeMcpAppDiagnosticDetail,
   validateMcpAppCspMetadata,
-  type McpAppFirstPaintEvidence,
   type McpAppModelContextUpdate,
   type McpAppResultEnvelope,
   type McpAppRuntimeFailureCode,
@@ -1487,8 +1482,8 @@ interface McpAppSandboxProxyHostControllerOptions {
   /**
    * P0-A: sanitized diagnostics from the trusted broker bootstrap. The broker
    * only reports classes/origins (never page data) for CSP violations, script
-   * failures, rejections, and layout evidence. Layout evidence alone never
-   * grants first paint (AUD-001).
+   * failures, rejections, and optional layout telemetry. Layout observation
+   * is never readiness proof.
    */
   onProbe?: (probe: McpAppSandboxProbe) => void;
 }
@@ -1771,10 +1766,10 @@ export const createMcpAppBrokerDocument = (
   // message listener synchronously while the bootstrap script is still
   // evaluating, so ready() must be able to call the probes before their
   // `const` initializers would be reached (TDZ).
-  // P0-A/AUD-001: the broker reports layout size only — never first paint.
-  // First paint requires the App itself to report rendered content size
-  // (ui/notifications/size-changed) IN ADDITION to this layout evidence; an
-  // opaque sandbox cannot be inspected for painted pixels.
+  // The broker reports layout size only as optional diagnostic telemetry.
+  // Protocol readiness never depends on it: a standards-compliant App is not
+  // required to emit size/layout/content markers (opaque sandboxes cannot be
+  // inspected for painted pixels anyway).
   const brokerProbes = `;var post=function(t,x){x=x||{};parent.postMessage({source:"openchamber-mcp-broker",type:t,nonce:expected,...x},"*")};var o=null;function sp(){if(o||!app)return;var r=function(){try{if(app.getBoundingClientRect().width>0&&app.getBoundingClientRect().height>0){post("broker.layout-visible");o&&(o.disconnect(),o=null)}}catch{}};try{o=new ResizeObserver(r);o.observe(app)}catch{r()}}addEventListener("securitypolicyviolation",function(e){var or="";try{or=new URL(e.blockedURI||"").origin}catch{or=""}post("broker.probe-csp",{directive:e.effectiveDirective||"",origin:or})});addEventListener("error",function(e){var or="";try{or=new URL(e&&e.filename||"").origin}catch{}post("broker.probe-script",{kind:e&&e.message==="Script error."?"cross-origin":"script",origin:or})});addEventListener("unhandledrejection",function(){post("broker.probe-rejection")});`;
   const readyWithProbe = `const ready=()=>{parent.postMessage({source:"openchamber-mcp-broker",type:"broker.ready",nonce:expected},"*");sp()};`;
   return document
@@ -1881,20 +1876,6 @@ export const McpAppRenderer = React.forwardRef<McpAppRendererHandle, McpAppRende
     undefined,
     () => createMcpAppRuntimeState(bindingEpoch),
   );
-  const firstPaintEvidenceRef = React.useRef<McpAppFirstPaintEvidence>({
-    appSizeChanged: false,
-    layoutVisible: false,
-    appContentReady: false,
-  });
-  const firstPaintEvidenceEpochRef = React.useRef<string | null>(null);
-  if (firstPaintEvidenceEpochRef.current !== bindingEpoch) {
-    firstPaintEvidenceEpochRef.current = bindingEpoch;
-    firstPaintEvidenceRef.current = {
-      appSizeChanged: false,
-      layoutVisible: false,
-      appContentReady: false,
-    };
-  }
   React.useEffect(() => {
     dispatchRuntimeEvent({ type: 'epoch', epoch: bindingEpoch });
   }, [bindingEpoch]);
@@ -1904,47 +1885,6 @@ export const McpAppRenderer = React.forwardRef<McpAppRendererHandle, McpAppRende
       setError(mcpAppRuntimeFailureText(runtimeState.failure));
     }
   }, [runtimeState.failure]);
-  // P0-A/A4 + AUD-001: ready-but-blank watchdog. AppBridge initialized alone
-  // is not proof the App painted anything. First paint requires BOTH the App's
-  // own rendered-size report, broker-observed layout, and App-originated
-  // content receipt; without all three signals inside the deadline the
-  // instance fails with `ready-but-blank`. Each signal alone only records a
-  // milestone.
-  React.useEffect(() => {
-    if (runtimeState.phase !== 'waiting-first-paint') return;
-    const deadline = window.setTimeout(() => {
-      if (!mcpAppFirstPaintVerdict(firstPaintEvidenceRef.current)) {
-        dispatchRuntimeEvent({
-          type: 'failed',
-          epoch: bindingEpoch,
-          code: 'ready-but-blank',
-        });
-      }
-    }, MCP_APP_READY_BLANK_DEADLINE_MS);
-    return () => window.clearTimeout(deadline);
-  }, [bindingEpoch, runtimeState.phase]);
-  const noteFirstPaintEvidence = React.useCallback((kind: 'app-size' | 'layout' | 'app-content') => {
-    if (kind === 'app-size') {
-      firstPaintEvidenceRef.current = {
-        ...firstPaintEvidenceRef.current,
-        appSizeChanged: true,
-      };
-    } else if (kind === 'layout') {
-      firstPaintEvidenceRef.current = {
-        ...firstPaintEvidenceRef.current,
-        layoutVisible: true,
-      };
-    } else {
-      firstPaintEvidenceRef.current = {
-        ...firstPaintEvidenceRef.current,
-        appContentReady: true,
-      };
-    }
-    if (!bridgeReadyRef.current) return;
-    if (mcpAppFirstPaintVerdict(firstPaintEvidenceRef.current)) {
-      dispatchRuntimeEvent({ type: 'phase', epoch: bindingEpoch, phase: 'ready' });
-    }
-  }, [bindingEpoch]);
   const recordPhase = React.useCallback((phase: McpAppRuntimePhase) => {
     dispatchRuntimeEvent({ type: 'phase', epoch: bindingEpoch, phase });
   }, [bindingEpoch]);
@@ -2148,6 +2088,9 @@ export const McpAppRenderer = React.forwardRef<McpAppRendererHandle, McpAppRende
   const handleToolNotificationOutcome = React.useCallback((
     outcome: McpAppToolNotificationOutcome,
   ) => {
+    // Cancellation handling only. Ordinary envelope/status flushes never
+    // grant ready: protocol readiness is granted exclusively from the
+    // AppBridge oninitialized initial-delivery path below.
     if (outcome !== 'cancelled') return;
     const notice = toolCancellationReasonRef.current || 'MCP App tool call was cancelled';
     const teardown = beginBridgeTeardownRef.current;
@@ -2332,7 +2275,9 @@ export const McpAppRenderer = React.forwardRef<McpAppRendererHandle, McpAppRende
       );
       bridge.onupdatemodelcontext = async (params) => {
         if (!hasActiveAuthority()) return { isError: true };
-        if (isMcpAppContentReadyUpdate(params)) noteFirstPaintEvidence('app-content');
+        // Model-context updates (including tldraw's openchamberContentReady
+        // marker) are persisted through the shared update handler. They are
+        // optional model context, never generic readiness proof.
         return await updateModelContext(params);
       };
     }
@@ -2361,16 +2306,10 @@ export const McpAppRenderer = React.forwardRef<McpAppRendererHandle, McpAppRende
     });
     bridge.onsizechange = ({ height: nextHeight }) => {
       if (!hasActiveAuthority()) return;
-      // AUD-001: the App's own rendered-size report is one part of the
-      // first-paint evidence. A sub-threshold or missing height only records
-      // activity and never releases the ready-but-blank watchdog by itself.
-      if (
-        typeof nextHeight === 'number' &&
-        Number.isFinite(nextHeight) &&
-        nextHeight >= MCP_APP_MIN_VISIBLE_HEIGHT
-      ) {
-        noteFirstPaintEvidence('app-size');
-      }
+      // ui/notifications/size-changed is optional layout information (Apps
+      // with autoResize disabled never emit it) and is not readiness proof.
+      // Preserve the size-based inline-height behavior for Apps that do
+      // report their preferred height.
       if (
         displayModeRef.current === 'inline'
         && typeof nextHeight === 'number'
@@ -2384,9 +2323,10 @@ export const McpAppRenderer = React.forwardRef<McpAppRendererHandle, McpAppRende
       initialized = true;
       appCapabilitiesRef.current = bridge.getAppCapabilities() ?? {};
       bridgeReadyRef.current = true;
-      // P0-A: AppBridge is up, but the App must still prove it painted
-      // something before the instance is considered ready.
-      recordPhase('waiting-first-paint');
+      // P0-A: AppBridge is up. Protocol readiness requires the queued initial
+      // Tool input/result delivery to complete successfully; a standards-
+      // compliant App never has to prove visible content.
+      recordPhase('delivering-tool-data');
       sandboxProxyController?.handleAppInitialized();
       const requestedMode = pendingDisplayModeRef.current;
       pendingDisplayModeRef.current = null;
@@ -2396,10 +2336,31 @@ export const McpAppRenderer = React.forwardRef<McpAppRendererHandle, McpAppRende
           ?? displayContext(displayModeRef.current).hostContext,
       );
       void toolNotificationQueueRef.current?.flush()
-        .then(handleToolNotificationOutcome)
-        .catch((next) => notificationViolationRef.current(
-          next instanceof Error ? next.message : 'MCP App tool notification failed',
-        ));
+        .then((outcome) => {
+          if (outcome === 'cancelled') {
+            // A cancelled initial delivery keeps the existing teardown
+            // behavior and never advances to ready.
+            handleToolNotificationOutcome(outcome);
+            return;
+          }
+          // idle/input/result are successful completion of the ordered
+          // initial Tool input/result delivery. Protocol readiness depends
+          // only on AppBridge initialization plus this delivery, and is
+          // granted only from this AppBridge's own oninitialized path while
+          // this exact bridge effect still owns the current binding
+          // (hasActiveAuthority proves !disposed, initialized, and the
+          // current binding epoch).
+          if (hasActiveAuthority()) recordPhase('ready');
+        })
+        .catch((next) => {
+          // A rejected initial delivery never grants ready. Only this exact
+          // bridge effect's authority may surface the violation; a stale
+          // flush from a superseded bridge must not invalidate a replacement.
+          if (!hasActiveAuthority()) return;
+          notificationViolationRef.current(
+            next instanceof Error ? next.message : 'MCP App tool notification failed',
+          );
+        });
     };
 
     const transport = new PostMessageTransport(target, target);
@@ -2536,9 +2497,9 @@ export const McpAppRenderer = React.forwardRef<McpAppRendererHandle, McpAppRende
         } else if (probe.type === 'rejection') {
           recordFailure('script-failed');
         } else if (probe.type === 'layout-visible') {
-          // Broker layout observation alone never grants first paint; it is
-      // the layout half of the three-signal evidence (AUD-001).
-          noteFirstPaintEvidence('layout');
+          // Broker layout observation is optional diagnostic telemetry. It is
+          // never readiness proof: protocol readiness depends only on
+          // AppBridge initialization plus successful tool data delivery.
         }
       },
     });
@@ -2604,12 +2565,23 @@ export const McpAppRenderer = React.forwardRef<McpAppRendererHandle, McpAppRende
   ]);
 
   React.useEffect(() => {
+    // Capture the initiating authority when the flush is scheduled: the queue
+    // may serialize behind an earlier delivery while React swaps the bridge or
+    // the binding. A later envelope/status flush only surfaces a protocol
+    // violation when the initiating bridge still owns the initiating epoch;
+    // a stale rejection must never invalidate a replacement bridge.
+    const initiatingEpoch = bindingEpoch;
+    const initiatingBridge = bridgeRef.current;
     void toolNotificationQueueRef.current?.flush()
       .then(handleToolNotificationOutcome)
-      .catch((next) => notificationViolationRef.current(
-        next instanceof Error ? next.message : 'MCP App tool notification failed',
-      ));
-  }, [envelope, handleToolNotificationOutcome, toolCancellationReason, toolStateStatus]);
+      .catch((next) => {
+        if (bindingAuthorityRef.current !== initiatingEpoch) return;
+        if (bridgeRef.current !== initiatingBridge) return;
+        notificationViolationRef.current(
+          next instanceof Error ? next.message : 'MCP App tool notification failed',
+        );
+      });
+  }, [bindingEpoch, envelope, handleToolNotificationOutcome, toolCancellationReason, toolStateStatus]);
 
   React.useLayoutEffect(() => {
     const dialog = hostRef.current;

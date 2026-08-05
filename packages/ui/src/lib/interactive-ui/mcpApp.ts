@@ -379,7 +379,6 @@ export type McpAppRuntimePhase =
   | 'loading-dependencies'
   | 'waiting-app-bridge'
   | 'delivering-tool-data'
-  | 'waiting-first-paint'
   | 'ready'
   | 'failed';
 
@@ -391,7 +390,6 @@ export type McpAppRuntimeFailureCode =
   | 'script-failed'
   | 'bridge-timeout'
   | 'tool-data-delivery-failed'
-  | 'ready-but-blank'
   | 'binding-invalidated';
 
 export interface McpAppRuntimeFailure {
@@ -428,7 +426,6 @@ export const MCP_APP_RUNTIME_PHASES: readonly McpAppRuntimePhase[] = [
   'loading-dependencies',
   'waiting-app-bridge',
   'delivering-tool-data',
-  'waiting-first-paint',
   'ready',
   'failed',
 ];
@@ -443,12 +440,8 @@ export const MCP_APP_RUNTIME_RETRYABLE: Readonly<
   'script-failed': true,
   'bridge-timeout': true,
   'tool-data-delivery-failed': true,
-  'ready-but-blank': true,
   'binding-invalidated': false,
 };
-
-/** AppBridge initialized → first visible content deadline (plan A4). */
-export const MCP_APP_READY_BLANK_DEADLINE_MS = 4_000;
 
 export const createMcpAppRuntimeState = (
   epoch = 'initial',
@@ -528,8 +521,6 @@ export const mcpAppRuntimeFailureText = (
       return 'MCP App did not initialize its AppBridge in time';
     case 'tool-data-delivery-failed':
       return 'MCP App initialized but Tool data delivery failed';
-    case 'ready-but-blank':
-      return 'MCP App initialized but shows no visible content';
     case 'binding-invalidated':
       return 'MCP App binding was invalidated';
     default:
@@ -567,53 +558,6 @@ export const sanitizeMcpAppDiagnosticDetail = (
   return originOnly.length > maxLength
     ? `${originOnly.slice(0, maxLength)}…`
     : originOnly;
-};
-
-// ────────────────────────────────────────────────────────────────────────────
-// P0-A/AUD-001: first-paint evidence model
-//
-// An opaque sandbox cannot be inspected for painted pixels, so `ready` must
-// never be granted by layout alone. Three independent signals are required:
-// 1. `appSizeChanged` — the App ITSELF reported ui/notifications/size-changed
-//    with a height at/above the visible threshold (App JS ran, measured and
-//    reported its own rendered size);
-// 2. `layoutVisible` — the trusted broker observed the App iframe with a
-//    non-zero layout size.
-// 3. `appContentReady` — the App emitted structured content proof after its
-//    real tldraw editor rendered at least one semantic element.
-// Any signal alone (or iframe load, AppBridge initialized, ResizeObserver)
-// records a milestone but never releases the ready-but-blank watchdog.
-// ────────────────────────────────────────────────────────────────────────────
-export interface McpAppFirstPaintEvidence {
-  /** App-originated size-changed with height >= MCP_APP_MIN_VISIBLE_HEIGHT. */
-  appSizeChanged: boolean;
-  /** Broker-observed non-zero layout size for the App iframe. */
-  layoutVisible: boolean;
-  /** App-originated content receipt for a rendered, non-empty semantic surface. */
-  appContentReady: boolean;
-}
-
-export const MCP_APP_MIN_VISIBLE_HEIGHT = 24;
-
-export const mcpAppFirstPaintVerdict = (
-  evidence: McpAppFirstPaintEvidence,
-): boolean => evidence.appSizeChanged && evidence.layoutVisible && evidence.appContentReady;
-
-/**
- * The first-paint receipt is intentionally an App-level model-context update,
- * not a host DOM guess. The tldraw App emits this marker only after its real
- * editor has rendered at least one semantic shape with a positive hit area;
- * the verifier independently checks the rendered surface before accepting it.
- */
-export const isMcpAppContentReadyUpdate = (
-  update: McpAppModelContextUpdate,
-): boolean => {
-  const structuredContent = record(update.structuredContent);
-  const renderedSemanticElementCount = structuredContent?.renderedSemanticElementCount;
-  return structuredContent?.openchamberContentReady === true
-    && typeof renderedSemanticElementCount === 'number'
-    && Number.isSafeInteger(renderedSemanticElementCount)
-    && renderedSemanticElementCount > 0;
 };
 
 // ────────────────────────────────────────────────────────────────────────────

@@ -44,7 +44,6 @@ import {
 } from './McpAppRenderer';
 import {
   createMcpAppResultEnvelope,
-  mcpAppFirstPaintVerdict,
   parseMcpAppBinding,
   type McpAppResultEnvelope,
 } from '@/lib/interactive-ui/mcpApp';
@@ -438,6 +437,61 @@ describe('MCP App tool notification ordering', () => {
     expect(await notifications.flush()).toBe('cancelled');
     expect(await notifications.flush()).toBe('idle');
     expect(events).toEqual(['input', 'cancel:user interrupted']);
+  });
+
+  test('a rejected tool notification delivery propagates as a failure and never reports success', async () => {
+    const binding = parseMcpAppBinding({
+      mcpApp: {
+        server: 'excalidraw',
+        tool: 'excalidraw_create_diagram',
+        toolKey: 'excalidraw_excalidraw_create_diagram',
+        resourceUri: 'ui://excalidraw/editor.html',
+        meta: {
+          resourceUri: 'ui://excalidraw/editor.html',
+          csp: {
+            resourceDomains: ['https://esm.sh'],
+            connectDomains: ['https://esm.sh'],
+          },
+        },
+      },
+    });
+    if (!binding) throw new Error('expected binding');
+    const envelope = createMcpAppResultEnvelope({
+      binding,
+      toolInput: { elements: [] },
+      toolOutput: '',
+      metadata: {},
+    });
+    const sent: string[] = [];
+    let failuresRemaining = 1;
+    const notifications = createMcpAppToolNotificationQueue({
+      getBridge: () => ({
+        sendToolInput: async () => {
+          sent.push('input');
+          if (failuresRemaining > 0) {
+            failuresRemaining -= 1;
+            throw new Error('transport closed during tool-input delivery');
+          }
+        },
+        sendToolResult: async () => { sent.push('result'); },
+        sendToolCancelled: async () => { sent.push('cancel'); },
+      }),
+      isReady: () => true,
+      getEnvelope: () => envelope,
+      getStatus: () => 'completed',
+    });
+
+    // The rejected delivery propagates as a failure; it is never reported as
+    // the input/result success outcome that would let the host enter ready.
+    await expect(notifications.flush()).rejects.toThrow(
+      'transport closed during tool-input delivery',
+    );
+    expect(sent).toEqual(['input']);
+    // A rejected transport operation never poisons later deliveries, but the
+    // host still only advances after a real successful flush.
+    notifications.reset();
+    expect(await notifications.flush()).toBe('result');
+    expect(sent).toEqual(['input', 'input', 'result']);
   });
 });
 
@@ -3831,40 +3885,283 @@ const executeMountedGeneratedBrokerRuntime = (
   };
 };
 
-describe('MCP App first-paint watchdog lifecycle', () => {
-  test('preserves evidence recorded before watchdog effect setup and resets only at an epoch boundary', () => {
+describe('MCP App protocol readiness (standards-only App)', () => {
+  test('retires the generic ready-but-blank watchdog from runtime source', () => {
+    const rendererSource = readFileSync(new URL('./McpAppRenderer.tsx', import.meta.url), 'utf8');
+    expect(rendererSource).not.toContain('waiting-first-paint');
+    expect(rendererSource).not.toContain('ready-but-blank');
+    expect(rendererSource).not.toContain('MCP_APP_READY_BLANK_DEADLINE_MS');
+    expect(rendererSource).not.toContain('mcpAppFirstPaintVerdict');
+    expect(rendererSource).not.toContain('firstPaintEvidence');
+    expect(rendererSource).not.toContain('isMcpAppContentReadyUpdate');
+    const runtimeSource = readFileSync(
+      new URL('../../lib/interactive-ui/mcpApp.ts', import.meta.url),
+      'utf8',
+    );
+    expect(runtimeSource).not.toContain('waiting-first-paint');
+    expect(runtimeSource).not.toContain('ready-but-blank');
+    expect(runtimeSource).not.toContain('MCP_APP_READY_BLANK_DEADLINE_MS');
+    expect(runtimeSource).not.toContain('McpAppFirstPaintEvidence');
+    expect(runtimeSource).not.toContain('mcpAppFirstPaintVerdict');
+    expect(runtimeSource).not.toContain('MCP_APP_MIN_VISIBLE_HEIGHT');
+    expect(runtimeSource).not.toContain('isMcpAppContentReadyUpdate');
+  });
+
+  test('grants ready only from the oninitialized initial delivery under active authority', () => {
     const source = readFileSync(new URL('./McpAppRenderer.tsx', import.meta.url), 'utf8');
-    const waitingEffect = source.indexOf(
-      "React.useEffect(() => {\n    if (runtimeState.phase !== 'waiting-first-paint') return;",
-    );
-    expect(waitingEffect).toBeGreaterThanOrEqual(0);
-    const waitingEffectEnd = source.indexOf(
-      '\n  }, [bindingEpoch, runtimeState.phase]);',
-      waitingEffect,
-    );
-    expect(waitingEffectEnd).toBeGreaterThan(waitingEffect);
+    // The runtime `ready` phase has exactly one grant site.
+    const readyGrants = source.match(/recordPhase\('ready'\)/g) ?? [];
+    expect(readyGrants).toHaveLength(1);
+    const grantIndex = source.indexOf("recordPhase('ready')");
+    // The grant lives inside the current bridge's oninitialized handler.
+    const oninitializedStart = source.indexOf('bridge.oninitialized = () => {');
+    expect(oninitializedStart).toBeGreaterThanOrEqual(0);
+    expect(grantIndex).toBeGreaterThan(oninitializedStart);
+    // The grant is guarded by that exact effect's active authority
+    // (hasActiveAuthority proves !disposed, initialized, and current epoch).
+    expect(source.slice(grantIndex - 120, grantIndex)).toContain('hasActiveAuthority()');
+    // The cancellation-only shared handler never grants ready.
+    const handlerStart = source.indexOf('const handleToolNotificationOutcome');
+    const handlerEnd = source.indexOf('notificationViolationRef.current = (reason) => {');
+    expect(handlerStart).toBeGreaterThanOrEqual(0);
+    expect(handlerEnd).toBeGreaterThan(handlerStart);
+    expect(source.slice(handlerStart, handlerEnd)).not.toContain("recordPhase('ready')");
+    // Ordinary envelope/status flushes never grant ready: the generic effect
+    // re-flush (the flush site after the oninitialized one) handles outcomes
+    // only through the cancellation-only handler.
+    const secondFlush = source.indexOf('toolNotificationQueueRef.current?.flush()', grantIndex);
+    expect(secondFlush).toBeGreaterThan(grantIndex);
+    expect(source.slice(secondFlush, secondFlush + 900)).not.toContain("recordPhase('ready')");
+  });
 
-    expect(source.slice(waitingEffect, waitingEffectEnd)).not.toContain(
-      'firstPaintEvidenceRef.current = {',
-    );
+  test('an Excalidraw-like standards-only App reaches and remains ready without size or model-context markers', async () => {
+    const dom = installMountedRendererDom();
+    const container = dom.document.createElement('div');
+    dom.document.body.appendChild(container);
+    const root = createRoot(container as unknown as Element);
+    const client = opencodeClient as unknown as {
+      getMcpAppResource: (...args: unknown[]) => Promise<unknown>;
+    };
+    const originalResource = client.getMcpAppResource;
+    client.getMcpAppResource = async () => ({
+      html: '<!doctype html><main>Excalidraw canvas</main>',
+      mimeType: 'text/html;profile=mcp-app',
+      sha256: 'sha256:excalidraw-standards-only',
+    });
+    const binding = parseMcpAppBinding({
+      mcpApp: {
+        server: 'excalidraw',
+        tool: 'excalidraw_create_diagram',
+        toolKey: 'excalidraw_excalidraw_create_diagram',
+        resourceUri: 'ui://excalidraw/editor.html',
+        meta: {
+          resourceUri: 'ui://excalidraw/editor.html',
+          csp: {
+            resourceDomains: ['https://esm.sh'],
+            connectDomains: ['https://esm.sh'],
+          },
+        },
+      },
+    });
+    if (!binding) throw new Error('expected binding');
+    const envelope = createMcpAppResultEnvelope({
+      binding,
+      toolInput: { elements: [] },
+      toolOutput: '',
+      metadata: {},
+    });
+    let mounted = true;
+    let runtime: ReturnType<typeof executeMountedGeneratedBrokerRuntime> | null = null;
+    try {
+      await act(async () => {
+        root.render(React.createElement(McpAppRenderer, {
+          envelope,
+          directory: '/workspace/excalidraw',
+          sessionId: 'ses_excalidraw',
+          messageId: 'msg_excalidraw',
+          partId: 'prt_excalidraw',
+        }));
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      const frame = dom.find('iframe');
+      if (!frame?.contentWindow) throw new Error('real renderer did not mount its proxy iframe');
+      runtime = executeMountedGeneratedBrokerRuntime(dom, frame);
+      expect(runtime.brokerMessages.some((message) => (
+        (message as { type?: unknown }).type === 'broker.ready'
+      ))).toBe(true);
 
-    const epochReset = source.indexOf(
-      'firstPaintEvidenceEpochRef.current !== bindingEpoch',
-    );
-    expect(epochReset).toBeGreaterThanOrEqual(0);
-    expect(epochReset).toBeLessThan(waitingEffect);
-    expect(source.indexOf(
-      'firstPaintEvidenceEpochRef.current = bindingEpoch',
-      epochReset,
-    )).toBeGreaterThan(epochReset);
+      // Standards-only handshake: ui/initialize followed by the standard
+      // ui/notifications/initialized. The App never sends autoResize-driven
+      // size-changed notifications and never emits OpenChamber model context.
+      runtime.sendAppMessage({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'ui/initialize',
+        params: {
+          appInfo: { name: 'excalidraw-standards-only', version: '1' },
+          appCapabilities: { availableDisplayModes: ['inline'] },
+          protocolVersion: '2026-01-26',
+        },
+      });
+      runtime.sendAppMessage({
+        jsonrpc: '2.0',
+        method: 'ui/notifications/initialized',
+      });
+      await act(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+      });
 
-    // The evidence that arrived before the passive watchdog effect is still a
-    // valid three-signal receipt; the effect must observe it, not erase it.
-    expect(mcpAppFirstPaintVerdict({
-      appSizeChanged: true,
-      layoutVisible: true,
-      appContentReady: true,
-    })).toBe(true);
+      const outbound = dom.outbound.get(frame.contentWindow) ?? [];
+      const toolInputs = outbound.filter((message) => (
+        (message as { method?: unknown }).method === 'ui/notifications/tool-input'
+      ));
+      const toolResults = outbound.filter((message) => (
+        (message as { method?: unknown }).method === 'ui/notifications/tool-result'
+      ));
+      expect(toolInputs).toHaveLength(1);
+      expect(toolResults).toHaveLength(1);
+      expect((toolInputs[0] as { params?: unknown }).params).toEqual({
+        arguments: { elements: [] },
+      });
+      // No size/layout/model-context signal was ever exchanged: readiness must
+      // not depend on any of them.
+      expect(outbound.some((message) => (
+        String((message as { method?: unknown }).method).includes('size-changed')
+      ))).toBe(false);
+
+      // The instance stays mounted and shows no error: it is ready and remains
+      // ready without any proprietary evidence (the retired 4s watchdog is
+      // gone and cannot replace the canvas).
+      for (let index = 0; index < 3; index += 1) {
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      }
+      expect(dom.find('iframe')).toBe(frame);
+      expect(dom.find('dialog')).not.toBeNull();
+    } finally {
+      if (mounted) await act(async () => { root.unmount(); });
+      runtime?.restore();
+      client.getMcpAppResource = originalResource;
+      dom.restore();
+    }
+  });
+
+  test('a rejected initial tool delivery fails closed and never reaches ready', async () => {
+    const dom = installMountedRendererDom();
+    const container = dom.document.createElement('div');
+    dom.document.body.appendChild(container);
+    const root = createRoot(container as unknown as Element);
+    const client = opencodeClient as unknown as {
+      getMcpAppResource: (...args: unknown[]) => Promise<unknown>;
+    };
+    const originalResource = client.getMcpAppResource;
+    client.getMcpAppResource = async () => ({
+      html: '<!doctype html><main>Excalidraw canvas</main>',
+      mimeType: 'text/html;profile=mcp-app',
+      sha256: 'sha256:excalidraw-delivery-failure',
+    });
+    const binding = parseMcpAppBinding({
+      mcpApp: {
+        server: 'excalidraw',
+        tool: 'excalidraw_create_diagram',
+        toolKey: 'excalidraw_excalidraw_create_diagram',
+        resourceUri: 'ui://excalidraw/editor.html',
+        meta: {
+          resourceUri: 'ui://excalidraw/editor.html',
+          csp: {
+            resourceDomains: ['https://esm.sh'],
+            connectDomains: ['https://esm.sh'],
+          },
+        },
+      },
+    });
+    if (!binding) throw new Error('expected binding');
+    const envelope = createMcpAppResultEnvelope({
+      binding,
+      toolInput: { elements: [] },
+      toolOutput: '',
+      metadata: {},
+    });
+    let mounted = true;
+    let runtime: ReturnType<typeof executeMountedGeneratedBrokerRuntime> | null = null;
+    try {
+      await act(async () => {
+        root.render(React.createElement(McpAppRenderer, {
+          envelope,
+          directory: '/workspace/excalidraw',
+          sessionId: 'ses_excalidraw',
+          messageId: 'msg_excalidraw',
+          partId: 'prt_excalidraw',
+        }));
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      const frame = dom.find('iframe');
+      const target = frame?.contentWindow;
+      if (!target) throw new Error('real renderer did not mount its proxy iframe');
+      runtime = executeMountedGeneratedBrokerRuntime(dom, frame);
+      expect(runtime.brokerMessages.some((message) => (
+        (message as { type?: unknown }).type === 'broker.ready'
+      ))).toBe(true);
+
+      // Reject the host-to-App tool-input notification at the transport
+      // boundary so the queued initial delivery cannot complete. The runtime
+      // must fail closed instead of granting ready without a delivery.
+      const brokerPostMessage = target.postMessage;
+      target.postMessage = (message: unknown) => {
+        const method = (message as { method?: unknown } | null)?.method;
+        if (method === 'ui/notifications/tool-input') {
+          throw new Error('transport failed during tool-input delivery');
+        }
+        return brokerPostMessage.call(target, message);
+      };
+
+      runtime.sendAppMessage({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'ui/initialize',
+        params: {
+          appInfo: { name: 'excalidraw-delivery-failure', version: '1' },
+          appCapabilities: { availableDisplayModes: ['inline'] },
+          protocolVersion: '2026-01-26',
+        },
+      });
+      runtime.sendAppMessage({
+        jsonrpc: '2.0',
+        method: 'ui/notifications/initialized',
+      });
+      await act(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      // Complete the bounded teardown response so the error surface settles
+      // without waiting out the grace period.
+      const outbound = dom.outbound.get(target) ?? [];
+      const teardown = outbound.find((message) => (
+        (message as { method?: unknown }).method === 'ui/resource-teardown'
+      )) as { id?: string | number } | undefined;
+      if (teardown?.id !== undefined) {
+        dom.dispatchMessage(target, { jsonrpc: '2.0', id: teardown.id, result: {} });
+        await act(async () => { await Promise.resolve(); });
+      }
+
+      // The delivery never completed: no tool-result was ever published and
+      // the runtime surfaced the failure instead of reaching ready.
+      expect(outbound.some((message) => (
+        (message as { method?: unknown }).method === 'ui/notifications/tool-result'
+      ))).toBe(false);
+      expect(dom.find('dialog')).toBeNull();
+      expect(frame.parentNode).toBeNull();
+    } finally {
+      if (mounted) await act(async () => { root.unmount(); });
+      runtime?.restore();
+      client.getMcpAppResource = originalResource;
+      dom.restore();
+    }
   });
 });
 

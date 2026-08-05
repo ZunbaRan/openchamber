@@ -1,14 +1,11 @@
 import { describe, expect, test } from 'bun:test';
 import {
   MCP_APP_RESULT_SCHEMA,
-  MCP_APP_READY_BLANK_DEADLINE_MS,
+  MCP_APP_RUNTIME_PHASES,
   applyMcpAppModelContextUpdate,
   canRenderMcpAppToolState,
   createMcpAppResultEnvelope,
   createMcpAppRuntimeState,
-  mcpAppFirstPaintVerdict,
-  isMcpAppContentReadyUpdate,
-  MCP_APP_MIN_VISIBLE_HEIGHT,
   mcpAppRuntimeFailureText,
   mcpAppRuntimeIsTerminal,
   normalizeMcpAppConnectCspSource,
@@ -390,7 +387,7 @@ describe('MCP App runtime model (P0-A diagnostics)', () => {
       'mounting-sandbox',
       'loading-dependencies',
       'waiting-app-bridge',
-      'waiting-first-paint',
+      'delivering-tool-data',
       'ready',
     ];
     for (const phase of sequence) {
@@ -437,7 +434,7 @@ describe('MCP App runtime model (P0-A diagnostics)', () => {
     const afterFailure = reduceMcpAppRuntime(state, {
       type: 'failed',
       epoch: epoch(),
-      code: 'ready-but-blank',
+      code: 'tool-data-delivery-failed',
     });
     expect(afterFailure.phase).toBe('ready');
   });
@@ -471,10 +468,10 @@ describe('MCP App runtime model (P0-A diagnostics)', () => {
 
   test('produces stable user-facing text without sensitive data', () => {
     expect(mcpAppRuntimeFailureText({
-      code: 'ready-but-blank',
+      code: 'tool-data-delivery-failed',
       retryable: true,
       at: 1,
-    })).toEqual("MCP App initialized but shows no visible content");
+    })).toEqual('MCP App initialized but Tool data delivery failed');
     expect(mcpAppRuntimeFailureText({
       code: 'dependency-blocked',
       retryable: false,
@@ -484,37 +481,39 @@ describe('MCP App runtime model (P0-A diagnostics)', () => {
   });
 });
 
-describe('MCP App first-paint evidence (AUD-001)', () => {
-  test('requires App size, broker layout, and an App-originated content receipt', () => {
-    const empty = { appSizeChanged: false, layoutVisible: false, appContentReady: false };
-    expect(mcpAppFirstPaintVerdict(empty)).toBe(false);
-    expect(mcpAppFirstPaintVerdict({ ...empty, appSizeChanged: true })).toBe(false);
-    expect(mcpAppFirstPaintVerdict({ ...empty, layoutVisible: true })).toBe(false);
-    expect(mcpAppFirstPaintVerdict({ ...empty, appContentReady: true })).toBe(false);
-    expect(mcpAppFirstPaintVerdict({ appSizeChanged: true, layoutVisible: true, appContentReady: true })).toBe(true);
+describe('MCP App protocol readiness', () => {
+  const epoch = (suffix = 'a') => `epoch-${suffix}`;
+
+  test('delivering-tool-data is the only phase between waiting-app-bridge and ready', () => {
+    expect(MCP_APP_RUNTIME_PHASES).not.toContain('waiting-first-paint');
+    const bridgeIndex = MCP_APP_RUNTIME_PHASES.indexOf('waiting-app-bridge');
+    const deliveringIndex = MCP_APP_RUNTIME_PHASES.indexOf('delivering-tool-data');
+    const readyIndex = MCP_APP_RUNTIME_PHASES.indexOf('ready');
+    expect(bridgeIndex).toBeGreaterThanOrEqual(0);
+    expect(deliveringIndex).toBeGreaterThan(bridgeIndex);
+    expect(readyIndex).toBeGreaterThan(deliveringIndex);
   });
 
-  test('accepts only a positive rendered semantic content receipt', () => {
-    expect(isMcpAppContentReadyUpdate({
-      structuredContent: {
-        openchamberContentReady: true,
-        renderedSemanticElementCount: 3,
-      },
-    })).toBe(true);
-    expect(isMcpAppContentReadyUpdate({
-      structuredContent: {
-        openchamberContentReady: true,
-        renderedSemanticElementCount: 0,
-      },
-    })).toBe(false);
-    expect(isMcpAppContentReadyUpdate({
-      structuredContent: { openchamberContentReady: true },
-    })).toBe(false);
+  test('a standards-only App reaches ready without any visual or semantic evidence', () => {
+    let state = createMcpAppRuntimeState(epoch());
+    state = reduceMcpAppRuntime(state, { type: 'phase', epoch: epoch(), phase: 'waiting-app-bridge' });
+    state = reduceMcpAppRuntime(state, { type: 'phase', epoch: epoch(), phase: 'delivering-tool-data' });
+    state = reduceMcpAppRuntime(state, { type: 'phase', epoch: epoch(), phase: 'ready' });
+    expect(state.phase).toBe('ready');
+    expect(state.failure).toBeNull();
+    expect(state.milestones['delivering-tool-data']).toBeDefined();
+    expect(state.milestones.ready).toBeDefined();
+    expect(mcpAppRuntimeIsTerminal(state)).toBe(true);
   });
 
-  test('the visible height threshold is small but nonzero', () => {
-    expect(MCP_APP_MIN_VISIBLE_HEIGHT > 0).toBe(true);
-    expect(MCP_APP_MIN_VISIBLE_HEIGHT <= 64).toBe(true);
+  test('a rejected delivery failure is terminal and blocks ready', () => {
+    let state = createMcpAppRuntimeState(epoch());
+    state = reduceMcpAppRuntime(state, { type: 'phase', epoch: epoch(), phase: 'delivering-tool-data' });
+    state = reduceMcpAppRuntime(state, { type: 'failed', epoch: epoch(), code: 'tool-data-delivery-failed' });
+    expect(state.phase).toBe('failed');
+    expect(state.failure?.retryable).toBe(true);
+    const after = reduceMcpAppRuntime(state, { type: 'phase', epoch: epoch(), phase: 'ready' });
+    expect(after.phase).toBe('failed');
   });
 });
 
