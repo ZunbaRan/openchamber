@@ -56,6 +56,12 @@ Shared contracts must define intentional behavior for every applicable runtime: 
 - One failed entity must not erase or block unrelated complete entities.
 - Runtime-specific differences must be intentional and visible in code.
 
+## Upstream Synchronization Policy
+
+- By default, incorporate upstream OpenChamber or OpenCode changes only after an official stable Release is published.
+- Use the immutable stable Release tag/ref as the upstream merge source. Do not routinely merge moving upstream branches such as `main`, `dev`, or `beta`, and ignore unreleased commits until the next stable Release.
+- The only exception is an explicit user request naming the commit, tag, or ref to incorporate.
+
 ## Documentation Discovery
 
 Before changing a module, search for the nearest `DOCUMENTATION.md`; before package-level work, read its `README.md`. Discover docs dynamically under `packages/**/DOCUMENTATION.md` rather than relying on a static exhaustive map.
@@ -111,6 +117,9 @@ For work in Agent Generated Declarative, Installed Declarative, Trusted Native, 
 | Continuing component-library, Scripts Artifact runner, or Marketplace productization work | [Interactive UI productization plan](docs/INTERACTIVE_UI_PRODUCTIZATION_PLAN.md) |
 | Implementing the Right Sidebar extension catalog, persistent tile board, pin/focus/popout, or same-OCIX linked surfaces | [OCIX Extension Workbench design](docs/OCIX_EXTENSION_WORKBENCH_DESIGN.md) |
 | Testing Extension Workbench manifests, board persistence, pin/link behavior, drag/resize, Runner lifecycle, or packaged acceptance | [OCIX Extension Workbench test plan](docs/OCIX_EXTENSION_WORKBENCH_TEST_PLAN.md) |
+| Testing the managed OpenCode fork, MCP dual stack, MCP Apps, Local/Hosted OCIX, historical profiles, or their unified release | [OpenChamber × OpenCode Fork × MCP Apps × OCIX test plan](docs/OPENCHAMBER_OPENCODE_MCP_OCIX_TEST_PLAN.md) |
+| Developing or diagnosing a strict MCP 2026 App, local loopback runtime, App-only calls, canvas persistence, export, or MCP App layout | [MCP 2026 App development lessons](docs/MCP_2026_APP_DEVELOPMENT_LESSONS.md) |
+| Porting or implementing CodePilot/Claude-style Generative Widget (`show-widget` fence, independent of OCIX/HTML Artifact) | [Generative Widget CodePilot port plan](docs/GENERATIVE_WIDGET_CODEPILOT_PORT_PLAN.md) and the reference snapshot under [docs/references/codepilot-generative-widget/](docs/references/codepilot-generative-widget/) |
 
 The canonical current release evidence is [the unified acceptance report](docs/INTERACTIVE_UI_UNIFIED_ACCEPTANCE_REPORT.md). The execution order and frozen gates are in [the execution plan](docs/INTERACTIVE_UI_BEAUTIFICATION_HTML_ARTIFACT_EXECUTION_PLAN.md). Qwen3.7 Plus is the default affordable model-routing baseline; OpenAI is optional comparison coverage unless a specific release task explicitly requires it. Do not replace evidence documents with fixture-only observations.
 

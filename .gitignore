@@ -1,5 +1,6 @@
 # Agent memory
 .graymatter/
+.codegraph/
 
 # Logs
 logs
