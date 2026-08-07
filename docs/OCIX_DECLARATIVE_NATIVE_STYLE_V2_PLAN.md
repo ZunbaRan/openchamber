@@ -1,7 +1,7 @@
 # OCIX Declarative / Trusted Native 样式优化 v2 详细规划
 
-> **状态**：设计规划（**本阶段不实施代码**）  
-> **日期**：2026-08-05  
+> **状态**：**已实现并合入主线**；合并后自动化验收通过，人工视觉矩阵与真实模型对话仍待执行  
+> **日期**：2026-08-05（状态回写 2026-08-07）  
 > **范围**：Declarative 渲染层 + Trusted Native Host UI Kit 的视觉与构图能力；**不**改 Business Gateway / Remote / LDR 后端  
 > **Agent 入口简报（讨论结论 / 推荐冻结）**：[OCIX_STYLE_V2_AGENT_BRIEF.md](./OCIX_STYLE_V2_AGENT_BRIEF.md)  
 > **父文档**：[美化开发指南](./INTERACTIVE_UI_BEAUTIFICATION.md) · [R0 视觉审计](./INTERACTIVE_UI_R0_VISUAL_AUDIT.md) · [执行计划](./INTERACTIVE_UI_BEAUTIFICATION_HTML_ARTIFACT_EXECUTION_PLAN.md) · [开发者手册](./INTERACTIVE_UI_EXTENSION_DEVELOPER_GUIDE.md)  
@@ -528,7 +528,7 @@ Date 控件：N1 后置评估（复杂度高；可用 Input + 业务格式先顶
 
 ---
 
-## 14. 本阶段交付与下一步
+## 14. 规划阶段交付与授权边界（历史，已由 §14.1 取代）
 
 **本阶段（文档）：**
 
@@ -538,11 +538,11 @@ Date 控件：N1 后置评估（复杂度高；可用 Input + 业务格式先顶
 - [x] 分批 S0–S6 与验收  
 - [x] Agent / Native 开发规范摘要  
 
-**未授权不做：**
+**规划阶段未授权不做：**
 
 - 改 `ocix-theme.css` / 渲染器 / Kit / skill / golden  
 
-**建议下一步（需你一句确认）：**
+**规划阶段建议（历史记录）：**
 
 1. **只确认 Q1–Q5 / O1–O5**（若与本文不一致则改本文），或  
 2. **授权 S1（Token v2）** 开始实现，或  
@@ -550,9 +550,11 @@ Date 控件：N1 后置评估（复杂度高；可用 Input + 业务格式先顶
 
 ---
 
-## 14.1 实施状态（2026-08-06，worktree `openchamber-style-v2` / 分支 `feat/ocix-style-v2`）
+## 14.1 实施与合入状态（2026-08-07）
 
 用户 2026-08-06 授权全量实施（不分阶段）。S6（Native recharts）按计划仍属可选依赖评审，未做。
+
+实现提交 `2fdb7ae3` 已通过合并提交 `4132bcef` 进入 `docs/interactive-ui-mcp-apps`，合并收尾为 `3929ebbb`；原 `openchamber-style-v2` worktree 与 `feat/ocix-style-v2` 分支已在确认合入后删除。日常开发以主仓工作区为准。
 
 | 批次 | 状态 | 证据 |
 |------|------|------|
@@ -571,6 +573,15 @@ Date 控件：N1 后置评估（复杂度高；可用 Input + 业务格式先顶
 - `dead-code`（knip）已审视：本改动新增导出均在用；报告其余为基线存量。
 - 环境备注：worktree 需复制主仓库的 `.npmrc`（GitHub Packages token 当前 403，SDK 已手动放入 bun store）及 gitignored 的 `examples/interactive-ui/*/dist/ui.mjs`、`templates/interactive-ui-extension/dist/ui.mjs` fixture。
 - `bun.lock` 在 worktree 有 registry URL 噪音（bun install 副作用），提交前应还原。
+
+**合并后验证（主仓，2026-08-07）：**
+
+- Style v2 UI / sanitizer / Native Kit：32 pass；Remote/Manager 联合回归：179 pass；生产路由接线：7 pass。
+- 全 workspace type-check 通过；Style v2 新增文件无 dead-code 命中。
+- workspace lint 仍只有既有 `packages/web/src/workbench-popout.tsx:50` error；UI lint 无新增 error。
+- `bun.lock` 镜像噪音已还原；三份同名主仓未跟踪副本已由分支最终版取代并清理。
+
+**尚未完成的发布验收：** 8 预设 × 明暗人工视觉审查、Qwen 真实对话冻结语料、预设维度 Golden 子矩阵及 Desktop/移动抽样。未完成这些项前，不把 Style v2 状态写成“人工验收全部通过”。
 
 ---
 

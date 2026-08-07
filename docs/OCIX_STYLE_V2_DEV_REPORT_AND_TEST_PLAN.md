@@ -1,8 +1,8 @@
 # OCIX Style v2 开发报告与测试计划
 
-> **状态**：实现完成，待人工视觉审查与合入  
-> **日期**：2026-08-06  
-> **实施分支**：worktree `openchamber-style-v2/` · 分支 `feat/ocix-style-v2`（基线 `bbee2481`）  
+> **状态**：**已实现并合入主线**；自动化验收通过，人工视觉审查、真实模型对话与预设 Golden 子矩阵待执行  
+> **日期**：2026-08-06（合入状态回写 2026-08-07）  
+> **历史实施分支**：`openchamber-style-v2/` · `feat/ocix-style-v2`（实现 `2fdb7ae3`；合并 `4132bcef`；收尾 `3929ebbb`；worktree/分支已清理）  
 > **上游文档**：[详细规划](./OCIX_DECLARATIVE_NATIVE_STYLE_V2_PLAN.md)（§14.1 实施状态）· [风格预设](./OCIX_STYLE_PRESETS.md) · [风格合同](./OCIX_STYLE_CONTRACT.md) · [Agent 简报](./OCIX_STYLE_V2_AGENT_BRIEF.md)
 
 ---
@@ -91,14 +91,24 @@
 | `bun run docs:validate` | ✅ 396 页通过 |
 | `bun run dead-code` | ✅ 新增导出均在用（报告其余为基线存量） |
 
+### 4.1 合并后验证（2026-08-07，主仓）
+
+| 门禁 | 结果 |
+|------|------|
+| Style v2 UI / sanitizer / Native Kit | ✅ 32 pass / 0 fail |
+| Remote runtime / manager / built-in 联合回归 | ✅ 179 pass / 0 fail |
+| 生产 `registerRoutes` 接线 | ✅ 7 pass / 0 fail |
+| 全 workspace type-check | ✅ 通过 |
+| UI lint | ✅ 0 error；3 个非 Style 既有 warning |
+| workspace lint | ⚠️ 仅既有 `packages/web/src/workbench-popout.tsx:50` error |
+| dead-code（Style v2 新增路径过滤） | ✅ 无命中 |
+
 ## 5. 偏差与遗留
 
 1. **S6（Native recharts）未做**：按计划属独立依赖评审。
 2. **Golden 剩余抖动**：`artifact-interactive` 2 张动画帧时序敏感（基线同型 flake，非本次引入）。
-3. **环境备注**：worktree 依赖从主仓库复制的 `.npmrc` 与 gitignored fixture（`examples/interactive-ui/*/dist/ui.mjs`、`templates/interactive-ui-extension/dist/ui.mjs`）；GitHub Packages token 当前 403，SDK 已手动置入 bun store，**token 需更新**。
-4. **`bun.lock` 有 registry URL 噪音**（install 副作用），提交前需还原。
-5. **演绎深色 4 套 + Slack 全套**为策展/推导值（PRESETS §5），数值正确性待人工审图确认。
-6. 主仓库 `docs/` 下三份 Style v2 设计文档原为 untracked，已复制进本分支；**合并后主仓库副本需删除**。
+3. **演绎深色 4 套 + Slack 全套**为策展/推导值（PRESETS §5），数值正确性待人工审图确认。
+4. **已收口的合入事项**：`bun.lock` registry URL 噪音已还原；分支最终文档已取代主仓同名副本；Style worktree/分支已删除。历史 worktree 的 GitHub Packages 403 仅是当时环境记录，不是当前产品状态。
 
 ---
 
@@ -116,7 +126,7 @@
 | 真实对话流（模型路由） | Qwen 17 条冻结语料 | ⬜ 待执行（L3 skill 变更后必跑） |
 | 平台矩阵 | macOS Web | ✅；Desktop/移动 ⬜ |
 
-## 7. 人工视觉审查矩阵（P0，合入前必做）
+## 7. 人工视觉审查矩阵（P0，合入后发布验收）
 
 按预设逐套在 Settings → Applications 切换，审查四类场景。命令：`bun run demo:interactive-ui:start` 起真实对话流，或用 gallery 工具（`mode=dashboard-hero` 等）。
 
@@ -162,5 +172,5 @@
 1. §7 矩阵 8×2 全过，演绎数值定稿。
 2. §8 全部回归通过，Qwen 17/17 不劣化。
 3. §9 预设 Golden 子集入库（或明确记录为后续批次）。
-4. `bun.lock` 噪音还原；worktree 分支合入；主仓库三份重复文档删除。
-5. PLAN §14.1 与本文档状态回写为「已验收」。
+4. [x] `bun.lock` 噪音还原；worktree 分支合入并清理；主仓库三份重复文档删除。
+5. [x] PLAN §14.1、简报与本文档已回写为“已实现并合入、自动化通过、人工验收待执行”；仅在 §7–§9 与真实对话/平台抽样完成后再改为“全部验收通过”。

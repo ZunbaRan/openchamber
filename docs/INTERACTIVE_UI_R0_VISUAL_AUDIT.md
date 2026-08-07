@@ -2,7 +2,8 @@
 
 > 状态：第二轮美化范围已冻结。  
 > 审计日期：2026-07-21  
-> 执行计划：[Interactive UI 美化、HTML Artifact 与统一测试执行计划](./INTERACTIVE_UI_BEAUTIFICATION_HTML_ARTIFACT_EXECUTION_PLAN.md)
+> 执行计划：[Interactive UI 美化、HTML Artifact 与统一测试执行计划](./INTERACTIVE_UI_BEAUTIFICATION_HTML_ARTIFACT_EXECUTION_PLAN.md)  
+> Style v2（R0-M01 等层级/构图深化）已实现并合入；剩余人工视觉矩阵见 [Style v2 开发报告](./OCIX_STYLE_V2_DEV_REPORT_AND_TEST_PLAN.md)
 
 本文记录 R0 的真实 OpenChamber 对话流证据、视觉缺陷和 R1/R2 冻结范围。它不是正式视觉 Golden；正式发布基线仍由 `tests/visual/interactive-ui/golden/` 和 `bun run test:interactive-ui-visual` 管理。
 

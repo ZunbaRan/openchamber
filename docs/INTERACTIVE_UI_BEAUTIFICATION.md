@@ -5,7 +5,8 @@
 > 配套文档：[架构](./INTERACTIVE_UI_EXTENSION_ARCHITECTURE.md) · [开发者手册](./INTERACTIVE_UI_EXTENSION_DEVELOPER_GUIDE.md)<br>
 > 实施主计划：[视觉、HTML Artifact 与统一验收计划](./INTERACTIVE_UI_VISUAL_HTML_ARTIFACT_AND_UNIFIED_TEST_PLAN.md)；本文作为其中 A 阶段的视觉实现参考，最终顺序、状态模型和跨路径验收以主计划为准。<br>
 > 下一阶段执行清单：[美化、HTML Artifact 与统一测试执行计划](./INTERACTIVE_UI_BEAUTIFICATION_HTML_ARTIFACT_EXECUTION_PLAN.md)。<br>
-> 更新日期：2026-07-21
+> **Style v2（层级/构图/Kit 扩充）已实现并合入**：先读 [Agent 简报](./OCIX_STYLE_V2_AGENT_BRIEF.md)，视觉合同见 [OCIX_STYLE_CONTRACT.md](./OCIX_STYLE_CONTRACT.md)，实施与剩余验收见 [开发报告](./OCIX_STYLE_V2_DEV_REPORT_AND_TEST_PLAN.md)。<br>
+> 更新日期：2026-07-21（Style v2 状态回写 2026-08-07）
 
 ## 实施状态（2026-07-21）
 
@@ -21,6 +22,8 @@
 - 自动化类型、lint、sanitizer、组件、Artifact、系统路由和阶段视觉 smoke 已接入；真实对话的正式 Golden 仍归入 P3 统一验收，不在本设计文档中提前宣称完成。
 
 未纳入当前实现的独立候选仍是 recharts/shadcn chart 依赖升级与 Native CSS 更强隔离；二者需要分别评审 bundle、性能和兼容性，不是 HTML Artifact 的前置条件。
+
+**Style v2 状态（2026-08-07）：** 五层方案已落地并合入：Token/8 套 Host 级预设、hero/standard/quiet、三种构图模式、Native Kit 扩充、Style Contract 与 Golden 更新。合并后的自动化回归已通过；8 预设 × 明暗人工视觉审查、真实模型对话与扩展后的预设 Golden 子矩阵仍按 [开发报告](./OCIX_STYLE_V2_DEV_REPORT_AND_TEST_PLAN.md) 执行。本文此前对旧 token 能力的夸大表述已由 Style v2 实现和合同取代。
 
 本文后续章节保留最初的视觉设计推导。最终实现没有建立一套与宿主完全脱离的品牌色：`.ocix-scope` 使用独立命名空间与受控语义映射，但基础 surface/primary 仍来自当前 OpenChamber 主题，以保持对话内无缝融合；扩展和模型不能覆盖这些映射。
 

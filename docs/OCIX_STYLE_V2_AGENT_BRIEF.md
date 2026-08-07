@@ -1,25 +1,26 @@
 # OCIX Style v2 — Agent 引用简报（反馈与推荐）
 
-> **用途**：给后续 Agent / 协作者的 **讨论结论 + 推荐方向** 入口文案。  
-> **状态**：讨论冻结摘要（**未授权写业务代码**）  
-> **日期**：2026-08-05  
+> **用途**：给后续 Agent / 协作者的 **实现合同 + 设计决策 + 剩余验收** 入口文案。  
+> **状态**：**已实现并合入主线**；合并后自动化验收通过，8 预设 × 明暗人工审图与真实模型对话仍待执行  
+> **日期**：2026-08-05（状态回写 2026-08-07）  
 > **详细设计（执行级）**：[OCIX_DECLARATIVE_NATIVE_STYLE_V2_PLAN.md](./OCIX_DECLARATIVE_NATIVE_STYLE_V2_PLAN.md)  
+> **视觉合同 / 验收**：[OCIX_STYLE_CONTRACT.md](./OCIX_STYLE_CONTRACT.md) · [OCIX_STYLE_V2_DEV_REPORT_AND_TEST_PLAN.md](./OCIX_STYLE_V2_DEV_REPORT_AND_TEST_PLAN.md)  
 > **相关历史**：[INTERACTIVE_UI_BEAUTIFICATION.md](./INTERACTIVE_UI_BEAUTIFICATION.md) · [INTERACTIVE_UI_R0_VISUAL_AUDIT.md](./INTERACTIVE_UI_R0_VISUAL_AUDIT.md)
 
-**读本文即可对齐方向；动手实现前再读详细规划与 change-discipline。**
+**读本文可快速对齐方向；维护实现前必须再读视觉合同、详细规划、开发报告与 change-discipline。**
 
 ---
 
 ## 1. 一句话
 
 上一轮美化解决的是 **「有没有」**（token 初版、tone/trend、sticky、tooltip、骨架、基础 Native Kit）。  
-现在要解决的是 **「好看且有层级」**：不是再刷一版换皮，而是 **Token 词汇 → 渲染强调层 → 构图模式 → Kit 扩充 → 合同与 Golden** 五层递进。
+Style v2 已按 **Token 词汇 → 渲染强调层 → 构图模式 → Kit 扩充 → 合同与 Golden** 五层落地，解决 **「好看且有层级」**，而不是再刷一版换皮。
 
 ---
 
-## 2. 根因（已与代码核对，可当事实用）
+## 2. 实现前根因（历史背景；已由 Style v2 收口）
 
-| # | 根因 | 现状锚点 |
+| # | 根因 | 实现前锚点 |
 |---|------|----------|
 | 1 | **单一视觉公式** | `DeclarativeInteractiveView.tsx` 中 `OCIX_PANEL = rounded-xl border … p-3`，多类节点同款白卡 |
 | 2 | **Token 层偏薄** | `packages/ui/src/styles/ocix-theme.css` 主要是 surface/border/前景/状态色/5 个 chart 色；**缺**圆角刻度、海拔阴影、display 字阶、primary tint/shade、sequential、delta 独立色 |
@@ -28,7 +29,7 @@
 
 补充事实：
 
-- `INTERACTIVE_UI_BEAUTIFICATION.md` 实施状态里「密度/圆角/阴影/motion token 已齐全」**相对实现偏乐观**；以磁盘 `ocix-theme.css` 与 Style v2 计划为准。  
+- `INTERACTIVE_UI_BEAUTIFICATION.md` 曾把旧 token 能力描述得偏乐观；当前以磁盘实现与 [Style Contract](./OCIX_STYLE_CONTRACT.md) 为准。  
 - R0 已记 **R0-M01**（卡片套卡片、等权边框）；v2 是其系统化收口，不是推翻 R1。  
 - 图表仍是手绘 SVG；recharts 曾评估后搁置为独立依赖评审。
 
@@ -118,7 +119,7 @@ Golden 按门禁分批刷新，禁止静默漂移。
 
 ---
 
-## 6. 推荐实施顺序（授权后）
+## 6. 已执行的实施顺序（历史）
 
 ```text
 S0  确认 Q1–Q5 / 字段草案          （可只做文档）
@@ -132,7 +133,7 @@ S6  （可选）Native recharts 评审
 ```
 
 **最小闭环（对话流立刻变好看）**：S1 → S2 → S3 → S5。  
-**未授权不得改**生产渲染器 / Kit / skill / golden；仅文档讨论阶段默认继续。
+上述 S1–S5 与 S4a/S4b 已完成；S6 仍是独立依赖评审。后续修改生产渲染器、Kit、skill 或 Golden 必须有明确需求，并继续遵守视觉合同与仓库门禁。
 
 ---
 
@@ -211,4 +212,4 @@ S6  （可选）Native recharts 评审
 3. **冻结**冷静专业 + **风格预设制（Host 级 8 套，扩展可推荐，防彩虹保留）** + Declarative 不引 recharts + 可选 schema + L1–L3 优先。  
 4. **阴影**用 token 化 box-shadow，**不等于**放开 blur。  
 5. **最大产品杠杆**在 L3 构图 + Skill 升级；**最大工程地基**在 L1 Token。  
-6. **当前仍是规划**；实施需明确授权批次（建议先 S1）。
+6. **当前实现已合入主线**；自动化验收已通过，人工 8×2 预设审图、真实模型对话与预设 Golden 子矩阵仍按开发报告收口。

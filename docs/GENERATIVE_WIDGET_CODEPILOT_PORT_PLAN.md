@@ -1,8 +1,9 @@
 # Generative Widget（CodePilot / Claude 风格）接入计划
 
-> **状态**：设计与参考源码已落盘；实现未开始  
-> **日期**：2026-08-04  
+> **状态**：实现已合入；验收执行见测试交接文档  
+> **日期**：2026-08-04（状态更新 2026-08-05）  
 > **性质**：fork 内部实施说明（OpenChamber UI + managed OpenCode fork）  
+> **测试交接（给他人执行）**：[GENERATIVE_WIDGET_TEST_HANDOFF.md](./GENERATIVE_WIDGET_TEST_HANDOFF.md)  
 > **参考源码目录**：[docs/references/codepilot-generative-widget/](./references/codepilot-generative-widget/)  
 > **上游**：https://github.com/op7418/CodePilot（BSL-1.1，**仅参考，禁止整包拷贝进产品运行时**）
 
