@@ -20,6 +20,10 @@ import {
   type MobileKeyboardMode,
 } from "@/lib/mobileKeyboardMode";
 import { getRuntimeKey } from "@/lib/runtime-switch";
+import {
+  normalizeOcixStylePreset,
+  type OcixStylePreset,
+} from "@/lib/interactive-ui/stylePresets";
 import type { TerminalShell } from "@/lib/api/types";
 import { useFilesViewTabsStore } from "./useFilesViewTabsStore";
 
@@ -896,8 +900,10 @@ interface UIStore {
   reportUsage: boolean;
   shortcutOverrides: Record<string, ShortcutCombo>;
   fileEditorKeymap: FileEditorKeymap;
+  ocixStylePreset: OcixStylePreset;
 
   setTheme: (theme: "light" | "dark" | "system") => void;
+  setOcixStylePreset: (preset: OcixStylePreset) => void;
   toggleSidebar: () => void;
   setSidebarOpen: (open: boolean) => void;
   setSidebarWidth: (width: number) => void;
@@ -1275,10 +1281,15 @@ export const useUIStore = create<UIStore>()(
         reportUsage: true,
         shortcutOverrides: {},
         fileEditorKeymap: "default",
+        ocixStylePreset: "linear",
 
         setTheme: (theme) => {
           set({ theme });
           get().applyTheme();
+        },
+
+        setOcixStylePreset: (preset) => {
+          set({ ocixStylePreset: normalizeOcixStylePreset(preset) });
         },
 
         toggleSidebar: () => {
@@ -3079,6 +3090,7 @@ export const useUIStore = create<UIStore>()(
           mobileSessionFilterProjectId: state.mobileSessionFilterProjectId,
           shortcutOverrides: state.shortcutOverrides,
           fileEditorKeymap: state.fileEditorKeymap,
+          ocixStylePreset: state.ocixStylePreset,
         }),
       },
     ),

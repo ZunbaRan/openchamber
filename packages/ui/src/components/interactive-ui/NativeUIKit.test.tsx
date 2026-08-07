@@ -70,4 +70,62 @@ describe('nativeUIKit', () => {
     expect(html).toContain('Account');
     expect(html).toContain('Acme');
   });
+
+  test('exposes the Style v2 form, overlay, display, and layout additions', () => {
+    for (const key of [
+      'Select', 'Checkbox', 'RadioGroup', 'Switch',
+      'Dialog', 'DialogContent', 'DialogHeader', 'DialogTitle', 'DialogDescription', 'DialogFooter', 'DialogTrigger',
+      'Tooltip', 'TooltipTrigger', 'TooltipContent', 'TooltipProvider',
+      'Stat', 'DescriptionList', 'Avatar', 'Pagination',
+      'Stack', 'Grid', 'Split',
+    ] as const) {
+      expect(nativeUIKit[key]).toBeDefined();
+    }
+  });
+
+  test('renders Stat with delta tone tokens and description lists', () => {
+    const html = renderToStaticMarkup(
+      <nativeUIKit.Stack gap={2}>
+        <nativeUIKit.Stat label="MRR" value="¥42,000" delta="+12.4%" trend="up" detail="vs last month" />
+        <nativeUIKit.DescriptionList columns={2} items={[{ label: 'Plan', value: 'Enterprise' }, { label: 'Owner', value: 'Lin' }]} />
+      </nativeUIKit.Stack>,
+    );
+
+    expect(html).toContain('MRR');
+    expect(html).toContain('¥42,000');
+    expect(html).toContain('--ocix-delta-up');
+    expect(html).toContain('ocix-type-display');
+    expect(html).toContain('Enterprise');
+    expect(html).toContain('sm:grid-cols-2');
+  });
+
+  test('renders radio groups, checkboxes, and pagination with bounded pages', () => {
+    const html = renderToStaticMarkup(
+      <nativeUIKit.Stack>
+        <nativeUIKit.RadioGroup value="annual" onValueChange={() => {}} options={[{ value: 'monthly', label: 'Monthly' }, { value: 'annual', label: 'Annual' }]} />
+        <nativeUIKit.Checkbox checked onChange={() => {}} label="Auto-renew" description="Bills yearly" />
+        <nativeUIKit.Pagination page={7} pageCount={3} onPageChange={() => {}} />
+      </nativeUIKit.Stack>,
+    );
+
+    expect(html).toContain('role="radiogroup"');
+    expect(html).toContain('Monthly');
+    expect(html).toContain('Auto-renew');
+    expect(html).toContain('Bills yearly');
+    expect(html).toContain('3 / 3');
+  });
+
+  test('renders layout primitives with responsive grid classes', () => {
+    const html = renderToStaticMarkup(
+      <nativeUIKit.Split ratio="1:2">
+        <nativeUIKit.Grid columns={3}><span>cell</span></nativeUIKit.Grid>
+        <nativeUIKit.Avatar name="Lin Zheng" />
+      </nativeUIKit.Split>,
+    );
+
+    expect(html).toContain('lg:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]');
+    expect(html).toContain('lg:grid-cols-3');
+    expect(html).toContain('LZ');
+    expect(html).toContain('role="img"');
+  });
 });

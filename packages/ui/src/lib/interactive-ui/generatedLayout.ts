@@ -1,4 +1,5 @@
 import type { DeclarativeViewNode } from './types';
+import { sanitizeOcixMetricIcon } from './metricIcons';
 
 const MAX_DEPTH = 6;
 const MAX_NODES = 80;
@@ -26,6 +27,58 @@ const STEP_STATUSES = new Set(['completed', 'active', 'error', 'pending']);
 const CHART_VARIANTS = new Set(['bar', 'line', 'area', 'donut']);
 const COLUMN_FORMATS = new Set(['number', 'percent', 'date']);
 const COLUMN_ALIGNMENTS = new Set(['left', 'center', 'right']);
+const EMPHASES = new Set(['hero', 'standard', 'quiet']);
+const TABLE_DENSITIES = new Set(['comfortable', 'compact']);
+const SAFE_SLOT_ID = /^[a-z][a-z0-9-]{0,31}$/;
+const LAYOUT_MODE_CONTRACT = {
+  'dashboard-hero': { slots: new Set(['kpis', 'main', 'aside']), required: ['kpis', 'main'] },
+  'master-detail': { slots: new Set(['master', 'detail']), required: ['master', 'detail'] },
+  report: { slots: new Set(['summary']), required: ['summary'] },
+} as const;
+type LayoutMode = keyof typeof LAYOUT_MODE_CONTRACT;
+
+const sanitizeEmphasis = (value: unknown): string | undefined => (
+  typeof value === 'string' && EMPHASES.has(value) ? value : undefined
+);
+
+const sanitizeSlotId = (value: unknown): string | undefined => (
+  typeof value === 'string' && SAFE_SLOT_ID.test(value) ? value : undefined
+);
+
+/**
+ * Style v2 (L3): a stack may declare an optional composition mode whose
+ * section ids must satisfy the mode contract. Invalid modes are stripped so
+ * the layout degrades to the default stack — the authoring tool already
+ * rejects malformed modes with a hard error, and persisted snapshots must
+ * never lose their content.
+ */
+const sanitizeLayoutMode = (
+  value: unknown,
+  children: DeclarativeViewNode[],
+): { layoutMode?: LayoutMode; children: DeclarativeViewNode[] } => {
+  if (typeof value !== 'string' || !(value in LAYOUT_MODE_CONTRACT)) {
+    return { children };
+  }
+  const mode = value as LayoutMode;
+  const contract = LAYOUT_MODE_CONTRACT[mode];
+  const ids = children
+    .filter((child) => child.type === 'section' && typeof child.id === 'string')
+    .map((child) => child.id as string);
+  const valid = ids.length > 0
+    && ids.every((id) => contract.slots.has(id))
+    && contract.required.every((required) => ids.includes(required));
+  if (!valid) {
+    return {
+      children: children.map((child) => {
+        if (child.type !== 'section' || child.id === undefined) return child;
+        const rest = { ...child };
+        delete rest.id;
+        return rest;
+      }),
+    };
+  }
+  return { layoutMode: mode, children };
+};
 
 const asRecord = (value: unknown): Record<string, unknown> | null => (
   typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -116,11 +169,29 @@ export const sanitizeGeneratedLayout = (input: unknown): DeclarativeViewNode | n
       if (source.type === 'grid' && !title && children.length === 1 && children[0].type === 'metric-grid') {
         return { ...children[0], columns };
       }
+      if (source.type === 'stack') {
+        const layout = sanitizeLayoutMode(source.layoutMode, children);
+        return {
+          type: 'stack',
+          ...(title ? { title } : {}),
+          ...(layout.layoutMode ? { layoutMode: layout.layoutMode } : {}),
+          children: layout.children,
+        };
+      }
+      if (source.type === 'section') {
+        const slotId = sanitizeSlotId(source.id);
+        return {
+          type: 'section',
+          ...(slotId ? { id: slotId } : {}),
+          ...(title ? { title } : {}),
+          ...(source.variant === 'bordered' ? { variant: 'bordered' } : {}),
+          children,
+        };
+      }
       return {
         type: source.type,
         ...(title ? { title } : {}),
-        ...(source.type === 'section' && source.variant === 'bordered' ? { variant: 'bordered' } : {}),
-        ...((source.type === 'row' || source.type === 'grid') ? { columns } : {}),
+        columns,
         children,
       };
     }
@@ -136,6 +207,8 @@ export const sanitizeGeneratedLayout = (input: unknown): DeclarativeViewNode | n
           const trendValue = sanitizeString(metric.trendValue, 80);
           const tone = sanitizeMetricTone(metric.tone);
           const trend = sanitizeTrend(metric.trend);
+          const emphasis = sanitizeEmphasis(metric.emphasis);
+          const icon = sanitizeOcixMetricIcon(metric.icon);
           if (!metricLabel || metricValue === undefined) return null;
           return {
             label: metricLabel,
@@ -144,6 +217,8 @@ export const sanitizeGeneratedLayout = (input: unknown): DeclarativeViewNode | n
             ...(tone ? { tone } : {}),
             ...(trend ? { trend } : {}),
             ...(trendValue ? { trendValue } : {}),
+            ...(emphasis ? { emphasis } : {}),
+            ...(icon ? { icon } : {}),
           };
         }))
         : [];
@@ -157,6 +232,8 @@ export const sanitizeGeneratedLayout = (input: unknown): DeclarativeViewNode | n
       const trendValue = sanitizeString(source.trendValue, 80);
       const tone = sanitizeMetricTone(source.tone);
       const trend = sanitizeTrend(source.trend);
+      const emphasis = sanitizeEmphasis(source.emphasis);
+      const icon = sanitizeOcixMetricIcon(source.icon);
       return {
         type: 'metric',
         ...(label ? { label } : {}),
@@ -165,6 +242,8 @@ export const sanitizeGeneratedLayout = (input: unknown): DeclarativeViewNode | n
         ...(tone ? { tone } : {}),
         ...(trend ? { trend } : {}),
         ...(trendValue ? { trendValue } : {}),
+        ...(emphasis ? { emphasis } : {}),
+        ...(icon ? { icon } : {}),
       };
     }
 
@@ -219,7 +298,11 @@ export const sanitizeGeneratedLayout = (input: unknown): DeclarativeViewNode | n
         const status = typeof entry.status === 'string' && STEP_STATUSES.has(entry.status) ? entry.status : undefined;
         return stepTitle ? { title: stepTitle, ...(description ? { description } : {}), ...(status ? { status } : {}) } : null;
       }));
-      return { type: 'flow', data };
+      return {
+        type: 'flow',
+        data,
+        ...(source.orientation === 'vertical' ? { orientation: 'vertical' } : {}),
+      };
     }
 
     if (source.type === 'divider') {
@@ -247,9 +330,20 @@ export const sanitizeGeneratedLayout = (input: unknown): DeclarativeViewNode | n
           };
         }))
         : [];
+      const density = typeof source.density === 'string' && TABLE_DENSITIES.has(source.density) ? source.density : undefined;
+      const toneColumn = isSafeDataKey(source.toneColumn) ? source.toneColumn : undefined;
+      const pageSizeRaw = asRecord(source.pagination)?.pageSize;
+      const pageSize = typeof pageSizeRaw === 'number' && Number.isFinite(pageSizeRaw)
+        ? Math.max(1, Math.min(50, Math.trunc(pageSizeRaw)))
+        : undefined;
       return {
         type: 'data-table',
         ...(title ? { title } : {}),
+        ...(density ? { density } : {}),
+        ...(toneColumn ? { toneColumn } : {}),
+        ...(source.searchable === true ? { searchable: true } : {}),
+        ...(source.sortable === true ? { sortable: true } : {}),
+        ...(pageSize !== undefined ? { pagination: { pageSize } } : {}),
         columns,
         data: sanitizeDataRows(source.data),
       };
@@ -266,6 +360,11 @@ export const sanitizeGeneratedLayout = (input: unknown): DeclarativeViewNode | n
           return { key: entry.key, ...(seriesLabel ? { label: seriesLabel } : {}) };
         }))
         : [];
+      const referenceLineRecord = asRecord(source.referenceLine);
+      const referenceLineValue = typeof referenceLineRecord?.value === 'number' && Number.isFinite(referenceLineRecord.value)
+        ? referenceLineRecord.value
+        : undefined;
+      const referenceLineLabel = sanitizeString(referenceLineRecord?.label, 80);
       return {
         type: 'chart',
         ...(title ? { title } : {}),
@@ -273,6 +372,10 @@ export const sanitizeGeneratedLayout = (input: unknown): DeclarativeViewNode | n
         xKey,
         series,
         data: sanitizeDataRows(source.data),
+        ...(referenceLineValue !== undefined
+          ? { referenceLine: { value: referenceLineValue, ...(referenceLineLabel ? { label: referenceLineLabel } : {}) } }
+          : {}),
+        ...(source.stacked === true ? { stacked: true } : {}),
       };
     }
 
@@ -565,7 +668,13 @@ export const sanitizeGeneratedLayout = (input: unknown): DeclarativeViewNode | n
           } : null;
         }))
         : [];
-      return { type: 'list', ...(title ? { title } : {}), ordered: source.ordered === true, items };
+      return {
+        type: 'list',
+        ...(title ? { title } : {}),
+        ordered: source.ordered === true,
+        items,
+        ...(source.filterable === true ? { filterable: true } : {}),
+      };
     }
 
     if (source.type === 'callout') {

@@ -37,6 +37,7 @@ import { isRelayModeActive } from '@/lib/relay/runtime-tunnel';
 import { isMobileSurfaceRuntime } from '@/lib/runtimeSurface';
 import { isElectronShell } from '@/lib/desktop';
 import { recordRoutingArtifactObservation } from '@/lib/interactive-ui/routingInspector';
+import { useUIStore } from '@/stores/useUIStore';
 import { HTMLArtifactStateNotice } from './HTMLArtifactStateNotice';
 import { ArtifactExecutionSurface, type ArtifactExecutionSurfaceHandle } from './ArtifactExecutionSurface';
 
@@ -81,12 +82,19 @@ const ARTIFACT_HEARTBEAT_INTERVAL_MS = 1_000;
 const ARTIFACT_HEARTBEAT_TIMEOUT_MS = 20_000;
 const ARTIFACT_EXECUTION_LEASE_MS = 15 * 60_000;
 
+// Style v2: artifacts receive the full token slot set, resolved from the
+// preset-aware .ocix-scope, so sandboxed HTML follows the Host-level style
+// preset exactly like Declarative and Native surfaces do.
 const OCIX_ARTIFACT_TOKENS = (
   'surface surface-muted surface-subtle foreground muted-foreground border '
   + 'selection selection-foreground focus-ring primary primary-foreground '
+  + 'primary-tint primary-shade panel-hero-bg '
   + 'success success-background success-border warning warning-background warning-border '
   + 'error error-background error-border info info-background info-border '
-  + 'chart-1 chart-2 chart-3 chart-4 chart-5'
+  + 'chart-1 chart-2 chart-3 chart-4 chart-5 chart-6 chart-7 chart-8 '
+  + 'chart-seq-1 chart-seq-2 chart-seq-3 chart-seq-4 chart-seq-5 '
+  + 'delta-up delta-down delta-flat '
+  + 'radius-sm radius-md radius-lg shadow-1 shadow-2'
 ).split(' ').map((token) => `--ocix-${token}`);
 
 const createChannelId = (): string => {
@@ -126,6 +134,7 @@ export const HTMLArtifactView = React.forwardRef<HTMLArtifactViewHandle, HTMLArt
 }, forwardedRef) => {
   const { t, locale } = useI18n();
   const runtime = React.useContext(RuntimeAPIContext);
+  const ocixStylePreset = useUIStore((state) => state.ocixStylePreset);
   const themeSystem = useOptionalThemeSystem();
   const themeVariant = themeSystem?.currentTheme.metadata.variant === 'dark' ? 'dark' : 'light';
   const mobileSurface = isMobileSurfaceRuntime();
@@ -484,6 +493,7 @@ export const HTMLArtifactView = React.forwardRef<HTMLArtifactViewHandle, HTMLArt
       role={expanded ? 'dialog' : 'group'}
       aria-modal={expanded || undefined}
       data-ocix-artifact-host
+      data-ocix-preset={ocixStylePreset}
       data-ocix-artifact-mode={mode}
       data-ocix-artifact-presentation={presentation}
       data-ocix-artifact-state={state}

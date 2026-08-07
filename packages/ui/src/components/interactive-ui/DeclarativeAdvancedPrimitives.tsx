@@ -32,7 +32,7 @@ const resolvedRecords = (value: unknown, resolveValue: Resolver): Record<string,
     : [];
 };
 
-const PANEL = 'rounded-xl border border-[var(--ocix-border)] bg-[var(--ocix-surface)] p-3';
+const PANEL = 'rounded-[var(--ocix-radius-md)] border border-[var(--ocix-border)] bg-[var(--ocix-surface)] p-3';
 const TITLE = 'typography-ui-label font-medium text-[var(--ocix-foreground)]';
 const META = 'typography-meta text-[var(--ocix-muted-foreground)]';
 
@@ -360,7 +360,7 @@ export const HeatmapPrimitive: React.FC<PrimitiveProps> = ({ node, resolveValue,
                 const label = cell ? displayDeclarativeValue(resolveValue(cell.label ?? cell.value)) : '';
                 return (
                   <td key={column} className="relative h-9 min-w-12 overflow-hidden rounded-md text-center typography-micro text-[var(--ocix-foreground)]" title={cell ? `${row} · ${column}: ${label}` : undefined}>
-                    {cell ? <span aria-hidden="true" className="absolute inset-0 bg-[var(--ocix-chart-1)]" style={{ opacity: intensity }} /> : null}
+                    {cell ? <span aria-hidden="true" className="absolute inset-0 bg-[var(--ocix-chart-seq-4)]" style={{ opacity: intensity }} /> : null}
                     <span className="relative">{label}</span>
                   </td>
                 );
@@ -529,7 +529,7 @@ export const NetworkPrimitive: React.FC<PrimitiveProps> = ({ node, resolveValue,
             })}
             {nodes.map((entry, index) => {
               const position = positions.get(entry.id)!;
-              const color = `var(--ocix-chart-${(index % 5) + 1})`;
+              const color = `var(--ocix-chart-${(index % 8) + 1})`;
               return (
                 <g key={entry.id} role="graphics-symbol" aria-label={`${entry.label}${entry.detail ? `: ${entry.detail}` : ''}`} tabIndex={0}>
                   <circle cx={position.x} cy={position.y} r="14" fill={color} stroke="var(--ocix-surface)" strokeWidth="3" />
@@ -542,7 +542,7 @@ export const NetworkPrimitive: React.FC<PrimitiveProps> = ({ node, resolveValue,
         <ol className="space-y-1.5" aria-label={`${accessibleTitle} nodes`}>
           {nodes.map((entry, index) => (
             <li key={entry.id} className="flex min-w-0 gap-2 rounded-lg bg-[var(--ocix-surface-muted)] px-2.5 py-2">
-              <span aria-hidden="true" className="mt-1 size-2.5 shrink-0 rounded-full" style={{ background: `var(--ocix-chart-${(index % 5) + 1})` }} />
+              <span aria-hidden="true" className="mt-1 size-2.5 shrink-0 rounded-full" style={{ background: `var(--ocix-chart-${(index % 8) + 1})` }} />
               <span className="min-w-0 break-words typography-meta text-[var(--ocix-foreground)]"><strong className="font-medium">{entry.label}</strong>{entry.detail ? ` · ${entry.detail}` : ''}</span>
             </li>
           ))}

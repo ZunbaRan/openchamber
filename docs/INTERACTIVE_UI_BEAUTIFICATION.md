@@ -11,7 +11,7 @@
 
 本文最初是视觉设计稿；当前 A 阶段已经按主计划落地，最终代码契约以实现和测试为准：
 
-- `packages/ui/src/styles/ocix-theme.css` 已提供独立 light/dark token、语义 tone、chart palette、密度、圆角、阴影和 motion token；Interactive UI 与 Artifact host 均挂载 `.ocix-scope`。
+- `packages/ui/src/styles/ocix-theme.css` 已提供独立 light/dark token、语义 tone、chart palette 与 reduced-motion 兜底；Interactive UI 与 Artifact host 均挂载 `.ocix-scope`。（2026-08-06 更正：此前此处声称「密度/圆角/阴影 token 已齐全」相对实现偏乐观；完整的圆角刻度、海拔阴影、字阶角色、图表扩展色与风格预设由 [Style v2](./OCIX_DECLARATIVE_NATIVE_STYLE_V2_PLAN.md) 落地，合同见 [OCIX_STYLE_CONTRACT.md](./OCIX_STYLE_CONTRACT.md)。）
 - 既有节点已完成层级、metric trend/tone、flow state、table density/hover/sticky header、chart tooltip/hover/focus/empty state、callout、progress、Skeleton 和空态升级。
 - Declarative 已新增 `divider`、`timeline`、`activity-feed`、`agenda`、`funnel`、`network`、`comparison`、`tabs`、`accordion`、`code-block`、`sparkline`、`gauge`、`heatmap`、`kanban`、`git-graph`、`tree`、`diff-summary`。Generated Declarative 使用同一渲染器，但仍经过节点/深度/行列/文本上限和无 action/query/binding/script 的 sanitizer。显式开发验收可调用 `interactive_ui_gallery`，Gallery 会直接出现在正常对话 ToolPart，而不是 standalone demo。
 - Native `activationHost.ui` 已扩展为 Button、Card、Badge、Notice、Skeleton、Separator、Progress、Table、Tabs、Input、Textarea 和 EmptyState；扩展继续复用 Host React，不打包第二份 React。销售与 CRM 示例已改为 Host UI Kit，统一使用 Notice 表达失败/陈旧状态，并避免依赖不会进入宿主 Tailwind 扫描的扩展自定义响应式 class。
