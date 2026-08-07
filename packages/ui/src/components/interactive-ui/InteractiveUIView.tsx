@@ -89,6 +89,7 @@ export const InteractiveUIView: React.FC<InteractiveUIViewProps> = ({
   const { t, locale } = useI18n();
   const runtime = React.useContext(RuntimeAPIContext);
   const ocixStylePreset = useUIStore((state) => state.ocixStylePreset);
+  const isWorkbench = workbench !== undefined;
   const [descriptor, setDescriptor] = React.useState<InteractiveViewDescriptor | null>(null);
   const [nativeComponent, setNativeComponent] = React.useState<NativeViewComponent | null>(null);
   const [error, setError] = React.useState<Error | null>(null);
@@ -109,7 +110,7 @@ export const InteractiveUIView: React.FC<InteractiveUIViewProps> = ({
     void getInteractiveViewDescriptor(
       envelope.view,
       tool?.name ?? '',
-      workbench ? { launchSource: 'workbench' } : undefined,
+      isWorkbench ? { launchSource: 'workbench' } : undefined,
     ).then(async (next) => {
       if (!active) return;
       setDescriptor(next);
@@ -155,6 +156,7 @@ export const InteractiveUIView: React.FC<InteractiveUIViewProps> = ({
   }, [
     descriptorAttempt,
     envelope.view,
+    isWorkbench,
     tool?.id,
     tool?.name,
     traceContext?.sessionId,

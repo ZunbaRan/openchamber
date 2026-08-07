@@ -30,6 +30,14 @@ interface SettingsSearchAvailabilityContext extends SettingsRuntimeContext {
 
 const SETTINGS_SEARCH_ITEMS: readonly SettingsSearchItem[] = [
   {
+    id: 'interactive-ui.stylePreset',
+    page: 'interactive-ui.extensions',
+    titleKey: 'settings.interactiveUI.stylePreset.title',
+    descriptionKey: 'settings.interactiveUI.stylePreset.description',
+    keywords: ['ocix', 'style', 'preset', 'theme', 'appearance'],
+    isAvailable: (ctx) => !ctx.isVSCode,
+  },
+  {
     id: 'interactive-ui.installed',
     page: 'interactive-ui.extensions',
     titleKey: 'settings.interactiveUI.installed.title',

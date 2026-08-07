@@ -9,7 +9,7 @@
  * select a preset. See docs/OCIX_STYLE_PRESETS.md.
  */
 
-export const OCIX_STYLE_PRESET_IDS = [
+const OCIX_STYLE_PRESET_IDS = [
   'linear',
   'vercel',
   'notion',
@@ -22,9 +22,9 @@ export const OCIX_STYLE_PRESET_IDS = [
 
 export type OcixStylePreset = (typeof OCIX_STYLE_PRESET_IDS)[number];
 
-export const DEFAULT_OCIX_STYLE_PRESET: OcixStylePreset = 'linear';
+const DEFAULT_OCIX_STYLE_PRESET: OcixStylePreset = 'linear';
 
-export interface OcixStylePresetMeta {
+interface OcixStylePresetMeta {
   id: OcixStylePreset;
   /** Brand-flavor hint shown under the display name. */
   character: 'professional' | 'playful' | 'financial';
@@ -41,7 +41,7 @@ export const OCIX_STYLE_PRESETS: readonly OcixStylePresetMeta[] = [
   { id: 'slack', character: 'professional' },
 ];
 
-export const isOcixStylePreset = (value: unknown): value is OcixStylePreset => (
+const isOcixStylePreset = (value: unknown): value is OcixStylePreset => (
   typeof value === 'string' && (OCIX_STYLE_PRESET_IDS as readonly string[]).includes(value)
 );
 

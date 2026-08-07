@@ -556,7 +556,6 @@ export const ExtensionManagerPage: React.FC = () => {
       <StylePresetSection />
 
       <SettingsSection
-        divider={false}
         settingsItem="interactive-ui.installed"
         title={t('settings.interactiveUI.installed.title')}
         description={t('settings.interactiveUI.installed.description')}
