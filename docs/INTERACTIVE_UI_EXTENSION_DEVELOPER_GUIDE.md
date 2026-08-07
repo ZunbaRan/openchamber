@@ -1,7 +1,7 @@
 # OpenChamber OCIX：Interactive UI + HTML Artifact 开发手册
 
 > 规范：OCIX v1 Managed Distribution Preview<br>
-> 更新日期：2026-07-30<br>
+> 更新日期：2026-08-07（补充 Direct Remote R1–R3）<br>
 > 配套 Agent skill：`.agents/skills/build-openchamber-interactive-extension/`<br>
 > 架构背景：[Interactive UI 扩展架构](./INTERACTIVE_UI_EXTENSION_ARCHITECTURE.md)
 
@@ -24,6 +24,7 @@ OCIX 已经支持一个签名扩展同时携带 Third-party Interactive UI 与 T
 - OCIX Connector Authentication v1：Extension Manager 内配置/签发/测试/断开业务连接，服务端 Secret Store 与 Gateway Key 注入。
 - Extension Workbench：右侧扩展目录、项目级磁贴看板、四类 Pin、12 列拖拽/缩放、同 DOM Focus、生成结果快照和同扩展事件联动。
 - Hosted OCIX 薄包：官方 CLI 原生支持 `create → validate → pack → verify`；远程 manifest/resource 验签、MIME 校验、缓存重验、权限稳定自动更新及权限扩大再确认。
+- Direct Remote：用户直接输入签名 Manifest URL + Access Key；无 `.ocix` 文件，connect 不预拉资源，三类 Surface 首次使用时按需验签下载，health/update、required blocking 与 granted/re-consent 已实现。
 
 这已经是一条可用于企业私有分发、内测渠道和静态公共目录的完整技术链，但不等于 OpenChamber 官方已经运营一个公共市场。公网域名/CDN、扩展审核组织、离线根密钥仪式、签名密钥吊销/透明日志、恶意软件响应、Native ABI 兼容窗口、VS Code Gateway 和远程 OpenCode 双端协商仍属于部署方或后续平台治理。业务 Key 的权限、RBAC/ABAC、撤销和审计由接入的第三方系统负责，不是 OpenChamber 要复制的一套多用户权限系统。
 
@@ -137,6 +138,20 @@ node scripts/interactive-ui-extension.mjs validate \
 创建结果必须只包含 `openchamber.extension.json`。`validate`、`pack` 和 `verify` 都会拒绝任何额外文件，避免把 Hosted 薄包误做成本地代码包。每个远程资源的 HTTP `Content-Type`（忽略 `charset` 等参数）必须与签名 manifest 的 `mimeType` 相同。
 
 Hosted manifest 若新增 origin、action、credential scope、Agent Tool、剪贴板、弹窗或 `nativeCode`，Extension Manager 会进入待确认状态。Native Surface 同时必须声明 `trust.mode = "native-code"`；仅修改资源但不扩大权限时才允许自动更新。
+
+### 3.2 创建 Direct Remote 服务（URL + Access Key，无 `.ocix`）
+
+Direct Remote 与 Hosted 薄包共享签名 Manifest schema，但用户入口和本地持久化不同：Settings 直接 Inspect Manifest URL，确认本地派生的发布者 fingerprint 与权限摘要后连接；Host 只持久化 discovery/trust shell，Declarative JSON、Native ESM、HTML Artifact 和 icon 在首次实际使用时才按需下载。
+
+第三方开发者必须先读 [OCIX Direct Remote 服务开发指南](./OCIX_REMOTE_SERVICE_DEVELOPER_GUIDE.md)。该指南包含可复制的：
+
+- 服务端路由与恰好一个 `api-key` Connector 约束；
+- 内嵌 publisher envelope、canonical JSON、Ed25519 签名格式；
+- resource path/URL/MIME/SHA-256 索引；
+- Declarative / Trusted Native / installed HTML Artifact 与品牌 token 边界；
+- R1–R3 lazy fetch、TTL、health/update、required 与 re-consent 测试矩阵。
+
+Direct Remote **不运行** `create --delivery hosted`，也不打包薄 `.ocix`。Manifest/resource 请求不携带业务 Access Key；Key 只在 Business Gateway 调用签名 Manifest 中声明的 API action 时由服务端注入。
 
 ## 4. 先定义业务 API
 
@@ -710,6 +725,8 @@ node scripts/interactive-ui-extension.mjs verify ./dist/acme-operations-1.0.0.oc
 
 Hosted OCIX 的远程资源下载成功后还会保存原始签名 manifest，并生成独立缓存完整性索引。OpenChamber 在 Enable、启动恢复、Runtime 暴露和 Agent Runtime 同步之前，先用当前信任的发布者公钥重新验证缓存 manifest 的 Ed25519 签名，再由该签名文档重建期望索引并逐文件重算哈希；本地同时篡改 manifest 与索引也不能绕过验签。缺失签名/索引、发布者已不受信任、额外文件、symlink 或任何字节变化都会隔离该 Hosted 版本并移除其受管 Tool。网络失败时只能回退到仍通过这次完整重验的 last-good，不能把“目录还在”当作可信缓存。
 
+Direct Remote 不创建持久的完整资源树：connect 只保存签名 Manifest、发现 shell 与信任/凭据状态；资源进入 manager-owned、进程内短 TTL 缓存，进程重启即丢弃。每次缓存命中仍绑定 accepted Manifest hash 与资源 hash；过期、MIME/hash 错误、Manifest 变化或 lifecycle 清理都会 fail closed，而不会回退到任意磁盘文件。
+
 ### 9.3 Extension Manager
 
 在 **Settings → Interactive UI Extensions** 中：
@@ -937,6 +954,6 @@ skill 会要求 Agent 先划分 query/write、选择 runtime、使用脚手架�
 - VS Code 尚无 Interactive UI Gateway，保持明确 unsupported。
 - Agent Generated HTML Artifact 已实现独立 schema、内容寻址重放、sandbox/CSP、主题/resize/follow-up Bridge 和展开模式；其 scripts 仍受 runtime gate 且永远没有 Business Gateway。
 - Third-party HTML Artifact 已作为签名 OCIX surface 实现，拥有单独引用 schema、Tool binding、sandbox、action 子集与 Business Bridge。它永远不能获得 Connector URL、Token、任意网络、Tool 或 MCP 权限。VS Code 与 active E2EE relay 仍明确 unsupported。
-- MCP Apps 仍在 Roadmap。
+- MCP Apps 与 OCIX 保持平行协议；它们不进入本手册的 Remote/Local/Hosted 交付模型。
 
 这些限制不影响在受控企业部署中开发和验证真实模块，但上线到公共生态前必须完成治理阶段。

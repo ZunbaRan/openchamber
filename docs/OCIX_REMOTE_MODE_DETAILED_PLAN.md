@@ -1,6 +1,6 @@
 # OCIX Remote 模式详细规划
 
-> **状态**：**R1–R3 已实现并合入，自动化验证通过；R4 第三方指引/参考服务与真实打包客户端验收待完成**  
+> **状态**：**R1–R3 已实现并合入；R4 指引、三类参考服务、自动化与本机验收包已完成，待用户实机验收**
 > **日期**：2026-08-05（状态回写 2026-08-07）  
 > **父文档**：[OCIX 双场景愿景](./OCIX_DUAL_PATH_HOSTED_AND_DEV_SERVER_PLAN.md)（场景 A 主路径展开）  
 > **范围**：第三方 **Remote** 连接、信任、Manifest、懒加载、TTL 缓存、health/update、re-consent  
@@ -19,7 +19,7 @@
 
 **与父文档关系：** 双场景愿景仍是总纲；本文既是 **Remote 第三方路径** 的实现合同，也是剩余实机验收清单。若冲突，以本文对 Remote 的安全与生命周期合同为准，并回写父文档摘要。
 
-**当前事实：** R1（安全连接）、R2（懒加载与 TTL）、R3（health/update 与完整 re-consent 生命周期）已实现并合入。R4 与真实打包客户端验收尚未完成；Local Data Runtime / Dev Hosted 不在这些提交范围内。
+**当前事实：** R1（安全连接）、R2（懒加载与 TTL）、R3（health/update 与完整 re-consent 生命周期）已实现并合入。R4 已提供独立 Direct Remote 开发指南、Declarative / Trusted Native / HTML Artifact 三类 loopback 参考服务、真实 Host 集成测试、本机 Electron 验收包与用户测试清单；仅剩用户实机记录。Local Data Runtime / Dev Hosted 不在这些提交范围内。
 
 ---
 
@@ -630,7 +630,7 @@ User/Agent          OC Host                 Vendor
 | **R1 产品层** | URL+Key 向导 + 信任态 + re-consent 文案 | **已实现并合入** |
 | **R2 加载策略** | connect 不预拉；懒加载 + TTL | **已实现并合入** |
 | **R3 运行时打磨** | health/update 触发矩阵、Workbench、诊断 | **已实现并合入** |
-| **R4 厂商文档与参考服务** | 签名发布、权限摘要、三类 runtime 参考 Remote 服务 | **下一阶段** |
+| **R4 厂商文档与参考服务** | 签名发布、权限摘要、三类 runtime 参考 Remote 服务 | **实现完成，待用户实机验收** |
 | **Hx Host API 基座** | §12 另项决策后单独立项 | **不随 R1–R3 偷偷做完** |
 
 现有 `hosted-ocix.js` / Manager 的验签、expansion、权限字段是 **可复用内核**；Remote 规划是 **产品路径与缓存/懒加载合同** 的演进，而非推倒重来。
@@ -709,12 +709,12 @@ User/Agent          OC Host                 Vendor
 
 - [x] 触发时机、TTL 合并、required、诊断  
 
-### Phase R4 — 第三方文档、参考服务与实机验收（下一阶段）
+### Phase R4 — 第三方文档、参考服务与实机验收（待用户验收）
 
-- [ ] 审核第三方开发指引与内置 skill 的独立可执行性  
-- [ ] 提供 Declarative / Trusted Native / HTML Artifact、不同品牌色的参考 Remote 服务  
-- [ ] 清洁环境打包客户端  
-- [ ] 编写供用户执行的测试文档：测试问题、操作步骤、预期结果和失败判据  
+- [x] 审核第三方开发指引与内置 skill 的独立可执行性
+- [x] 提供 Declarative / Trusted Native / HTML Artifact、不同品牌色的参考 Remote 服务
+- [x] 清洁工作树打包本机客户端，并复验成品内 OpenCode prompt/skill
+- [x] 编写供用户执行的测试文档：工作区根 `extension/USER_ACCEPTANCE_TEST.md`
 - [ ] 用户完成真实客户端 × 参考服务验收并记录结果  
 
 **依赖 Host API 基座的工作单列 Hx，不阻塞 R0；R1–R3 可在现有 Gateway 上演进。**

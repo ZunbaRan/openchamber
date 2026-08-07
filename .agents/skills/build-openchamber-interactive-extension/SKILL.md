@@ -11,7 +11,7 @@ Produce a repository-compatible enterprise extension without modifying OpenCode 
 
 ## Required reference
 
-Read [references/contracts.md](references/contracts.md) before editing an extension. Read [references/html-artifacts.md](references/html-artifacts.md) whenever `artifacts[]` or custom HTML/SVG/Canvas is involved. Read [references/distribution.md](references/distribution.md) for signing, package installation, updates, rollback, publisher trust, or marketplace work. Read `docs/OCIX_CONNECTOR_AUTHENTICATION_V1.md` when the extension connects to a real authenticated API. Read `docs/INTERACTIVE_UI_EXTENSION_DEVELOPER_GUIDE.md` when the request includes architecture, installation, deployment, or a real external OpenCode server.
+Read [references/contracts.md](references/contracts.md) before editing an extension. Read [references/html-artifacts.md](references/html-artifacts.md) whenever `artifacts[]` or custom HTML/SVG/Canvas is involved. Read [references/distribution.md](references/distribution.md) for signing, package installation, updates, rollback, publisher trust, or marketplace work. Read [references/remote-services.md](references/remote-services.md) whenever the request is a URL+Access-Key Direct Remote service rather than a Local or Hosted thin `.ocix`. Read `docs/OCIX_CONNECTOR_AUTHENTICATION_V1.md` when the extension connects to a real authenticated API. Read `docs/INTERACTIVE_UI_EXTENSION_DEVELOPER_GUIDE.md` when the request includes architecture, installation, deployment, or a real external OpenCode server.
 
 When changing OpenChamber source rather than only an extension package, also load the repository skills triggered by `AGENTS.md`, especially `openchamber-change-discipline`, `theme-system`, `locale-ui-patterns`, and `ui-api-decoupling`.
 
@@ -24,7 +24,7 @@ When changing OpenChamber source rather than only an extension package, also loa
    - Use a Third-party HTML Artifact for signed, durable custom SVG/Canvas, simulation, drag/drop, or explorer experiences that need more expression than the Host UI Kit. It stays sandboxed and calls only declared Gateway actions through `window.openchamber.business`.
    - A single `.ocix` may ship `views[]`, `artifacts[]`, or both; start with Declarative when it can satisfy the task.
    - Agent Generated HTML Artifact remains a separate one-off result with no Connector, Gateway, credential, or network access. Never confuse its authority with an installed Artifact.
-3. Scaffold a new package:
+3. Choose the delivery workflow. For Local/Hosted package work, scaffold a package:
 
 ```bash
 node scripts/interactive-ui-extension.mjs create /absolute/new/path \
@@ -33,13 +33,15 @@ node scripts/interactive-ui-extension.mjs create /absolute/new/path \
   --tool-prefix operations
 ```
 
+   For Direct Remote, do not create or pack a thin `.ocix`: start from `docs/OCIX_REMOTE_SERVICE_DEVELOPER_GUIDE.md` and the workspace-root `extension/` reference services. The app entry URL itself returns the signed Manifest; UI resources stay remote and lazy, while the Access Key is only for the one declared Business Connector.
+
 4. Replace the starter `agentRouting` domain/intents/examples and every `views[].routing` / `artifacts[].routing` block. Use `connected-business-system` for authoritative enterprise data, assign `read`/`write`/`mixed` honestly, and give the more specific business surface a higher bounded priority. Do not put instructions, API URLs, credentials, or business values in routing metadata.
 5. Design every surface that should appear in the right-sidebar Extension Workbench. Add a bounded `dashboard` contract with `inputSchema`, safe `defaultContext` and/or `hostContext`, preferred/min/max grid size, instance policy, refresh policy, declared events, and Popout capability. A surface is manually launchable only when defaults plus Host context satisfy every required input. Do not invent a fake default for an ID-dependent detail surface: keep its `itemId` required so the Catalog correctly disables manual launch until an Agent result or a declared Link supplies it. If a release changes stored Context across an incompatible major version, declare bounded `dashboard.migrations` with only `rename`, `move`, and `setDefault`; never add migration JavaScript.
 6. Declare same-extension `links[]` for coordinated tiles. The source must declare the event under `dashboard.events.emits`, the target must accept the same event, and every mapped target path must exist in the target `inputSchema`. Use only `$event.payload.*`, `$source.context.*`, `$host.*`, or JSON scalar mappings. Declarative surfaces emit through a row action with `type: "emit"`; Trusted Native uses `props.host.dashboard.emit(event, payload)`; installed HTML uses `window.openchamber.dashboard.emit(event, payload)`. Never route a Link across OCIX package boundaries.
 7. Replace the starter API paths and data shape. Choose `api-key` for a key copied from the third-party system or `issued-key` for a server-to-server one-time setup-code exchange. Keep credentials server-side and route Native/Declarative calls through declared Gateway actions. Do not recreate the third party's RBAC/ABAC in OpenChamber.
 8. Implement the Agent half under `agent-runtime/`. Put one default-export OpenCode Custom Tool in `agent-runtime/tools/<tool_name>.ts`; its file name is the tool name. Interactive UI Tools return `openchamber://interactive-result/v1`; installed Artifact Tools return `openchamber://installed-html-artifact-result/v1` and only reference an installed Artifact ID—never inline HTML, URLs, or credentials. Tool descriptions must state the authoritative business source, priority over generic visualization, missing-connection behavior, and that a successful result is terminal/already rendered: call at most once per assistant turn and never follow it with the same or another primary Surface Tool. Keep the user-facing `summary` explicit that the requested Surface opened successfully rather than implying the Agent must fetch inline rows. Put each routing Skill at `agent-runtime/skills/<skill-name>/SKILL.md` with matching `name` and a useful `description`. A Skill improves selection and is never the API transport.
 9. Match the host. Declarative/Native use semantic fields, OCIX tokens, the Host UI Kit, responsive layouts, and explicit loading/ready/empty/unconfigured/error states. Installed HTML uses a self-contained `.html`, OCIX CSS variables, accessible DOM, `window.openchamber.business.query/execute`, and—when linked—`window.openchamber.dashboard.emit`; it must not use `fetch`, XHR, remote assets, storage, popup authentication, or parent DOM. Do not bundle React or a duplicate component library in Native output. Do not hard-code a parallel palette or inject global CSS.
-10. Validate before launching:
+10. Validate before launching. Local/Hosted packages use the extension CLI; Direct Remote additionally verifies the built signed Manifest and every indexed resource byte/MIME before starting its server:
 
 ```bash
 node scripts/interactive-ui-extension.mjs validate /absolute/path/to/extension
@@ -70,6 +72,7 @@ node scripts/interactive-ui-extension.mjs validate /absolute/path/to/extension
 ## Completion checklist
 
 - The manifest, View/Artifact IDs, bundle registration, HTML entries, and tool names agree exactly.
+- A Direct Remote Manifest embeds a valid publisher envelope, is signed over canonical JSON, declares exactly one `api-key` Connector, and is inspectable without fetching any resource.
 - `agentRouting.domain` and every intent are namespaced identifiers; `dataAuthority` is correct; every surface in a multi-surface extension has bounded intents, priority, and operation metadata.
 - Every installed HTML Artifact is self-contained, declares `capabilities.scripts: true`, and lists only the Gateway actions it actually needs under `capabilities.businessActions`.
 - Every Workbench surface has a bounded `dashboard.inputSchema`; defaults/Host mappings satisfy only genuinely defaultable inputs; ID-dependent detail surfaces remain disabled for manual launch until Context is supplied.
