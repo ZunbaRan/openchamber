@@ -202,4 +202,143 @@ describe('sanitizeGeneratedLayout', () => {
     expect(JSON.stringify(layout)).not.toContain('prototype');
     expect(JSON.stringify(layout)).not.toContain('__proto__');
   });
+
+  test('keeps a valid layoutMode with its slot ids', () => {
+    const layout = sanitizeGeneratedLayout({
+      type: 'stack',
+      title: 'Sales',
+      layoutMode: 'dashboard-hero',
+      children: [
+        { type: 'section', id: 'kpis', children: [{ type: 'metric', label: 'Revenue', value: 10 }] },
+        { type: 'section', id: 'main', children: [{ type: 'text', value: 'chart here' }] },
+        { type: 'section', id: 'aside', children: [{ type: 'text', value: 'rail' }] },
+      ],
+    });
+
+    expect(layout?.layoutMode).toBe('dashboard-hero');
+    expect(layout?.children?.map((child) => child.id)).toEqual(['kpis', 'main', 'aside']);
+  });
+
+  test('strips an invalid layoutMode but preserves the content', () => {
+    const missingRequired = sanitizeGeneratedLayout({
+      type: 'stack',
+      layoutMode: 'dashboard-hero',
+      children: [
+        { type: 'section', id: 'kpis', children: [{ type: 'metric', label: 'Revenue', value: 10 }] },
+      ],
+    });
+    expect('layoutMode' in (missingRequired ?? {})).toBe(false);
+    expect('id' in (missingRequired?.children?.[0] ?? {})).toBe(false);
+    expect(missingRequired?.children?.[0]?.children?.length).toBe(1);
+
+    const unknownSlot = sanitizeGeneratedLayout({
+      type: 'stack',
+      layoutMode: 'dashboard-hero',
+      children: [
+        { type: 'section', id: 'kpis', children: [{ type: 'metric', label: 'Revenue', value: 10 }] },
+        { type: 'section', id: 'sidebar', children: [{ type: 'text', value: 'x' }] },
+      ],
+    });
+    expect('layoutMode' in (unknownSlot ?? {})).toBe(false);
+
+    const unknownMode = sanitizeGeneratedLayout({
+      type: 'stack',
+      layoutMode: 'kaban-style',
+      children: [{ type: 'section', id: 'kpis', children: [{ type: 'metric', label: 'Revenue', value: 10 }] }],
+    });
+    expect('layoutMode' in (unknownMode ?? {})).toBe(false);
+  });
+
+  test('keeps metric emphasis and whitelisted icon while dropping unknown values', () => {
+    const layout = sanitizeGeneratedLayout({
+      type: 'metric',
+      label: 'Revenue',
+      value: 1280000,
+      emphasis: 'hero',
+      icon: 'bar-chart-2',
+    });
+    expect(layout).toEqual({ type: 'metric', label: 'Revenue', value: 1280000, emphasis: 'hero', icon: 'bar-chart-2' });
+
+    const dropped = sanitizeGeneratedLayout({
+      type: 'metric',
+      label: 'Revenue',
+      value: 1,
+      emphasis: 'banner',
+      icon: 'https://evil.example/icon.svg',
+    });
+    expect(dropped).toEqual({ type: 'metric', label: 'Revenue', value: 1 });
+  });
+
+  test('keeps table density/toneColumn and chart referenceLine', () => {
+    const layout = sanitizeGeneratedLayout({
+      type: 'stack',
+      children: [
+        {
+          type: 'data-table',
+          density: 'compact',
+          toneColumn: 'status',
+          columns: [{ key: 'status', label: 'Status', render: 'status' }],
+          data: [{ status: 'active' }],
+        },
+        {
+          type: 'chart',
+          series: [{ key: 'v' }],
+          data: [{ label: 'a', v: 1 }],
+          referenceLine: { value: 2, label: 'Target' },
+        },
+      ],
+    });
+
+    expect(layout?.children?.[0]?.density).toBe('compact');
+    expect(layout?.children?.[0]?.toneColumn).toBe('status');
+    expect(layout?.children?.[1]?.referenceLine).toEqual({ value: 2, label: 'Target' });
+
+    const dropped = sanitizeGeneratedLayout({
+      type: 'data-table',
+      density: 'dense',
+      toneColumn: '__proto__',
+      columns: [{ key: 'a' }],
+      data: [{ a: 1 }],
+    });
+    expect(dropped).toEqual({ type: 'data-table', columns: [{ key: 'a' }], data: [{ a: 1 }] });
+  });
+
+  test('keeps local-interactivity flags and clamps pagination', () => {
+    const layout = sanitizeGeneratedLayout({
+      type: 'stack',
+      children: [
+        {
+          type: 'data-table',
+          searchable: true,
+          sortable: true,
+          pagination: { pageSize: 500 },
+          columns: [{ key: 'a' }],
+          data: [{ a: 1 }],
+        },
+        { type: 'list', filterable: true, items: [{ title: 'x' }] },
+        { type: 'flow', orientation: 'vertical', data: [{ title: 's' }] },
+        { type: 'chart', stacked: true, series: [{ key: 'a' }], data: [{ label: 'l', a: 1 }] },
+      ],
+    });
+
+    expect(layout?.children?.[0]?.searchable).toBe(true);
+    expect(layout?.children?.[0]?.sortable).toBe(true);
+    expect(layout?.children?.[0]?.pagination).toEqual({ pageSize: 50 });
+    expect(layout?.children?.[1]?.filterable).toBe(true);
+    expect(layout?.children?.[2]?.orientation).toBe('vertical');
+    expect(layout?.children?.[3]?.stacked).toBe(true);
+
+    const dropped = sanitizeGeneratedLayout({
+      type: 'data-table',
+      searchable: 'yes',
+      sortable: 1,
+      pagination: { pageSize: 'ten' },
+      columns: [{ key: 'a' }],
+      data: [{ a: 1 }],
+    });
+    expect(dropped).toEqual({ type: 'data-table', columns: [{ key: 'a' }], data: [{ a: 1 }] });
+
+    const badOrientation = sanitizeGeneratedLayout({ type: 'flow', orientation: 'diagonal', data: [{ title: 's' }] });
+    expect('orientation' in (badOrientation ?? {})).toBe(false);
+  });
 });

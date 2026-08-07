@@ -1,0 +1,870 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>OCIX Style v2 — 风格预设预览</title>
+<style>
+/* ============ Token 槽位（= ocix-theme.css 默认值，即 linear 预设） ============ */
+.ocix-scope {
+  --ocix-surface: oklch(1 0 0);
+  --ocix-surface-muted: oklch(0.965 0.003 285);
+  --ocix-surface-subtle: oklch(0.985 0.002 285);
+  --ocix-border: oklch(0.895 0.008 285);
+  --ocix-foreground: oklch(0.21 0.006 285);
+  --ocix-muted-foreground: oklch(0.46 0.014 285);
+  --ocix-selection: oklch(0.94 0.035 260);
+  --ocix-selection-foreground: oklch(0.34 0.12 260);
+  --ocix-focus-ring: oklch(0.58 0.19 260);
+  --ocix-primary: oklch(0.57 0.2 260);
+  --ocix-primary-foreground: oklch(0.985 0 0);
+  --ocix-primary-tint: oklch(0.66 0.18 260);
+  --ocix-primary-shade: oklch(0.48 0.18 260);
+  --ocix-panel-hero-bg: color-mix(in srgb, var(--ocix-primary) 5%, var(--ocix-surface));
+  --ocix-success: oklch(0.46 0.15 150); --ocix-success-background: oklch(0.96 0.03 150); --ocix-success-border: oklch(0.83 0.07 150);
+  --ocix-warning: oklch(0.48 0.13 65); --ocix-warning-background: oklch(0.965 0.035 85); --ocix-warning-border: oklch(0.84 0.08 80);
+  --ocix-error: oklch(0.52 0.2 27); --ocix-error-background: oklch(0.96 0.025 25); --ocix-error-border: oklch(0.84 0.075 25);
+  --ocix-info: oklch(0.49 0.15 240); --ocix-info-background: oklch(0.96 0.025 240); --ocix-info-border: oklch(0.84 0.07 240);
+  --ocix-chart-1: oklch(0.58 0.19 260); --ocix-chart-2: oklch(0.57 0.16 162); --ocix-chart-3: oklch(0.64 0.17 70); --ocix-chart-4: oklch(0.57 0.21 25);
+  --ocix-chart-5: oklch(0.57 0.22 303); --ocix-chart-6: oklch(0.6 0.15 205); --ocix-chart-7: oklch(0.62 0.19 330); --ocix-chart-8: oklch(0.6 0.17 100);
+  --ocix-chart-seq-1: oklch(0.93 0.03 260); --ocix-chart-seq-2: oklch(0.83 0.07 260); --ocix-chart-seq-3: oklch(0.71 0.12 260); --ocix-chart-seq-4: oklch(0.6 0.17 260); --ocix-chart-seq-5: oklch(0.49 0.2 260);
+  --ocix-delta-up: oklch(0.46 0.15 150); --ocix-delta-down: oklch(0.52 0.2 27); --ocix-delta-flat: oklch(0.52 0.01 285);
+  --ocix-radius-sm: 8px; --ocix-radius-md: 12px; --ocix-radius-lg: 16px;
+  --ocix-shadow-1: 0 1px 2px rgb(24 24 38 / 0.06), 0 1px 3px rgb(24 24 38 / 0.04);
+  --ocix-shadow-2: 0 2px 4px rgb(24 24 38 / 0.06), 0 8px 20px -6px rgb(24 24 38 / 0.1);
+  color: var(--ocix-foreground);
+}
+.dark .ocix-scope {
+  --ocix-surface: oklch(0.205 0.006 285);
+  --ocix-surface-muted: oklch(0.265 0.008 285);
+  --ocix-surface-subtle: oklch(0.235 0.007 285);
+  --ocix-border: oklch(0.36 0.012 285);
+  --ocix-foreground: oklch(0.95 0.005 285);
+  --ocix-muted-foreground: oklch(0.72 0.015 286);
+  --ocix-selection: oklch(0.3 0.07 260);
+  --ocix-selection-foreground: oklch(0.9 0.05 260);
+  --ocix-focus-ring: oklch(0.72 0.16 260);
+  --ocix-primary: oklch(0.7 0.17 260);
+  --ocix-primary-foreground: oklch(0.18 0.01 260);
+  --ocix-primary-tint: oklch(0.77 0.15 260);
+  --ocix-primary-shade: oklch(0.62 0.18 260);
+  --ocix-panel-hero-bg: color-mix(in srgb, var(--ocix-primary) 12%, var(--ocix-surface));
+  --ocix-success: oklch(0.74 0.15 150); --ocix-success-background: oklch(0.27 0.045 150); --ocix-success-border: oklch(0.43 0.08 150);
+  --ocix-warning: oklch(0.8 0.14 75); --ocix-warning-background: oklch(0.28 0.045 85); --ocix-warning-border: oklch(0.45 0.075 85);
+  --ocix-error: oklch(0.72 0.18 25); --ocix-error-background: oklch(0.27 0.045 25); --ocix-error-border: oklch(0.45 0.085 25);
+  --ocix-info: oklch(0.74 0.13 240); --ocix-info-background: oklch(0.27 0.04 240); --ocix-info-border: oklch(0.45 0.075 240);
+  --ocix-chart-1: oklch(0.72 0.15 260); --ocix-chart-2: oklch(0.76 0.14 162); --ocix-chart-3: oklch(0.82 0.15 75); --ocix-chart-4: oklch(0.74 0.18 25);
+  --ocix-chart-5: oklch(0.75 0.18 303); --ocix-chart-6: oklch(0.78 0.12 205); --ocix-chart-7: oklch(0.8 0.16 330); --ocix-chart-8: oklch(0.78 0.14 100);
+  --ocix-chart-seq-1: oklch(0.32 0.05 260); --ocix-chart-seq-2: oklch(0.45 0.09 260); --ocix-chart-seq-3: oklch(0.57 0.13 260); --ocix-chart-seq-4: oklch(0.68 0.15 260); --ocix-chart-seq-5: oklch(0.79 0.16 260);
+  --ocix-delta-up: oklch(0.74 0.15 150); --ocix-delta-down: oklch(0.72 0.18 25); --ocix-delta-flat: oklch(0.7 0.01 285);
+  --ocix-shadow-1: none; --ocix-shadow-2: none;
+}
+
+/* ============ 预设数据（= ocix-presets.css，hex 原样） ============ */
+[data-ocix-preset="vercel"] .ocix-scope {
+  --ocix-surface: #ffffff; --ocix-surface-muted: #fafafa; --ocix-surface-subtle: #f5f5f5;
+  --ocix-border: #ebebeb; --ocix-foreground: #171717; --ocix-muted-foreground: #888888;
+  --ocix-selection: #f0f0f0; --ocix-selection-foreground: #171717; --ocix-focus-ring: #0070f3;
+  --ocix-primary: #171717; --ocix-primary-foreground: #fafafa; --ocix-primary-tint: #4d4d4d; --ocix-primary-shade: #000000;
+  --ocix-panel-hero-bg: #fafafa;
+  --ocix-success: #0070f3; --ocix-success-background: #d3e5ff; --ocix-success-border: #91c0f8;
+  --ocix-warning: #ab570a; --ocix-warning-background: #ffefcf; --ocix-warning-border: #f5a623;
+  --ocix-error: #c50000; --ocix-error-background: #f7d4d6; --ocix-error-border: #f0a5a8;
+  --ocix-info: #0070f3; --ocix-info-background: #d3e5ff; --ocix-info-border: #91c0f8;
+  --ocix-chart-1: #0070f3; --ocix-chart-2: #50e3c2; --ocix-chart-3: #7928ca; --ocix-chart-4: #ff0080;
+  --ocix-chart-5: #f9cb28; --ocix-chart-6: #eb367f; --ocix-chart-7: #3291ff; --ocix-chart-8: #888888;
+  --ocix-chart-seq-1: #d3e5ff; --ocix-chart-seq-2: #a8ccff; --ocix-chart-seq-3: #6ea8f7; --ocix-chart-seq-4: #0070f3; --ocix-chart-seq-5: #0761d1;
+  --ocix-delta-up: #0f9d58; --ocix-delta-down: #ee0000; --ocix-delta-flat: #888888;
+  --ocix-radius-sm: 6px; --ocix-radius-md: 8px; --ocix-radius-lg: 12px;
+  --ocix-shadow-1: 0 1px 1px rgb(0 0 0 / 0.05), 0 2px 2px rgb(0 0 0 / 0.1);
+  --ocix-shadow-2: 0 2px 2px rgb(0 0 0 / 0.1), 0 8px 16px -4px rgb(0 0 0 / 0.1);
+}
+.dark [data-ocix-preset="vercel"] .ocix-scope {
+  --ocix-surface: #0a0a0a; --ocix-surface-muted: #111111; --ocix-surface-subtle: #1a1a1a;
+  --ocix-border: #262626; --ocix-foreground: #ededed; --ocix-muted-foreground: #a1a1a1;
+  --ocix-selection: #262626; --ocix-selection-foreground: #fafafa; --ocix-focus-ring: #3291ff;
+  --ocix-primary: #fafafa; --ocix-primary-foreground: #171717; --ocix-primary-tint: #d4d4d4; --ocix-primary-shade: #ffffff;
+  --ocix-panel-hero-bg: #111111;
+  --ocix-success: #3291ff; --ocix-success-background: #12233d; --ocix-success-border: #1d4ed8;
+  --ocix-warning: #f5a623; --ocix-warning-background: #2b2110; --ocix-warning-border: #ab570a;
+  --ocix-error: #ff6363; --ocix-error-background: #2e1414; --ocix-error-border: #c50000;
+  --ocix-info: #3291ff; --ocix-info-background: #12233d; --ocix-info-border: #1d4ed8;
+  --ocix-chart-1: #3291ff; --ocix-chart-2: #50e3c2; --ocix-chart-3: #a55eea; --ocix-chart-4: #ff4d94;
+  --ocix-chart-5: #f9cb28; --ocix-chart-6: #eb367f; --ocix-chart-7: #76b7ff; --ocix-chart-8: #a1a1a1;
+  --ocix-chart-seq-1: #12233d; --ocix-chart-seq-2: #1d4ed8; --ocix-chart-seq-3: #3291ff; --ocix-chart-seq-4: #76b7ff; --ocix-chart-seq-5: #d3e5ff;
+  --ocix-delta-up: #2fbf71; --ocix-delta-down: #ff6363; --ocix-delta-flat: #a1a1a1;
+  --ocix-shadow-1: none; --ocix-shadow-2: none;
+}
+[data-ocix-preset="notion"] .ocix-scope {
+  --ocix-surface: #ffffff; --ocix-surface-muted: #f6f5f4; --ocix-surface-subtle: #fafaf9;
+  --ocix-border: #e5e3df; --ocix-foreground: #1a1a1a; --ocix-muted-foreground: #787671;
+  --ocix-selection: #efedfc; --ocix-selection-foreground: #3a2a99; --ocix-focus-ring: #5645d4;
+  --ocix-primary: #5645d4; --ocix-primary-foreground: #ffffff; --ocix-primary-tint: #7a6ae0; --ocix-primary-shade: #4534b3;
+  --ocix-panel-hero-bg: color-mix(in srgb, #5645d4 5%, #ffffff);
+  --ocix-success: #1aae39; --ocix-success-background: #e5f6e9; --ocix-success-border: #a8dcb4;
+  --ocix-warning: #dd5b00; --ocix-warning-background: #fdeede; --ocix-warning-border: #f2b48a;
+  --ocix-error: #e03131; --ocix-error-background: #fde8e8; --ocix-error-border: #f3acac;
+  --ocix-info: #0075de; --ocix-info-background: #e2f0fd; --ocix-info-border: #a3cff5;
+  --ocix-chart-1: #7b3ff2; --ocix-chart-2: #0075de; --ocix-chart-3: #2a9d99; --ocix-chart-4: #dd5b00;
+  --ocix-chart-5: #1aae39; --ocix-chart-6: #ff64c8; --ocix-chart-7: #b89b00; --ocix-chart-8: #523410;
+  --ocix-chart-seq-1: #e6e0f5; --ocix-chart-seq-2: #c5b8ea; --ocix-chart-seq-3: #9f8ade; --ocix-chart-seq-4: #7b3ff2; --ocix-chart-seq-5: #3a2a99;
+  --ocix-delta-up: #1aae39; --ocix-delta-down: #e03131; --ocix-delta-flat: #a4a097;
+  --ocix-radius-sm: 8px; --ocix-radius-md: 12px; --ocix-radius-lg: 16px;
+  --ocix-shadow-1: 0 1px 2px rgb(15 15 15 / 0.04);
+  --ocix-shadow-2: 0 4px 12px rgb(15 15 15 / 0.08);
+}
+.dark [data-ocix-preset="notion"] .ocix-scope {
+  --ocix-surface: #191919; --ocix-surface-muted: #202020; --ocix-surface-subtle: #2c2c2c;
+  --ocix-border: #2f2f2f; --ocix-foreground: #e3e3e3; --ocix-muted-foreground: #9b9b9b;
+  --ocix-selection: #35324e; --ocix-selection-foreground: #c9c4f5; --ocix-focus-ring: #8b80f9;
+  --ocix-primary: #8b80f9; --ocix-primary-foreground: #1a1a1a; --ocix-primary-tint: #a89ffb; --ocix-primary-shade: #6e62e6;
+  --ocix-panel-hero-bg: color-mix(in srgb, #8b80f9 12%, #191919);
+  --ocix-success: #4dab9a; --ocix-success-background: #1c2b27; --ocix-success-border: #2e574d;
+  --ocix-warning: #e0703a; --ocix-warning-background: #2f211a; --ocix-warning-border: #6b3a1f;
+  --ocix-error: #df5452; --ocix-error-background: #2f1c1c; --ocix-error-border: #6e2a29;
+  --ocix-info: #529cca; --ocix-info-background: #16222c; --ocix-info-border: #2a4a63;
+  --ocix-chart-1: #a78bfa; --ocix-chart-2: #529cca; --ocix-chart-3: #4dab9a; --ocix-chart-4: #e0703a;
+  --ocix-chart-5: #5cb85c; --ocix-chart-6: #ff64c8; --ocix-chart-7: #f5d75e; --ocix-chart-8: #a4a097;
+  --ocix-chart-seq-1: #35324e; --ocix-chart-seq-2: #4c4683; --ocix-chart-seq-3: #6e62c8; --ocix-chart-seq-4: #8b80f9; --ocix-chart-seq-5: #c9c4f5;
+  --ocix-delta-up: #4dab9a; --ocix-delta-down: #df5452; --ocix-delta-flat: #9b9b9b;
+  --ocix-shadow-1: none; --ocix-shadow-2: none;
+}
+[data-ocix-preset="claude"] .ocix-scope {
+  --ocix-surface: #faf9f5; --ocix-surface-muted: #f5f0e8; --ocix-surface-subtle: #efe9de;
+  --ocix-border: #e6dfd8; --ocix-foreground: #141413; --ocix-muted-foreground: #6c6a64;
+  --ocix-selection: #f2e4dc; --ocix-selection-foreground: #a9583e; --ocix-focus-ring: #cc785c;
+  --ocix-primary: #cc785c; --ocix-primary-foreground: #ffffff; --ocix-primary-tint: #d9977f; --ocix-primary-shade: #a9583e;
+  --ocix-panel-hero-bg: #f5f0e8;
+  --ocix-success: #3f9654; --ocix-success-background: #e4f3e9; --ocix-success-border: #a9d7b8;
+  --ocix-warning: #d4a017; --ocix-warning-background: #faf2d9; --ocix-warning-border: #e3c26e;
+  --ocix-error: #c64545; --ocix-error-background: #f9e7e7; --ocix-error-border: #e0a3a3;
+  --ocix-info: #4a9c8d; --ocix-info-background: #e2f1ee; --ocix-info-border: #a3d4ca;
+  --ocix-chart-1: #cc785c; --ocix-chart-2: #5db8a6; --ocix-chart-3: #e8a55a; --ocix-chart-4: #5db872;
+  --ocix-chart-5: #c64545; --ocix-chart-6: #8e8b82; --ocix-chart-7: #a9583e; --ocix-chart-8: #6c6a64;
+  --ocix-chart-seq-1: #f5e8e1; --ocix-chart-seq-2: #e8c4b3; --ocix-chart-seq-3: #d99a80; --ocix-chart-seq-4: #cc785c; --ocix-chart-seq-5: #a9583e;
+  --ocix-delta-up: #3f9654; --ocix-delta-down: #c64545; --ocix-delta-flat: #8e8b82;
+  --ocix-radius-sm: 8px; --ocix-radius-md: 12px; --ocix-radius-lg: 16px;
+  --ocix-shadow-1: 0 1px 3px rgb(20 20 19 / 0.08);
+  --ocix-shadow-2: 0 2px 6px rgb(20 20 19 / 0.08), 0 8px 20px -6px rgb(20 20 19 / 0.1);
+}
+.dark [data-ocix-preset="claude"] .ocix-scope {
+  --ocix-surface: #181715; --ocix-surface-muted: #1f1e1b; --ocix-surface-subtle: #252320;
+  --ocix-border: #33302b; --ocix-foreground: #faf9f5; --ocix-muted-foreground: #a09d96;
+  --ocix-selection: #3d322c; --ocix-selection-foreground: #e8b39f; --ocix-focus-ring: #d97757;
+  --ocix-primary: #d97757; --ocix-primary-foreground: #181715; --ocix-primary-tint: #e89b80; --ocix-primary-shade: #c26143;
+  --ocix-panel-hero-bg: #1f1e1b;
+  --ocix-success: #5db872; --ocix-success-background: #1e2a22; --ocix-success-border: #356047;
+  --ocix-warning: #d4a017; --ocix-warning-background: #2c2716; --ocix-warning-border: #6e5a1e;
+  --ocix-error: #d96363; --ocix-error-background: #2d1c1c; --ocix-error-border: #6e3131;
+  --ocix-info: #5db8a6; --ocix-info-background: #1a2724; --ocix-info-border: #2f5a51;
+  --ocix-chart-1: #d97757; --ocix-chart-2: #5db8a6; --ocix-chart-3: #e8a55a; --ocix-chart-4: #5db872;
+  --ocix-chart-5: #d96363; --ocix-chart-6: #a09d96; --ocix-chart-7: #e89b80; --ocix-chart-8: #6c6a64;
+  --ocix-chart-seq-1: #3d322c; --ocix-chart-seq-2: #6b4a3a; --ocix-chart-seq-3: #a05f45; --ocix-chart-seq-4: #d97757; --ocix-chart-seq-5: #e89b80;
+  --ocix-delta-up: #5db872; --ocix-delta-down: #d96363; --ocix-delta-flat: #a09d96;
+  --ocix-shadow-1: none; --ocix-shadow-2: none;
+}
+[data-ocix-preset="apple"] .ocix-scope {
+  --ocix-surface: #ffffff; --ocix-surface-muted: #f5f5f7; --ocix-surface-subtle: #fafafc;
+  --ocix-border: #e0e0e0; --ocix-foreground: #1d1d1f; --ocix-muted-foreground: #7a7a7a;
+  --ocix-selection: #e3effc; --ocix-selection-foreground: #0066cc; --ocix-focus-ring: #0071e3;
+  --ocix-primary: #0066cc; --ocix-primary-foreground: #ffffff; --ocix-primary-tint: #0071e3; --ocix-primary-shade: #005bb8;
+  --ocix-panel-hero-bg: #f5f5f7;
+  --ocix-success: #34c759; --ocix-success-background: #e8f9ed; --ocix-success-border: #a3e7b8;
+  --ocix-warning: #b25000; --ocix-warning-background: #fff4e5; --ocix-warning-border: #ffcc80;
+  --ocix-error: #ff3b30; --ocix-error-background: #ffeceb; --ocix-error-border: #ffb3ae;
+  --ocix-info: #0066cc; --ocix-info-background: #e5f0fc; --ocix-info-border: #a3cdf3;
+  --ocix-chart-1: #0071e3; --ocix-chart-2: #34c759; --ocix-chart-3: #ff9500; --ocix-chart-4: #ff3b30;
+  --ocix-chart-5: #af52de; --ocix-chart-6: #5ac8fa; --ocix-chart-7: #ffcc00; --ocix-chart-8: #8e8e93;
+  --ocix-chart-seq-1: #e5f0fc; --ocix-chart-seq-2: #b3d7f8; --ocix-chart-seq-3: #7ab8f2; --ocix-chart-seq-4: #0071e3; --ocix-chart-seq-5: #005bb8;
+  --ocix-delta-up: #34c759; --ocix-delta-down: #ff3b30; --ocix-delta-flat: #8e8e93;
+  --ocix-radius-sm: 11px; --ocix-radius-md: 18px; --ocix-radius-lg: 18px;
+  --ocix-shadow-1: none; --ocix-shadow-2: none;
+}
+.dark [data-ocix-preset="apple"] .ocix-scope {
+  --ocix-surface: #000000; --ocix-surface-muted: #1c1c1e; --ocix-surface-subtle: #2c2c2e;
+  --ocix-border: #38383a; --ocix-foreground: #ffffff; --ocix-muted-foreground: #98989f;
+  --ocix-selection: #16344d; --ocix-selection-foreground: #64a9f0; --ocix-focus-ring: #0a84ff;
+  --ocix-primary: #0a84ff; --ocix-primary-foreground: #ffffff; --ocix-primary-tint: #409cff; --ocix-primary-shade: #0066cc;
+  --ocix-panel-hero-bg: #1c1c1e;
+  --ocix-success: #30d158; --ocix-success-background: #14281a; --ocix-success-border: #2a5a38;
+  --ocix-warning: #ff9f0a; --ocix-warning-background: #2c2210; --ocix-warning-border: #6e4f10;
+  --ocix-error: #ff453a; --ocix-error-background: #2e1615; --ocix-error-border: #6e2925;
+  --ocix-info: #0a84ff; --ocix-info-background: #102334; --ocix-info-border: #1d4a76;
+  --ocix-chart-1: #0a84ff; --ocix-chart-2: #30d158; --ocix-chart-3: #ff9f0a; --ocix-chart-4: #ff453a;
+  --ocix-chart-5: #bf5af2; --ocix-chart-6: #64d2ff; --ocix-chart-7: #ffd60a; --ocix-chart-8: #98989f;
+  --ocix-chart-seq-1: #16344d; --ocix-chart-seq-2: #0f5cba; --ocix-chart-seq-3: #0a84ff; --ocix-chart-seq-4: #409cff; --ocix-chart-seq-5: #9ec9ff;
+  --ocix-delta-up: #30d158; --ocix-delta-down: #ff453a; --ocix-delta-flat: #98989f;
+  --ocix-shadow-1: none; --ocix-shadow-2: none;
+}
+[data-ocix-preset="figma"] .ocix-scope {
+  --ocix-surface: #ffffff; --ocix-surface-muted: #f7f7f5; --ocix-surface-subtle: #fafafa;
+  --ocix-border: #e6e6e6; --ocix-foreground: #000000; --ocix-muted-foreground: #5a5a5a;
+  --ocix-selection: #dceeb1; --ocix-selection-foreground: #000000; --ocix-focus-ring: #0d99ff;
+  --ocix-primary: #000000; --ocix-primary-foreground: #ffffff; --ocix-primary-tint: #333333; --ocix-primary-shade: #000000;
+  --ocix-panel-hero-bg: #f7f7f5;
+  --ocix-success: #1ea64a; --ocix-success-background: #c8e6cd; --ocix-success-border: #7cc38a;
+  --ocix-warning: #8a6d00; --ocix-warning-background: #ffefcf; --ocix-warning-border: #ffcd29;
+  --ocix-error: #f24e1e; --ocix-error-background: #efd4d4; --ocix-error-border: #f3a08c;
+  --ocix-info: #0d99ff; --ocix-info-background: #dceefa; --ocix-info-border: #a3d4f5;
+  --ocix-chart-1: #0d99ff; --ocix-chart-2: #f24e1e; --ocix-chart-3: #a259ff; --ocix-chart-4: #1abcfe;
+  --ocix-chart-5: #0acf83; --ocix-chart-6: #ff3d8b; --ocix-chart-7: #ff7262; --ocix-chart-8: #b89b00;
+  --ocix-chart-seq-1: #eaf5ff; --ocix-chart-seq-2: #b8e0fd; --ocix-chart-seq-3: #7ac2fc; --ocix-chart-seq-4: #1abcfe; --ocix-chart-seq-5: #0d99ff;
+  --ocix-delta-up: #1ea64a; --ocix-delta-down: #f24e1e; --ocix-delta-flat: #8a8a8a;
+  --ocix-radius-sm: 9999px; --ocix-radius-md: 8px; --ocix-radius-lg: 24px;
+  --ocix-shadow-1: 0 4px 16px rgb(0 0 0 / 0.06);
+  --ocix-shadow-2: 0 2px 4px rgb(0 0 0 / 0.05), 0 12px 28px -8px rgb(0 0 0 / 0.12);
+}
+.dark [data-ocix-preset="figma"] .ocix-scope {
+  --ocix-surface: #1e1e1e; --ocix-surface-muted: #2c2c2c; --ocix-surface-subtle: #383838;
+  --ocix-border: #3d3d3d; --ocix-foreground: #ffffff; --ocix-muted-foreground: #b3b3b3;
+  --ocix-selection: #3f4a1f; --ocix-selection-foreground: #dceeb1; --ocix-focus-ring: #0d99ff;
+  --ocix-primary: #0d99ff; --ocix-primary-foreground: #ffffff; --ocix-primary-tint: #4db2ff; --ocix-primary-shade: #007be0;
+  --ocix-panel-hero-bg: #2c2c2c;
+  --ocix-success: #0acf83; --ocix-success-background: #14332a; --ocix-success-border: #1f6b4a;
+  --ocix-warning: #ffcd29; --ocix-warning-background: #332d14; --ocix-warning-border: #8a6d00;
+  --ocix-error: #ff7262; --ocix-error-background: #381f1c; --ocix-error-border: #8c3a30;
+  --ocix-info: #0d99ff; --ocix-info-background: #14293b; --ocix-info-border: #0d5c99;
+  --ocix-chart-1: #0d99ff; --ocix-chart-2: #ff7262; --ocix-chart-3: #b78cff; --ocix-chart-4: #1abcfe;
+  --ocix-chart-5: #0acf83; --ocix-chart-6: #ff3d8b; --ocix-chart-7: #ffa198; --ocix-chart-8: #ffcd29;
+  --ocix-chart-seq-1: #14332a; --ocix-chart-seq-2: #0d5c99; --ocix-chart-seq-3: #0d99ff; --ocix-chart-seq-4: #4db2ff; --ocix-chart-seq-5: #b8e0fd;
+  --ocix-delta-up: #0acf83; --ocix-delta-down: #ff7262; --ocix-delta-flat: #b3b3b3;
+  --ocix-shadow-1: none; --ocix-shadow-2: none;
+}
+[data-ocix-preset="binance"] .ocix-scope {
+  --ocix-surface: #ffffff; --ocix-surface-muted: #fafafa; --ocix-surface-subtle: #f5f5f5;
+  --ocix-border: #eaecef; --ocix-foreground: #181a20; --ocix-muted-foreground: #707a8a;
+  --ocix-selection: #fdf3d0; --ocix-selection-foreground: #7a5c00; --ocix-focus-ring: #3b82f6;
+  --ocix-primary: #fcd535; --ocix-primary-foreground: #181a20; --ocix-primary-tint: #f9dd6b; --ocix-primary-shade: #f0b90b;
+  --ocix-panel-hero-bg: #fdf8e7;
+  --ocix-success: #0ecb81; --ocix-success-background: #e3f9f0; --ocix-success-border: #93e3c5;
+  --ocix-warning: #b25e00; --ocix-warning-background: #fff4e0; --ocix-warning-border: #f0b90b;
+  --ocix-error: #f6465d; --ocix-error-background: #fdeaee; --ocix-error-border: #f9a9b6;
+  --ocix-info: #3b82f6; --ocix-info-background: #e8f0fe; --ocix-info-border: #a9c6fa;
+  --ocix-chart-1: #f0b90b; --ocix-chart-2: #0ecb81; --ocix-chart-3: #f6465d; --ocix-chart-4: #3b82f6;
+  --ocix-chart-5: #2dbdb6; --ocix-chart-6: #929aa5; --ocix-chart-7: #fcd535; --ocix-chart-8: #707a8a;
+  --ocix-chart-seq-1: #fdf3d0; --ocix-chart-seq-2: #f9e394; --ocix-chart-seq-3: #f9dd6b; --ocix-chart-seq-4: #fcd535; --ocix-chart-seq-5: #f0b90b;
+  --ocix-delta-up: #0ecb81; --ocix-delta-down: #f6465d; --ocix-delta-flat: #929aa5;
+  --ocix-radius-sm: 6px; --ocix-radius-md: 8px; --ocix-radius-lg: 12px;
+  --ocix-shadow-1: none; --ocix-shadow-2: none;
+}
+.dark [data-ocix-preset="binance"] .ocix-scope {
+  --ocix-surface: #0b0e11; --ocix-surface-muted: #1e2329; --ocix-surface-subtle: #2b3139;
+  --ocix-border: #2b3139; --ocix-foreground: #eaecef; --ocix-muted-foreground: #929aa5;
+  --ocix-selection: #3a3419; --ocix-selection-foreground: #fcd535; --ocix-focus-ring: #3b82f6;
+  --ocix-primary: #fcd535; --ocix-primary-foreground: #181a20; --ocix-primary-tint: #f9dd6b; --ocix-primary-shade: #f0b90b;
+  --ocix-panel-hero-bg: #1e2329;
+  --ocix-success: #0ecb81; --ocix-success-background: #10261d; --ocix-success-border: #0a5c40;
+  --ocix-warning: #f0b90b; --ocix-warning-background: #2b2410; --ocix-warning-border: #8a6a07;
+  --ocix-error: #f6465d; --ocix-error-background: #2e1218; --ocix-error-border: #7e2433;
+  --ocix-info: #3b82f6; --ocix-info-background: #101c33; --ocix-info-border: #1d4a9e;
+  --ocix-chart-1: #fcd535; --ocix-chart-2: #0ecb81; --ocix-chart-3: #f6465d; --ocix-chart-4: #3b82f6;
+  --ocix-chart-5: #2dbdb6; --ocix-chart-6: #929aa5; --ocix-chart-7: #f0b90b; --ocix-chart-8: #eaecef;
+  --ocix-chart-seq-1: #3a3419; --ocix-chart-seq-2: #8a6a07; --ocix-chart-seq-3: #f0b90b; --ocix-chart-seq-4: #fcd535; --ocix-chart-seq-5: #f9dd6b;
+  --ocix-delta-up: #0ecb81; --ocix-delta-down: #f6465d; --ocix-delta-flat: #929aa5;
+  --ocix-shadow-1: none; --ocix-shadow-2: none;
+}
+[data-ocix-preset="slack"] .ocix-scope {
+  --ocix-surface: #ffffff; --ocix-surface-muted: #f8f8f8; --ocix-surface-subtle: #f0f0f0;
+  --ocix-border: #dddddd; --ocix-foreground: #1d1c1d; --ocix-muted-foreground: #616061;
+  --ocix-selection: #f0e8f0; --ocix-selection-foreground: #4a154b; --ocix-focus-ring: #1264a3;
+  --ocix-primary: #4a154b; --ocix-primary-foreground: #ffffff; --ocix-primary-tint: #6b3a6c; --ocix-primary-shade: #350d36;
+  --ocix-panel-hero-bg: #faf7fa;
+  --ocix-success: #007a5a; --ocix-success-background: #e2f2ec; --ocix-success-border: #9ed4c3;
+  --ocix-warning: #8a5a00; --ocix-warning-background: #fbf2d4; --ocix-warning-border: #ecb22e;
+  --ocix-error: #e01e5a; --ocix-error-background: #fce5ec; --ocix-error-border: #f29dbc;
+  --ocix-info: #1264a3; --ocix-info-background: #e4f0f8; --ocix-info-border: #9ecbe8;
+  --ocix-chart-1: #4a154b; --ocix-chart-2: #36c5f0; --ocix-chart-3: #2bac76; --ocix-chart-4: #ecb22e;
+  --ocix-chart-5: #e01e5a; --ocix-chart-6: #1264a3; --ocix-chart-7: #7c2d82; --ocix-chart-8: #616061;
+  --ocix-chart-seq-1: #f0e8f0; --ocix-chart-seq-2: #d5b8d6; --ocix-chart-seq-3: #a86aaa; --ocix-chart-seq-4: #7c2d82; --ocix-chart-seq-5: #4a154b;
+  --ocix-delta-up: #2bac76; --ocix-delta-down: #e01e5a; --ocix-delta-flat: #616061;
+  --ocix-radius-sm: 8px; --ocix-radius-md: 12px; --ocix-radius-lg: 16px;
+  --ocix-shadow-1: 0 1px 3px rgb(29 28 29 / 0.13);
+  --ocix-shadow-2: 0 2px 6px rgb(29 28 29 / 0.1), 0 8px 20px -6px rgb(29 28 29 / 0.16);
+}
+.dark [data-ocix-preset="slack"] .ocix-scope {
+  --ocix-surface: #1a1d21; --ocix-surface-muted: #222529; --ocix-surface-subtle: #2c2f33;
+  --ocix-border: #3b3e42; --ocix-foreground: #d1d2d3; --ocix-muted-foreground: #ababad;
+  --ocix-selection: #3d2a3e; --ocix-selection-foreground: #d5b8d6; --ocix-focus-ring: #1d9bd1;
+  --ocix-primary: #7c2d82; --ocix-primary-foreground: #ffffff; --ocix-primary-tint: #9d4ba3; --ocix-primary-shade: #5f2164;
+  --ocix-panel-hero-bg: #222529;
+  --ocix-success: #2bac76; --ocix-success-background: #14261e; --ocix-success-border: #1f5c40;
+  --ocix-warning: #ecb22e; --ocix-warning-background: #2b2512; --ocix-warning-border: #8a6a1c;
+  --ocix-error: #e01e5a; --ocix-error-background: #2e1420; --ocix-error-border: #7e1a3d;
+  --ocix-info: #1d9bd1; --ocix-info-background: #12222e; --ocix-info-border: #1a5a80;
+  --ocix-chart-1: #9d4ba3; --ocix-chart-2: #36c5f0; --ocix-chart-3: #2bac76; --ocix-chart-4: #ecb22e;
+  --ocix-chart-5: #e01e5a; --ocix-chart-6: #1d9bd1; --ocix-chart-7: #c78fcc; --ocix-chart-8: #ababad;
+  --ocix-chart-seq-1: #3d2a3e; --ocix-chart-seq-2: #5f2164; --ocix-chart-seq-3: #7c2d82; --ocix-chart-seq-4: #9d4ba3; --ocix-chart-seq-5: #c78fcc;
+  --ocix-delta-up: #2bac76; --ocix-delta-down: #e01e5a; --ocix-delta-flat: #ababad;
+  --ocix-shadow-1: none; --ocix-shadow-2: none;
+}
+
+/* ============ 组件样式（贴近渲染器的类结构） ============ */
+* { box-sizing: border-box; margin: 0; }
+body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; background: #555; }
+.ocix-scope { background: var(--ocix-surface); min-height: 100%; padding: 20px; transition: background-color .15s; }
+.panel { border-radius: var(--ocix-radius-md); border: 1px solid var(--ocix-border); background: var(--ocix-surface); padding: 12px; }
+.hero { border-radius: var(--ocix-radius-md); border: 1px solid var(--ocix-border); background: var(--ocix-panel-hero-bg); padding: 16px; box-shadow: var(--ocix-shadow-1); }
+.t-display { font-size: 20px; font-weight: 600; letter-spacing: -0.01em; font-variant-numeric: tabular-nums; }
+.t-body { font-size: 14px; }
+.t-label { font-size: 13px; font-weight: 500; }
+.t-meta { font-size: 12px; color: var(--ocix-muted-foreground); }
+.t-micro { font-size: 11px; color: var(--ocix-muted-foreground); }
+.grid { display: grid; gap: 12px; }
+.g2 { grid-template-columns: repeat(2, minmax(0,1fr)); }
+.g3 { grid-template-columns: repeat(3, minmax(0,1fr)); }
+.g4 { grid-template-columns: repeat(4, minmax(0,1fr)); }
+@media (max-width: 900px) { .g4 { grid-template-columns: repeat(2, minmax(0,1fr)); } .g3 { grid-template-columns: 1fr; } .g2 { grid-template-columns: 1fr; } }
+.row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.between { justify-content: space-between; }
+.badge { display: inline-flex; align-items: center; border-radius: 9999px; border: 1px solid var(--ocix-border); background: var(--ocix-surface-muted); color: var(--ocix-muted-foreground); padding: 2px 8px; font-size: 12px; white-space: nowrap; }
+.badge.success { border-color: var(--ocix-success-border); background: var(--ocix-success-background); color: var(--ocix-success); }
+.badge.warning { border-color: var(--ocix-warning-border); background: var(--ocix-warning-background); color: var(--ocix-warning); }
+.badge.error { border-color: var(--ocix-error-border); background: var(--ocix-error-background); color: var(--ocix-error); }
+.badge.info { border-color: var(--ocix-info-border); background: var(--ocix-info-background); color: var(--ocix-info); }
+.callout { border-radius: var(--ocix-radius-md); border: 1px solid; padding: 10px 12px; font-size: 12px; display: flex; gap: 8px; }
+.callout.info { border-color: var(--ocix-info-border); background: var(--ocix-info-background); color: var(--ocix-info); }
+.callout.success { border-color: var(--ocix-success-border); background: var(--ocix-success-background); color: var(--ocix-success); }
+.callout.warning { border-color: var(--ocix-warning-border); background: var(--ocix-warning-background); color: var(--ocix-warning); }
+.progress { height: 8px; border-radius: 9999px; background: var(--ocix-surface-muted); overflow: hidden; }
+.progress > i { display: block; height: 100%; border-radius: 9999px; background: var(--ocix-primary); }
+.progress.done > i { background: var(--ocix-success); }
+table.dt { width: 100%; border-collapse: collapse; font-size: 12px; }
+table.dt th { position: sticky; top: 0; background: var(--ocix-surface-muted); color: var(--ocix-muted-foreground); font-weight: 500; text-align: left; padding: 6px 12px; white-space: nowrap; }
+table.dt td { padding: 5px 12px; border-top: 1px solid var(--ocix-border); color: var(--ocix-foreground); font-variant-numeric: tabular-nums; }
+table.dt tr.tone-success td { background: color-mix(in srgb, var(--ocix-success-background) 60%, transparent); }
+table.dt tr.tone-warning td { background: color-mix(in srgb, var(--ocix-warning-background) 60%, transparent); }
+table.dt tr.tone-error td { background: color-mix(in srgb, var(--ocix-error-background) 60%, transparent); }
+.num { text-align: right; }
+.btn { display: inline-flex; align-items: center; gap: 6px; border-radius: var(--ocix-radius-sm); border: 1px solid transparent; font-size: 13px; font-weight: 500; padding: 6px 12px; cursor: default; }
+.btn-primary { background: var(--ocix-primary); color: var(--ocix-primary-foreground); }
+.btn-outline { border-color: var(--ocix-border); background: var(--ocix-surface); color: var(--ocix-foreground); }
+.input, .selectbox { width: 100%; border-radius: var(--ocix-radius-sm); border: 1px solid var(--ocix-border); background: var(--ocix-surface); color: var(--ocix-foreground); font-size: 13px; padding: 7px 12px; }
+.selectbox { display: flex; justify-content: space-between; align-items: center; }
+.checkbox { width: 14px; height: 14px; min-width: 14px; border-radius: 4px; border: 1px solid var(--ocix-border); display: inline-flex; align-items: center; justify-content: center; color: var(--ocix-primary); font-size: 10px; }
+.radio { width: 14px; height: 14px; min-width: 14px; border-radius: 50%; border: 1px solid var(--ocix-border); display: inline-flex; align-items: center; justify-content: center; }
+.radio.on { border-color: var(--ocix-primary); }
+.radio.on::after { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--ocix-primary); }
+.switch { width: 36px; height: 20px; border-radius: 9999px; background: var(--ocix-border); position: relative; display: inline-block; }
+.switch.on { background: var(--ocix-primary); }
+.switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: var(--ocix-surface); transition: transform .15s; }
+.switch.on::after { transform: translateX(16px); }
+.avatar { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; border-radius: 50%; background: var(--ocix-selection); color: var(--ocix-selection-foreground); font-size: 12px; font-weight: 500; }
+.tab { border-radius: 9999px; border: 1px solid var(--ocix-border); padding: 4px 12px; font-size: 12px; color: var(--ocix-muted-foreground); background: transparent; }
+.tab.on { background: var(--ocix-selection); color: var(--ocix-selection-foreground); border-color: transparent; }
+.stat-delta-up { color: var(--ocix-delta-up); }
+.stat-delta-down { color: var(--ocix-delta-down); }
+.stat-delta-flat { color: var(--ocix-delta-flat); }
+.section-title { font-size: 15px; font-weight: 600; margin: 28px 0 10px; }
+.section-title small { font-weight: 400; color: var(--ocix-muted-foreground); margin-left: 8px; font-size: 11px; }
+.slotbox { border: 1px dashed var(--ocix-border); border-radius: var(--ocix-radius-md); padding: 10px; }
+.legend-btn { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--ocix-muted-foreground); background: none; border: 0; cursor: pointer; padding: 2px 4px; border-radius: 4px; }
+.legend-btn.off { opacity: .45; }
+.dot { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
+
+/* ============ 预览框架（非 OCIX 区域） ============ */
+.topbar { position: sticky; top: 0; z-index: 10; background: #1c1c1f; color: #eee; padding: 10px 16px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 13px; }
+.topbar .brand { font-weight: 600; margin-right: 8px; }
+.ptab { border: 1px solid #3a3a3f; background: transparent; color: #bbb; border-radius: 8px; padding: 5px 12px; font-size: 12.5px; cursor: pointer; }
+.ptab:hover { color: #fff; border-color: #666; }
+.ptab.on { background: #eee; color: #111; border-color: #eee; font-weight: 600; }
+.modebtn { margin-left: auto; border: 1px solid #3a3a3f; background: #2a2a2e; color: #eee; border-radius: 8px; padding: 5px 12px; font-size: 12.5px; cursor: pointer; }
+.preset-note { background: #2a2a2e; color: #aaa; font-size: 12px; padding: 8px 16px; border-top: 1px solid #3a3a3f; }
+.preset-note b { color: #ddd; }
+.stage { max-width: 1080px; margin: 0 auto; }
+main { background: #555; min-height: 100vh; }
+</style>
+</head>
+<body>
+<header class="topbar">
+  <span class="brand">OCIX Style v2 预设预览</span>
+  <div id="preset-tabs"></div>
+  <button class="modebtn" id="mode-toggle">切换到深色</button>
+</header>
+<div class="preset-note" id="preset-note"></div>
+
+<main>
+<div class="stage" id="stage" data-ocix-preset="linear">
+<div class="ocix-scope">
+
+  <!-- ===================== Declarative 组合 ===================== -->
+  <div class="section-title">Declarative <small>metric-grid（首卡 hero 自动 + icon）· chart（8 色系/参考线/图例显隐/donut≤4 环）· data-table（compact + toneColumn 行态）· 状态族</small></div>
+
+  <div class="grid g4" id="metrics"></div>
+
+  <div class="grid g2" style="margin-top:12px">
+    <div class="panel">
+      <div class="row between" style="margin-bottom:10px">
+        <span class="t-label">月度收入 vs 去年（bar · referenceLine）</span>
+        <button class="tab" id="stacked-toggle" aria-pressed="false">堆叠 stacked</button>
+      </div>
+      <svg id="bar-chart" viewBox="0 0 680 260" style="width:100%;height:auto" role="group" aria-label="bar chart"></svg>
+      <div class="row" id="bar-legend" style="margin-top:6px"></div>
+    </div>
+    <div class="panel">
+      <div class="t-label" style="margin-bottom:10px">缺陷趋势（line · 轻网格 · 参考线）</div>
+      <svg id="line-chart" viewBox="0 0 680 260" style="width:100%;height:auto" role="group" aria-label="line chart"></svg>
+      <div class="row" id="line-legend" style="margin-top:6px"></div>
+    </div>
+  </div>
+
+  <div class="grid g3" style="margin-top:12px">
+    <div class="panel">
+      <div class="t-label" style="margin-bottom:10px">渠道占比（donut · 3 环）</div>
+      <svg id="donut-chart" viewBox="0 0 220 220" style="max-width:200px;display:block;margin:0 auto"></svg>
+      <div id="donut-legend" class="grid" style="gap:6px;margin-top:8px"></div>
+    </div>
+    <div class="panel">
+      <div class="t-label" style="margin-bottom:10px">提交热力（heatmap · seq 色阶）</div>
+      <div id="heatmap" style="display:grid;grid-template-columns:repeat(7,1fr);gap:3px"></div>
+      <div class="t-micro" style="margin-top:8px">seq-1 → seq-5 单色相深浅</div>
+    </div>
+    <div class="panel">
+      <div class="t-label" style="margin-bottom:8px">状态族（status / callout / progress）</div>
+      <div class="row" style="margin-bottom:10px">
+        <span class="badge success">approved</span><span class="badge warning">pending</span>
+        <span class="badge error">blocked</span><span class="badge info">review</span><span class="badge">draft</span>
+      </div>
+      <div class="callout success" style="margin-bottom:8px"><b>结论：</b>发布准备就绪，两项观察点遗留。</div>
+      <div class="callout warning" style="margin-bottom:10px">容量接近阈值，建议本周扩容。</div>
+      <div class="t-meta" style="margin-bottom:4px">迁移进度 87.5%</div>
+      <div class="progress"><i style="width:87.5%"></i></div>
+      <div class="t-meta" style="margin:8px 0 4px">已完成</div>
+      <div class="progress done"><i style="width:100%"></i></div>
+    </div>
+  </div>
+
+  <div class="panel" style="margin-top:12px;padding:0;overflow:hidden">
+    <div class="t-label" style="padding:8px 12px;border-bottom:1px solid var(--ocix-border)">客户管道（data-table · compact · toneColumn · <b>searchable / sortable / pagination</b>）</div>
+    <div style="padding:8px 12px;border-bottom:1px solid var(--ocix-border)">
+      <input id="table-search" type="search" placeholder="Search（本地过滤，不触发业务查询）" aria-label="Search" class="input" style="max-width:280px;padding:6px 12px">
+    </div>
+    <table class="dt" id="data-table"></table>
+    <div class="row between" style="padding:6px 12px;border-top:1px solid var(--ocix-border)">
+      <span class="t-micro" id="table-pageinfo" style="font-variant-numeric:tabular-nums"></span>
+      <span class="row">
+        <button class="btn btn-outline" id="table-prev" style="padding:2px 8px">‹</button>
+        <button class="btn btn-outline" id="table-next" style="padding:2px 8px">›</button>
+      </span>
+    </div>
+  </div>
+
+  <div class="grid g2" style="margin-top:12px">
+    <div class="panel">
+      <div class="row between" style="margin-bottom:8px">
+        <span class="t-label">可过滤列表（list · filterable）</span>
+        <span class="badge">本地状态</span>
+      </div>
+      <input id="list-search" type="search" placeholder="Search" aria-label="Search" class="input" style="margin-bottom:8px;padding:6px 12px">
+      <div id="filter-list" class="grid" style="gap:8px"></div>
+    </div>
+    <div class="panel">
+      <div class="row between" style="margin-bottom:8px">
+        <span class="t-label">纵向步骤流（flow · orientation=vertical）</span>
+        <span class="badge info">报告叙事</span>
+      </div>
+      <div id="vflow"></div>
+    </div>
+  </div>
+
+  <!-- ===================== Trusted Native 组合 ===================== -->
+  <div class="section-title">Trusted Native Kit <small>Stat · 表单（N1）· 浮层（N2）· 展示（N3）· 布局原语（N4）</small></div>
+
+  <div class="grid g3" id="stats"></div>
+
+  <div class="grid g2" style="margin-top:12px">
+    <div class="panel">
+      <div class="row between" style="margin-bottom:10px">
+        <span class="t-label">审批表单（Select / Checkbox / Radio / Switch）</span>
+        <span class="badge info">N1</span>
+      </div>
+      <div class="t-meta" style="margin-bottom:4px">审批级别</div>
+      <div class="selectbox" style="margin-bottom:10px"><span>部门负责人 + 财务</span><span style="color:var(--ocix-muted-foreground)">▾</span></div>
+      <div class="row" style="margin-bottom:8px"><span class="checkbox" style="border-color:var(--ocix-primary)">✓</span><span class="t-body">自动通知干系人</span></div>
+      <div class="row" style="margin-bottom:10px"><span class="checkbox"></span><span class="t-body">需要法务会签</span></div>
+      <div class="row" style="margin-bottom:10px">
+        <span class="radio on"></span><span class="t-body">加急</span>
+        <span class="radio" style="margin-left:12px"></span><span class="t-body">常规</span>
+      </div>
+      <div class="row between">
+        <span class="t-body">同步到 BI 看板</span><span class="switch on"></span>
+      </div>
+      <div class="row" style="margin-top:12px;justify-content:flex-end">
+        <button class="btn btn-outline">取消</button>
+        <button class="btn btn-primary">提交审批</button>
+      </div>
+    </div>
+    <div class="panel">
+      <div class="row between" style="margin-bottom:10px">
+        <span class="t-label">Card + Notice + Tabs + Pagination</span>
+        <span class="badge info">N2/N3</span>
+      </div>
+      <div class="row" style="margin-bottom:10px;border-bottom:1px solid var(--ocix-border);padding-bottom:8px">
+        <span class="tab on">概览</span><span class="tab">明细</span><span class="tab">审计</span>
+      </div>
+      <div class="callout info" style="margin-bottom:10px">数据来自已配置连接 · 5 分钟前更新</div>
+      <div class="row" style="margin-bottom:10px">
+        <span class="avatar">LZ</span>
+        <div><div class="t-label">Lin Zheng</div><div class="t-micro">销售运营 · Avatar</div></div>
+      </div>
+      <div class="row between">
+        <span class="t-meta">Pagination</span>
+        <span class="row"><button class="btn btn-outline">‹</button><span class="t-meta" style="font-variant-numeric:tabular-nums">3 / 12</span><button class="btn btn-outline">›</button></span>
+      </div>
+      <div class="row" style="margin-top:10px"><span class="badge">Dialog 族</span><span class="badge">Tooltip 族</span><span class="t-micro">（浮层为宿主原语别名，预览页静态标注）</span></div>
+    </div>
+  </div>
+
+  <div class="panel" style="margin-top:12px">
+    <div class="row between" style="margin-bottom:10px">
+      <span class="t-label">布局原语（Stack / Grid / Split 1:2）</span>
+      <span class="badge info">N4</span>
+    </div>
+    <div class="grid" style="grid-template-columns:1fr 2fr;gap:12px">
+      <div class="slotbox t-meta">Split-master<br>列表区</div>
+      <div class="grid g2" style="gap:12px">
+        <div class="slotbox t-meta">Grid cell A</div>
+        <div class="slotbox t-meta">Grid cell B</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="t-micro" style="margin:24px 0 8px;text-align:center">OCIX Style v2 预设预览 · 组件仅消费 var(--ocix-*) · 切换预设 = 切换 data-ocix-preset 属性</div>
+</div>
+</div>
+</main>
+
+<script>
+const PRESETS = [
+  { id: 'linear', name: 'Linear（默认）', note: '冷静技术感：surface 阶梯 + 发丝线，零阴影；官方双板数据。' },
+  { id: 'vercel', name: 'Vercel', note: '黑白工程感：堆叠细阴影 + 内描边；dark 极性翻转，primary 反白。' },
+  { id: 'notion', name: 'Notion', note: '暖灰编辑感：软阴影 + 暖炭文字；dark 为演绎值，审图重点=暖灰是否偏冷。' },
+  { id: 'claude', name: 'Claude', note: '暖奶油人文感：层级靠色块不靠阴影；dark coral 提亮为演绎值。' },
+  { id: 'apple', name: 'Apple', note: '画廊克制感：无阴影、大留白、Action Blue；dark 为 HIG 系统色演绎。' },
+  { id: 'figma', name: 'Figma', note: '黑白骨架 + pastel：按钮全 pill（radius-sm=9999px）；dark primary 切 #0d99ff（演绎）。' },
+  { id: 'binance', name: 'Binance', note: '金融扁平：黑字黄底签名组合不反转；涨跌色直通 delta token；官方双板。' },
+  { id: 'slack', name: 'Slack', note: '友好协作感：aubergine 主色；全套人工策展（awesome-design-md 未收录），首轮审图后可微调。' },
+];
+
+const stage = document.getElementById('stage');
+const tabsRoot = document.getElementById('preset-tabs');
+const noteEl = document.getElementById('preset-note');
+const modeBtn = document.getElementById('mode-toggle');
+let currentPreset = 'linear';
+
+PRESETS.forEach((p) => {
+  const b = document.createElement('button');
+  b.className = 'ptab' + (p.id === currentPreset ? ' on' : '');
+  b.textContent = p.name;
+  b.dataset.preset = p.id;
+  b.onclick = () => {
+    currentPreset = p.id;
+    stage.dataset.ocixPreset = p.id;
+    document.querySelectorAll('.ptab').forEach((el) => el.classList.toggle('on', el.dataset.preset === p.id));
+    noteEl.innerHTML = '<b>' + p.name + '</b> — ' + p.note;
+  };
+  tabsRoot.appendChild(b);
+});
+noteEl.innerHTML = '<b>' + PRESETS[0].name + '</b> — ' + PRESETS[0].note;
+
+modeBtn.onclick = () => {
+  document.documentElement.classList.toggle('dark');
+  modeBtn.textContent = document.documentElement.classList.contains('dark') ? '切换到浅色' : '切换到深色';
+};
+
+/* ---------- Declarative 数据 ---------- */
+const metrics = [
+  { label: '销售额', value: '¥1,820,000', delta: '+12.4%', dir: 'up', hero: true, icon: '◈' },
+  { label: '订单数', value: '48', delta: '+6', dir: 'up' },
+  { label: '退款', value: '3', delta: '-2', dir: 'down' },
+  { label: '转化率', value: '4.8%', delta: '±0.1', dir: 'flat' },
+];
+document.getElementById('metrics').innerHTML = metrics.map((m) => `
+  <div class="${m.hero ? 'hero' : 'panel'}">
+    <div class="row between"><span class="t-meta">${m.icon ? m.icon + ' ' : ''}${m.label}</span></div>
+    <div class="${m.hero ? 't-display' : 't-body'}" style="font-weight:600;margin-top:4px;font-variant-numeric:tabular-nums">${m.value}</div>
+    <div class="t-micro stat-delta-${m.dir}" style="margin-top:2px">${m.dir === 'up' ? '▲' : m.dir === 'down' ? '▼' : '—'} ${m.delta}</div>
+  </div>`).join('');
+
+const stats = [
+  { label: 'MRR（Native Stat）', value: '¥42,000', delta: '+12.4% vs 上月', dir: 'up' },
+  { label: '活跃企业', value: '128', delta: '+4', dir: 'up' },
+  { label: '流失风险', value: '2', delta: '持平', dir: 'flat' },
+];
+document.getElementById('stats').innerHTML = stats.map((s) => `
+  <div class="panel">
+    <div class="t-meta">${s.label}</div>
+    <div class="t-display" style="margin-top:4px">${s.value}</div>
+    <div class="t-micro stat-delta-${s.dir}" style="margin-top:2px">${s.delta}</div>
+  </div>`).join('');
+
+/* ---------- 图表（JS 生成 SVG，贴近渲染器行为） ---------- */
+const NS = 'http://www.w3.org/2000/svg';
+function el(tag, attrs) { const e = document.createElementNS(NS, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); return e; }
+
+function drawGroupedBar(svgId, legendId, rows, series, ref) {
+  const svg = document.getElementById(svgId);
+  const W = 680, H = 260, m = { t: 16, r: 18, b: 42, l: 48 };
+  const pw = W - m.l - m.r, ph = H - m.t - m.b;
+  const max = Math.max(...rows.flatMap((r) => series.map((s) => r[s.key])), ref ? ref.value : 0) * 1.1;
+  const y = (v) => m.t + (1 - v / max) * ph;
+  for (let i = 0; i <= 4; i++) {
+    const gy = m.t + (i / 4) * ph;
+    svg.appendChild(el('line', { x1: m.l, x2: W - m.r, y1: gy, y2: gy, stroke: 'var(--ocix-border)', 'stroke-opacity': 0.35, 'stroke-dasharray': '3 4' }));
+    const t = el('text', { x: m.l - 8, y: gy + 4, 'text-anchor': 'end', class: 't-micro', fill: 'var(--ocix-muted-foreground)', 'font-size': 10 });
+    t.textContent = Math.round(max * (1 - i / 4) / 10000) + '万';
+    svg.appendChild(t);
+  }
+  if (ref) {
+    svg.appendChild(el('line', { x1: m.l, x2: W - m.r, y1: y(ref.value), y2: y(ref.value), stroke: 'var(--ocix-primary-tint)', 'stroke-width': 1.5, 'stroke-dasharray': '6 4' }));
+    const t = el('text', { x: W - m.r, y: y(ref.value) - 4, 'text-anchor': 'end', fill: 'var(--ocix-muted-foreground)', 'font-size': 10 });
+    t.textContent = ref.label;
+    svg.appendChild(t);
+  }
+  const gw = (pw / rows.length) * 0.72, bw = gw / series.length;
+  rows.forEach((row, ri) => {
+    const cx = m.l + ((ri + 0.5) / rows.length) * pw;
+    series.forEach((s, si) => {
+      const v = row[s.key];
+      svg.appendChild(el('rect', {
+        x: cx - gw / 2 + si * bw + 1, y: y(v), width: Math.max(2, bw - 2), height: m.t + ph - y(v),
+        rx: 3, fill: `var(--ocix-chart-${(si % 8) + 1})`,
+      }));
+    });
+    const t = el('text', { x: cx, y: H - 14, 'text-anchor': 'middle', fill: 'var(--ocix-muted-foreground)', 'font-size': 10 });
+    t.textContent = row.label;
+    svg.appendChild(t);
+  });
+  drawLegend(legendId, series, svg, `bar`);
+}
+
+function drawLine(svgId, legendId, rows, series, ref) {
+  const svg = document.getElementById(svgId);
+  const W = 680, H = 260, m = { t: 16, r: 18, b: 42, l: 48 };
+  const pw = W - m.l - m.r, ph = H - m.t - m.b;
+  const max = Math.max(...rows.flatMap((r) => series.map((s) => r[s.key])), ref ? ref.value : 0) * 1.15;
+  const x = (i) => m.l + ((i + 0.5) / rows.length) * pw, y = (v) => m.t + (1 - v / max) * ph;
+  for (let i = 0; i <= 4; i++) {
+    const gy = m.t + (i / 4) * ph;
+    svg.appendChild(el('line', { x1: m.l, x2: W - m.r, y1: gy, y2: gy, stroke: 'var(--ocix-border)', 'stroke-opacity': 0.35, 'stroke-dasharray': '3 4' }));
+  }
+  if (ref) {
+    svg.appendChild(el('line', { x1: m.l, x2: W - m.r, y1: y(ref.value), y2: y(ref.value), stroke: 'var(--ocix-primary-tint)', 'stroke-width': 1.5, 'stroke-dasharray': '6 4' }));
+    const t = el('text', { x: W - m.r, y: y(ref.value) - 4, 'text-anchor': 'end', fill: 'var(--ocix-muted-foreground)', 'font-size': 10 });
+    t.textContent = ref.label;
+    svg.appendChild(t);
+  }
+  series.forEach((s, si) => {
+    const pts = rows.map((r, i) => [x(i), y(r[s.key])]);
+    svg.appendChild(el('path', { d: pts.map((p, i) => (i ? 'L' : 'M') + p[0] + ' ' + p[1]).join(' '), fill: 'none', stroke: `var(--ocix-chart-${(si % 8) + 1})`, 'stroke-width': 3, 'stroke-linecap': 'round', 'stroke-linejoin': 'round', 'data-series': s.key }));
+    pts.forEach((p) => svg.appendChild(el('circle', { cx: p[0], cy: p[1], r: 3.5, fill: 'var(--ocix-surface)', stroke: `var(--ocix-chart-${(si % 8) + 1})`, 'stroke-width': 2, 'data-series': s.key })));
+  });
+  rows.forEach((r, i) => {
+    const t = el('text', { x: x(i), y: H - 14, 'text-anchor': 'middle', fill: 'var(--ocix-muted-foreground)', 'font-size': 10 });
+    t.textContent = r.label;
+    svg.appendChild(t);
+  });
+  drawLegend(legendId, series, svg, 'line');
+}
+
+function drawLegend(rootId, series, svg, kind) {
+  const root = document.getElementById(rootId);
+  root.innerHTML = '';
+  series.forEach((s, si) => {
+    const b = document.createElement('button');
+    b.className = 'legend-btn';
+    b.setAttribute('aria-pressed', 'true');
+    b.innerHTML = `<span class="dot" style="background:var(--ocix-chart-${(si % 8) + 1})"></span>${s.label}`;
+    b.onclick = () => {
+      const off = b.classList.toggle('off');
+      b.setAttribute('aria-pressed', String(!off));
+      svg.querySelectorAll(`[data-series="${s.key}"]`).forEach((n) => n.setAttribute('opacity', off ? '0.15' : '1'));
+    };
+    root.appendChild(b);
+  });
+}
+
+function drawDonut(svgId, legendId, parts) {
+  const svg = document.getElementById(svgId);
+  const total = parts.reduce((a, p) => a + p.value, 0);
+  let offset = 0;
+  svg.appendChild(el('circle', { cx: 110, cy: 110, r: 72, fill: 'none', stroke: 'var(--ocix-surface-muted)', 'stroke-width': 32 }));
+  parts.forEach((p, i) => {
+    const frac = p.value / total;
+    svg.appendChild(el('circle', {
+      cx: 110, cy: 110, r: 72, fill: 'none', pathLength: 100,
+      stroke: `var(--ocix-chart-${(i % 8) + 1})`, 'stroke-width': 32,
+      'stroke-dasharray': `${frac * 100} ${100 - frac * 100}`, 'stroke-dashoffset': -offset * 100,
+      transform: 'rotate(-90 110 110)',
+    }));
+    offset += frac;
+  });
+  const t1 = el('text', { x: 110, y: 104, 'text-anchor': 'middle', fill: 'var(--ocix-muted-foreground)', 'font-size': 10 });
+  t1.textContent = '总计';
+  const t2 = el('text', { x: 110, y: 128, 'text-anchor': 'middle', fill: 'var(--ocix-foreground)', 'font-size': 16, 'font-weight': 600, 'font-variant-numeric': 'tabular-nums' });
+  t2.textContent = total.toLocaleString();
+  svg.appendChild(t1); svg.appendChild(t2);
+  document.getElementById(legendId).innerHTML = parts.map((p, i) =>
+    `<div class="row between"><span class="t-meta"><span class="dot" style="background:var(--ocix-chart-${(i % 8) + 1});margin-right:6px"></span>${p.label}</span><span class="t-meta" style="color:var(--ocix-foreground);font-variant-numeric:tabular-nums">${Math.round(p.value / total * 100)}%</span></div>`).join('');
+}
+
+function drawHeatmap(rootId) {
+  const root = document.getElementById(rootId);
+  const seed = [2, 4, 1, 5, 3, 2, 4, 1, 3, 5, 2, 4, 1, 3, 5, 2, 4, 3, 1, 2, 4, 5, 3, 2, 1, 4, 2, 5, 3, 1, 2, 4, 3, 5, 1];
+  root.innerHTML = seed.map((v) => `<span style="height:14px;border-radius:3px;background:var(--ocix-chart-seq-${v})"></span>`).join('');
+}
+
+const barData = [
+  { label: '3月', a: 1180000, b: 960000 }, { label: '4月', a: 1320000, b: 1040000 },
+  { label: '5月', a: 1490000, b: 1110000 }, { label: '6月', a: 1820000, b: 1250000 },
+];
+const barSeries = [{ key: 'a', label: '今年' }, { key: 'b', label: '去年' }];
+
+function drawStackedBar(svgId, legendId, rows, series) {
+  const svg = document.getElementById(svgId);
+  svg.innerHTML = '';
+  const W = 680, H = 260, m = { t: 16, r: 18, b: 42, l: 48 };
+  const pw = W - m.l - m.r, ph = H - m.t - m.b;
+  const max = Math.max(...rows.map((r) => series.reduce((s, it) => s + r[it.key], 0))) * 1.1;
+  const y = (v) => m.t + (1 - v / max) * ph;
+  for (let i = 0; i <= 4; i++) {
+    const gy = m.t + (i / 4) * ph;
+    svg.appendChild(el('line', { x1: m.l, x2: W - m.r, y1: gy, y2: gy, stroke: 'var(--ocix-border)', 'stroke-opacity': 0.35, 'stroke-dasharray': '3 4' }));
+  }
+  const gw = (pw / rows.length) * 0.72;
+  rows.forEach((row, ri) => {
+    let acc = 0;
+    series.forEach((s, si) => {
+      const start = acc;
+      acc += row[s.key];
+      svg.appendChild(el('rect', {
+        x: m.l + ((ri + 0.5) / rows.length) * pw - gw / 2 + 1, y: y(acc), width: gw - 2,
+        height: Math.max(1, y(start) - y(acc)), rx: 3, fill: `var(--ocix-chart-${(si % 8) + 1})`,
+      }));
+    });
+    const t = el('text', { x: m.l + ((ri + 0.5) / rows.length) * pw, y: H - 14, 'text-anchor': 'middle', fill: 'var(--ocix-muted-foreground)', 'font-size': 10 });
+    t.textContent = rows[ri].label;
+    svg.appendChild(t);
+  });
+  drawLegend(legendId, series, svg, 'bar');
+}
+
+let barStacked = false;
+document.getElementById('stacked-toggle').onclick = () => {
+  barStacked = !barStacked;
+  const btn = document.getElementById('stacked-toggle');
+  btn.classList.toggle('on', barStacked);
+  btn.setAttribute('aria-pressed', String(barStacked));
+  document.getElementById('bar-chart').innerHTML = '';
+  if (barStacked) drawStackedBar('bar-chart', 'bar-legend', barData, barSeries);
+  else drawGroupedBar('bar-chart', 'bar-legend', barData, barSeries, { value: 1500000, label: 'Target' });
+};
+drawGroupedBar('bar-chart', 'bar-legend', barData, barSeries, { value: 1500000, label: 'Target' });
+
+drawLine('line-chart', 'line-legend', [
+  { label: 'W1', open: 21, closed: 9 }, { label: 'W2', open: 17, closed: 12 },
+  { label: 'W3', open: 12, closed: 14 }, { label: 'W4', open: 8, closed: 16 },
+], [{ key: 'open', label: '未决' }, { key: 'closed', label: '已决' }], { value: 10, label: 'Gate' });
+
+drawDonut('donut-chart', 'donut-legend', [
+  { label: '直销', value: 46 }, { label: '渠道', value: 32 }, { label: '线上', value: 22 },
+]);
+drawHeatmap('heatmap');
+
+/* ---------- data-table（compact + toneColumn + 本地搜索/排序/分页） ---------- */
+const tableRows = [
+  { name: 'Acme Corp', mrr: 42000, stage: '谈判', status: 'active', tone: 'success' },
+  { name: 'Globex', mrr: 28500, stage: '方案', status: 'pending', tone: 'warning' },
+  { name: 'Initech', mrr: 9800, stage: '交付', status: 'active', tone: 'success' },
+  { name: 'Umbrella', mrr: 67200, stage: '续约', status: 'active', tone: 'success' },
+  { name: 'Hooli', mrr: 15800, stage: '试点', status: 'review', tone: '' },
+  { name: 'Stark Industries', mrr: 80300, stage: '谈判', status: 'active', tone: 'success' },
+  { name: 'Wayne Enterprises', mrr: 51200, stage: '方案', status: 'pending', tone: 'warning' },
+  { name: 'Wonka', mrr: 4400, stage: '流失', status: 'blocked', tone: 'error' },
+];
+const tableState = { q: '', sortKey: null, sortDir: 1, page: 0, pageSize: 4 };
+const money = (v) => '¥' + v.toLocaleString();
+function renderTable() {
+  const q = tableState.q.trim().toLowerCase();
+  let rows = tableRows.filter((r) => !q || [r.name, r.stage, r.status, String(r.mrr)].some((c) => c.toLowerCase().includes(q)));
+  if (tableState.sortKey) {
+    rows = [...rows].sort((a, b) => {
+      const av = a[tableState.sortKey], bv = b[tableState.sortKey];
+      const cmp = typeof av === 'number' ? av - bv : String(av).localeCompare(String(bv));
+      return cmp * tableState.sortDir;
+    });
+  }
+  const pageCount = Math.max(1, Math.ceil(rows.length / tableState.pageSize));
+  tableState.page = Math.min(tableState.page, pageCount - 1);
+  const visible = rows.slice(tableState.page * tableState.pageSize, tableState.page * tableState.pageSize + tableState.pageSize);
+  const arrow = (key) => tableState.sortKey !== key ? '<span style="opacity:.35;font-size:10px">▾</span>' : (tableState.sortDir === 1 ? '↑' : '↓');
+  document.getElementById('data-table').innerHTML = `
+    <thead><tr>
+      <th><button class="legend-btn" data-sort="name">客户 ${arrow('name')}</button></th>
+      <th><button class="legend-btn" data-sort="stage">阶段 ${arrow('stage')}</button></th>
+      <th class="num"><button class="legend-btn" data-sort="mrr">MRR ${arrow('mrr')}</button></th>
+      <th>状态</th>
+    </tr></thead>
+    <tbody>${visible.length === 0
+      ? '<tr><td colspan="4" style="text-align:center;padding:16px" class="t-meta">No data.</td></tr>'
+      : visible.map((r) => `
+      <tr class="${r.tone ? 'tone-' + r.tone : ''}">
+        <td>${r.name}</td><td>${r.stage}</td><td class="num">${money(r.mrr)}</td>
+        <td><span class="badge ${r.tone}">${r.status}</span></td>
+      </tr>`).join('')}</tbody>`;
+  document.getElementById('table-pageinfo').textContent = `${rows.length} 条 · ${tableState.page + 1} / ${pageCount}`;
+  document.getElementById('table-prev').disabled = tableState.page <= 0;
+  document.getElementById('table-next').disabled = tableState.page >= pageCount - 1;
+  document.querySelectorAll('#data-table [data-sort]').forEach((btn) => {
+    btn.onclick = () => {
+      const key = btn.dataset.sort;
+      if (tableState.sortKey !== key) { tableState.sortKey = key; tableState.sortDir = 1; }
+      else if (tableState.sortDir === 1) { tableState.sortDir = -1; }
+      else { tableState.sortKey = null; }
+      tableState.page = 0;
+      renderTable();
+    };
+  });
+}
+document.getElementById('table-search').oninput = (e) => { tableState.q = e.target.value; tableState.page = 0; renderTable(); };
+document.getElementById('table-prev').onclick = () => { tableState.page -= 1; renderTable(); };
+document.getElementById('table-next').onclick = () => { tableState.page += 1; renderTable(); };
+renderTable();
+
+/* ---------- filterable list ---------- */
+const watchItems = [
+  { title: 'Q3 续约 — Acme', desc: '负责人：Lin', badge: 'pending', tone: 'warning' },
+  { title: '扩容 — Globex', desc: '负责人：Chen', badge: 'approved', tone: 'success' },
+  { title: '流失风险 — Wonka', desc: '负责人：Zhao', badge: 'blocked', tone: 'error' },
+  { title: '试点启动 — Hooli', desc: '负责人：Lin', badge: 'review', tone: '' },
+];
+function renderWatchList() {
+  const q = document.getElementById('list-search').value.trim().toLowerCase();
+  const items = watchItems.filter((it) => !q || [it.title, it.desc, it.badge].some((c) => c.toLowerCase().includes(q)));
+  document.getElementById('filter-list').innerHTML = items.length === 0
+    ? '<div class="t-meta" style="text-align:center;padding:12px">No data.</div>'
+    : items.map((it) => `
+      <div class="row between" style="background:var(--ocix-surface-muted);border-radius:10px;padding:8px 12px">
+        <span><span class="t-label" style="font-size:12px">${it.title}</span><br><span class="t-micro">${it.desc}</span></span>
+        <span class="badge ${it.tone}">${it.badge}</span>
+      </div>`).join('');
+}
+document.getElementById('list-search').oninput = renderWatchList;
+renderWatchList();
+
+/* ---------- vertical flow ---------- */
+const flowSteps = [
+  { title: '需求收集', desc: '销售录入与客户确认', status: 'completed' },
+  { title: '方案评审', desc: '解决方案与报价评审', status: 'active' },
+  { title: '签约交付', desc: '合同签署与排期', status: 'pending' },
+];
+document.getElementById('vflow').innerHTML = flowSteps.map((s, i) => `
+  <div class="row" style="align-items:flex-start;gap:10px;padding-bottom:${i < flowSteps.length - 1 ? '10px' : '0'}">
+    <span style="display:inline-flex;flex-direction:column;align-items:center">
+      <span style="display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:50%;font-size:11px;font-weight:600;${s.status === 'completed' ? 'background:var(--ocix-success);color:var(--ocix-primary-foreground)' : s.status === 'active' ? 'background:var(--ocix-selection);color:var(--ocix-selection-foreground)' : 'background:var(--ocix-surface-muted);color:var(--ocix-muted-foreground)'}">${s.status === 'completed' ? '✓' : i + 1}</span>
+      ${i < flowSteps.length - 1 ? `<span style="width:1px;min-height:14px;flex:1;margin-top:4px;${s.status === 'completed' ? 'background:var(--ocix-success)' : 'border-left:1px dashed var(--ocix-border)'}"></span>` : ''}
+    </span>
+    <span><span class="t-label" style="font-size:12.5px">${s.title}</span><br><span class="t-micro">${s.desc}</span></span>
+  </div>`).join('');
+</script>
+</body>
+</html>

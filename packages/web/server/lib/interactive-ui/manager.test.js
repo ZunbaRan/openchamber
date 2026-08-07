@@ -450,7 +450,7 @@ describe('Interactive UI extension manager', () => {
     expect(await manager.list()).toMatchObject({
       builtInRuntime: {
         id: 'com.openchamber.builtin.interactive-ui',
-        version: '1.2.1',
+        version: '1.3.0',
         status: 'ready',
       },
       extensions: [],
@@ -481,7 +481,7 @@ describe('Interactive UI extension manager', () => {
 
     await expect(manager.initialize()).resolves.toMatchObject({ changed: true });
     expect(await fs.readFile(existingTool, 'utf8')).toContain('openchamber://interactive-result/v1');
-    expect((await manager.list()).builtInRuntime).toMatchObject({ version: '1.2.1', status: 'ready' });
+    expect((await manager.list()).builtInRuntime).toMatchObject({ version: '1.3.0', status: 'ready' });
   });
 
   it('preserves an unmanaged Tool and reports a built-in initialization conflict', async () => {

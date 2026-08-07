@@ -1235,6 +1235,7 @@ export const ExtensionWorkbench: React.FC = () => {
   const activeProjectId = useProjectsStore((state) => state.activeProjectId);
   const projectId = getActiveProjectId(activeProjectId, projects);
   const isRightSidebarOpen = useUIStore((state) => state.isRightSidebarOpen);
+  const ocixStylePreset = useUIStore((state) => state.ocixStylePreset);
   const catalog = useExtensionWorkbenchStore((state) => state.catalog);
   const snapshot = useExtensionWorkbenchStore((state) => state.snapshot);
   const loadState = useExtensionWorkbenchStore((state) => state.loadState);
@@ -1558,7 +1559,7 @@ export const ExtensionWorkbench: React.FC = () => {
   }
 
   return (
-    <div className="ocix-scope flex h-full min-h-0 overflow-hidden bg-background">
+    <div className="ocix-scope flex h-full min-h-0 overflow-hidden bg-background" data-ocix-preset={ocixStylePreset}>
       {!catalogCollapsed && (
         <WorkbenchCatalog
           extensions={applicationExtensions}

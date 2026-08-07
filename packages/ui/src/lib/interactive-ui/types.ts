@@ -170,6 +170,28 @@ export interface NativeActivationHost {
     Input: React.ComponentType<Record<string, unknown>>;
     Textarea: React.ComponentType<Record<string, unknown>>;
     EmptyState: React.ComponentType<Record<string, unknown>>;
+    Select: React.ComponentType<Record<string, unknown>>;
+    Checkbox: React.ComponentType<Record<string, unknown>>;
+    RadioGroup: React.ComponentType<Record<string, unknown>>;
+    Switch: React.ComponentType<Record<string, unknown>>;
+    Dialog: React.ComponentType<Record<string, unknown>>;
+    DialogContent: React.ComponentType<Record<string, unknown>>;
+    DialogHeader: React.ComponentType<Record<string, unknown>>;
+    DialogTitle: React.ComponentType<Record<string, unknown>>;
+    DialogDescription: React.ComponentType<Record<string, unknown>>;
+    DialogFooter: React.ComponentType<Record<string, unknown>>;
+    DialogTrigger: React.ComponentType<Record<string, unknown>>;
+    Tooltip: React.ComponentType<Record<string, unknown>>;
+    TooltipTrigger: React.ComponentType<Record<string, unknown>>;
+    TooltipContent: React.ComponentType<Record<string, unknown>>;
+    TooltipProvider: React.ComponentType<Record<string, unknown>>;
+    Stat: React.ComponentType<Record<string, unknown>>;
+    DescriptionList: React.ComponentType<Record<string, unknown>>;
+    Avatar: React.ComponentType<Record<string, unknown>>;
+    Pagination: React.ComponentType<Record<string, unknown>>;
+    Stack: React.ComponentType<Record<string, unknown>>;
+    Grid: React.ComponentType<Record<string, unknown>>;
+    Split: React.ComponentType<Record<string, unknown>>;
   };
   views: {
     register(definition: {

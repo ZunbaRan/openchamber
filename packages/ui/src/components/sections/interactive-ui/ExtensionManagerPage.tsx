@@ -53,6 +53,7 @@ import {
   remoteReviewReducer,
 } from '@/lib/interactive-ui/remoteReview';
 import { RoutingInspectorSection } from './RoutingInspectorSection';
+import { StylePresetSection } from './StylePresetSection';
 
 class RequestError extends Error {
   readonly status: number;
@@ -552,6 +553,8 @@ export const ExtensionManagerPage: React.FC = () => {
         </Button>
       )}
     >
+      <StylePresetSection />
+
       <SettingsSection
         divider={false}
         settingsItem="interactive-ui.installed"

@@ -472,6 +472,16 @@ Trusted Native 调用 `props.host.dashboard.emit("item.selected", { itemId })`�
 
 HTML 必须自包含且不超过 2 MiB。禁止远程资源、`fetch`/XHR/WebSocket/Worker、iframe/form/object、动态代码和浏览器存储。业务代码只能调用 `window.openchamber.business.query/execute`；Host 会复核 Artifact、Tool、extension、action allowlist 和确认策略，并在服务端注入 Key。
 
+### 5.8 Artifact 视觉设计（Style v2）
+
+Host 在沙箱文档根部注入主题解析后的 `--ocix-*` 令牌（light/dark 与当前风格预设已解析完毕），Artifact 与 Declarative/Native 表面消费同一套词汇：
+
+- **颜色/圆角/阴影一律 `var(--ocix-*)`**，禁止任何 hex/rgb 字面量。完整令牌组：surface 三级、foreground 两级、border、selection/focus、primary（含 tint/shade/panel-hero-bg）、四组状态色、`chart-1…8`、`chart-seq-1…5`、`delta-up/down/flat`、`radius-sm/md/lg`、`shadow-1/2`（可能为 `none`，此时靠表面阶梯分层）。
+- 图表系列色严格按 `chart-1`→`chart-8` 顺序；涨跌用 delta 色（与 success/error 解耦）；参考线用 `primary-tint` 虚线。
+- 构图纪律与 Declarative 一致：单焦点、KPI ≤4、结论文字留在对话回复里、390px 不横向滚动。
+- 模板 `templates/interactive-ui-extension/ui/artifacts/explorer.html` 是令牌消费的参考实现（含 `color-scheme`、focus ring、reduced-motion）。
+- 完整规则见内置 skill `html-artifact-design`（Agent 侧同一份指引）与 `docs/OCIX_STYLE_CONTRACT.md`。
+
 ## 6. Agent 半边：Tool、MCP 与 Skill
 
 安装 UI 不会自动让模型知道何时打开它。Agent runtime 必须提供一个 tool，并在完成结果里返回严格 Envelope。

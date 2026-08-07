@@ -2,6 +2,16 @@
 
 This directory owns the shared OCIX view host used by Web, Desktop, hosted mobile, and Capacitor mobile.
 
+## Style v2 (2026-08-06)
+
+- Token contract lives in `packages/ui/src/styles/ocix-theme.css` (slots) and `ocix-presets.css` (8 style presets × light/dark). The frozen visual contract is `docs/OCIX_STYLE_CONTRACT.md`; preset data and provenance are `docs/OCIX_STYLE_PRESETS.md`.
+- The current Host-level preset comes from `useUIStore().ocixStylePreset` and mounts as `data-ocix-preset` on every `.ocix-scope` root (InteractiveUIView, HTMLArtifactView, ExtensionWorkbench). Unknown ids fall back to `linear`. Views, extensions, and Agent output never select a preset.
+- Declarative emphasis tiers: `hero` (first KPI in metric-grids of ≤4, or explicit `emphasis`), `standard`, `quiet` (nested inside bordered sections). `metric.icon` accepts only the curated whitelist in `lib/interactive-ui/metricIcons.ts`.
+- Layout modes: a root stack may declare `layoutMode` (`dashboard-hero` / `master-detail` / `report`); section `id`s name the slots. The Agent Tool validates modes fail-closed; `generatedLayout.ts` strips invalid modes so persisted snapshots degrade to plain stacks.
+- Local interactivity: `data-table` supports `searchable` / `sortable` / `pagination.pageSize`; `list` supports `filterable`; `flow` supports `orientation=vertical`; bar charts support `stacked`. These are host-owned local presentation state over inlined data — they never issue business queries, so Generated snapshots keep the same trust boundary.
+- Artifact theme injection: `HTMLArtifactView` collects the full Style v2 slot set (including chart-1…8, chart-seq, delta, radius, shadow, primary-tint/shade, panel-hero-bg) as computed values from the preset-aware scope and injects them into every sandbox document, so Agent-generated and installed artifacts follow the active preset. Authoring rules live in the built-in `html-artifact-design` skill.
+- Native Kit additions: form controls (Select/Checkbox/RadioGroup/Switch), overlays (Dialog/Tooltip families), data display (Stat/DescriptionList/Avatar/Pagination), and layout primitives (Stack/Grid/Split) — the only styling channel for Trusted Native besides `--ocix-*` tokens.
+
 ## Flow
 
 1. `ToolPart` independently parses MCP App ToolPart metadata plus completed string output with `parseInteractiveResultEnvelope`, `parseHTMLArtifactResultEnvelope`, and `parseInstalledHTMLArtifactResultEnvelope`. Exact schemas activate independent renderers; malformed or unknown output remains ordinary Tool UI. MCP App metadata is never interpreted as an OCIX envelope.

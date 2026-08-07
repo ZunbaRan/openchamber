@@ -22,6 +22,7 @@ import { DeclarativeInteractiveView } from './DeclarativeInteractiveView';
 import { InteractiveUIStateNotice } from './InteractiveUIStateNotice';
 import { getRegisteredNativeView, loadNativeExtension } from './nativeRegistry';
 import { recordRoutingViewObservation } from '@/lib/interactive-ui/routingInspector';
+import { useUIStore } from '@/stores/useUIStore';
 
 interface InteractiveUIViewProps {
   envelope: InteractiveResultEnvelope;
@@ -87,6 +88,7 @@ export const InteractiveUIView: React.FC<InteractiveUIViewProps> = ({
 }) => {
   const { t, locale } = useI18n();
   const runtime = React.useContext(RuntimeAPIContext);
+  const ocixStylePreset = useUIStore((state) => state.ocixStylePreset);
   const [descriptor, setDescriptor] = React.useState<InteractiveViewDescriptor | null>(null);
   const [nativeComponent, setNativeComponent] = React.useState<NativeViewComponent | null>(null);
   const [error, setError] = React.useState<Error | null>(null);
@@ -245,7 +247,7 @@ export const InteractiveUIView: React.FC<InteractiveUIViewProps> = ({
 
   if (error) {
     return (
-      <div className="ocix-scope space-y-2">
+      <div className="ocix-scope space-y-2" data-ocix-preset={ocixStylePreset}>
         {envelope.summary ? <div className="typography-meta text-[var(--ocix-muted-foreground)]" data-ocix-view-summary>{envelope.summary}</div> : null}
         <InteractiveUIStateNotice
           state={classifyInteractiveUIError(error)}
@@ -258,7 +260,7 @@ export const InteractiveUIView: React.FC<InteractiveUIViewProps> = ({
 
   if (!descriptor || !host || (descriptor.view.runtime === 'native' && !nativeComponent)) {
     return (
-      <div className="ocix-scope space-y-3 rounded-xl border border-[var(--ocix-border)] bg-[var(--ocix-surface)] p-3" aria-label={t('common.loading')} aria-busy="true">
+      <div className="ocix-scope space-y-3 rounded-xl border border-[var(--ocix-border)] bg-[var(--ocix-surface)] p-3" data-ocix-preset={ocixStylePreset} aria-label={t('common.loading')} aria-busy="true">
         <Skeleton className="h-5 w-2/5" />
         <Skeleton className="h-20 rounded-xl" />
       </div>
@@ -267,7 +269,7 @@ export const InteractiveUIView: React.FC<InteractiveUIViewProps> = ({
 
   if (descriptor.view.runtime === 'declarative' && descriptor.declarative) {
     return (
-      <div className="ocix-scope tool-output-surface min-w-0 space-y-3 rounded-xl p-3">
+      <div className="ocix-scope tool-output-surface min-w-0 space-y-3 rounded-xl p-3" data-ocix-preset={ocixStylePreset}>
         {envelope.summary ? <div className="typography-meta text-[var(--ocix-muted-foreground)]" data-ocix-view-summary>{envelope.summary}</div> : null}
         <DeclarativeInteractiveView definition={descriptor.declarative} envelope={envelope} host={host} />
         {hostMetadata}
@@ -288,7 +290,7 @@ export const InteractiveUIView: React.FC<InteractiveUIViewProps> = ({
           status: 'failed',
         })}
       >
-        <div className="ocix-scope tool-output-surface min-w-0 space-y-3 rounded-xl p-3">
+        <div className="ocix-scope tool-output-surface min-w-0 space-y-3 rounded-xl p-3" data-ocix-preset={ocixStylePreset}>
           {envelope.summary ? <div className="typography-meta text-[var(--ocix-muted-foreground)]" data-ocix-view-summary>{envelope.summary}</div> : null}
           <NativeComponent
             instanceId={instanceId}

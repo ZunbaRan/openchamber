@@ -37,6 +37,29 @@
   --ocix-chart-3: oklch(0.64 0.17 70);
   --ocix-chart-4: oklch(0.57 0.21 25);
   --ocix-chart-5: oklch(0.57 0.22 303);
+  --ocix-chart-6: oklch(0.6 0.15 210);
+  --ocix-chart-7: oklch(0.65 0.18 330);
+  --ocix-chart-8: oklch(0.75 0.15 95);
+
+  --ocix-chart-seq-1: oklch(0.94 0.04 260);
+  --ocix-chart-seq-2: oklch(0.84 0.08 260);
+  --ocix-chart-seq-3: oklch(0.73 0.13 260);
+  --ocix-chart-seq-4: oklch(0.62 0.17 260);
+  --ocix-chart-seq-5: oklch(0.51 0.2 260);
+
+  --ocix-delta-up: var(--ocix-success);
+  --ocix-delta-down: var(--ocix-error);
+  --ocix-delta-flat: var(--ocix-muted-foreground);
+
+  --ocix-primary-tint: oklch(0.68 0.16 260);
+  --ocix-primary-shade: oklch(0.5 0.19 260);
+
+  --ocix-radius-sm: 8px;
+  --ocix-radius-md: 12px;
+  --ocix-radius-lg: 16px;
+
+  --ocix-shadow-1: none;
+  --ocix-shadow-2: none;
 
   min-width: 0;
   color-scheme: light;
@@ -75,8 +98,37 @@
   --ocix-chart-3: oklch(0.82 0.15 75);
   --ocix-chart-4: oklch(0.74 0.18 25);
   --ocix-chart-5: oklch(0.75 0.18 303);
+  --ocix-chart-6: oklch(0.72 0.13 210);
+  --ocix-chart-7: oklch(0.75 0.16 330);
+  --ocix-chart-8: oklch(0.84 0.14 95);
+
+  --ocix-chart-seq-1: oklch(0.32 0.05 260);
+  --ocix-chart-seq-2: oklch(0.44 0.09 260);
+  --ocix-chart-seq-3: oklch(0.56 0.13 260);
+  --ocix-chart-seq-4: oklch(0.68 0.15 260);
+  --ocix-chart-seq-5: oklch(0.8 0.13 260);
+
+  --ocix-primary-tint: oklch(0.78 0.13 260);
+  --ocix-primary-shade: oklch(0.62 0.17 260);
 
   color-scheme: dark;
+}
+
+/*
+ * Typography roles (Style v2). Display is for KPI hero numbers and always
+ * uses tabular numerals; other roles keep using the shared typography-*
+ * utility classes. Roles are global and never vary by style preset.
+ */
+.ocix-scope .ocix-type-display {
+  font-size: 1.5rem;
+  line-height: 2rem;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+}
+
+.ocix-scope .ocix-type-value {
+  font-variant-numeric: tabular-nums;
 }
 
 .ocix-artifact-dialog::backdrop {

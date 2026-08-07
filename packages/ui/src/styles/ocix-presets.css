@@ -1,0 +1,717 @@
+/*
+ * OCIX style presets (Style v2).
+ *
+ * Presets are pure data: they only fill the token slots declared in
+ * ocix-theme.css. Components always reference var(--ocix-*) and never read
+ * the preset id. The default slot values in ocix-theme.css ARE the `linear`
+ * preset, so `linear` and unknown ids intentionally have no override block.
+ *
+ * Each preset may set: palette, radius scale, elevation scale. Typography
+ * roles and composition rules are global and never vary by preset.
+ *
+ * Values marked "derived" in docs/OCIX_STYLE_PRESETS.md §5 need visual review.
+ */
+
+/* ================================ vercel ================================ */
+.ocix-scope[data-ocix-preset='vercel'] {
+  --ocix-surface: #ffffff;
+  --ocix-surface-muted: #fafafa;
+  --ocix-surface-subtle: #f5f5f5;
+  --ocix-border: #ebebeb;
+  --ocix-foreground: #171717;
+  --ocix-muted-foreground: #888888;
+  --ocix-selection: #171717;
+  --ocix-selection-foreground: #fafafa;
+  --ocix-focus-ring: #0070f3;
+  --ocix-primary: #171717;
+  --ocix-primary-foreground: #fafafa;
+  --ocix-primary-tint: #4d4d4d;
+  --ocix-primary-shade: #000000;
+
+  --ocix-success: #0f9d58;
+  --ocix-success-background: #e6f4ec;
+  --ocix-success-border: #b7e2c8;
+  --ocix-warning: #ab570a;
+  --ocix-warning-background: #ffefcf;
+  --ocix-warning-border: #f5d9a0;
+  --ocix-error: #c50000;
+  --ocix-error-background: #f7d4d6;
+  --ocix-error-border: #eeb9bc;
+  --ocix-info: #0070f3;
+  --ocix-info-background: #d3e5ff;
+  --ocix-info-border: #a9ccf7;
+
+  --ocix-chart-1: #0070f3;
+  --ocix-chart-2: #50e3c2;
+  --ocix-chart-3: #7928ca;
+  --ocix-chart-4: #ff0080;
+  --ocix-chart-5: #f9cb28;
+  --ocix-chart-6: #eb367f;
+  --ocix-chart-7: #3291ff;
+  --ocix-chart-8: #a1a1a1;
+  --ocix-chart-seq-1: #d3e5ff;
+  --ocix-chart-seq-2: #a9ccf7;
+  --ocix-chart-seq-3: #6fa8f5;
+  --ocix-chart-seq-4: #3291ff;
+  --ocix-chart-seq-5: #0761d1;
+
+  --ocix-delta-up: #0f9d58;
+  --ocix-delta-down: #c50000;
+  --ocix-delta-flat: #888888;
+
+  --ocix-radius-sm: 6px;
+  --ocix-radius-md: 8px;
+  --ocix-radius-lg: 12px;
+
+  --ocix-shadow-1: 0 1px 1px rgb(0 0 0 / 0.05), 0 2px 2px rgb(0 0 0 / 0.1);
+  --ocix-shadow-2: 0 2px 2px rgb(0 0 0 / 0.1), 0 8px 16px -4px rgb(0 0 0 / 0.1);
+}
+
+.dark .ocix-scope[data-ocix-preset='vercel'],
+[data-theme='dark'] .ocix-scope[data-ocix-preset='vercel'] {
+  --ocix-surface: #0a0a0a;
+  --ocix-surface-muted: #111111;
+  --ocix-surface-subtle: #1a1a1a;
+  --ocix-border: #262626;
+  --ocix-foreground: #ededed;
+  --ocix-muted-foreground: #a1a1a1;
+  --ocix-selection: #fafafa;
+  --ocix-selection-foreground: #171717;
+  --ocix-focus-ring: #3291ff;
+  --ocix-primary: #fafafa;
+  --ocix-primary-foreground: #171717;
+  --ocix-primary-tint: #ffffff;
+  --ocix-primary-shade: #d4d4d4;
+
+  --ocix-success: #3fb950;
+  --ocix-success-background: #12261a;
+  --ocix-success-border: #1f5335;
+  --ocix-warning: #d29922;
+  --ocix-warning-background: #2a1f0d;
+  --ocix-warning-border: #5c4413;
+  --ocix-error: #f85149;
+  --ocix-error-background: #2d1114;
+  --ocix-error-border: #6e2828;
+  --ocix-info: #3291ff;
+  --ocix-info-background: #0d2038;
+  --ocix-info-border: #1c4a8c;
+
+  --ocix-chart-seq-1: #0d2038;
+  --ocix-chart-seq-2: #123a6e;
+  --ocix-chart-seq-3: #1c5cb8;
+  --ocix-chart-seq-4: #3291ff;
+  --ocix-chart-seq-5: #7ab8ff;
+
+  --ocix-delta-up: #3fb950;
+  --ocix-delta-down: #f85149;
+  --ocix-delta-flat: #a1a1a1;
+
+  --ocix-shadow-1: none;
+  --ocix-shadow-2: none;
+}
+
+/* ================================ notion ================================ */
+.ocix-scope[data-ocix-preset='notion'] {
+  --ocix-surface: #ffffff;
+  --ocix-surface-muted: #f6f5f4;
+  --ocix-surface-subtle: #fafaf9;
+  --ocix-border: #e5e3df;
+  --ocix-foreground: #1a1a1a;
+  --ocix-muted-foreground: #787671;
+  --ocix-selection: #ebe9f8;
+  --ocix-selection-foreground: #3a2a99;
+  --ocix-focus-ring: #5645d4;
+  --ocix-primary: #5645d4;
+  --ocix-primary-foreground: #ffffff;
+  --ocix-primary-tint: #6e5ce0;
+  --ocix-primary-shade: #4534b3;
+
+  --ocix-success: #1aae39;
+  --ocix-success-background: #e3f5e8;
+  --ocix-success-border: #bfe6cc;
+  --ocix-warning: #dd5b00;
+  --ocix-warning-background: #fdeee0;
+  --ocix-warning-border: #f5d3b3;
+  --ocix-error: #e03131;
+  --ocix-error-background: #fbe5e5;
+  --ocix-error-border: #f2c2c2;
+  --ocix-info: #0075de;
+  --ocix-info-background: #e3f0fb;
+  --ocix-info-border: #bdd9f2;
+
+  --ocix-chart-1: #7b3ff2;
+  --ocix-chart-2: #0075de;
+  --ocix-chart-3: #2a9d99;
+  --ocix-chart-4: #1aae39;
+  --ocix-chart-5: #dd5b00;
+  --ocix-chart-6: #ff64c8;
+  --ocix-chart-7: #f5d75e;
+  --ocix-chart-8: #523410;
+  --ocix-chart-seq-1: #e6e0f5;
+  --ocix-chart-seq-2: #c5b8ea;
+  --ocix-chart-seq-3: #9d88dc;
+  --ocix-chart-seq-4: #7b3ff2;
+  --ocix-chart-seq-5: #5a2fd6;
+
+  --ocix-delta-up: #1aae39;
+  --ocix-delta-down: #e03131;
+  --ocix-delta-flat: #787671;
+
+  --ocix-radius-sm: 8px;
+  --ocix-radius-md: 12px;
+  --ocix-radius-lg: 16px;
+
+  --ocix-shadow-1: 0 1px 2px rgb(15 15 15 / 0.04);
+  --ocix-shadow-2: 0 4px 12px rgb(15 15 15 / 0.08);
+}
+
+.dark .ocix-scope[data-ocix-preset='notion'],
+[data-theme='dark'] .ocix-scope[data-ocix-preset='notion'] {
+  --ocix-surface: #191919;
+  --ocix-surface-muted: #202020;
+  --ocix-surface-subtle: #2c2c2c;
+  --ocix-border: #2f2f2f;
+  --ocix-foreground: rgb(255 255 255 / 0.87);
+  --ocix-muted-foreground: rgb(255 255 255 / 0.46);
+  --ocix-selection: #3d3480;
+  --ocix-selection-foreground: #d9d4ff;
+  --ocix-focus-ring: #8b80f9;
+  --ocix-primary: #8b80f9;
+  --ocix-primary-foreground: #1a1a1a;
+  --ocix-primary-tint: #a399ff;
+  --ocix-primary-shade: #6e62d9;
+
+  --ocix-success: #4dab9a;
+  --ocix-success-background: #1c2b26;
+  --ocix-success-border: #2c4a40;
+  --ocix-warning: #e0703a;
+  --ocix-warning-background: #2e211a;
+  --ocix-warning-border: #57391f;
+  --ocix-error: #df5452;
+  --ocix-error-background: #2e1b1b;
+  --ocix-error-border: #592c2c;
+  --ocix-info: #529cca;
+  --ocix-info-background: #1a2530;
+  --ocix-info-border: #2c4358;
+
+  --ocix-chart-1: #9b7ff5;
+  --ocix-chart-2: #529cca;
+  --ocix-chart-3: #3fbfb2;
+  --ocix-chart-4: #4cc36a;
+  --ocix-chart-5: #e0703a;
+  --ocix-chart-6: #ff7fd2;
+  --ocix-chart-7: #f5d75e;
+  --ocix-chart-8: #a8998a;
+  --ocix-chart-seq-1: #2c2647;
+  --ocix-chart-seq-2: #4a3f7d;
+  --ocix-chart-seq-3: #6a5cb5;
+  --ocix-chart-seq-4: #8b80f9;
+  --ocix-chart-seq-5: #b3aaff;
+
+  --ocix-delta-up: #4cc36a;
+  --ocix-delta-down: #df5452;
+  --ocix-delta-flat: rgb(255 255 255 / 0.46);
+
+  --ocix-shadow-1: none;
+  --ocix-shadow-2: none;
+}
+
+/* ================================ claude ================================ */
+.ocix-scope[data-ocix-preset='claude'] {
+  --ocix-surface: #faf9f5;
+  --ocix-surface-muted: #f5f0e8;
+  --ocix-surface-subtle: #efe9de;
+  --ocix-border: #e6dfd8;
+  --ocix-foreground: #141413;
+  --ocix-muted-foreground: #6c6a64;
+  --ocix-selection: #f0dcd2;
+  --ocix-selection-foreground: #8c4a30;
+  --ocix-focus-ring: #cc785c;
+  --ocix-primary: #cc785c;
+  --ocix-primary-foreground: #ffffff;
+  --ocix-primary-tint: #d9907a;
+  --ocix-primary-shade: #a9583e;
+
+  --ocix-success: #5db872;
+  --ocix-success-background: #e8f4ea;
+  --ocix-success-border: #c4e2cc;
+  --ocix-warning: #d4a017;
+  --ocix-warning-background: #faf3dd;
+  --ocix-warning-border: #ead9a3;
+  --ocix-error: #c64545;
+  --ocix-error-background: #f7e6e6;
+  --ocix-error-border: #e5bdbd;
+  --ocix-info: #5db8a6;
+  --ocix-info-background: #e5f3f0;
+  --ocix-info-border: #bfe0d8;
+
+  --ocix-chart-1: #cc785c;
+  --ocix-chart-2: #5db8a6;
+  --ocix-chart-3: #e8a55a;
+  --ocix-chart-4: #5db872;
+  --ocix-chart-5: #c64545;
+  --ocix-chart-6: #8e8b82;
+  --ocix-chart-7: #a9583e;
+  --ocix-chart-8: #6c6a64;
+  --ocix-chart-seq-1: #f0dcd2;
+  --ocix-chart-seq-2: #e4b7a3;
+  --ocix-chart-seq-3: #d79075;
+  --ocix-chart-seq-4: #cc785c;
+  --ocix-chart-seq-5: #a9583e;
+
+  --ocix-delta-up: #5db872;
+  --ocix-delta-down: #c64545;
+  --ocix-delta-flat: #6c6a64;
+
+  --ocix-radius-sm: 8px;
+  --ocix-radius-md: 12px;
+  --ocix-radius-lg: 16px;
+
+  --ocix-shadow-1: 0 1px 3px rgb(20 20 19 / 0.08);
+  --ocix-shadow-2: 0 1px 3px rgb(20 20 19 / 0.08);
+}
+
+.dark .ocix-scope[data-ocix-preset='claude'],
+[data-theme='dark'] .ocix-scope[data-ocix-preset='claude'] {
+  --ocix-surface: #181715;
+  --ocix-surface-muted: #1f1e1b;
+  --ocix-surface-subtle: #252320;
+  --ocix-border: #33302b;
+  --ocix-foreground: #faf9f5;
+  --ocix-muted-foreground: #a09d96;
+  --ocix-selection: #4a342a;
+  --ocix-selection-foreground: #f0c8b4;
+  --ocix-focus-ring: #d97757;
+  --ocix-primary: #d97757;
+  --ocix-primary-foreground: #181715;
+  --ocix-primary-tint: #e5957c;
+  --ocix-primary-shade: #b86444;
+
+  --ocix-success: #6fc784;
+  --ocix-success-background: #1d2b20;
+  --ocix-success-border: #33502f;
+  --ocix-warning: #e0b23a;
+  --ocix-warning-background: #2b2415;
+  --ocix-warning-border: #54471f;
+  --ocix-error: #d96666;
+  --ocix-error-background: #2e1d1d;
+  --ocix-error-border: #592e2e;
+  --ocix-info: #74c4b3;
+  --ocix-info-background: #1a2925;
+  --ocix-info-border: #2e4a42;
+
+  --ocix-chart-1: #d97757;
+  --ocix-chart-2: #74c4b3;
+  --ocix-chart-3: #e8a55a;
+  --ocix-chart-4: #6fc784;
+  --ocix-chart-5: #d96666;
+  --ocix-chart-6: #a09d96;
+  --ocix-chart-7: #c98a6f;
+  --ocix-chart-8: #8e8b82;
+  --ocix-chart-seq-1: #4a342a;
+  --ocix-chart-seq-2: #7a5340;
+  --ocix-chart-seq-3: #b06a4c;
+  --ocix-chart-seq-4: #d97757;
+  --ocix-chart-seq-5: #e8a187;
+
+  --ocix-delta-up: #6fc784;
+  --ocix-delta-down: #d96666;
+  --ocix-delta-flat: #a09d96;
+
+  --ocix-shadow-1: none;
+  --ocix-shadow-2: none;
+}
+
+/* ================================ apple ================================= */
+.ocix-scope[data-ocix-preset='apple'] {
+  --ocix-surface: #ffffff;
+  --ocix-surface-muted: #f5f5f7;
+  --ocix-surface-subtle: #fafafc;
+  --ocix-border: #e0e0e0;
+  --ocix-foreground: #1d1d1f;
+  --ocix-muted-foreground: #7a7a7a;
+  --ocix-selection: #e3effc;
+  --ocix-selection-foreground: #0053b8;
+  --ocix-focus-ring: #0071e3;
+  --ocix-primary: #0066cc;
+  --ocix-primary-foreground: #ffffff;
+  --ocix-primary-tint: #0071e3;
+  --ocix-primary-shade: #0053b8;
+
+  --ocix-success: #34c759;
+  --ocix-success-background: #e6f7ea;
+  --ocix-success-border: #c2e9cc;
+  --ocix-warning: #ff9500;
+  --ocix-warning-background: #fff2e0;
+  --ocix-warning-border: #ffddb0;
+  --ocix-error: #ff3b30;
+  --ocix-error-background: #ffe9e8;
+  --ocix-error-border: #ffc7c4;
+  --ocix-info: #0066cc;
+  --ocix-info-background: #e3effc;
+  --ocix-info-border: #bcd9f5;
+
+  --ocix-chart-1: #0071e3;
+  --ocix-chart-2: #30d158;
+  --ocix-chart-3: #ff9f0a;
+  --ocix-chart-4: #ff453a;
+  --ocix-chart-5: #af52de;
+  --ocix-chart-6: #64d2ff;
+  --ocix-chart-7: #ffd60a;
+  --ocix-chart-8: #8e8e93;
+  --ocix-chart-seq-1: #e3effc;
+  --ocix-chart-seq-2: #bcd9f5;
+  --ocix-chart-seq-3: #83bcf0;
+  --ocix-chart-seq-4: #4d9de8;
+  --ocix-chart-seq-5: #0071e3;
+
+  --ocix-delta-up: #34c759;
+  --ocix-delta-down: #ff3b30;
+  --ocix-delta-flat: #7a7a7a;
+
+  --ocix-radius-sm: 11px;
+  --ocix-radius-md: 18px;
+  --ocix-radius-lg: 24px;
+
+  --ocix-shadow-1: none;
+  --ocix-shadow-2: none;
+}
+
+.dark .ocix-scope[data-ocix-preset='apple'],
+[data-theme='dark'] .ocix-scope[data-ocix-preset='apple'] {
+  --ocix-surface: #000000;
+  --ocix-surface-muted: #1c1c1e;
+  --ocix-surface-subtle: #2c2c2e;
+  --ocix-border: #38383a;
+  --ocix-foreground: #ffffff;
+  --ocix-muted-foreground: rgb(235 235 245 / 0.6);
+  --ocix-selection: #0a3a6e;
+  --ocix-selection-foreground: #bfe0ff;
+  --ocix-focus-ring: #0a84ff;
+  --ocix-primary: #0a84ff;
+  --ocix-primary-foreground: #ffffff;
+  --ocix-primary-tint: #409cff;
+  --ocix-primary-shade: #0066cc;
+
+  --ocix-success: #30d158;
+  --ocix-success-background: #0e2415;
+  --ocix-success-border: #1d4a28;
+  --ocix-warning: #ff9f0a;
+  --ocix-warning-background: #2b1f0a;
+  --ocix-warning-border: #573d13;
+  --ocix-error: #ff453a;
+  --ocix-error-background: #2e1210;
+  --ocix-error-border: #5e2622;
+  --ocix-info: #0a84ff;
+  --ocix-info-background: #0a1f33;
+  --ocix-info-border: #144066;
+
+  --ocix-chart-1: #0a84ff;
+  --ocix-chart-2: #30d158;
+  --ocix-chart-3: #ff9f0a;
+  --ocix-chart-4: #ff453a;
+  --ocix-chart-5: #bf5af2;
+  --ocix-chart-6: #64d2ff;
+  --ocix-chart-7: #ffd60a;
+  --ocix-chart-8: #98989d;
+  --ocix-chart-seq-1: #0a1f33;
+  --ocix-chart-seq-2: #103a61;
+  --ocix-chart-seq-3: #1763a6;
+  --ocix-chart-seq-4: #0a84ff;
+  --ocix-chart-seq-5: #5eb2ff;
+
+  --ocix-delta-up: #30d158;
+  --ocix-delta-down: #ff453a;
+  --ocix-delta-flat: rgb(235 235 245 / 0.6);
+}
+
+/* ================================ figma ================================= */
+.ocix-scope[data-ocix-preset='figma'] {
+  --ocix-surface: #ffffff;
+  --ocix-surface-muted: #f7f7f5;
+  --ocix-surface-subtle: #fafafa;
+  --ocix-border: #e6e6e6;
+  --ocix-foreground: #000000;
+  --ocix-muted-foreground: #5a5a5a;
+  --ocix-selection: #e9e2fb;
+  --ocix-selection-foreground: #1e1e1e;
+  --ocix-focus-ring: #0d99ff;
+  --ocix-primary: #000000;
+  --ocix-primary-foreground: #ffffff;
+  --ocix-primary-tint: #333333;
+  --ocix-primary-shade: #000000;
+
+  --ocix-success: #1ea64a;
+  --ocix-success-background: #e4f5ea;
+  --ocix-success-border: #bfe6cd;
+  --ocix-warning: #b88a00;
+  --ocix-warning-background: #fff6d9;
+  --ocix-warning-border: #f0e0a0;
+  --ocix-error: #f24e1e;
+  --ocix-error-background: #fde8e2;
+  --ocix-error-border: #f7c4b5;
+  --ocix-info: #0d99ff;
+  --ocix-info-background: #e3f2ff;
+  --ocix-info-border: #bfe0f7;
+
+  --ocix-chart-1: #0d99ff;
+  --ocix-chart-2: #f24e1e;
+  --ocix-chart-3: #ff7262;
+  --ocix-chart-4: #a259ff;
+  --ocix-chart-5: #1abcfe;
+  --ocix-chart-6: #0acf83;
+  --ocix-chart-7: #ff3d8b;
+  --ocix-chart-8: #ffcd29;
+  --ocix-chart-seq-1: #e3f2ff;
+  --ocix-chart-seq-2: #bfe0f7;
+  --ocix-chart-seq-3: #7cc2ff;
+  --ocix-chart-seq-4: #3aa9ff;
+  --ocix-chart-seq-5: #0d99ff;
+
+  --ocix-delta-up: #1ea64a;
+  --ocix-delta-down: #f24e1e;
+  --ocix-delta-flat: #5a5a5a;
+
+  --ocix-radius-sm: 9999px;
+  --ocix-radius-md: 24px;
+  --ocix-radius-lg: 32px;
+
+  --ocix-shadow-1: 0 4px 16px rgb(0 0 0 / 0.06);
+  --ocix-shadow-2: 0 4px 16px rgb(0 0 0 / 0.06);
+}
+
+.dark .ocix-scope[data-ocix-preset='figma'],
+[data-theme='dark'] .ocix-scope[data-ocix-preset='figma'] {
+  --ocix-surface: #1e1e1e;
+  --ocix-surface-muted: #2c2c2c;
+  --ocix-surface-subtle: #383838;
+  --ocix-border: #3d3d3d;
+  --ocix-foreground: #ffffff;
+  --ocix-muted-foreground: rgb(255 255 255 / 0.7);
+  --ocix-selection: #1c3a52;
+  --ocix-selection-foreground: #bfe0f7;
+  --ocix-focus-ring: #0d99ff;
+  --ocix-primary: #0d99ff;
+  --ocix-primary-foreground: #ffffff;
+  --ocix-primary-tint: #3aa9ff;
+  --ocix-primary-shade: #087acc;
+
+  --ocix-success: #0acf83;
+  --ocix-success-background: #0f2a1f;
+  --ocix-success-border: #1d5238;
+  --ocix-warning: #ffcd29;
+  --ocix-warning-background: #2b250e;
+  --ocix-warning-border: #57501c;
+  --ocix-error: #ff7262;
+  --ocix-error-background: #2e1713;
+  --ocix-error-border: #5e2c24;
+  --ocix-info: #0d99ff;
+  --ocix-info-background: #0f2433;
+  --ocix-info-border: #1d4a66;
+
+  --ocix-chart-seq-1: #0f2433;
+  --ocix-chart-seq-2: #173d5c;
+  --ocix-chart-seq-3: #1f5c8c;
+  --ocix-chart-seq-4: #0d99ff;
+  --ocix-chart-seq-5: #66c2ff;
+
+  --ocix-delta-up: #0acf83;
+  --ocix-delta-down: #ff7262;
+  --ocix-delta-flat: rgb(255 255 255 / 0.7);
+
+  --ocix-shadow-1: none;
+  --ocix-shadow-2: none;
+}
+
+/* =============================== binance ================================ */
+.ocix-scope[data-ocix-preset='binance'] {
+  --ocix-surface: #ffffff;
+  --ocix-surface-muted: #fafafa;
+  --ocix-surface-subtle: #f5f5f5;
+  --ocix-border: #eaecef;
+  --ocix-foreground: #181a20;
+  --ocix-muted-foreground: #707a8a;
+  --ocix-selection: #fdf3d0;
+  --ocix-selection-foreground: #7a5c00;
+  --ocix-focus-ring: #f0b90b;
+  --ocix-primary: #fcd535;
+  --ocix-primary-foreground: #181a20;
+  --ocix-primary-tint: #fddc5c;
+  --ocix-primary-shade: #f0b90b;
+
+  --ocix-success: #0ecb81;
+  --ocix-success-background: #e0f8ee;
+  --ocix-success-border: #b3ecd4;
+  --ocix-warning: #f0b90b;
+  --ocix-warning-background: #fdf3d0;
+  --ocix-warning-border: #f5e2a0;
+  --ocix-error: #f6465d;
+  --ocix-error-background: #fee7ea;
+  --ocix-error-border: #f9c0c8;
+  --ocix-info: #3b82f6;
+  --ocix-info-background: #e6effd;
+  --ocix-info-border: #c2d6f8;
+
+  --ocix-chart-1: #fcd535;
+  --ocix-chart-2: #0ecb81;
+  --ocix-chart-3: #f6465d;
+  --ocix-chart-4: #3b82f6;
+  --ocix-chart-5: #2dbdb6;
+  --ocix-chart-6: #929aa5;
+  --ocix-chart-7: #f0b90b;
+  --ocix-chart-8: #5e6673;
+  --ocix-chart-seq-1: #fdf3d0;
+  --ocix-chart-seq-2: #f9e58f;
+  --ocix-chart-seq-3: #f5d95c;
+  --ocix-chart-seq-4: #fcd535;
+  --ocix-chart-seq-5: #f0b90b;
+
+  --ocix-delta-up: #0ecb81;
+  --ocix-delta-down: #f6465d;
+  --ocix-delta-flat: #929aa5;
+
+  --ocix-radius-sm: 6px;
+  --ocix-radius-md: 8px;
+  --ocix-radius-lg: 12px;
+
+  --ocix-shadow-1: none;
+  --ocix-shadow-2: none;
+}
+
+.dark .ocix-scope[data-ocix-preset='binance'],
+[data-theme='dark'] .ocix-scope[data-ocix-preset='binance'] {
+  --ocix-surface: #0b0e11;
+  --ocix-surface-muted: #1e2329;
+  --ocix-surface-subtle: #2b3139;
+  --ocix-border: #2b3139;
+  --ocix-foreground: #eaecef;
+  --ocix-muted-foreground: #929aa5;
+  --ocix-selection: #3a3a1f;
+  --ocix-selection-foreground: #fcd535;
+  --ocix-focus-ring: #fcd535;
+  --ocix-primary: #fcd535;
+  --ocix-primary-foreground: #181a20;
+  --ocix-primary-tint: #fddc5c;
+  --ocix-primary-shade: #f0b90b;
+
+  --ocix-success: #0ecb81;
+  --ocix-success-background: #0f2a1f;
+  --ocix-success-border: #1c4d38;
+  --ocix-warning: #f0b90b;
+  --ocix-warning-background: #2b240e;
+  --ocix-warning-border: #544a1c;
+  --ocix-error: #f6465d;
+  --ocix-error-background: #2e151a;
+  --ocix-error-border: #5c2630;
+  --ocix-info: #3b82f6;
+  --ocix-info-background: #14233d;
+  --ocix-info-border: #24406b;
+
+  --ocix-chart-seq-1: #3a3a1f;
+  --ocix-chart-seq-2: #6b5d1f;
+  --ocix-chart-seq-3: #a38712;
+  --ocix-chart-seq-4: #fcd535;
+  --ocix-chart-seq-5: #ffe17a;
+
+  --ocix-delta-up: #0ecb81;
+  --ocix-delta-down: #f6465d;
+  --ocix-delta-flat: #929aa5;
+}
+
+/* ================================ slack ================================= */
+.ocix-scope[data-ocix-preset='slack'] {
+  --ocix-surface: #ffffff;
+  --ocix-surface-muted: #f8f8f8;
+  --ocix-surface-subtle: #f0f0f0;
+  --ocix-border: #dddddd;
+  --ocix-foreground: #1d1c1d;
+  --ocix-muted-foreground: #616061;
+  --ocix-selection: #e8dceb;
+  --ocix-selection-foreground: #4a154b;
+  --ocix-focus-ring: #1264a3;
+  --ocix-primary: #4a154b;
+  --ocix-primary-foreground: #ffffff;
+  --ocix-primary-tint: #611f64;
+  --ocix-primary-shade: #350d36;
+
+  --ocix-success: #007a5a;
+  --ocix-success-background: #e0f2ec;
+  --ocix-success-border: #b8e0d2;
+  --ocix-warning: #ecb22e;
+  --ocix-warning-background: #fdf6e0;
+  --ocix-warning-border: #f0e0a8;
+  --ocix-error: #e01e5a;
+  --ocix-error-background: #fbe4ec;
+  --ocix-error-border: #f2bdcf;
+  --ocix-info: #1264a3;
+  --ocix-info-background: #e3eef7;
+  --ocix-info-border: #bcd4e8;
+
+  --ocix-chart-1: #36c5f0;
+  --ocix-chart-2: #2bac76;
+  --ocix-chart-3: #ecb22e;
+  --ocix-chart-4: #e01e5a;
+  --ocix-chart-5: #4a154b;
+  --ocix-chart-6: #1264a3;
+  --ocix-chart-7: #1d9bd1;
+  --ocix-chart-8: #616061;
+  --ocix-chart-seq-1: #e8dceb;
+  --ocix-chart-seq-2: #c9a8d1;
+  --ocix-chart-seq-3: #a56bb5;
+  --ocix-chart-seq-4: #7c3f88;
+  --ocix-chart-seq-5: #4a154b;
+
+  --ocix-delta-up: #2bac76;
+  --ocix-delta-down: #e01e5a;
+  --ocix-delta-flat: #616061;
+
+  --ocix-radius-sm: 8px;
+  --ocix-radius-md: 12px;
+  --ocix-radius-lg: 16px;
+
+  --ocix-shadow-1: 0 1px 3px rgb(29 28 29 / 0.13);
+  --ocix-shadow-2: 0 4px 12px rgb(29 28 29 / 0.12);
+}
+
+.dark .ocix-scope[data-ocix-preset='slack'],
+[data-theme='dark'] .ocix-scope[data-ocix-preset='slack'] {
+  --ocix-surface: #1a1d21;
+  --ocix-surface-muted: #222529;
+  --ocix-surface-subtle: #2c2f33;
+  --ocix-border: #3b3e42;
+  --ocix-foreground: #d1d2d3;
+  --ocix-muted-foreground: #ababad;
+  --ocix-selection: #4a2b4d;
+  --ocix-selection-foreground: #e3c4e8;
+  --ocix-focus-ring: #1d9bd1;
+  --ocix-primary: #7c2d82;
+  --ocix-primary-foreground: #ffffff;
+  --ocix-primary-tint: #9b3fa3;
+  --ocix-primary-shade: #5e1f63;
+
+  --ocix-success: #2bac76;
+  --ocix-success-background: #14261d;
+  --ocix-success-border: #254d37;
+  --ocix-warning: #ecb22e;
+  --ocix-warning-background: #2b250f;
+  --ocix-warning-border: #54491d;
+  --ocix-error: #e01e5a;
+  --ocix-error-background: #2e1420;
+  --ocix-error-border: #5c2438;
+  --ocix-info: #1d9bd1;
+  --ocix-info-background: #12222e;
+  --ocix-info-border: #20445c;
+
+  --ocix-chart-seq-1: #4a2b4d;
+  --ocix-chart-seq-2: #6b3a70;
+  --ocix-chart-seq-3: #8f4a96;
+  --ocix-chart-seq-4: #b05fb8;
+  --ocix-chart-seq-5: #d18cd8;
+
+  --ocix-delta-up: #2bac76;
+  --ocix-delta-down: #e01e5a;
+  --ocix-delta-flat: #ababad;
+
+  --ocix-shadow-1: none;
+  --ocix-shadow-2: none;
+}

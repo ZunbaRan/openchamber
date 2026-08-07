@@ -39,6 +39,7 @@ import {
   TreePrimitive,
 } from './DeclarativeAdvancedPrimitives';
 import { InteractiveUIStateNotice } from './InteractiveUIStateNotice';
+import { sanitizeOcixMetricIcon } from '@/lib/interactive-ui/metricIcons';
 
 interface DeclarativeInteractiveViewProps {
   definition: DeclarativeViewDefinition;
@@ -73,11 +74,39 @@ const CHART_COLORS = [
   'var(--ocix-chart-3)',
   'var(--ocix-chart-4)',
   'var(--ocix-chart-5)',
+  'var(--ocix-chart-6)',
+  'var(--ocix-chart-7)',
+  'var(--ocix-chart-8)',
 ];
 
-const OCIX_PANEL = 'rounded-xl border border-[var(--ocix-border)] bg-[var(--ocix-surface)] p-3';
+// Style v2 emphasis tiers. `hero` is the single visual focal point (left
+// accent + elevation tokens — flat presets simply resolve shadow to none);
+// `standard` is the default panel; `quiet` drops the chrome for nested
+// content so bordered sections never render cards inside cards.
+const OCIX_PANEL = 'rounded-[var(--ocix-radius-md)] border border-[var(--ocix-border)] bg-[var(--ocix-surface)] p-3';
+const OCIX_PANEL_HERO = 'rounded-[var(--ocix-radius-md)] border border-[var(--ocix-border)] bg-[var(--ocix-panel-hero-bg)] p-4 shadow-[var(--ocix-shadow-1)]';
 const OCIX_TITLE = 'typography-ui-label font-medium text-[var(--ocix-foreground)]';
 const OCIX_META = 'typography-meta text-[var(--ocix-muted-foreground)]';
+
+type RowTone = 'success' | 'error' | 'warning';
+
+const toneForStatusValue = (value: string): RowTone | undefined => {
+  const normalized = value.toLowerCase();
+  if (['approved', 'success', 'completed', 'active', 'ok'].includes(normalized)) return 'success';
+  if (['failed', 'error', 'rejected', 'blocked'].includes(normalized)) return 'error';
+  if (['warning', 'pending', 'review'].includes(normalized)) return 'warning';
+  return undefined;
+};
+
+const ROW_TONE_CLASS: Record<RowTone, string> = {
+  success: 'bg-[var(--ocix-success-background)]',
+  error: 'bg-[var(--ocix-error-background)]',
+  warning: 'bg-[var(--ocix-warning-background)]',
+};
+
+const resolveEmphasis = (value: unknown): 'hero' | 'standard' | 'quiet' | undefined => (
+  value === 'hero' || value === 'standard' || value === 'quiet' ? value : undefined
+);
 
 const HorizontalOverflowRegion: React.FC<{
   children: React.ReactNode;
@@ -205,127 +234,189 @@ const statusClass = (value: string, tone?: unknown): string => {
   return 'border-[var(--ocix-border)] bg-[var(--ocix-surface-muted)] text-[var(--ocix-muted-foreground)]';
 };
 
+const MetricCard: React.FC<{
+  label?: unknown;
+  value: unknown;
+  detail?: unknown;
+  tone?: unknown;
+  trend?: unknown;
+  trendValue?: unknown;
+  icon?: unknown;
+  emphasis?: 'hero' | 'standard' | 'quiet';
+}> = ({ label, value, detail, tone, trend, trendValue, icon: rawIcon, emphasis = 'standard' }) => {
+  const toneClass = metricToneClass(tone);
+  const trendName = trendIcon(trend);
+  const icon = sanitizeOcixMetricIcon(rawIcon);
+  return (
+    <div className={emphasis === 'hero' ? OCIX_PANEL_HERO : emphasis === 'quiet' ? '' : OCIX_PANEL}>
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          {label !== undefined ? <div className={OCIX_META}>{displayDeclarativeValue(label)}</div> : null}
+          <div className={cn(
+            'mt-1 flex min-w-0 items-center gap-1 font-semibold',
+            emphasis === 'hero' ? 'ocix-type-display' : 'typography-body ocix-type-value',
+            toneClass,
+          )}>
+            {trendName ? <Icon name={trendName} className={cn('shrink-0', emphasis === 'hero' ? 'size-4' : 'size-3.5')} /> : null}
+            <span className="min-w-0 break-words">{displayDeclarativeValue(value)}</span>
+          </div>
+          {trendValue !== undefined ? <div className={cn('mt-0.5 typography-micro', toneClass)}>{displayDeclarativeValue(trendValue)}</div> : null}
+          {detail !== undefined ? <div className={cn('mt-1', OCIX_META)}>{displayDeclarativeValue(detail)}</div> : null}
+        </div>
+        {icon ? (
+          <span className="inline-flex size-9 shrink-0 items-center justify-center rounded-[var(--ocix-radius-sm)] bg-[var(--ocix-selection)] text-[var(--ocix-selection-foreground)]">
+            <Icon name={icon} className="size-4" aria-hidden="true" />
+          </span>
+        ) : null}
+      </div>
+    </div>
+  );
+};
+
 const DeclarativeChart: React.FC<{
   node: DeclarativeViewNode;
   resolveValue: (value: unknown) => unknown;
   emptyLabel: string;
 }> = ({ node, resolveValue, emptyLabel }) => {
   const [tooltip, setTooltip] = React.useState<ChartTooltipState | null>(null);
+  const [hiddenSeriesKeys, setHiddenSeriesKeys] = React.useState<readonly string[]>([]);
   const data = resolveValue(node.data);
   const rows = Array.isArray(data)
     ? data.map(asRecord).filter((entry): entry is Record<string, unknown> => entry !== null)
     : [];
-  const series = Array.isArray(node.series)
+  const allSeries = Array.isArray(node.series)
     ? node.series.map(asRecord).filter((entry): entry is Record<string, unknown> => !!entry && typeof entry.key === 'string') as ChartSeries[]
     : [];
   const xKey = typeof node.xKey === 'string' ? node.xKey : 'label';
   const variant = typeof node.variant === 'string' ? node.variant : 'bar';
-  const values = rows.flatMap((row) => series.map((item) => Number(row[item.key])).filter(Number.isFinite));
+  const hidden = new Set(hiddenSeriesKeys);
+  const series = allSeries.filter((item) => !hidden.has(item.key));
+  const toggleSeries = (key: string) => setHiddenSeriesKeys((current) => (
+    current.includes(key) ? current.filter((entry) => entry !== key) : [...current, key]
+  ));
+  const seriesColorIndex = (item: ChartSeries): number => Math.max(0, allSeries.indexOf(item));
+  // Stacked bars show part-to-whole composition; the domain always uses full
+  // row sums (all series) so toggling a legend entry keeps the axis stable.
+  const stacked = node.stacked === true && variant === 'bar';
+  const values = stacked
+    ? rows.map((row) => allSeries.reduce((sum, item) => sum + Math.max(0, Number(row[item.key]) || 0), 0))
+    : rows.flatMap((row) => series.map((item) => Number(row[item.key])).filter(Number.isFinite));
+  const referenceLineRecord = asRecord(node.referenceLine);
+  const referenceLine = referenceLineRecord && typeof referenceLineRecord.value === 'number' && Number.isFinite(referenceLineRecord.value)
+    ? { value: referenceLineRecord.value, label: typeof referenceLineRecord.label === 'string' ? referenceLineRecord.label : undefined }
+    : null;
+
+  const legend = allSeries.length > 0 ? (
+    <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1">
+      {allSeries.map((item, index) => {
+        const isHidden = hidden.has(item.key);
+        return (
+          <button
+            key={item.key}
+            type="button"
+            onClick={() => toggleSeries(item.key)}
+            aria-pressed={!isHidden}
+            className={cn(
+              'flex items-center gap-1.5 rounded-sm typography-meta text-[var(--ocix-muted-foreground)]',
+              'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ocix-focus-ring)]',
+              isHidden && 'opacity-40 line-through',
+            )}
+          >
+            <span className="size-2.5 rounded-sm" style={{ backgroundColor: CHART_COLORS[index % CHART_COLORS.length] }} />
+            {item.label ?? item.key}
+          </button>
+        );
+      })}
+    </div>
+  ) : null;
 
   if (rows.length === 0 || series.length === 0 || values.length === 0) {
     return (
       <div className={cn(OCIX_PANEL, 'py-8 text-center')}>
         {node.title ? <div className={cn('mb-2', OCIX_TITLE)}>{node.title}</div> : null}
         <div className={OCIX_META}>{emptyLabel}</div>
+        {legend}
       </div>
     );
   }
 
   if (variant === 'donut') {
-    const item = series[0];
-    const parts = rows.map((row) => ({
-      label: displayDeclarativeValue(row[xKey]),
-      value: Math.max(0, Number(row[item.key]) || 0),
-    })).filter((part) => part.value > 0);
-    const total = parts.reduce((sum, part) => sum + part.value, 0);
-    let offset = 0;
-    const segments = parts.map((part) => {
-      const fraction = total > 0 ? part.value / total : 0;
-      const start = offset;
-      offset += fraction;
-      const angle = (start + fraction / 2) * Math.PI * 2 - Math.PI / 2;
-      return {
-        ...part,
-        fraction,
-        start,
-        tooltip: {
-          x: 110 + Math.cos(angle) * 72,
-          y: 110 + Math.sin(angle) * 72,
-          label: part.label,
-          series: item.label ?? item.key,
-          value: `${displayDeclarativeValue(part.value)} · ${new Intl.NumberFormat(undefined, { style: 'percent', maximumFractionDigits: 1 }).format(fraction)}`,
-        },
-      };
-    });
-    if (segments.length === 0) {
-      return (
-        <div className={cn(OCIX_PANEL, 'py-8 text-center')}>
-          {node.title ? <div className={cn('mb-2', OCIX_TITLE)}>{node.title}</div> : null}
-          <div className={OCIX_META}>{emptyLabel}</div>
-        </div>
-      );
-    }
+    const donutSeries = series.slice(0, 4);
+    const ringWidth = 16;
+    const ringGap = 4;
+    const outerRadius = 76;
+    const firstTotal = rows.reduce((sum, row) => sum + Math.max(0, Number(row[donutSeries[0].key]) || 0), 0);
     return (
       <div className={OCIX_PANEL}>
         {node.title ? <div className={cn('mb-3', OCIX_TITLE)}>{node.title}</div> : null}
-        <div className="grid items-center gap-4 sm:grid-cols-[minmax(10rem,0.8fr)_minmax(10rem,1.2fr)]">
-          <div className="relative mx-auto size-full max-h-52 max-w-52" onPointerLeave={() => setTooltip(null)}>
-            <svg viewBox="0 0 220 220" className="size-full" role="group" aria-label={typeof node.title === 'string' ? node.title : undefined}>
-              <circle cx="110" cy="110" r="72" fill="none" stroke="var(--ocix-surface-muted)" strokeWidth="32" aria-hidden="true" />
-              {segments.map((segment, index) => (
-                <circle
-                  key={`${segment.label}:${index}`}
-                  cx="110"
-                  cy="110"
-                  r="72"
-                  fill="none"
-                  pathLength="100"
-                  stroke={CHART_COLORS[index % CHART_COLORS.length]}
-                  strokeWidth="32"
-                  strokeDasharray={`${segment.fraction * 100} ${100 - segment.fraction * 100}`}
-                  strokeDashoffset={-segment.start * 100}
-                  transform="rotate(-90 110 110)"
-                  tabIndex={0}
-                  role="graphics-symbol"
-                  aria-label={`${segment.label} · ${segment.tooltip.value}`}
-                  onPointerEnter={() => setTooltip(segment.tooltip)}
-                  onFocus={() => setTooltip(segment.tooltip)}
-                  onBlur={() => setTooltip(null)}
-                />
-              ))}
-              <text x="110" y="102" textAnchor="middle" className="fill-[var(--ocix-muted-foreground)] typography-micro">{item.label ?? item.key}</text>
-              <text x="110" y="128" textAnchor="middle" className="fill-[var(--ocix-foreground)] typography-ui-header font-semibold">{displayDeclarativeValue(total)}</text>
-            </svg>
-            {tooltip ? (
-              <div
-                role="tooltip"
-                className="pointer-events-none absolute z-10 min-w-28 -translate-x-1/2 -translate-y-full rounded-lg border border-[var(--ocix-border)] bg-[var(--ocix-surface)] px-2.5 py-2 shadow-lg"
-                style={{ left: `${(tooltip.x / 220) * 100}%`, top: `${(tooltip.y / 220) * 100}%` }}
-              >
-                <div className="typography-micro text-[var(--ocix-muted-foreground)]">{tooltip.label}</div>
-                <div className="mt-0.5 flex items-center justify-between gap-3 typography-meta text-[var(--ocix-foreground)]">
-                  <span>{tooltip.series}</span>
-                  <span className="font-semibold">{tooltip.value}</span>
-                </div>
+        <div className="relative mx-auto size-full max-h-60 max-w-60" onPointerLeave={() => setTooltip(null)}>
+          <svg viewBox="0 0 220 220" className="size-full" role="group" aria-label={typeof node.title === 'string' ? node.title : undefined}>
+            {donutSeries.map((item, ringIndex) => {
+              const radius = outerRadius - ringIndex * (ringWidth + ringGap);
+              const parts = rows.map((row) => ({
+                label: displayDeclarativeValue(row[xKey]),
+                value: Math.max(0, Number(row[item.key]) || 0),
+              })).filter((part) => part.value > 0);
+              const total = parts.reduce((sum, part) => sum + part.value, 0);
+              let offset = 0;
+              return (
+                <g key={item.key}>
+                  <circle cx="110" cy="110" r={radius} fill="none" stroke="var(--ocix-surface-muted)" strokeWidth={ringWidth} aria-hidden="true" />
+                  {parts.map((part) => {
+                    const fraction = total > 0 ? part.value / total : 0;
+                    const start = offset;
+                    offset += fraction;
+                    const angle = (start + fraction / 2) * Math.PI * 2 - Math.PI / 2;
+                    const tooltipState = {
+                      x: 110 + Math.cos(angle) * radius,
+                      y: 110 + Math.sin(angle) * radius,
+                      label: part.label,
+                      series: item.label ?? item.key,
+                      value: `${displayDeclarativeValue(part.value)} · ${new Intl.NumberFormat(undefined, { style: 'percent', maximumFractionDigits: 1 }).format(fraction)}`,
+                    };
+                    return (
+                      <circle
+                        key={`${item.key}:${part.label}`}
+                        cx="110"
+                        cy="110"
+                        r={radius}
+                        fill="none"
+                        pathLength="100"
+                        stroke={CHART_COLORS[seriesColorIndex(item) % CHART_COLORS.length]}
+                        strokeWidth={ringWidth}
+                        strokeDasharray={`${fraction * 100} ${100 - fraction * 100}`}
+                        strokeDashoffset={-start * 100}
+                        transform="rotate(-90 110 110)"
+                        tabIndex={0}
+                        role="graphics-symbol"
+                        aria-label={`${part.label} · ${tooltipState.value}`}
+                        onPointerEnter={() => setTooltip(tooltipState)}
+                        onFocus={() => setTooltip(tooltipState)}
+                        onBlur={() => setTooltip(null)}
+                      />
+                    );
+                  })}
+                </g>
+              );
+            })}
+            <text x="110" y="104" textAnchor="middle" className="fill-[var(--ocix-muted-foreground)] typography-micro">{donutSeries[0].label ?? donutSeries[0].key}</text>
+            <text x="110" y="130" textAnchor="middle" className="fill-[var(--ocix-foreground)] typography-ui-header font-semibold">{displayDeclarativeValue(firstTotal)}</text>
+          </svg>
+          {tooltip ? (
+            <div
+              role="tooltip"
+              className="pointer-events-none absolute z-10 min-w-28 -translate-x-1/2 -translate-y-full rounded-lg border border-[var(--ocix-border)] bg-[var(--ocix-surface)] px-2.5 py-2 shadow-lg"
+              style={{ left: `${(tooltip.x / 220) * 100}%`, top: `${(tooltip.y / 220) * 100}%` }}
+            >
+              <div className="typography-micro text-[var(--ocix-muted-foreground)]">{tooltip.label}</div>
+              <div className="mt-0.5 flex items-center justify-between gap-3 typography-meta text-[var(--ocix-foreground)]">
+                <span>{tooltip.series}</span>
+                <span className="font-semibold">{tooltip.value}</span>
               </div>
-            ) : null}
-          </div>
-          <div className="grid gap-2">
-            {segments.map((segment, index) => (
-              <div
-                key={`${segment.label}:legend:${index}`}
-                className="flex min-w-0 items-center gap-2 rounded-md typography-meta focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ocix-focus-ring)]"
-                tabIndex={0}
-                onFocus={() => setTooltip(segment.tooltip)}
-                onBlur={() => setTooltip(null)}
-              >
-                <span className="size-2.5 shrink-0 rounded-sm" style={{ backgroundColor: CHART_COLORS[index % CHART_COLORS.length] }} />
-                <span className="min-w-0 flex-1 truncate text-[var(--ocix-muted-foreground)]">{segment.label}</span>
-                <span className="font-medium text-[var(--ocix-foreground)]">{displayDeclarativeValue(segment.value)}</span>
-              </div>
-            ))}
-          </div>
+            </div>
+          ) : null}
         </div>
+        {legend}
       </div>
     );
   }
@@ -364,12 +455,62 @@ const DeclarativeChart: React.FC<{
             const value = maxValue - ratio * extent;
             return (
               <g key={`grid:${index}`}>
-                <line x1={margin.left} x2={width - margin.right} y1={y} y2={y} stroke="var(--ocix-border)" strokeOpacity="0.55" strokeDasharray="3 4" />
+                <line x1={margin.left} x2={width - margin.right} y1={y} y2={y} stroke="var(--ocix-border)" strokeOpacity="0.35" strokeDasharray="3 4" />
                 <text x={margin.left - 8} y={y + 4} textAnchor="end" className="fill-[var(--ocix-muted-foreground)] typography-micro">{formatTick(value)}</text>
               </g>
             );
           })}
-          {variant === 'bar' ? rows.flatMap((row, rowIndex) => {
+          {referenceLine ? (() => {
+            const y = yAt(referenceLine.value);
+            if (!Number.isFinite(y) || y < margin.top || y > margin.top + plotHeight) return null;
+            return (
+              <g aria-hidden="true">
+                <line x1={margin.left} x2={width - margin.right} y1={y} y2={y} stroke="var(--ocix-primary-tint)" strokeWidth="1.5" strokeDasharray="6 4" />
+                {referenceLine.label ? (
+                  <text x={width - margin.right} y={y - 4} textAnchor="end" className="fill-[var(--ocix-muted-foreground)] typography-micro">{referenceLine.label}</text>
+                ) : null}
+              </g>
+            );
+          })() : null}
+          {variant === 'bar' ? (stacked ? rows.map((row, rowIndex) => {
+            const groupWidth = (plotWidth / rows.length) * 0.72;
+            let accumulated = 0;
+            return series.map((item) => {
+              const value = Number(row[item.key]);
+              if (!Number.isFinite(value)) return null;
+              const start = accumulated;
+              accumulated += Math.max(0, value);
+              const seriesIndex = seriesColorIndex(item);
+              const top = yAt(accumulated);
+              const bottom = yAt(start);
+              const label = displayDeclarativeValue(row[xKey]);
+              const seriesLabel = item.label ?? item.key;
+              const tooltipState = {
+                x: xAt(rowIndex),
+                y: Math.min(top, bottom),
+                label,
+                series: seriesLabel,
+                value: displayDeclarativeValue(value),
+              };
+              return (
+                <rect
+                  key={`${rowIndex}:${item.key}`}
+                  x={xAt(rowIndex) - groupWidth / 2 + 1}
+                  y={Math.min(top, bottom)}
+                  width={Math.max(2, groupWidth - 2)}
+                  height={Math.max(1, Math.abs(bottom - top))}
+                  rx="3"
+                  fill={CHART_COLORS[seriesIndex % CHART_COLORS.length]}
+                  tabIndex={0}
+                  role="graphics-symbol"
+                  aria-label={`${label} · ${seriesLabel}: ${displayDeclarativeValue(value)}`}
+                  onPointerEnter={() => setTooltip(tooltipState)}
+                  onFocus={() => setTooltip(tooltipState)}
+                  onBlur={() => setTooltip(null)}
+                />
+              );
+            });
+          }) : rows.flatMap((row, rowIndex) => {
             const groupWidth = (plotWidth / rows.length) * 0.72;
             const barWidth = Math.max(2, groupWidth / series.length);
             return series.map((item, seriesIndex) => {
@@ -393,7 +534,7 @@ const DeclarativeChart: React.FC<{
                   width={Math.max(1, barWidth - 2)}
                   height={Math.max(1, Math.abs(baseline - y))}
                   rx="3"
-                  fill={CHART_COLORS[seriesIndex % CHART_COLORS.length]}
+                  fill={CHART_COLORS[seriesColorIndex(item) % CHART_COLORS.length]}
                   tabIndex={0}
                   role="graphics-symbol"
                   aria-label={`${label} · ${seriesLabel}: ${displayDeclarativeValue(value)}`}
@@ -403,7 +544,7 @@ const DeclarativeChart: React.FC<{
                 />
               );
             });
-          }) : series.map((item, seriesIndex) => {
+          })) : series.map((item) => {
             const points = rows.flatMap((row, rowIndex) => {
               const value = Number(row[item.key]);
               return Number.isFinite(value) ? [{
@@ -416,10 +557,11 @@ const DeclarativeChart: React.FC<{
             if (points.length === 0) return null;
             const linePath = points.map(({ x, y }, index) => `${index === 0 ? 'M' : 'L'} ${x} ${y}`).join(' ');
             const areaPath = `${linePath} L ${points[points.length - 1].x} ${baseline} L ${points[0].x} ${baseline} Z`;
+            const color = CHART_COLORS[seriesColorIndex(item) % CHART_COLORS.length];
             return (
               <g key={item.key}>
-                {variant === 'area' ? <path d={areaPath} fill={CHART_COLORS[seriesIndex % CHART_COLORS.length]} opacity="0.14" /> : null}
-                <path d={linePath} fill="none" stroke={CHART_COLORS[seriesIndex % CHART_COLORS.length]} strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
+                {variant === 'area' ? <path d={areaPath} fill={color} opacity="0.14" /> : null}
+                <path d={linePath} fill="none" stroke={color} strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
                 {points.map(({ x, y, label, value }, pointIndex) => {
                   const seriesLabel = item.label ?? item.key;
                   const tooltipState = {
@@ -436,7 +578,7 @@ const DeclarativeChart: React.FC<{
                       cy={y}
                       r={points.length <= 16 ? 3.5 : 6}
                       fill={points.length <= 16 ? 'var(--ocix-surface)' : 'transparent'}
-                      stroke={CHART_COLORS[seriesIndex % CHART_COLORS.length]}
+                      stroke={color}
                       strokeWidth={points.length <= 16 ? 2 : 0}
                       tabIndex={0}
                       role="graphics-symbol"
@@ -471,14 +613,268 @@ const DeclarativeChart: React.FC<{
         ) : null}
         </div>
       </HorizontalOverflowRegion>
-      <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1">
-        {series.map((item, index) => (
-          <div key={item.key} className="flex items-center gap-1.5 typography-meta text-[var(--ocix-muted-foreground)]">
-            <span className="size-2.5 rounded-sm" style={{ backgroundColor: CHART_COLORS[index % CHART_COLORS.length] }} />
-            {item.label ?? item.key}
+      {legend}
+    </div>
+  );
+};
+
+/**
+ * Style v2 local interactivity: search/sort/pagination are host-owned local
+ * state over data already inlined in the view. They never trigger business
+ * queries, which keeps Generated snapshots inside the existing trust model.
+ */
+const LocalFilterInput: React.FC<{
+  value: string;
+  onChange: (next: string) => void;
+  label: string;
+}> = ({ value, onChange, label }) => (
+  <div className="relative max-w-xs">
+    <Icon name="search" className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-[var(--ocix-muted-foreground)]" aria-hidden="true" />
+    <input
+      type="search"
+      value={value}
+      onChange={(event) => onChange(event.target.value)}
+      placeholder={label}
+      aria-label={label}
+      className="w-full rounded-[var(--ocix-radius-sm)] border border-[var(--ocix-border)] bg-[var(--ocix-surface)] py-1.5 pl-8 pr-3 typography-meta text-[var(--ocix-foreground)] placeholder:text-[var(--ocix-muted-foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ocix-focus-ring)]"
+    />
+  </div>
+);
+
+type TableSortState = { key: string; direction: 'asc' | 'desc' } | null;
+
+const MAX_TABLE_PAGE_SIZE = 50;
+
+const DeclarativeDataTable: React.FC<{
+  node: DeclarativeViewNode;
+  scope: DeclarativeBindingScope;
+  locale: string;
+  emptyLabel: string;
+  runningAction: string | null;
+  executeAction: (action: DeclarativeActionDefinition, row?: unknown) => Promise<void>;
+  isActionVisible: (action: DeclarativeActionDefinition, row?: unknown) => boolean;
+}> = ({ node, scope, locale, emptyLabel, runningAction, executeAction, isActionVisible }) => {
+  const { t } = useI18n();
+  const data = resolveDeclarativeValue(node.data, scope);
+  const rows = Array.isArray(data) ? data : [];
+  const compactDensity = node.density === 'compact';
+  const toneColumn = typeof node.toneColumn === 'string' ? node.toneColumn : undefined;
+  const cellPadding = compactDensity ? 'py-1.5' : 'py-2';
+  const columns = Array.isArray(node.columns)
+    ? node.columns.map(asRecord).filter((entry): entry is Record<string, unknown> => !!entry && typeof entry.key === 'string') as DataTableColumn[]
+    : [];
+  const actions = Array.isArray(node.rowActions)
+    ? node.rowActions.filter((entry): entry is DeclarativeActionDefinition => {
+      const record = asRecord(entry);
+      return !!record
+        && typeof record.label === 'string'
+        && (
+          typeof record.action === 'string'
+          || (record.type === 'emit' && typeof record.event === 'string')
+        );
+    })
+    : [];
+  const searchable = node.searchable === true;
+  const sortable = node.sortable === true;
+  const paginationRecord = asRecord(node.pagination);
+  const pageSize = typeof paginationRecord?.pageSize === 'number' && Number.isFinite(paginationRecord.pageSize)
+    ? Math.max(1, Math.min(MAX_TABLE_PAGE_SIZE, Math.trunc(paginationRecord.pageSize)))
+    : undefined;
+
+  const [query, setQuery] = React.useState('');
+  const [sort, setSort] = React.useState<TableSortState>(null);
+  const [page, setPage] = React.useState(0);
+
+  const displayRows = rows.map((row) => ({
+    row,
+    cells: columns.map((column) => displayDeclarativeValue(resolveDeclarativeValue({ $row: column.key, format: column.format }, { ...scope, row }, locale))),
+  }));
+  const normalizedQuery = query.trim().toLowerCase();
+  const filteredRows = normalizedQuery
+    ? displayRows.filter((entry) => entry.cells.some((cell) => cell.toLowerCase().includes(normalizedQuery)))
+    : displayRows;
+  const sortIndex = sort ? columns.findIndex((column) => column.key === sort.key) : -1;
+  const sortedRows = sort !== null && sortIndex >= 0
+    ? [...filteredRows].sort((a, b) => {
+      const column = columns[sortIndex];
+      const rawA = asRecord(a.row)?.[sort.key];
+      const rawB = asRecord(b.row)?.[sort.key];
+      const numA = typeof rawA === 'number' ? rawA : Number(rawA);
+      const numB = typeof rawB === 'number' ? rawB : Number(rawB);
+      const numeric = !!column && isNumericColumn(column) && Number.isFinite(numA) && Number.isFinite(numB);
+      const compared = numeric
+        ? numA - numB
+        : (a.cells[sortIndex] ?? '').localeCompare(b.cells[sortIndex] ?? '', locale);
+      return sort.direction === 'asc' ? compared : -compared;
+    })
+    : filteredRows;
+  const pageCount = pageSize ? Math.max(1, Math.ceil(sortedRows.length / pageSize)) : 1;
+  const boundedPage = Math.min(page, pageCount - 1);
+  const visibleRows = pageSize ? sortedRows.slice(boundedPage * pageSize, boundedPage * pageSize + pageSize) : sortedRows;
+
+  const toggleSort = (key: string) => {
+    setSort((current) => (
+      current?.key !== key
+        ? { key, direction: 'asc' }
+        : current.direction === 'asc'
+          ? { key, direction: 'desc' }
+          : null
+    ));
+    setPage(0);
+  };
+
+  return (
+    <div className="min-w-0 rounded-[var(--ocix-radius-md)] border border-[var(--ocix-border)] bg-[var(--ocix-surface)]">
+      {node.title ? <div className={cn('border-b border-[var(--ocix-border)] px-3 py-2', OCIX_TITLE)}>{node.title}</div> : null}
+      {searchable ? (
+        <div className="border-b border-[var(--ocix-border)] px-3 py-2">
+          <LocalFilterInput value={query} onChange={(next) => { setQuery(next); setPage(0); }} label={t('interactiveUI.common.search')} />
+        </div>
+      ) : null}
+      <HorizontalOverflowRegion label={node.title}>
+      <table className="w-full min-w-[32rem] border-collapse text-left">
+        <thead className="sticky top-0 z-10 bg-[var(--ocix-surface-muted)]">
+          <tr>
+            {columns.map((column) => (
+              <th
+                key={column.key}
+                aria-sort={sort?.key === column.key ? (sort.direction === 'asc' ? 'ascending' : 'descending') : undefined}
+                className={cn('whitespace-nowrap px-3 typography-meta font-medium text-[var(--ocix-muted-foreground)]', cellPadding, isNumericColumn(column) && 'text-right')}
+              >
+                {sortable ? (
+                  <button
+                    type="button"
+                    onClick={() => toggleSort(column.key)}
+                    className={cn('inline-flex items-center gap-1 rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ocix-focus-ring)]', isNumericColumn(column) && 'flex-row-reverse')}
+                  >
+                    {column.label ?? column.key}
+                    <Icon
+                      name={sort?.key === column.key ? (sort.direction === 'asc' ? 'arrow-up' : 'arrow-down') : 'sort-desc'}
+                      className={cn('size-3 shrink-0', sort?.key === column.key ? 'text-[var(--ocix-foreground)]' : 'opacity-40')}
+                      aria-hidden="true"
+                    />
+                  </button>
+                ) : (column.label ?? column.key)}
+              </th>
+            ))}
+            {actions.length > 0 ? <th className={cn('w-1 px-3', cellPadding)} /> : null}
+          </tr>
+        </thead>
+        <tbody>
+          {visibleRows.map((entry, rowIndex) => {
+            const row = entry.row;
+            const rowRecord = asRecord(row) ?? {};
+            const rowKey = typeof node.rowKey === 'string' ? rowRecord[node.rowKey] : rowIndex;
+            const visibleActions = actions.filter((action) => isActionVisible(action, row));
+            const rowTone = toneColumn ? toneForStatusValue(displayDeclarativeValue(rowRecord[toneColumn])) : undefined;
+            return (
+              <tr key={String(rowKey ?? rowIndex)} className={cn(
+                'border-t border-[var(--ocix-border)] transition-colors',
+                rowTone ? ROW_TONE_CLASS[rowTone] : rowIndex % 2 === 1 && 'bg-[var(--ocix-surface-muted)]/50',
+                actions.length > 0 && 'hover:bg-[var(--ocix-surface-muted)]',
+              )}>
+                {columns.map((column, columnIndex) => (
+                  <td key={column.key} className={cn('px-3 typography-meta text-[var(--ocix-foreground)]', cellPadding, isNumericColumn(column) && 'text-right')}>
+                    {column.render === 'status'
+                      ? <span className={cn('inline-flex rounded-full border px-2 py-0.5', statusClass(entry.cells[columnIndex] ?? ''))}>{entry.cells[columnIndex]}</span>
+                      : entry.cells[columnIndex]}
+                  </td>
+                ))}
+                {actions.length > 0 ? (
+                  <td className={cn('whitespace-nowrap px-3 text-right', cellPadding)}>
+                    {visibleActions.map((action) => (
+                      <Button
+                        key={action.id || action.action || action.event}
+                        variant="outline"
+                        size="xs"
+                        disabled={runningAction !== null}
+                        onClick={() => void executeAction(action, row)}
+                      >
+                        {action.label}
+                      </Button>
+                    ))}
+                  </td>
+                ) : null}
+              </tr>
+            );
+          })}
+          {visibleRows.length === 0 ? (
+            <tr className="border-t border-[var(--ocix-border)]">
+              <td colSpan={Math.max(1, columns.length + (actions.length > 0 ? 1 : 0))} className="px-3 py-6 text-center typography-meta text-[var(--ocix-muted-foreground)]">
+                {emptyLabel}
+              </td>
+            </tr>
+          ) : null}
+        </tbody>
+      </table>
+      </HorizontalOverflowRegion>
+      {pageSize ? (
+        <div className="flex items-center justify-between gap-3 border-t border-[var(--ocix-border)] px-3 py-1.5">
+          <span className="ocix-type-value typography-micro text-[var(--ocix-muted-foreground)]">{sortedRows.length} · {boundedPage + 1} / {pageCount}</span>
+          <div className="flex items-center gap-1">
+            <Button variant="ghost" size="xs" disabled={boundedPage <= 0} onClick={() => setPage(boundedPage - 1)} aria-label={t('interactiveUI.common.previousPage')}>
+              <Icon name="arrow-left-s" className="size-3.5" aria-hidden="true" />
+            </Button>
+            <Button variant="ghost" size="xs" disabled={boundedPage >= pageCount - 1} onClick={() => setPage(boundedPage + 1)} aria-label={t('interactiveUI.common.nextPage')}>
+              <Icon name="arrow-right-s" className="size-3.5" aria-hidden="true" />
+            </Button>
           </div>
-        ))}
-      </div>
+        </div>
+      ) : null}
+    </div>
+  );
+};
+
+const DeclarativeList: React.FC<{
+  node: DeclarativeViewNode;
+  resolved: (value: unknown, row?: unknown) => unknown;
+  nested: boolean;
+  emptyLabel: string;
+}> = ({ node, resolved, nested, emptyLabel }) => {
+  const { t } = useI18n();
+  const items = Array.isArray(node.items) ? node.items : [];
+  const filterable = node.filterable === true;
+  const [query, setQuery] = React.useState('');
+  const normalizedQuery = query.trim().toLowerCase();
+  const ListElement = node.ordered === true ? 'ol' : 'ul';
+  const visibleItems = normalizedQuery
+    ? items.filter((item) => {
+      const entry = asRecord(item);
+      if (!entry) return displayDeclarativeValue(resolved(item)).toLowerCase().includes(normalizedQuery);
+      return [entry.title, entry.description, entry.badge]
+        .map((field) => displayDeclarativeValue(resolved(field)).toLowerCase())
+        .some((text) => text.includes(normalizedQuery));
+    })
+    : items;
+  return (
+    <div className={nested ? '' : OCIX_PANEL}>
+      {node.title ? <div className={cn('mb-2', OCIX_TITLE)}>{node.title}</div> : null}
+      {filterable ? (
+        <div className="mb-2">
+          <LocalFilterInput value={query} onChange={setQuery} label={t('interactiveUI.common.search')} />
+        </div>
+      ) : null}
+      <ListElement className="space-y-2">
+        {visibleItems.map((item, index) => {
+          const entry = asRecord(item);
+          const itemTitle = entry ? displayDeclarativeValue(resolved(entry.title)) : displayDeclarativeValue(resolved(item));
+          return (
+            <li key={`${itemTitle}:${index}`} className="flex min-w-0 gap-2.5 rounded-lg bg-[var(--ocix-surface-muted)] px-3 py-2">
+              <span className="mt-0.5 inline-flex size-5 shrink-0 items-center justify-center rounded-full bg-[var(--ocix-selection)] typography-micro font-semibold text-[var(--ocix-selection-foreground)]">
+                {node.ordered === true ? index + 1 : '•'}
+              </span>
+              <div className="min-w-0 flex-1">
+                <div className="flex items-start justify-between gap-2">
+                  <span className="typography-meta font-medium text-[var(--ocix-foreground)]">{itemTitle}</span>
+                  {entry?.badge !== undefined ? <span className={cn('shrink-0 rounded-full border px-2 py-0.5 typography-micro', statusClass('', resolved(entry.badgeTone)))}>{displayDeclarativeValue(resolved(entry.badge))}</span> : null}
+                </div>
+                {entry?.description !== undefined ? <div className={cn('mt-0.5', OCIX_META)}>{displayDeclarativeValue(resolved(entry.description))}</div> : null}
+              </div>
+            </li>
+          );
+        })}
+      </ListElement>
+      {visibleItems.length === 0 ? <div className="py-4 text-center typography-meta text-[var(--ocix-muted-foreground)]">{emptyLabel}</div> : null}
     </div>
   );
 };
@@ -490,13 +886,14 @@ const DeclarativeNode: React.FC<{
   host: InteractiveViewHost;
   refreshQueries: () => void;
   emptyLabel: string;
-}> = ({ node, scope, locale, host, refreshQueries, emptyLabel }) => {
+  nested?: boolean;
+}> = ({ node, scope, locale, host, refreshQueries, emptyLabel, nested = false }) => {
   const [runningAction, setRunningAction] = React.useState<string | null>(null);
   const resolved = (value: unknown, row?: unknown) => resolveDeclarativeValue(value, { ...scope, row }, locale);
   const renderChildren = (value: unknown): React.ReactNode => (
     <div className="space-y-3">
       {asNodes(value).map((child, index) => (
-        <DeclarativeNode key={`${child.type}:${index}`} node={child} scope={scope} locale={locale} host={host} refreshQueries={refreshQueries} emptyLabel={emptyLabel} />
+        <DeclarativeNode key={`${child.type}:${index}`} node={child} scope={scope} locale={locale} host={host} refreshQueries={refreshQueries} emptyLabel={emptyLabel} nested={nested} />
       ))}
     </div>
   );
@@ -534,17 +931,18 @@ const DeclarativeNode: React.FC<{
   if (node.type === 'generated-layout') {
     const generatedLayout = sanitizeGeneratedLayout(resolved(node.data));
     return generatedLayout
-      ? <DeclarativeNode node={generatedLayout} scope={scope} locale={locale} host={host} refreshQueries={refreshQueries} emptyLabel={emptyLabel} />
+      ? <DeclarativeNode node={generatedLayout} scope={scope} locale={locale} host={host} refreshQueries={refreshQueries} emptyLabel={emptyLabel} nested={nested} />
       : null;
   }
 
   if (node.type === 'stack' || node.type === 'section') {
+    const bordered = node.type === 'section' && node.variant === 'bordered';
     return (
-      <section className={cn('min-w-0', node.type === 'section' && node.variant === 'bordered' && OCIX_PANEL)}>
+      <section className={cn('min-w-0', bordered && OCIX_PANEL)} {...(node.type === 'section' && typeof node.id === 'string' ? { 'data-ocix-slot': node.id } : {})}>
         {node.title ? <h3 className={cn('mb-2', OCIX_TITLE)}>{node.title}</h3> : null}
         <div className="space-y-3">
           {asNodes(node.children).map((child, index) => (
-            <DeclarativeNode key={`${child.type}:${index}`} node={child} scope={scope} locale={locale} host={host} refreshQueries={refreshQueries} emptyLabel={emptyLabel} />
+            <DeclarativeNode key={`${child.type}:${index}`} node={child} scope={scope} locale={locale} host={host} refreshQueries={refreshQueries} emptyLabel={emptyLabel} nested={nested || bordered} />
           ))}
         </div>
       </section>
@@ -555,31 +953,36 @@ const DeclarativeNode: React.FC<{
     return (
       <div className={cn('grid gap-3', columnsClass(node.columns ?? (node.type === 'row' ? 2 : 1)))}>
         {asNodes(node.children).map((child, index) => (
-          <DeclarativeNode key={`${child.type}:${index}`} node={child} scope={scope} locale={locale} host={host} refreshQueries={refreshQueries} emptyLabel={emptyLabel} />
+          <DeclarativeNode key={`${child.type}:${index}`} node={child} scope={scope} locale={locale} host={host} refreshQueries={refreshQueries} emptyLabel={emptyLabel} nested={nested} />
         ))}
       </div>
     );
   }
 
   if (node.type === 'metric-grid') {
+    const items = Array.isArray(node.items) ? node.items : [];
+    // Style v2 auto rule: the first KPI in a small grid is the hero; with 5+
+    // items every card stays standard so the band keeps one focal point.
+    const autoHero = items.length > 0 && items.length <= 4;
     return (
       <div className="@container/metric-grid min-w-0">
         <div className={cn('grid min-w-0 gap-2', metricGridClass(node.columns))} data-ocix-metric-grid>
-          {(Array.isArray(node.items) ? node.items : []).map((item, index) => {
+          {items.map((item, index) => {
             const metric = asRecord(item) ?? {};
-            const tone = resolved(metric.tone);
-            const trend = resolved(metric.trend);
-            const trendName = trendIcon(trend);
+            const explicit = resolveEmphasis(resolved(metric.emphasis));
+            const emphasis = explicit ?? (nested ? 'quiet' : autoHero && index === 0 ? 'hero' : 'standard');
             return (
-              <div key={String(metric.label ?? index)} className={OCIX_PANEL}>
-                <div className={OCIX_META}>{displayDeclarativeValue(metric.label)}</div>
-                <div className={cn('mt-1 flex min-w-0 items-center gap-1 typography-body font-semibold', metricToneClass(tone))}>
-                  {trendName ? <Icon name={trendName} className="size-3.5 shrink-0" /> : null}
-                  <span className="min-w-0 break-words">{displayDeclarativeValue(resolved(metric.value))}</span>
-                </div>
-                {metric.trendValue !== undefined ? <div className={cn('mt-0.5 typography-micro', metricToneClass(tone))}>{displayDeclarativeValue(resolved(metric.trendValue))}</div> : null}
-                {metric.detail !== undefined ? <div className={cn('mt-1', OCIX_META)}>{displayDeclarativeValue(resolved(metric.detail))}</div> : null}
-              </div>
+              <MetricCard
+                key={String(metric.label ?? index)}
+                label={resolved(metric.label)}
+                value={resolved(metric.value)}
+                detail={resolved(metric.detail)}
+                tone={resolved(metric.tone)}
+                trend={resolved(metric.trend)}
+                trendValue={resolved(metric.trendValue)}
+                icon={resolved(metric.icon)}
+                emphasis={emphasis}
+              />
             );
           })}
         </div>
@@ -588,18 +991,18 @@ const DeclarativeNode: React.FC<{
   }
 
   if (node.type === 'metric') {
-    const tone = resolved(node.tone);
-    const trendName = trendIcon(resolved(node.trend));
+    const emphasis = resolveEmphasis(node.emphasis) ?? (nested ? 'quiet' : 'standard');
     return (
-      <div className={OCIX_PANEL}>
-        {node.label ? <div className={OCIX_META}>{node.label}</div> : null}
-        <div className={cn('mt-1 flex min-w-0 items-center gap-1 typography-body font-semibold', metricToneClass(tone))}>
-          {trendName ? <Icon name={trendName} className="size-3.5 shrink-0" /> : null}
-          <span className="min-w-0 break-words">{displayDeclarativeValue(resolved(node.value))}</span>
-        </div>
-        {node.trendValue !== undefined ? <div className={cn('mt-0.5 typography-micro', metricToneClass(tone))}>{displayDeclarativeValue(resolved(node.trendValue))}</div> : null}
-        {node.detail !== undefined ? <div className={cn('mt-1', OCIX_META)}>{displayDeclarativeValue(resolved(node.detail))}</div> : null}
-      </div>
+      <MetricCard
+        label={node.label}
+        value={resolved(node.value)}
+        detail={resolved(node.detail)}
+        tone={resolved(node.tone)}
+        trend={resolved(node.trend)}
+        trendValue={resolved(node.trendValue)}
+        icon={node.icon}
+        emphasis={emphasis}
+      />
     );
   }
 
@@ -652,6 +1055,33 @@ const DeclarativeNode: React.FC<{
     const steps = Array.isArray(value)
       ? value.map(asRecord).filter((entry): entry is Record<string, unknown> => entry !== null)
       : [];
+    if (node.orientation === 'vertical') {
+      return (
+        <ol className="space-y-0">
+          {steps.map((step, index) => (
+            <li key={`${displayDeclarativeValue(step.title)}:${index}`} className="relative flex gap-3 pb-3 last:pb-0">
+              <div className="flex flex-col items-center">
+                <span className={cn('inline-flex size-6 shrink-0 items-center justify-center rounded-full typography-meta font-semibold', flowStepClass(step.status))}>
+                  {step.status === 'completed' ? <Icon name="check" className="size-3.5" /> : index + 1}
+                </span>
+                {index < steps.length - 1 ? (
+                  <span aria-hidden="true" className={cn(
+                    'mt-1 w-px flex-1 border-l',
+                    step.status === 'completed' ? 'border-solid border-[var(--ocix-success)]' : 'border-dashed border-[var(--ocix-border)]',
+                  )} />
+                ) : null}
+              </div>
+              <div className="min-w-0 pt-0.5">
+                <div className={cn('break-words', OCIX_TITLE)}>{displayDeclarativeValue(resolved(step.title))}</div>
+                {step.description !== undefined ? (
+                  <div className={cn('mt-0.5 break-words', OCIX_META)}>{displayDeclarativeValue(resolved(step.description))}</div>
+                ) : null}
+              </div>
+            </li>
+          ))}
+        </ol>
+      );
+    }
     return (
       <div className="grid grid-cols-1 gap-2 lg:grid-cols-[repeat(auto-fit,minmax(9rem,1fr))] lg:gap-0">
         {steps.map((step, index) => (
@@ -709,33 +1139,7 @@ const DeclarativeNode: React.FC<{
   }
 
   if (node.type === 'list') {
-    const items = Array.isArray(node.items) ? node.items : [];
-    const ListElement = node.ordered === true ? 'ol' : 'ul';
-    return (
-      <div className={OCIX_PANEL}>
-        {node.title ? <div className={cn('mb-2', OCIX_TITLE)}>{node.title}</div> : null}
-        <ListElement className="space-y-2">
-          {items.map((item, index) => {
-            const entry = asRecord(item);
-            const itemTitle = entry ? displayDeclarativeValue(resolved(entry.title)) : displayDeclarativeValue(resolved(item));
-            return (
-              <li key={`${itemTitle}:${index}`} className="flex min-w-0 gap-2.5 rounded-lg bg-[var(--ocix-surface-muted)] px-3 py-2">
-                <span className="mt-0.5 inline-flex size-5 shrink-0 items-center justify-center rounded-full bg-[var(--ocix-selection)] typography-micro font-semibold text-[var(--ocix-selection-foreground)]">
-                  {node.ordered === true ? index + 1 : '•'}
-                </span>
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-start justify-between gap-2">
-                    <span className="typography-meta font-medium text-[var(--ocix-foreground)]">{itemTitle}</span>
-                    {entry?.badge !== undefined ? <span className={cn('shrink-0 rounded-full border px-2 py-0.5 typography-micro', statusClass('', resolved(entry.badgeTone)))}>{displayDeclarativeValue(resolved(entry.badge))}</span> : null}
-                  </div>
-                  {entry?.description !== undefined ? <div className={cn('mt-0.5', OCIX_META)}>{displayDeclarativeValue(resolved(entry.description))}</div> : null}
-                </div>
-              </li>
-            );
-          })}
-        </ListElement>
-      </div>
-    );
+    return <DeclarativeList node={node} resolved={resolved} nested={nested} emptyLabel={emptyLabel} />;
   }
 
   if (node.type === 'callout') {
@@ -754,87 +1158,87 @@ const DeclarativeNode: React.FC<{
   }
 
   if (node.type === 'data-table') {
-    const data = resolved(node.data);
-    const rows = Array.isArray(data) ? data : [];
-    const columns = Array.isArray(node.columns)
-      ? node.columns.map(asRecord).filter((entry): entry is Record<string, unknown> => !!entry && typeof entry.key === 'string') as DataTableColumn[]
-      : [];
-    const actions = Array.isArray(node.rowActions)
-      ? node.rowActions.filter((entry): entry is DeclarativeActionDefinition => {
-        const record = asRecord(entry);
-        return !!record
-          && typeof record.label === 'string'
-          && (
-            typeof record.action === 'string'
-            || (record.type === 'emit' && typeof record.event === 'string')
-          );
-      })
-      : [];
     return (
-      <div className="min-w-0 rounded-xl border border-[var(--ocix-border)] bg-[var(--ocix-surface)]">
-        {node.title ? <div className={cn('border-b border-[var(--ocix-border)] px-3 py-2', OCIX_TITLE)}>{node.title}</div> : null}
-        <HorizontalOverflowRegion label={node.title}>
-        <table className="w-full min-w-[32rem] border-collapse text-left">
-          <thead className="sticky top-0 z-10 bg-[var(--ocix-surface-muted)]">
-            <tr>
-              {columns.map((column) => <th key={column.key} className={cn('whitespace-nowrap px-3 py-2 typography-meta font-medium text-[var(--ocix-muted-foreground)]', isNumericColumn(column) && 'text-right')}>{column.label ?? column.key}</th>)}
-              {actions.length > 0 ? <th className="w-1 px-3 py-2" /> : null}
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((row, rowIndex) => {
-              const rowRecord = asRecord(row) ?? {};
-              const rowKey = typeof node.rowKey === 'string' ? rowRecord[node.rowKey] : rowIndex;
-              const visibleActions = actions.filter((action) => isActionVisible(action, row));
-              return (
-                <tr key={String(rowKey ?? rowIndex)} className={cn(
-                  'border-t border-[var(--ocix-border)] transition-colors',
-                  rowIndex % 2 === 1 && 'bg-[var(--ocix-surface-muted)]/50',
-                  actions.length > 0 && 'hover:bg-[var(--ocix-surface-muted)]',
-                )}>
-                  {columns.map((column) => {
-                    const value = resolveDeclarativeValue({ $row: column.key, format: column.format }, { ...scope, row }, locale);
-                    return (
-                      <td key={column.key} className={cn('px-3 py-2 typography-meta text-[var(--ocix-foreground)]', isNumericColumn(column) && 'text-right')}>
-                        {column.render === 'status'
-                          ? <span className={cn('inline-flex rounded-full border px-2 py-0.5', statusClass(displayDeclarativeValue(value)))}>{displayDeclarativeValue(value)}</span>
-                          : displayDeclarativeValue(value)}
-                      </td>
-                    );
-                  })}
-                  {actions.length > 0 ? (
-                    <td className="whitespace-nowrap px-3 py-2 text-right">
-                      {visibleActions.map((action) => (
-                        <Button
-                          key={action.id || action.action || action.event}
-                          variant="outline"
-                          size="xs"
-                          disabled={runningAction !== null}
-                          onClick={() => void executeAction(action, row)}
-                        >
-                          {action.label}
-                        </Button>
-                      ))}
-                    </td>
-                  ) : null}
-                </tr>
-              );
-            })}
-            {rows.length === 0 ? (
-              <tr className="border-t border-[var(--ocix-border)]">
-                <td colSpan={Math.max(1, columns.length + (actions.length > 0 ? 1 : 0))} className="px-3 py-6 text-center typography-meta text-[var(--ocix-muted-foreground)]">
-                  {emptyLabel}
-                </td>
-              </tr>
-            ) : null}
-          </tbody>
-        </table>
-        </HorizontalOverflowRegion>
-      </div>
+      <DeclarativeDataTable
+        node={node}
+        scope={scope}
+        locale={locale}
+        emptyLabel={emptyLabel}
+        runningAction={runningAction}
+        executeAction={executeAction}
+        isActionVisible={isActionVisible}
+      />
     );
   }
 
   return null;
+};
+
+/**
+ * Style v2 (L3) composition modes. The root stack may declare a layoutMode
+ * whose section ids are validated upstream (tool + sanitizer); unknown or
+ * incomplete slot mappings simply render in document order.
+ */
+const LayoutModeContent: React.FC<{
+  layout: DeclarativeViewNode;
+  scope: DeclarativeBindingScope;
+  locale: string;
+  host: InteractiveViewHost;
+  refreshQueries: () => void;
+  emptyLabel: string;
+}> = ({ layout, scope, locale, host, refreshQueries, emptyLabel }) => {
+  const renderNode = (node: DeclarativeViewNode, key: React.Key) => (
+    <DeclarativeNode key={key} node={node} scope={scope} locale={locale} host={host} refreshQueries={refreshQueries} emptyLabel={emptyLabel} />
+  );
+  const children = asNodes(layout.children);
+  const byId = new Map<string, DeclarativeViewNode>();
+  const rest: DeclarativeViewNode[] = [];
+  for (const child of children) {
+    if (child.type === 'section' && typeof child.id === 'string' && !byId.has(child.id)) byId.set(child.id, child);
+    else rest.push(child);
+  }
+
+  if (layout.layoutMode === 'dashboard-hero') {
+    const kpis = byId.get('kpis');
+    const main = byId.get('main');
+    const aside = byId.get('aside');
+    return (
+      <div className="min-w-0 space-y-3" data-ocix-layout-mode="dashboard-hero">
+        {kpis ? renderNode(kpis, 'kpis') : null}
+        <div className="grid min-w-0 gap-3 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
+          <div className="min-w-0 space-y-3">{main ? renderNode(main, 'main') : null}</div>
+          {aside ? <div className="min-w-0 space-y-3">{renderNode(aside, 'aside')}</div> : null}
+        </div>
+        {rest.map((child, index) => renderNode(child, `rest-${index}`))}
+      </div>
+    );
+  }
+
+  if (layout.layoutMode === 'master-detail') {
+    const master = byId.get('master');
+    const detail = byId.get('detail');
+    return (
+      <div className="grid min-w-0 gap-3 lg:grid-cols-2" data-ocix-layout-mode="master-detail">
+        <div className="min-w-0 space-y-3">{master ? renderNode(master, 'master') : null}</div>
+        <div className="min-w-0 space-y-3">
+          {detail ? renderNode(detail, 'detail') : null}
+          {rest.map((child, index) => renderNode(child, `rest-${index}`))}
+        </div>
+      </div>
+    );
+  }
+
+  if (layout.layoutMode === 'report') {
+    const summary = byId.get('summary');
+    return (
+      <div className="min-w-0 space-y-3" data-ocix-layout-mode="report">
+        {summary ? renderNode(summary, 'summary') : null}
+        {rest.map((child, index) => renderNode(child, `rest-${index}`))}
+      </div>
+    );
+  }
+
+  return <>{children.map((child, index) => renderNode(child, index))}</>;
 };
 
 export const DeclarativeInteractiveView: React.FC<DeclarativeInteractiveViewProps> = ({ definition, envelope, host }) => {
@@ -897,6 +1301,15 @@ export const DeclarativeInteractiveView: React.FC<DeclarativeInteractiveViewProp
           <Skeleton className="h-20 rounded-xl" />
           <Skeleton className="h-40 rounded-xl" />
         </div>
+      ) : definition.layout.type === 'stack' && typeof definition.layout.layoutMode === 'string' ? (
+        <LayoutModeContent
+          layout={definition.layout}
+          scope={scope}
+          locale={locale}
+          host={host}
+          refreshQueries={refreshQueries}
+          emptyLabel={t('interactiveUI.common.noData')}
+        />
       ) : (
         <DeclarativeNode
           node={definition.layout}

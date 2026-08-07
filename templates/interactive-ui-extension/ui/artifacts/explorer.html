@@ -5,18 +5,28 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>__EXTENSION_NAME__ Explorer</title>
   <style>
-    :root { color: var(--ocix-foreground); font: 14px/1.45 system-ui, sans-serif; }
+    /* Consume Host-injected --ocix-* tokens only; never hardcode colors,
+       radii, or shadows — tokens already reflect light/dark and the active
+       OCIX style preset. See the HTML Artifact design guide. */
+    :root { color-scheme: light dark; color: var(--ocix-foreground); font: 14px/1.45 system-ui, sans-serif; }
     * { box-sizing: border-box; }
     body { margin: 0; padding: 16px; color: var(--ocix-foreground); background: var(--ocix-surface); }
     header, .toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
     h1 { margin: 0; font-size: 18px; }
     .subtle { color: var(--ocix-muted-foreground); }
     .canvas { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-top: 16px; }
-    .card { min-height: 120px; padding: 14px; border: 1px solid var(--ocix-border); border-radius: 12px; background: var(--ocix-surface-muted); }
-    .value { margin-top: 8px; font-size: 28px; font-weight: 650; }
-    button { border: 1px solid var(--ocix-border); border-radius: 9px; padding: 8px 12px; color: var(--ocix-primary-foreground); background: var(--ocix-primary); cursor: pointer; }
+    .card { min-height: 120px; padding: 14px; border: 1px solid var(--ocix-border); border-radius: var(--ocix-radius-md, 12px); background: var(--ocix-surface-muted); }
+    .card:first-child { background: var(--ocix-panel-hero-bg, var(--ocix-surface-muted)); box-shadow: var(--ocix-shadow-1, none); }
+    .value { margin-top: 8px; font-size: 28px; font-weight: 650; font-variant-numeric: tabular-nums; }
+    button { border: 1px solid var(--ocix-border); border-radius: var(--ocix-radius-sm, 8px); padding: 8px 12px; color: var(--ocix-primary-foreground); background: var(--ocix-primary); cursor: pointer; }
+    button:hover { background: var(--ocix-primary-tint, var(--ocix-primary)); }
+    button:active { background: var(--ocix-primary-shade, var(--ocix-primary)); }
+    button:focus-visible { outline: 2px solid var(--ocix-focus-ring); outline-offset: 1px; }
     button:disabled { cursor: wait; opacity: .65; }
     #status { min-height: 22px; margin-top: 12px; }
+    @media (prefers-reduced-motion: no-preference) {
+      button { transition: background-color 120ms ease-out; }
+    }
   </style>
 </head>
 <body>

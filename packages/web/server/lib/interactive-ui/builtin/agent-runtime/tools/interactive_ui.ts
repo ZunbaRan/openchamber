@@ -17,6 +17,8 @@ const widget = tool.schema.object({
   tone: tool.schema.string().optional().describe('语义色：neutral、info、success、warning、error；metric 还可用 positive、negative'),
   trend: tool.schema.string().optional().describe('metric 趋势：up、down、flat'),
   trendValue: tool.schema.string().optional().describe('metric 趋势说明，例如 +12.4%'),
+  emphasis: tool.schema.string().optional().describe('metric 强调层级：hero（唯一视觉焦点）、standard（默认）、quiet（无卡片描边）'),
+  icon: tool.schema.string().optional().describe('metric 图标，仅可用白名单：bar-chart-2、donut-chart、pie-chart、pulse、database-2、server、user、user-3、briefcase、archive、stack、target、rocket、lightbulb、calendar、time、timer、list-check-2、file-text、folder、global、shield-check、scales-3、survey、task、clipboard、star、heart、inbox-archive'),
   columns: tool.schema.number().optional().describe('metric-grid 的响应式列数，1 到 4'),
   metrics: tool.schema.array(tool.schema.object({
     label: tool.schema.string(),
@@ -25,6 +27,8 @@ const widget = tool.schema.object({
     tone: tool.schema.string().optional(),
     trend: tool.schema.string().optional(),
     trendValue: tool.schema.string().optional(),
+    emphasis: tool.schema.string().optional(),
+    icon: tool.schema.string().optional(),
   })).max(12).optional().describe('metric-grid 的指标卡'),
   steps: tool.schema.array(tool.schema.object({
     title: tool.schema.string(),
@@ -120,6 +124,16 @@ const widget = tool.schema.object({
     render: tool.schema.string().optional().describe('设为 status 时显示状态胶囊'),
     align: tool.schema.string().optional().describe('列对齐：left、center、right'),
   })).max(8).optional(),
+  density: tool.schema.string().optional().describe('table 密度：comfortable（默认）或 compact'),
+  toneColumn: tool.schema.string().optional().describe('table 行状态着色的字段键；该列值匹配 approved/failed/pending 等状态词时整行着色'),
+  searchable: tool.schema.boolean().optional().describe('table 显示本地搜索框（只过滤当前内联数据，不触发业务查询）'),
+  sortable: tool.schema.boolean().optional().describe('table 列头可点击排序（本地状态）'),
+  pageSize: tool.schema.number().optional().describe('table 分页大小，1 到 50；设置后显示分页栏'),
+  filterable: tool.schema.boolean().optional().describe('list 显示本地过滤框'),
+  orientation: tool.schema.string().optional().describe('flow 方向：horizontal（默认）或 vertical（纵向步骤，适合报告叙事）'),
+  stacked: tool.schema.boolean().optional().describe('chart variant=bar 时堆叠显示各系列构成'),
+  referenceValue: tool.schema.number().optional().describe('chart 的参考线数值（例如目标值或均值）'),
+  referenceLabel: tool.schema.string().optional().describe('chart 参考线的短标签'),
   tableRows: tool.schema.array(tool.schema.object({
     cells: tool.schema.array(tool.schema.object({
       key: tool.schema.string(),
@@ -140,8 +154,10 @@ type WidgetInput = {
   tone?: string;
   trend?: string;
   trendValue?: string;
+  emphasis?: string;
+  icon?: string;
   columns?: number;
-  metrics?: Array<{ label: string; value: Scalar; detail?: string; tone?: string; trend?: string; trendValue?: string }>;
+  metrics?: Array<{ label: string; value: Scalar; detail?: string; tone?: string; trend?: string; trendValue?: string; emphasis?: string; icon?: string }>;
   steps?: Array<{ title: string; description?: string; status?: string }>;
   items?: Array<{
     id?: string;
@@ -177,9 +193,20 @@ type WidgetInput = {
   commits?: Array<{ id: string; message: string; branch?: string; parents?: string[]; author?: string; timestamp?: string }>;
   tableColumns?: Array<{ key: string; label: string; format?: string; render?: string; align?: string }>;
   tableRows?: Array<{ cells: Array<{ key: string; value: Scalar }> }>;
+  density?: string;
+  toneColumn?: string;
+  searchable?: boolean;
+  sortable?: boolean;
+  pageSize?: number;
+  filterable?: boolean;
+  orientation?: string;
+  stacked?: boolean;
+  referenceValue?: number;
+  referenceLabel?: string;
 };
 
 type SectionInput = {
+  id?: string;
   title?: string;
   columns?: number;
   widgets: WidgetInput[];
@@ -189,7 +216,17 @@ type InteractiveUIArgs = {
   title?: unknown;
   summary?: unknown;
   presentation?: unknown;
+  layoutMode?: unknown;
   sections?: unknown;
+};
+
+const LAYOUT_MODES = ['dashboard-hero', 'master-detail', 'report'] as const;
+type LayoutMode = (typeof LAYOUT_MODES)[number];
+
+const LAYOUT_MODE_CONTRACT: Record<LayoutMode, { slots: readonly string[]; required: readonly string[] }> = {
+  'dashboard-hero': { slots: ['kpis', 'main', 'aside'], required: ['kpis', 'main'] },
+  'master-detail': { slots: ['master', 'detail'], required: ['master', 'detail'] },
+  report: { slots: ['summary'], required: ['summary'] },
 };
 
 const MAX_SECTIONS_JSON_LENGTH = 100_000;
@@ -218,6 +255,7 @@ const parseSections = (value: unknown): SectionInput[] => {
     const widgets = asArray<unknown>(section.widgets).slice(0, 12);
     if (widgets.length === 0) return [];
     return [{
+      ...(typeof section.id === 'string' && /^[a-z][a-z0-9-]{0,31}$/.test(section.id) ? { id: section.id } : {}),
       ...(typeof section.title === 'string' ? { title: section.title.slice(0, 160) } : {}),
       ...(typeof section.columns === 'number' && Number.isFinite(section.columns) ? { columns: section.columns } : {}),
       widgets: widgets as WidgetInput[],
@@ -260,6 +298,8 @@ const toNode = (rawInput: unknown, inheritedMetricColumns?: number): Record<stri
       tone: input.tone,
       trend: input.trend,
       trendValue: input.trendValue,
+      emphasis: input.emphasis,
+      icon: input.icon,
     };
   }
   if (type === 'metric-grid') {
@@ -272,8 +312,8 @@ const toNode = (rawInput: unknown, inheritedMetricColumns?: number): Record<stri
     return { type: 'status', label: input.label, value: input.value ?? '', tone: input.tone ?? 'neutral' };
   }
   if (type === 'divider') return { type: 'divider' };
-  if (type === 'flow') return { type: 'flow', data: asArray(input.steps).slice(0, 12) };
-  if (type === 'list') return { type: 'list', title: input.title, ordered: input.ordered === true, items: asArray(input.items).slice(0, 30) };
+  if (type === 'flow') return { type: 'flow', data: asArray(input.steps).slice(0, 12), ...(input.orientation === 'vertical' ? { orientation: 'vertical' } : {}) };
+  if (type === 'list') return { type: 'list', title: input.title, ordered: input.ordered === true, items: asArray(input.items).slice(0, 30), ...(input.filterable === true ? { filterable: true } : {}) };
   if (type === 'timeline' || type === 'activity-feed' || type === 'tree' || type === 'diff-summary') {
     return { type, title: input.title, items: asArray(input.items).slice(0, 30) };
   }
@@ -332,6 +372,10 @@ const toNode = (rawInput: unknown, inheritedMetricColumns?: number): Record<stri
       xKey: 'label',
       series,
       data,
+      ...(typeof input.referenceValue === 'number' && Number.isFinite(input.referenceValue)
+        ? { referenceLine: { value: input.referenceValue, label: input.referenceLabel } }
+        : {}),
+      ...(input.stacked === true ? { stacked: true } : {}),
     };
   }
   if (type === 'table') {
@@ -340,6 +384,13 @@ const toNode = (rawInput: unknown, inheritedMetricColumns?: number): Record<stri
     return {
       type: 'data-table',
       title: input.title,
+      ...(input.density === 'compact' || input.density === 'comfortable' ? { density: input.density } : {}),
+      ...(typeof input.toneColumn === 'string' ? { toneColumn: input.toneColumn } : {}),
+      ...(input.searchable === true ? { searchable: true } : {}),
+      ...(input.sortable === true ? { sortable: true } : {}),
+      ...(typeof input.pageSize === 'number' && Number.isFinite(input.pageSize)
+        ? { pagination: { pageSize: Math.max(1, Math.min(50, Math.trunc(input.pageSize))) } }
+        : {}),
       columns,
       data: asArray<unknown>(input.tableRows).slice(0, 50).flatMap((rawRow) => {
         const row = asRecord(rawRow);
@@ -383,7 +434,9 @@ export default tool({
     title: tool.schema.string().describe('这次可视化的简短标题'),
     summary: tool.schema.string().describe('一句话给出结论、目标或范围，不要重复标题'),
     presentation: tool.schema.enum(['stack', 'tabs', 'accordion']).optional().describe('页面分区的展示方式：stack 直接排列（默认）；tabs 可切换页签；accordion 可展开/收起。tabs/accordion 时每个 section 都必须有 title'),
+    layoutMode: tool.schema.enum(['dashboard-hero', 'master-detail', 'report']).optional().describe('可选构图模式：dashboard-hero（KPI 横带 + 主图 + 侧栏，槽位 kpis/main/aside，KPI 最多 4 个）；master-detail（左列表右详情，槽位 master/detail）；report（结论先行长文，槽位 summary）。设置后相关 section 必须带对应 id，且 presentation 保持默认 stack；信息少、无明确主次时不要使用'),
     sections: tool.schema.array(tool.schema.object({
+      id: tool.schema.string().optional().describe('构图槽位标识，仅在 layoutMode 下使用：dashboard-hero 用 kpis/main/aside，master-detail 用 master/detail，report 用 summary；小写字母'),
       title: tool.schema.string().optional().describe('分区标题'),
       columns: tool.schema.number().optional().describe('本分区中多个 widgets 的响应式列数，1 到 4；只有一个 metric-grid 时优先设置 metric-grid 自身的 columns，若漏填则继承这里的列数'),
       widgets: tool.schema.array(widget).min(1).max(12),
@@ -394,9 +447,41 @@ export default tool({
     const title = typeof args.title === 'string' && args.title.trim() ? args.title.slice(0, 160) : 'Interactive UI';
     const summary = typeof args.summary === 'string' ? args.summary.slice(0, 1_000) : '';
     const presentation = args.presentation === 'tabs' || args.presentation === 'accordion' ? args.presentation : 'stack';
+    const layoutMode = LAYOUT_MODES.find((mode) => mode === args.layoutMode);
+    if (args.layoutMode !== undefined && !layoutMode) {
+      throw new Error(`interactive_ui layoutMode must be one of: ${LAYOUT_MODES.join(', ')}`);
+    }
+    if (layoutMode && presentation !== 'stack') {
+      throw new Error('interactive_ui layoutMode requires the default stack presentation');
+    }
     const sections = parseSections(args.sections);
     if (sections.length === 0) {
       throw new Error('interactive_ui requires at least one valid section');
+    }
+    if (layoutMode) {
+      const contract = LAYOUT_MODE_CONTRACT[layoutMode];
+      const ids = sections.flatMap((section) => section.id ? [section.id] : []);
+      const unknown = ids.filter((id) => !contract.slots.includes(id));
+      if (unknown.length > 0) {
+        throw new Error(`interactive_ui layoutMode=${layoutMode} has unknown section id(s): ${unknown.join(', ')}. Valid slots: ${contract.slots.join(', ')}`);
+      }
+      const missing = contract.required.filter((required) => !ids.includes(required));
+      if (missing.length > 0) {
+        throw new Error(`interactive_ui layoutMode=${layoutMode} requires section id(s): ${missing.join(', ')}`);
+      }
+      if (new Set(ids).size !== ids.length) {
+        throw new Error('interactive_ui layoutMode section ids must be unique');
+      }
+      if (layoutMode === 'dashboard-hero') {
+        const kpis = sections.find((section) => section.id === 'kpis');
+        const kpiCount = kpis ? kpis.widgets.reduce((count, widgetInput) => {
+          if (widgetInput.type === 'metric-grid' || (!widgetInput.type && widgetInput.metrics)) return count + asArray(widgetInput.metrics).length;
+          return widgetInput.type === 'metric' ? count + 1 : count;
+        }, 0) : 0;
+        if (kpiCount > 4) {
+          throw new Error(`interactive_ui layoutMode=dashboard-hero allows at most 4 KPI metrics in the kpis section (got ${kpiCount})`);
+        }
+      }
     }
     const renderedSections = sections.flatMap((section) => {
       const inheritedMetricColumns = section.widgets.length === 1 ? section.columns : undefined;
@@ -406,6 +491,7 @@ export default tool({
       if (children.length === 0) return [];
       return [{
         type: 'section',
+        ...(section.id ? { id: section.id } : {}),
         title: section.title,
         children: children.length > 1 && clampColumns(section.columns) > 1
           ? [{ type: 'grid', columns: clampColumns(section.columns), children }]
@@ -430,6 +516,7 @@ export default tool({
     const layout = {
       type: 'stack',
       title,
+      ...(layoutMode ? { layoutMode } : {}),
       children: [
         ...(summary ? [{ type: 'text', value: summary }] : []),
         ...body,

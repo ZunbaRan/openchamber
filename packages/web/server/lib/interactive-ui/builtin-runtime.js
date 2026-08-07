@@ -2,7 +2,7 @@ import nodePath from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 export const BUILT_IN_INTERACTIVE_UI_EXTENSION_ID = 'com.openchamber.builtin.interactive-ui';
-export const BUILT_IN_INTERACTIVE_UI_VERSION = '1.2.1';
+export const BUILT_IN_INTERACTIVE_UI_VERSION = '1.3.0';
 
 // Exact hashes of previously shipped OpenChamber built-ins. These permit a
 // one-time ownership migration without ever adopting an arbitrary user Tool.
@@ -28,6 +28,9 @@ export const createBuiltInInteractiveUIRuntime = ({ pathImpl = nodePath } = {}) 
       skills: [{
         name: 'interactive-ui-visualization',
         files: ['agent-runtime/skills/interactive-ui-visualization/SKILL.md'],
+      }, {
+        name: 'html-artifact-design',
+        files: ['agent-runtime/skills/html-artifact-design/SKILL.md'],
       }],
     },
   };

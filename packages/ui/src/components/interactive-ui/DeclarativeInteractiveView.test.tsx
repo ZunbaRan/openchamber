@@ -320,3 +320,183 @@ describe('DeclarativeInteractiveView', () => {
     expect(html).toContain('feature/very-long-branch-name');
   });
 });
+
+describe('DeclarativeInteractiveView — Style v2', () => {
+  const createHost = (): InteractiveViewHost => ({
+    apiVersion: 1,
+    business: {
+      query: async <TOutput,>(): Promise<TOutput> => { throw new Error('Unexpected query'); },
+      execute: async <TOutput,>(): Promise<TOutput> => { throw new Error('Unexpected action'); },
+    },
+    dialog: { confirm: async () => false },
+    notifications: { show() {} },
+    dashboard: { emit: async () => {} },
+    context: { runtime: 'web', locale: 'en' },
+  });
+
+  const renderView = (layout: Record<string, unknown>): string => {
+    const definition: DeclarativeViewDefinition = {
+      $schema: 'openchamber://declarative-view/v1',
+      id: 'com.openchamber.test.style-v2',
+      layout: layout as DeclarativeViewDefinition['layout'],
+    };
+    const envelope: InteractiveResultEnvelope = {
+      $schema: 'openchamber://interactive-result/v1',
+      view: definition.id,
+      schemaVersion: 1,
+      mode: 'snapshot',
+      data: {},
+    };
+    return renderToStaticMarkup(
+      <I18nProvider>
+        <DeclarativeInteractiveView definition={definition} envelope={envelope} host={createHost()} />
+      </I18nProvider>,
+    );
+  };
+
+  test('heroes the first KPI in a small metric-grid and keeps 5+ grids standard', () => {
+    const small = renderView({
+      type: 'metric-grid',
+      columns: 3,
+      items: [
+        { label: 'Revenue', value: 100, icon: 'bar-chart-2' },
+        { label: 'Orders', value: 48 },
+        { label: 'Refunds', value: 3 },
+      ],
+    });
+    expect(small.match(/bg-\[var\(--ocix-panel-hero-bg\)\]/g)).toHaveLength(1);
+    expect(small).toContain('ocix-type-display');
+
+    const large = renderView({
+      type: 'metric-grid',
+      columns: 4,
+      items: [
+        { label: 'A', value: 1 }, { label: 'B', value: 2 }, { label: 'C', value: 3 }, { label: 'D', value: 4 }, { label: 'E', value: 5 },
+      ],
+    });
+    expect(large).not.toContain('bg-[var(--ocix-panel-hero-bg)]');
+  });
+
+  test('renders dashboard-hero sections into slot regions', () => {
+    const html = renderView({
+      type: 'stack',
+      layoutMode: 'dashboard-hero',
+      children: [
+        { type: 'section', id: 'kpis', children: [{ type: 'metric', label: 'Revenue', value: 10 }] },
+        { type: 'section', id: 'main', children: [{ type: 'text', value: 'main visual' }] },
+        { type: 'section', id: 'aside', children: [{ type: 'text', value: 'rail item' }] },
+      ],
+    });
+    expect(html).toContain('data-ocix-layout-mode="dashboard-hero"');
+    expect(html.match(/data-ocix-slot="kpis"/g)).toHaveLength(1);
+    expect(html.match(/data-ocix-slot="main"/g)).toHaveLength(1);
+    expect(html.match(/data-ocix-slot="aside"/g)).toHaveLength(1);
+    expect(html).toContain('main visual');
+    expect(html).toContain('rail item');
+  });
+
+  test('tints table rows through toneColumn and honors compact density', () => {
+    const html = renderView({
+      type: 'data-table',
+      density: 'compact',
+      toneColumn: 'status',
+      columns: [{ key: 'name', label: 'Name' }, { key: 'status', label: 'Status', render: 'status' }],
+      data: [
+        { name: 'Acme', status: 'active' },
+        { name: 'Globex', status: 'blocked' },
+      ],
+    });
+    expect(html).toContain('--ocix-success-background');
+    expect(html).toContain('--ocix-error-background');
+    expect(html).toContain('py-1.5');
+  });
+
+  test('drops panel chrome for metrics nested inside a bordered section', () => {
+    const html = renderView({
+      type: 'section',
+      variant: 'bordered',
+      children: [
+        { type: 'metric', label: 'Nested KPI', value: 7 },
+      ],
+    });
+    // The section owns the only panel; the nested metric renders quiet.
+    expect(html.match(/rounded-\[var\(--ocix-radius-md\)\] border /g)).toHaveLength(1);
+    expect(html).toContain('Nested KPI');
+  });
+
+  test('renders chart reference lines and legend toggle buttons', () => {
+    const html = renderView({
+      type: 'chart',
+      title: 'Trend',
+      variant: 'line',
+      xKey: 'label',
+      series: [{ key: 'a', label: 'Alpha' }, { key: 'b', label: 'Beta' }],
+      data: [{ label: 'x', a: 1, b: 2 }],
+      referenceLine: { value: 1.5, label: 'Target' },
+    });
+    expect(html).toContain('Target');
+    expect(html).toContain('stroke-dasharray="6 4"');
+    expect(html.match(/aria-pressed="true"/g)?.length).toBeGreaterThanOrEqual(2);
+  });
+
+  test('renders table search, sortable headers, and paginates initial rows', () => {
+    const html = renderView({
+      type: 'data-table',
+      searchable: true,
+      sortable: true,
+      pagination: { pageSize: 2 },
+      columns: [{ key: 'name', label: 'Name' }, { key: 'mrr', label: 'MRR', format: 'number', align: 'right' }],
+      data: [
+        { name: 'Acme', mrr: 42000 },
+        { name: 'Globex', mrr: 28500 },
+        { name: 'Initech', mrr: 9800 },
+      ],
+    });
+    expect(html).toContain('type="search"');
+    expect(html).toContain('aria-label="Search"');
+    expect(html).toContain('sort-desc');
+    expect(html.match(/<tr[^>]*class="[^"]*border-t[^"]*"/g)?.length).toBe(2);
+    expect(html).toContain('1 / 2');
+    expect(html).toContain('aria-label="Next page"');
+  });
+
+  test('renders a filterable list and a vertical flow', () => {
+    const listHtml = renderView({
+      type: 'list',
+      filterable: true,
+      items: [{ title: 'Alpha task' }, { title: 'Beta task' }],
+    });
+    expect(listHtml).toContain('type="search"');
+    expect(listHtml).toContain('Alpha task');
+
+    const flowHtml = renderView({
+      type: 'flow',
+      orientation: 'vertical',
+      data: [
+        { title: 'Collect', status: 'completed' },
+        { title: 'Review', status: 'active' },
+        { title: 'Ship', status: 'pending' },
+      ],
+    });
+    expect(flowHtml).toContain('<ol');
+    expect(flowHtml).toContain('Collect');
+    expect(flowHtml).toContain('border-dashed');
+    expect(flowHtml).toContain('border-solid');
+  });
+
+  test('renders stacked bars with one column per row', () => {
+    const html = renderView({
+      type: 'chart',
+      variant: 'bar',
+      stacked: true,
+      series: [{ key: 'a', label: 'A' }, { key: 'b', label: 'B' }],
+      data: [
+        { label: 'Q1', a: 10, b: 5 },
+        { label: 'Q2', a: 8, b: 7 },
+      ],
+    });
+    // 2 rows × 2 series = 4 stacked rects
+    expect(html.match(/<rect/g)?.length).toBe(4);
+    expect(html).toContain('role="graphics-symbol"');
+  });
+});

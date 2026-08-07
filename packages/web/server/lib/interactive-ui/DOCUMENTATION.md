@@ -2,6 +2,15 @@
 
 This module owns Local and Hosted OCIX discovery, Interactive UI/HTML Artifact assets, Agent Runtime ownership, and the Business Gateway. Standard MCP Apps are handled by the OpenCode fork and the UI MCP App host; they do not enter this OCIX runtime.
 
+## Style v2 (2026-08-06)
+
+The built-in Agent Tools and Skill follow the frozen visual contract in `docs/OCIX_STYLE_CONTRACT.md`:
+
+- `builtin/agent-runtime/tools/interactive_ui.ts` accepts optional `layoutMode` (`dashboard-hero` / `master-detail` / `report`) with fail-closed slot validation (unknown mode/id, missing required slot, duplicate ids, KPI count > 4 all reject), plus `emphasis`/whitelisted `icon` on metrics, `density`/`toneColumn` on tables, and `referenceValue`/`referenceLabel` on charts. Local-interactivity fields are presentation-only and never reach the Gateway: `searchable`/`sortable`/`pageSize` (table), `filterable` (list), `orientation=vertical` (flow), `stacked` (bar chart).
+- `builtin/agent-runtime/tools/interactive_ui_gallery.ts` takes an optional `mode` arg (`components` default, or one of the three layout-mode demos).
+- `builtin/agent-runtime/skills/interactive-ui-visualization/SKILL.md` carries the composition guidance (one focal point, KPI ≤ 4, slot table, mode selection).
+- `builtin/agent-runtime/skills/html-artifact-design/SKILL.md` (built-in v1.3.0) is the HTML Artifact design guide for first- and third-party authors: full token-slot consumption, typography, composition discipline, chart color order, sandbox-safe motion. Third-party authors get the same rules via the developer guide §5.8 and the updated artifact template.
+
 ## Extension roots
 
 The runtime discovers extensions from:
