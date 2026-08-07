@@ -147,6 +147,34 @@ export const normalizeHostedDelivery = (manifest) => {
   };
 };
 
+// Optional signed update metadata on the Hosted/Remote manifest kernel
+// (Phase R3). It is covered by the existing signature/canonical manifest
+// hash. Normalized to { required: boolean, changeSummary: string | null }
+// with defaults false/null; non-boolean `required` and non-string/blank/
+// over-2000 `changeSummary` reject with the stable invalid_hosted_manifest
+// behavior BEFORE any trust/state write.
+export const normalizeHostedUpdateMetadata = (value) => {
+  if (value === undefined) {
+    return { required: false, changeSummary: null };
+  }
+  if (!isRecord(value)) {
+    throw new HostedOcixError('Hosted update metadata must be an object', 'invalid_hosted_manifest');
+  }
+  if (value.required !== undefined && typeof value.required !== 'boolean') {
+    throw new HostedOcixError('Hosted update required must be a boolean', 'invalid_hosted_manifest');
+  }
+  const changeSummary = value.changeSummary === undefined
+    ? null
+    : typeof value.changeSummary === 'string' && value.changeSummary.trim()
+      ? value.changeSummary.trim()
+      : null;
+  if (value.changeSummary !== undefined
+    && (typeof value.changeSummary !== 'string' || !value.changeSummary.trim() || changeSummary.length > 2000)) {
+    throw new HostedOcixError('Hosted update changeSummary must be a non-blank string of at most 2000 characters', 'invalid_hosted_manifest');
+  }
+  return { required: value.required === true, changeSummary };
+};
+
 export const normalizeHostedPermissions = (value) => {
   if (!isRecord(value)) {
     throw new HostedOcixError('Hosted permissions must be an object', 'invalid_hosted_permissions');
@@ -373,17 +401,20 @@ export const verifyHostedOcixManifest = ({
     extension: canonicalize(document.extension),
     resources,
     permissions,
+    // Phase R3: normalized safe update metadata only (covered by the existing
+    // signature/canonical manifest hash). Unknown fields inside update are
+    // never exposed.
+    update: normalizeHostedUpdateMetadata(document.update),
     signedDocument: canonicalize(document),
     manifestHash: sha256(cryptoImpl, Buffer.from(canonicalStringify(document))),
   };
 };
 
-// Best-effort async disposal of a response body BEFORE a pre-consumption
-// rejection: cancels the underlying stream so hostile/unbounded bodies are
-// not retained across retries. Cancellation failure is ignored — it must
-// never mask the authoritative HostedOcixError and never causes a forbidden
-// next-hop contact.
-const discardResponseBody = async (response) => {
+// Best-effort async disposal of a response body WITHOUT consuming it: used
+// before a pre-consumption rejection (non-2xx classification, policy
+// failures) so hostile/unbounded bodies are not retained. Cancellation
+// failure is ignored — it must never mask the authoritative error.
+export const discardResponseBody = async (response) => {
   try {
     if (response?.body?.cancel) await response.body.cancel();
   } catch {
@@ -391,7 +422,7 @@ const discardResponseBody = async (response) => {
   }
 };
 
-const readResponseBytes = async (response, limit, label) => {
+export const readResponseBytes = async (response, limit, label) => {
   const length = Number(response.headers?.get?.('content-length'));
   if (Number.isFinite(length) && length > limit) {
     await discardResponseBody(response);

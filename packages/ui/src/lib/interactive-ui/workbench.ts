@@ -102,6 +102,18 @@ export interface WorkbenchExtensionDescriptor {
   shortName: string;
   version: string;
   iconPath: string | null;
+  // Phase R3 safe Remote lifecycle summary (present for manager-owned Remote
+  // extensions): used to show blocked/warning states at extension level.
+  lifecycle?: {
+    status: 'none' | 'available' | 'required';
+    health: {
+      status: 'unknown' | 'reachable' | 'unreachable' | 'trust_invalid';
+      checkedAt: string | null;
+      code?: string;
+    };
+    blocked?: { code: string };
+    requiresUserConfirmation?: boolean;
+  };
   surfaces: WorkbenchSurfaceDescriptor[];
   links: WorkbenchLinkDescriptor[];
 }

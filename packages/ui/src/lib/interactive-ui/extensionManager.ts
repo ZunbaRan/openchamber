@@ -1,3 +1,5 @@
+import type { I18nKey } from '@/lib/i18n';
+
 export interface InstalledVersion {
   version: string;
   installedAt: string;
@@ -18,6 +20,8 @@ export interface InstalledVersion {
     acceptedManifestVersion?: string;
     acceptedManifestHash?: string;
     status?: string;
+    lifecycle?: RemoteLifecycle;
+    blocked?: RemoteBlockedSummary | null;
   };
 }
 
@@ -175,6 +179,47 @@ export const classifyCatalogInstallState = (catalogVersion: string, installedVer
 type ConnectionAuthType = 'none' | 'env-bearer' | 'api-key' | 'issued-key';
 export type ConnectionHealthStatus = 'unknown' | 'reachable' | 'unreachable' | 'unauthorized' | 'forbidden';
 
+export type RemoteLifecycleStatus = 'none' | 'available' | 'required';
+export type RemoteLifecycleHealthStatus = 'unknown' | 'reachable' | 'unreachable' | 'trust_invalid';
+export type RemotePermissionDelta = 'none' | 'expanded' | 'reduced';
+
+// Safe Remote lifecycle summary: never accepts or exposes public keys,
+// signed documents, installation ids, credentials, or internal paths.
+export interface RemoteLifecycle {
+  status: RemoteLifecycleStatus;
+  currentVersion: string;
+  currentManifestHash: string;
+  remoteVersion: string | null;
+  remoteManifestHash: string | null;
+  changeSummary: string | null;
+  permissionDelta: RemotePermissionDelta;
+  addedPermissions: Partial<HostedPermissions> | null;
+  keyChanged: boolean;
+  requiresUserConfirmation: boolean;
+  publisherFingerprint: string | null;
+  health: {
+    status: RemoteLifecycleHealthStatus;
+    checkedAt: string | null;
+    code?: string;
+  };
+  blocked?: {
+    code: string;
+    required?: boolean;
+    version?: string;
+    manifestHash?: string;
+    reason?: string;
+  };
+  applied?: boolean;
+}
+
+export interface RemoteBlockedSummary {
+  required: boolean;
+  version?: string;
+  manifestHash?: string;
+  reason?: string;
+  observedAt?: string;
+}
+
 export interface ManagedConnection {
   extension: { id: string; name: string; version: string };
   connector: {
@@ -218,6 +263,30 @@ export interface ManagerSnapshot {
 
 export const EMPTY_MANAGER_SNAPSHOT: ManagerSnapshot = { extensions: [], publishers: [], marketplaces: [] };
 export const EMPTY_CONNECTION_SNAPSHOT: ConnectionSnapshot = { connections: [] };
+
+// Connector-test SAFE failure codes emitted by the server runtime's
+// connection test (and invokeAction credential resolution): a "Check health &
+// updates" health probe that fails with any of these is a RECOVERABLE health
+// failure — the UI records/surfaces it, still calls the dedicated Remote
+// update-check route (force:true) so update classification stays current, and
+// refreshes. Unrelated/unsafe codes are never treated as recoverable health
+// probe failures and route to the generic outer failure instead.
+const REMOTE_HEALTH_PROBE_FAILURE_CODES = new Set([
+  'connection_test_unsupported',
+  'connector_unconfigured',
+  'credential_expired',
+  'credential_unavailable',
+  'connector_unauthorized',
+  'connector_forbidden',
+  'connection_test_timeout',
+  'upstream_unavailable',
+  'upstream_error',
+  'upstream_response_too_large',
+]);
+
+export const isRemoteHealthProbeFailureCode = (code: unknown): code is string => (
+  typeof code === 'string' && REMOTE_HEALTH_PROBE_FAILURE_CODES.has(code)
+);
 
 const isRecord = (value: unknown): value is Record<string, unknown> => (
   typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -318,6 +387,16 @@ const normalizeVersion = (value: unknown, fallbackVersion: string): InstalledVer
         ...(remoteManifest && typeof remoteManifest.version === 'string' ? { acceptedManifestVersion: remoteManifest.version } : {}),
         ...(remoteManifest && typeof remoteManifest.manifestHash === 'string' ? { acceptedManifestHash: remoteManifest.manifestHash } : {}),
         ...(typeof remote.status === 'string' ? { status: remote.status } : {}),
+        ...(isRecord(remote.lifecycle) ? { lifecycle: normalizeRemoteLifecycle(remote.lifecycle) ?? undefined } : {}),
+        ...(isRecord(remote.blocked) ? {
+          blocked: {
+            required: remote.blocked.required === true,
+            ...(typeof remote.blocked.version === 'string' ? { version: remote.blocked.version } : {}),
+            ...(typeof remote.blocked.manifestHash === 'string' ? { manifestHash: remote.blocked.manifestHash } : {}),
+            ...(typeof remote.blocked.reason === 'string' ? { reason: remote.blocked.reason } : {}),
+            ...(typeof remote.blocked.observedAt === 'string' ? { observedAt: remote.blocked.observedAt } : {}),
+          },
+        } : {}),
       },
     } : {}),
   };
@@ -433,6 +512,145 @@ export const normalizeRemoteInspection = (value: unknown): RemoteInspection | nu
     },
   };
 };
+
+const normalizeLifecycleHealth = (value: unknown): RemoteLifecycle['health'] => {
+  const health = isRecord(value) ? value : {};
+  const status = typeof health.status === 'string' && ['unknown', 'reachable', 'unreachable', 'trust_invalid'].includes(health.status)
+    ? health.status as RemoteLifecycleHealthStatus
+    : 'unknown';
+  return {
+    status,
+    checkedAt: typeof health.checkedAt === 'string' && Number.isFinite(Date.parse(health.checkedAt)) ? health.checkedAt : null,
+    ...(typeof health.code === 'string' ? { code: health.code } : {}),
+  };
+};
+
+// Human-readable i18n label key for each Hosted permission group, used by the
+// re-consent dialog to render "Network origins (networkOrigins)" — a localized
+// group label while retaining the exact technical id. Unknown keys yield null
+// (the caller falls back to the raw technical id).
+export const remotePermissionGroupLabelKey = (key: string): I18nKey | null => {
+  switch (key) {
+    case 'resourceOrigins': return 'settings.interactiveUI.permissionGroups.resourceOrigins';
+    case 'networkOrigins': return 'settings.interactiveUI.permissionGroups.networkOrigins';
+    case 'externalLinkOrigins': return 'settings.interactiveUI.permissionGroups.externalLinkOrigins';
+    case 'credentialScopes': return 'settings.interactiveUI.permissionGroups.credentialScopes';
+    case 'actionIds': return 'settings.interactiveUI.permissionGroups.actionIds';
+    case 'agentToolNames': return 'settings.interactiveUI.permissionGroups.agentToolNames';
+    case 'clipboard': return 'settings.interactiveUI.permissionGroups.clipboard';
+    case 'popups': return 'settings.interactiveUI.permissionGroups.popups';
+    case 'nativeCode': return 'settings.interactiveUI.permissionGroups.nativeCode';
+    default: return null;
+  }
+};
+
+const normalizeLifecycleAddedPermissions = (value: unknown): Partial<HostedPermissions> | null => {
+  if (!isRecord(value)) return null;
+  const result: Partial<HostedPermissions> = {};
+  let found = false;
+  for (const key of ['resourceOrigins', 'networkOrigins', 'externalLinkOrigins', 'credentialScopes', 'actionIds', 'agentToolNames'] as const) {
+    if (Array.isArray(value[key])) {
+      const entries = value[key].filter((entry): entry is string => typeof entry === 'string');
+      result[key] = entries;
+      if (entries.length > 0) found = true;
+    }
+  }
+  for (const key of ['clipboard', 'popups', 'nativeCode'] as const) {
+    if (typeof value[key] === 'boolean') {
+      result[key] = value[key];
+      found = true;
+    }
+  }
+  return found ? result : null;
+};
+
+// Safe Remote lifecycle/update normalizer: accepts ONLY the documented safe
+// fields with their exact shapes and never accepts unknown fields or secret
+// material (public keys, installation ids, credentials, internal paths are
+// dropped before they reach React state).
+export const normalizeRemoteLifecycle = (value: unknown): RemoteLifecycle | null => {
+  if (!isRecord(value)) return null;
+  const status = typeof value.status === 'string' && ['none', 'available', 'required'].includes(value.status)
+    ? value.status as RemoteLifecycleStatus
+    : null;
+  const currentVersion = typeof value.currentVersion === 'string' ? value.currentVersion : '';
+  const currentManifestHash = typeof value.currentManifestHash === 'string' ? value.currentManifestHash : '';
+  if (!status || !currentVersion || !currentManifestHash) return null;
+  const permissionDelta = typeof value.permissionDelta === 'string'
+    && ['none', 'expanded', 'reduced'].includes(value.permissionDelta)
+    ? value.permissionDelta as RemotePermissionDelta
+    : 'none';
+  const addedPermissions = normalizeLifecycleAddedPermissions(value.addedPermissions);
+  const requiresUserConfirmation = value.requiresUserConfirmation === true;
+  const remoteVersion = typeof value.remoteVersion === 'string' && value.remoteVersion.length > 0
+    ? value.remoteVersion
+    : null;
+  const remoteManifestHash = typeof value.remoteManifestHash === 'string' && value.remoteManifestHash.length > 0
+    ? value.remoteManifestHash
+    : null;
+  const publisherFingerprint = typeof value.publisherFingerprint === 'string' && value.publisherFingerprint.length > 0
+    ? value.publisherFingerprint
+    : null;
+  // Correlation-invariant: a consent-requiring payload MUST carry the exact
+  // candidate identity (version, manifest hash, publisher fingerprint) that a
+  // confirm would apply; a payload claiming requiresUserConfirmation without
+  // all three is rejected outright so the re-consent dialog can never open on
+  // an unconfirmable candidate.
+  if (requiresUserConfirmation && (!remoteVersion || !remoteManifestHash || !publisherFingerprint)) {
+    return null;
+  }
+  const blockedValue = isRecord(value.blocked) && typeof value.blocked.code === 'string'
+    ? {
+        code: value.blocked.code,
+        ...(value.blocked.required === true ? { required: true } : {}),
+        ...(typeof value.blocked.version === 'string' ? { version: value.blocked.version } : {}),
+        ...(typeof value.blocked.manifestHash === 'string' ? { manifestHash: value.blocked.manifestHash } : {}),
+        ...(typeof value.blocked.reason === 'string' ? { reason: value.blocked.reason } : {}),
+      }
+    : undefined;
+  return {
+    status,
+    currentVersion,
+    currentManifestHash,
+    remoteVersion,
+    remoteManifestHash,
+    changeSummary: typeof value.changeSummary === 'string' ? value.changeSummary : null,
+    permissionDelta,
+    addedPermissions,
+    keyChanged: value.keyChanged === true,
+    requiresUserConfirmation,
+    publisherFingerprint,
+    health: normalizeLifecycleHealth(value.health),
+    ...(blockedValue ? { blocked: blockedValue } : {}),
+    ...(value.applied === true ? { applied: true } : {}),
+  };
+};
+
+// A Remote update candidate is confirmable ONLY when the exact current
+// verified candidate identity is complete: non-empty remote version, manifest
+// hash, and publisher fingerprint. A persisted required block whose current
+// probe is unreachable/unverifiable carries null candidate identity and must
+// never open the review/apply dialog — it stays visibly required/blocked with
+// the existing health/toast/refresh behavior instead.
+export const hasRemoteUpdateCandidateIdentity = (lifecycle: RemoteLifecycle): boolean => (
+  Boolean(lifecycle.remoteVersion)
+  && Boolean(lifecycle.remoteManifestHash)
+  && Boolean(lifecycle.publisherFingerprint)
+);
+
+// The re-consent review/apply dialog opens ONLY when BOTH the lifecycle
+// warrants it (a required update — including required no-confirmation
+// updates, which keep an immediate manual Apply path — or a consent-awaiting
+// available update) AND the exact current verified candidate identity is
+// complete (non-empty remoteVersion, remoteManifestHash, and
+// publisherFingerprint). A persisted required block whose current probe is
+// unreachable/unverifiable (identity fields null) stays visibly
+// required/blocked but must NOT open Apply; a plain available/none lifecycle
+// keeps the existing toast behavior.
+export const shouldOpenRemoteUpdateDialog = (lifecycle: RemoteLifecycle): boolean => (
+  (lifecycle.status === 'required' || lifecycle.requiresUserConfirmation)
+  && hasRemoteUpdateCandidateIdentity(lifecycle)
+);
 
 export const normalizeRemoteConnectResult = (value: unknown): RemoteConnectResult | null => {
   if (!isRecord(value) || !isRecord(value.extension) || !isRecord(value.connector) || !isRecord(value.credential)) return null;

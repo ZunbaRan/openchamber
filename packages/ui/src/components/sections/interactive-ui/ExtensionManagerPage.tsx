@@ -19,13 +19,15 @@ import {
   SettingsSection,
   SettingsStackedField,
 } from '@/components/sections/shared/SettingsSection';
-import { useI18n } from '@/lib/i18n';
+import { useI18n, type I18nKey } from '@/lib/i18n';
 import { runtimeFetch } from '@/lib/runtime-fetch';
 import { clearInteractiveUIRoutingCache } from '@/lib/interactive-ui/routing';
 import {
   EMPTY_MANAGER_SNAPSHOT,
   EMPTY_CONNECTION_SNAPSHOT,
   classifyCatalogInstallState,
+  hasRemoteUpdateCandidateIdentity,
+  isRemoteHealthProbeFailureCode,
   normalizeCatalogEntries,
   normalizeConnectionSnapshot,
   normalizeManagerSnapshot,
@@ -33,6 +35,9 @@ import {
   normalizePackageInspection,
   normalizeRemoteInspection,
   normalizeRemoteConnectResult,
+  normalizeRemoteLifecycle,
+  remotePermissionGroupLabelKey,
+  shouldOpenRemoteUpdateDialog,
   type CatalogEntry,
   type ConnectionSnapshot,
   type InstalledExtension,
@@ -40,6 +45,7 @@ import {
   type MarketplaceInspection,
   type PackageInspection,
   type RemoteConnectResult,
+  type RemoteLifecycle,
   type HostedPermissions,
 } from '@/lib/interactive-ui/extensionManager';
 import {
@@ -104,6 +110,10 @@ export const ExtensionManagerPage: React.FC = () => {
     manifestHash: string;
     version: string;
     addedPermissions: Partial<HostedPermissions>;
+  } | null>(null);
+  const [pendingRemoteUpdate, setPendingRemoteUpdate] = React.useState<{
+    extension: InstalledExtension;
+    lifecycle: RemoteLifecycle;
   } | null>(null);
   const [catalogs, setCatalogs] = React.useState<Record<string, CatalogEntry[]>>({});
 
@@ -356,6 +366,137 @@ export const ExtensionManagerPage: React.FC = () => {
     }, 'settings.interactiveUI.toast.connectionEndpointCleared');
   }, [connectionKey, runMutation]);
 
+  const checkRemoteUpdates = React.useCallback(async (extension: InstalledExtension) => {
+    const key = `remote-check:${extension.id}`;
+    setBusy(key);
+    try {
+      const active = extension.versions[extension.activeVersion];
+      const connectorId = active?.remote?.connectorIds?.[0];
+      let lifecycle: RemoteLifecycle | null = null;
+      // "Check health & updates": exercise BOTH the connector health probe
+      // and the update check through the existing connection-test route with
+      // { checkForUpdates: true } using the Remote app's exact connector id
+      // (manual health always forces; the optional update check forces too).
+      let healthFailure: string | null = null;
+      if (connectorId) {
+        try {
+          const response = await requestJson<{ update?: unknown }>(`/api/interactive-ui/connections/${encodeURIComponent(extension.id)}/${encodeURIComponent(connectorId)}/test`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ checkForUpdates: true }),
+          });
+          lifecycle = normalizeRemoteLifecycle(response.update);
+        } catch (error) {
+          const requestError = error instanceof RequestError ? error : null;
+          const healthFailureCode = requestError?.code;
+          const healthBlocked = isRemoteHealthProbeFailureCode(healthFailureCode);
+          if (!healthBlocked) throw error;
+          // The health probe itself failed or the connector declares no safe
+          // test request: keep the update state current via the dedicated
+          // update-check route (classification only) and surface the health
+          // failure below; refresh exposes the connector health evidence.
+          if (healthFailureCode !== 'connection_test_unsupported'
+            && healthFailureCode !== 'connector_unconfigured') {
+            healthFailure = requestError?.message ?? healthFailureCode;
+          }
+          lifecycle = normalizeRemoteLifecycle(await requestJson(`/api/interactive-ui/manager/extensions/${encodeURIComponent(extension.id)}/remote/update-check`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ force: true }),
+          }));
+        }
+      } else {
+        lifecycle = normalizeRemoteLifecycle(await requestJson(`/api/interactive-ui/manager/extensions/${encodeURIComponent(extension.id)}/remote/update-check`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ force: true }),
+        }));
+      }
+      if (!lifecycle) throw new Error(t('settings.interactiveUI.errors.invalidInspection'));
+      clearInteractiveUIRoutingCache();
+      if (shouldOpenRemoteUpdateDialog(lifecycle)) {
+        // The review/apply dialog opens only for a CONFIRMABLE candidate:
+        // a required lifecycle (including required no-confirmation updates,
+        // which keep an immediate manual Apply path) or a consent-awaiting
+        // available update, AND only when the exact current verified
+        // candidate identity is complete (non-empty remoteVersion,
+        // remoteManifestHash, publisherFingerprint). A persisted required
+        // block whose current probe is unreachable/unverifiable (missing
+        // identity) stays visibly required/blocked but falls through to the
+        // health/toast/refresh behavior below and never opens Apply. "Not
+        // now"/Escape leaves the durable required block in place and only
+        // refreshes.
+        setPendingRemoteUpdate({ extension, lifecycle });
+      } else if (healthFailure) {
+        // Health evidence failed (e.g. access key rejected); the update state
+        // is still current and the refresh below exposes the health result.
+        toast.error(healthFailure);
+      } else {
+        let toastKey: I18nKey = 'settings.interactiveUI.toast.remoteUpdateNone';
+        if (lifecycle.status === 'required') {
+          toastKey = 'settings.interactiveUI.toast.remoteUpdateRequired';
+        } else if (lifecycle.status === 'available') {
+          toastKey = 'settings.interactiveUI.toast.remoteUpdatePending';
+        }
+        toast.success(t(toastKey));
+      }
+      await refresh();
+    } catch (error) {
+      toast.error(t('settings.interactiveUI.toast.actionFailed'), {
+        description: error instanceof Error ? error.message : undefined,
+      });
+      await refresh().catch(() => undefined);
+    } finally {
+      setBusy(null);
+    }
+  }, [refresh, t]);
+
+  const applyRemoteUpdate = React.useCallback(async (
+    extension: InstalledExtension,
+    lifecycle: RemoteLifecycle,
+  ) => {
+    // Defensive: never call /remote/update-apply without the complete exact
+    // candidate identity (remote version + manifest hash + publisher
+    // fingerprint), even if invalid pending state were introduced later — an
+    // unconfirmable persisted-required block must never reach the apply path.
+    if (!hasRemoteUpdateCandidateIdentity(lifecycle)) return;
+    const key = `remote-apply:${extension.id}`;
+    setBusy(key);
+    try {
+      // Confirm carries the EXACT manifest hash and publisher fingerprint
+      // captured from the check response; the server refetches and reverifies
+      // (TOCTOU-safe) before applying. Rejection/"Not now" performs no apply.
+      await requestJson(`/api/interactive-ui/manager/extensions/${encodeURIComponent(extension.id)}/remote/update-apply`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          confirmedManifestHash: lifecycle.remoteManifestHash,
+          confirmedPublisherFingerprint: lifecycle.publisherFingerprint,
+        }),
+      });
+      setPendingRemoteUpdate(null);
+      clearInteractiveUIRoutingCache();
+      toast.success(t('settings.interactiveUI.toast.remoteUpdateApplied'));
+      await refresh();
+    } catch (error) {
+      toast.error(t('settings.interactiveUI.toast.actionFailed'), {
+        description: error instanceof Error ? error.message : undefined,
+      });
+      await refresh().catch(() => undefined);
+    } finally {
+      setBusy(null);
+    }
+  }, [refresh, t]);
+
+  // Single dismissal handler for EVERY Remote update dialog close (Not now,
+  // Escape, outside click): closes the dialog then refreshes the manager
+  // state so the UI proves the exact old accepted contract is still active.
+  // Performs no apply/mutation — only the Confirm button calls update-apply.
+  const dismissRemoteUpdate = React.useCallback(() => {
+    setPendingRemoteUpdate(null);
+    void refresh();
+  }, [refresh]);
+
   const refreshHosted = React.useCallback(async (
     extension: InstalledExtension,
     confirmedManifestHash?: string,
@@ -543,6 +684,23 @@ export const ExtensionManagerPage: React.FC = () => {
           <div className="divide-y divide-border/60">
             {snapshot.extensions.filter((extension) => extension.versions[extension.activeVersion]?.delivery === 'remote').map((extension) => {
               const active = extension.versions[extension.activeVersion];
+              const lifecycle = active?.remote?.lifecycle;
+              const blocked = active?.remote?.blocked;
+              let healthKey: I18nKey = 'settings.interactiveUI.remote.healthUnknown';
+              if (lifecycle?.health.status === 'reachable') {
+                healthKey = 'settings.interactiveUI.remote.healthReachable';
+              } else if (lifecycle?.health.status === 'unreachable') {
+                healthKey = 'settings.interactiveUI.remote.healthUnreachable';
+              } else if (lifecycle?.health.status === 'trust_invalid') {
+                healthKey = 'settings.interactiveUI.remote.healthTrustInvalid';
+              }
+              let updateKey: I18nKey = 'settings.interactiveUI.remote.updateNone';
+              if (lifecycle?.status === 'required') {
+                updateKey = 'settings.interactiveUI.remote.updateRequired';
+              } else if (lifecycle?.status === 'available') {
+                updateKey = 'settings.interactiveUI.remote.updateAvailable';
+              }
+              const blockedState = blocked != null || lifecycle?.blocked != null;
               return (
                 <div key={extension.id} className="flex items-center justify-between gap-4 py-3 first:pt-0">
                   <div className="min-w-0">
@@ -551,8 +709,28 @@ export const ExtensionManagerPage: React.FC = () => {
                     <div className={SETTINGS_HELPER_CLASS}>
                       {t('settings.interactiveUI.installed.publisher', { publisher: active?.publisher.name ?? '—' })}
                     </div>
+                    <div className={SETTINGS_HELPER_CLASS}>
+                      {t(healthKey)}
+                      {lifecycle?.health.checkedAt
+                        ? ` · ${t('settings.interactiveUI.connections.lastChecked')} ${new Intl.DateTimeFormat(locale, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(lifecycle.health.checkedAt))}`
+                        : ''}
+                      {' · '}{t(updateKey)}
+                    </div>
+                    {blockedState && (
+                      <p className="mt-1 text-sm text-[var(--status-error)]">
+                        {t('settings.interactiveUI.remote.blockedRequired')}
+                      </p>
+                    )}
                   </div>
                   <div className="flex flex-wrap items-center gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={busy === `remote-check:${extension.id}` || busy === `remote-apply:${extension.id}`}
+                      onClick={() => void checkRemoteUpdates(extension)}
+                    >
+                      {t('settings.interactiveUI.actions.checkHealthUpdates')}
+                    </Button>
                     <Switch
                       checked={extension.enabled && extension.integrity.status !== 'unavailable' && extension.integrity.status !== 'failed'}
                       aria-label={t('settings.interactiveUI.actions.enableAria', { name: extension.name })}
@@ -1156,6 +1334,112 @@ export const ExtensionManagerPage: React.FC = () => {
               }}
             >
               {t('settings.interactiveUI.actions.approveHostedUpdate')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={pendingRemoteUpdate !== null}
+        onOpenChange={(open) => { if (!open) dismissRemoteUpdate(); }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{t('settings.interactiveUI.remoteUpdate.title')}</DialogTitle>
+            <DialogDescription>
+              {pendingRemoteUpdate?.lifecycle.status === 'required'
+                ? t('settings.interactiveUI.remoteUpdate.requiredDescription', { name: pendingRemoteUpdate?.extension.name ?? '' })
+                : t('settings.interactiveUI.remoteUpdate.description', { name: pendingRemoteUpdate?.extension.name ?? '' })}
+            </DialogDescription>
+          </DialogHeader>
+          {pendingRemoteUpdate && (() => {
+            const { lifecycle } = pendingRemoteUpdate;
+            const added = lifecycle.addedPermissions;
+            // Current trusted publisher fingerprint (the accepted contract's
+            // key) for the key-rotation "current → candidate" display.
+            const currentFingerprint = pendingRemoteUpdate.extension.versions[pendingRemoteUpdate.extension.activeVersion]?.publisher.fingerprint;
+            return (
+              // Flat hierarchy aligned with the shared Settings primitives —
+              // no hand-rolled nested card chrome. Semantic warning/error
+              // tokens and accessibility are retained.
+              <div className="space-y-3 text-sm">
+                <SettingsStackedField label={t('settings.interactiveUI.remoteUpdate.app')}>
+                  <span className={SETTINGS_HELPER_CLASS}>{pendingRemoteUpdate.extension.name} · {pendingRemoteUpdate.extension.id}</span>
+                </SettingsStackedField>
+                <SettingsStackedField label={t('settings.interactiveUI.remoteUpdate.versionChange')}>
+                  <span className={SETTINGS_HELPER_CLASS}>{lifecycle.currentVersion} → {lifecycle.remoteVersion ?? '—'}</span>
+                </SettingsStackedField>
+                {lifecycle.changeSummary ? (
+                  <SettingsStackedField label={t('settings.interactiveUI.remoteUpdate.changeSummary')}>
+                    <span className={SETTINGS_HELPER_CLASS}>{lifecycle.changeSummary}</span>
+                  </SettingsStackedField>
+                ) : null}
+                {/* Exact candidate identity for confirmation: the publisher
+                    fingerprint (current → candidate when keyChanged) and the
+                    signed manifest hash are technical identifiers — never
+                    public keys or credentials. The confirm button sends
+                    exactly these values to update-apply. */}
+                {lifecycle.publisherFingerprint ? (
+                  <SettingsStackedField label={t('settings.interactiveUI.remoteReview.publisher')}>
+                    <span className={`${SETTINGS_HELPER_CLASS} break-all font-mono`}>
+                      {lifecycle.keyChanged && currentFingerprint
+                        ? `${currentFingerprint} → ${lifecycle.publisherFingerprint}`
+                        : lifecycle.publisherFingerprint}
+                    </span>
+                  </SettingsStackedField>
+                ) : null}
+                {lifecycle.remoteManifestHash ? (
+                  <SettingsStackedField label={t('settings.interactiveUI.remoteReview.manifest')}>
+                    <span className={`${SETTINGS_HELPER_CLASS} break-all font-mono`}>{lifecycle.remoteManifestHash}</span>
+                  </SettingsStackedField>
+                ) : null}
+                {added && (
+                  <SettingsStackedField label={t('settings.interactiveUI.remoteUpdate.addedPermissions')}>
+                    {Object.entries(added).map(([key, value]) => {
+                      // Human-readable localized group label while retaining
+                      // the exact technical id, e.g. "Network origins
+                      // (networkOrigins)".
+                      const labelKey = remotePermissionGroupLabelKey(key);
+                      return (
+                        <div key={key} className="grid gap-1 @xl:grid-cols-[12rem_minmax(0,1fr)]">
+                          <span className={SETTINGS_FIELD_LABEL_CLASS}>
+                            {labelKey ? `${t(labelKey)} (${key})` : key}
+                          </span>
+                          <span className={`${SETTINGS_HELPER_CLASS} break-all`}>
+                            {Array.isArray(value) ? value.join(', ') : String(value)}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </SettingsStackedField>
+                )}
+                {lifecycle.keyChanged && (
+                  <p className="text-sm text-[var(--status-warning)]" role="status">
+                    {t('settings.interactiveUI.remoteUpdate.keyChanged')}
+                  </p>
+                )}
+                {added?.nativeCode === true && (
+                  <p className="text-sm font-medium text-[var(--status-error)]" role="alert">
+                    {t('settings.interactiveUI.remoteUpdate.nativeCodeWarning')}
+                  </p>
+                )}
+              </div>
+            );
+          })()}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => dismissRemoteUpdate()}>
+              {t('settings.interactiveUI.remoteUpdate.notNow')}
+            </Button>
+            <Button
+              disabled={!pendingRemoteUpdate
+                || !hasRemoteUpdateCandidateIdentity(pendingRemoteUpdate.lifecycle)
+                || busy === `remote-apply:${pendingRemoteUpdate?.extension.id}`}
+              onClick={() => {
+                if (!pendingRemoteUpdate || !hasRemoteUpdateCandidateIdentity(pendingRemoteUpdate.lifecycle)) return;
+                void applyRemoteUpdate(pendingRemoteUpdate.extension, pendingRemoteUpdate.lifecycle);
+              }}
+            >
+              {t('settings.interactiveUI.remoteUpdate.confirm')}
             </Button>
           </DialogFooter>
         </DialogContent>

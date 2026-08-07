@@ -3,6 +3,7 @@ import {
   normalizeInteractiveUIRouting,
   renderInteractiveUIRoutingSystemPrompt,
 } from './routing.js';
+import { discardResponseBody, readResponseBytes } from './hosted-ocix.js';
 import { createInstalledHTMLArtifactDocument } from './artifact-store.js';
 import {
   InteractiveUIDashboardContractError,
@@ -48,6 +49,10 @@ const ACTION_TIMEOUT_MS = 15_000;
 const CONNECTION_TEST_TIMEOUT_MS = 10_000;
 const CONFIRMATION_TTL_MS = 60_000;
 const MAX_PENDING_CONFIRMATIONS = 1024;
+// Phase R3 connector-test probe cache defaults: process-lifetime 45-second
+// TTL, bounded storage, same-key in-flight coalescing, INCLUSIVE boundaries.
+const CONNECTOR_TEST_TTL_MS = 45_000;
+const CONNECTOR_TEST_MAX_ENTRIES = 256;
 const EXTENSION_ID_PATTERN = /^[a-z0-9]+(?:[._-][a-z0-9]+)+$/i;
 const EXTENSION_LOAD_ERROR_CODE_PATTERN = /^[a-z0-9_]+$/;
 
@@ -547,31 +552,180 @@ export const createInteractiveUIRuntime = ({
   // so a configured root can never resurrect a disabled/quarantined manager
   // extension id.
   authorizeExtensionAuthority = null,
+  // Phase R3 Remote lifecycle callbacks: prepareExtensionUse runs the manager
+  // Remote prepare (check + same-key none/reduced automatic apply) before
+  // surface/artifact/Workbench/action use and returns { applied } when an
+  // automatic update switched the active manifest; getExtensionLifecycle
+  // returns the safe Remote lifecycle summary for the Workbench catalog;
+  // listEnabledRemoteExtensions supplies enabled manager-owned Remote
+  // extension ids for startup warm-up EVEN when their executable root is
+  // currently excluded (persisted required-update block), so a superseded
+  // block can clear and the root can return.
+  prepareExtensionUse = null,
+  getExtensionLifecycle = null,
+  listEnabledRemoteExtensions = null,
+  // Catalog-only seam: safe descriptors for enabled manager-owned Remote apps
+  // whose persisted status (required block / trust-invalid) excludes their
+  // executable root from discovery, so the Workbench catalog keeps them
+  // visible as blocked after a fresh manager/runtime restart. Grants no
+  // resolver/launch authority and fetches no Remote resources.
+  getBlockedCatalogEntries = null,
+  // Connector-test probe cache TTL and clock (injectable in tests). All
+  // cache time boundaries are INCLUSIVE and the clock is validated before any
+  // read/write.
+  healthTtlMs = CONNECTOR_TEST_TTL_MS,
+  now = Date.now,
 } = {}) => {
   if (!fsPromises || !path || !crypto || typeof fetchImpl !== 'function') {
     throw new Error('Interactive UI runtime dependencies are incomplete');
   }
 
+  // Validated probe clock: a non-negative safe integer within ECMAScript
+  // Date's representable range (so toISOString can never throw) whose sum
+  // with ttlMs is ALSO a safe integer. NaN/Infinity, fractional, negative,
+  // out-of-Date-range, and overflow-near-MAX_SAFE_INTEGER clocks
+  // read/write/cache nothing and yield checkedAt null.
+  const MAX_DATE_MS = 8_640_000_000_000_000;
+  const isValidHealthTime = (value) => (
+    Number.isSafeInteger(value)
+    && value >= 0
+    && value <= MAX_DATE_MS
+    && Number.isSafeInteger(value + healthTtlMs)
+  );
+  const currentHealthTime = () => {
+    const value = now();
+    return isValidHealthTime(value) ? value : null;
+  };
+  const currentHealthIso = () => {
+    const value = currentHealthTime();
+    if (value === null) return null;
+    try {
+      return new Date(value).toISOString();
+    } catch {
+      return null; // defensive: invalid values produce checkedAt null, never throw
+    }
+  };
+
   const pendingConfirmations = new Map();
   // Credential state is durable; reachability is only recent runtime evidence.
   // Keep health ephemeral so it can never become an authorization source.
   const connectionHealth = new Map();
+  // Phase R3 connector-test probe cache: PROCESS-LIFETIME in-memory TTL cache
+  // of safe success/failure test results (never credentials or raw upstream
+  // bodies), bounded with deterministic oldest-first eviction. Every settled
+  // and in-flight entry is bound to a SAFE connector-test SUBJECT (effective
+  // origin/base URL, test method/path, auth type, declared auth placement/
+  // config contract — never accessKey, environment token values, custom
+  // header values, or other credentials). resetConnectionHealth and bulk
+  // removal detach the settled cache, the in-flight entry (new callers can
+  // never join an old probe), and bump/delete the per-connection epoch so a
+  // stale in-flight result can settle only for its original caller and never
+  // repopulates cache or overwrites connectionHealth after a reset.
+  const connectorTestCache = new Map();
+  const connectorTestInFlight = new Map();
+  const connectorTestTokens = new Map();
+  const rotateConnectorTestToken = (key) => {
+    const token = Symbol('connector-test-generation');
+    connectorTestTokens.set(key, token);
+    return token;
+  };
   const connectionHealthKey = (extensionId, connectorId) => `${extensionId}\u0000${connectorId}`;
   const getConnectionHealth = (extensionId, connectorId) => connectionHealth.get(connectionHealthKey(extensionId, connectorId)) ?? {
     status: 'unknown',
     checkedAt: null,
   };
-  const setConnectionHealth = (extensionId, connectorId, status, code = null) => {
+  const setConnectionHealth = (extensionId, connectorId, status, code = null, checkedAt) => {
+    // An EXPLICITLY supplied checkedAt (including null) is preserved
+    // verbatim; only an omitted/undefined value requests a fresh timestamp.
     const health = {
       status,
-      checkedAt: new Date().toISOString(),
+      checkedAt: checkedAt === undefined ? currentHealthIso() : checkedAt,
       ...(code ? { code } : {}),
     };
     connectionHealth.set(connectionHealthKey(extensionId, connectorId), health);
     return health;
   };
+  // Detaches ALL connector-test evidence for one connection WITHOUT touching
+  // connectionHealth: settled cache deleted, in-flight entry deleted (new
+  // callers cannot join it), and the epoch bumped so a stale in-flight result
+  // can never repopulate the cache or overwrite current health after a
+  // credential/config reset or a failed real business request.
+  const detachConnectorTestEvidence = (extensionId, connectorId) => {
+    const key = connectionHealthKey(extensionId, connectorId);
+    connectorTestCache.delete(key);
+    connectorTestInFlight.delete(key);
+    // ROTATE to a fresh unique token: a deleted/rotated token can never
+    // compare equal to a detached old probe's token.
+    rotateConnectorTestToken(key);
+  };
   const resetConnectionHealth = (extensionId, connectorId) => {
     connectionHealth.delete(connectionHealthKey(extensionId, connectorId));
+    detachConnectorTestEvidence(extensionId, connectorId);
+  };
+  // Deterministic SAFE connector-test subject: built from the EFFECTIVE
+  // connector (resolved endpoint/origin) plus the declared test contract and
+  // auth placement/config contract, so a manifest or endpoint change that
+  // keeps extensionId+connectorId can never reuse old settled or in-flight
+  // evidence. Never includes accessKey, environment token values, custom
+  // header values, or any other credential material.
+  const connectorTestSubject = (connector) => {
+    const placement = isRecord(connector.auth?.placement) ? connector.auth.placement : {};
+    return JSON.stringify({
+      origin: typeof connector.origin === 'string' ? connector.origin : null,
+      baseUrl: typeof connector.baseUrl === 'string' ? connector.baseUrl : null,
+      method: typeof connector.test?.method === 'string' ? connector.test.method : null,
+      path: typeof connector.test?.path === 'string' ? connector.test.path : null,
+      authType: typeof connector.auth?.type === 'string' ? connector.auth.type : null,
+      placementName: typeof placement.name === 'string' ? placement.name : null,
+      placementPrefix: typeof placement.prefix === 'string' ? placement.prefix : null,
+      envName: connector.auth?.type === 'env-bearer'
+        ? (typeof connector.auth.env === 'string' ? connector.auth.env : null)
+        : null,
+      provisioningUrl: connector.auth?.type === 'issued-key'
+        ? (typeof connector.auth.provisioningUrl === 'string' ? connector.auth.provisioningUrl : null)
+        : null,
+    });
+  };
+  const storeConnectorTest = (key, cachedAt, entry) => {
+    if (connectorTestCache.has(key)) connectorTestCache.delete(key);
+    connectorTestCache.set(key, {
+      ...entry,
+      cachedAt,
+      expiresAt: cachedAt + healthTtlMs,
+    });
+    while (connectorTestCache.size > CONNECTOR_TEST_MAX_ENTRIES) {
+      let oldestKey = null;
+      let oldestCachedAt = Infinity;
+      for (const [candidateKey, candidate] of connectorTestCache) {
+        if (candidate.cachedAt < oldestCachedAt) {
+          oldestCachedAt = candidate.cachedAt;
+          oldestKey = candidateKey;
+        }
+      }
+      if (oldestKey === null) break;
+      connectorTestCache.delete(oldestKey);
+    }
+  };
+  // One generation contract: a settled cache entry is reusable ONLY when its
+  // captured opaque token is EXACTLY the current token AND its subject/TTL
+  // match. Every genuinely new probe reservation deletes the prior settled
+  // cache BEFORE network work, so old evidence can never outlive a rotation.
+  const readConnectorTest = (key, subject, currentToken) => {
+    const nowValue = currentHealthTime();
+    if (nowValue === null) return null;
+    const cached = connectorTestCache.get(key);
+    // Backward-clock regression (now < cachedAt) is a MISS, never a hit;
+    // inclusive upper boundary retained (valid at now === expiresAt).
+    if (!cached || nowValue < cached.cachedAt || nowValue > cached.expiresAt) return null;
+    // Authority-safe: evidence is reusable ONLY for the exact same safe
+    // connector-test subject (never credentials) AND the exact same current
+    // generation token.
+    if (cached.subject !== subject) return null;
+    if (cached.token !== currentToken) return null;
+    return cached;
+  };
+  const throwConnectorTestError = (error) => {
+    throw new InteractiveUIRuntimeError(error.message, error.status, error.code);
   };
   const sweepConfirmations = (now = Date.now()) => {
     for (const [token, entry] of pendingConfirmations) {
@@ -1009,58 +1163,311 @@ export const createInteractiveUIRuntime = ({
   };
 
   const removeExtensionConnections = async (extensionId) => {
+    const prefix = `${extensionId}\u0000`;
     for (const key of connectionHealth.keys()) {
-      if (key.startsWith(`${extensionId}\u0000`)) connectionHealth.delete(key);
+      if (key.startsWith(prefix)) connectionHealth.delete(key);
+    }
+    // Bulk removal invalidates EVERY connector-test artifact for the
+    // extension: settled cache, in-flight joinability, and token bookkeeping
+    // are all deleted (no unbounded tombstone leak), so a same-id reinstall
+    // can never reuse old health or evidence and stale in-flight results can
+    // never repopulate anything.
+    for (const key of connectorTestCache.keys()) {
+      if (key.startsWith(prefix)) connectorTestCache.delete(key);
+    }
+    for (const key of connectorTestInFlight.keys()) {
+      if (key.startsWith(prefix)) connectorTestInFlight.delete(key);
+    }
+    for (const key of connectorTestTokens.keys()) {
+      if (key.startsWith(prefix)) connectorTestTokens.delete(key);
     }
     if (!connectionStore?.removeExtensionCredentials) return { removed: 0 };
     return connectionStore.removeExtensionCredentials(extensionId);
   };
 
-  const testConnection = async (extensionId, connectorId) => {
+  // Phase R3: runs the manager Remote lifecycle prepare (check + same-key
+  // none/reduced automatic apply) before surface/artifact/Workbench/action
+  // use. Non-Remote extensions and missing records are no-ops; blocked/
+  // trust_invalid/required failures propagate so the caller fails closed.
+  // Returns true when an automatic update switched the active manifest (the
+  // caller must reload discovery).
+  const prepareForExtensionUse = async (extensionId, trigger = 'surface') => {
+    if (typeof prepareExtensionUse !== 'function') return false;
+    try {
+      const outcome = await prepareExtensionUse(extensionId, { trigger });
+      return outcome?.applied === true;
+    } catch (error) {
+      if (error?.code === 'remote_extension_required' || error?.code === 'extension_not_found') return false;
+      throw error;
+    }
+  };
+
+  const testConnection = async (extensionId, connectorId, { force = false } = {}) => {
+    const key = connectionHealthKey(extensionId, connectorId);
+    // AUTHORITY-SAFE: resolve the CURRENT connector and effective endpoint
+    // BEFORE accepting any settled or in-flight evidence. The safe subject
+    // (effective origin/base URL, test method/path, auth type, declared auth
+    // placement/config contract — never credentials) binds every cached and
+    // in-flight entry, so a Remote manifest update that keeps the connector
+    // id/auth type but changes the endpoint or test contract can never reuse
+    // old evidence.
     const found = await findConnector(extensionId, connectorId);
     const connector = await resolveEffectiveConnector(extensionId, found.connector);
-    if (!connector.test) throw new InteractiveUIRuntimeError('Connector does not declare a safe test request', 409, 'connection_test_unsupported');
+    if (!connector.test) {
+      throw new InteractiveUIRuntimeError('Connector does not declare a safe test request', 409, 'connection_test_unsupported');
+    }
+    const subject = connectorTestSubject(connector);
+    // ONE GENERATION CONTRACT: settled cache and in-flight evidence share the
+    // current opaque token. For the same current subject/token, the CURRENT
+    // in-flight probe is checked and joined FIRST — so a non-force caller
+    // arriving during a forced refresh joins the refresh and cannot bypass it
+    // with older settled evidence. Force still bypasses settled cache and
+    // joins an already-current same-subject in-flight probe. Cache hits and
+    // joins return the ORIGINAL network probe checkedAt — cache access never
+    // refreshes evidence time. Boundaries are INCLUSIVE (a hit remains valid
+    // at now === expiresAt and expires only at expiresAt + 1).
+    const existing = connectorTestInFlight.get(key);
+    const currentToken = connectorTestTokens.get(key);
+    if (existing && existing.subject === subject && existing.token === currentToken) {
+      const joined = await existing.promise;
+      if (joined.ok) return { ...joined.body };
+      throwConnectorTestError(joined.error);
+    }
+    if (!force) {
+      const cached = readConnectorTest(key, subject, currentToken);
+      if (cached) {
+        if (cached.ok) return { ...cached.body };
+        throwConnectorTestError(cached.error);
+      }
+    }
     const target = new URL(connector.test.path.slice(1), connector.baseUrl.endsWith('/') ? connector.baseUrl : `${connector.baseUrl}/`);
     if (target.origin !== connector.origin) throw new InteractiveUIRuntimeError('Connection test escaped the connector origin', 403, 'network_not_allowed');
-    const requestId = crypto.randomUUID();
-    const headers = new Headers({ Accept: 'application/json', 'X-OpenChamber-Request-Id': requestId });
-    await applyConnectorAuthentication(extensionId, connector, headers);
-    let response;
+    // AWAIT-FREE CHECK-AND-RESERVE BOUNDARY: after deciding a genuinely new
+    // probe is needed (force, expired/missing cache, changed subject), the
+    // prior settled cache is made inaccessible IMMEDIATELY (deleted before
+    // any network work), the generation token is ROTATED to a fresh unique
+    // Symbol, and the in-flight entry is installed SYNCHRONOUSLY — BEFORE
+    // credential resolution or any other await. Concurrent callers therefore
+    // can never both pass the empty-slot decision and start duplicate
+    // probes: a same-subject/current-token caller arriving at any later
+    // point joins this entry. All authentication/header/network work happens
+    // inside the reserved promise. A missing/deleted token can never compare
+    // equal to a detached old probe's token (Symbol identity), so a stale
+    // old result settles only for its original caller and never repopulates
+    // the cache or overwrites connectionHealth — even across same-id
+    // reinstall, a subject change, or an invalid clock that prevents the
+    // fresh probe from caching.
+    connectorTestCache.delete(key);
+    const token = rotateConnectorTestToken(key);
+    const promise = (async () => {
+      const requestId = crypto.randomUUID();
+      const headers = new Headers({ Accept: 'application/json', 'X-OpenChamber-Request-Id': requestId });
+      const recordOutcome = (payload) => {
+        // Token guard: only the CURRENT token may record. Live health is
+        // ALWAYS recorded with the payload's explicit checkedAt (which may
+        // be null for an invalid clock); only CACHING is skipped when the
+        // injected clock is invalid.
+        if (connectorTestTokens.get(key) !== token) return;
+        setConnectionHealth(
+          extensionId,
+          connectorId,
+          payload.health.status,
+          payload.health.code ?? null,
+          payload.health.checkedAt,
+        );
+        const cachedAt = currentHealthTime();
+        if (cachedAt === null) return;
+        storeConnectorTest(key, cachedAt, { ...payload, token });
+      };
+      // Authentication/credential-resolution failure records a SANITIZED
+      // safe failure under the CURRENT token (the reservation already
+      // invalidated any old reachable evidence) and NEVER sends the test
+      // request; raw credential/error text is never exposed.
+      try {
+        await applyConnectorAuthentication(extensionId, connector, headers);
+      } catch (error) {
+        const unconfigured = error?.code === 'connector_unconfigured';
+        const failure = {
+          code: unconfigured ? 'connector_unconfigured' : 'credential_unavailable',
+          status: unconfigured ? 503 : 502,
+          message: unconfigured
+            ? 'Connector credentials are not configured'
+            : 'Connector credentials are unavailable',
+        };
+        const health = { status: 'unreachable', code: failure.code, checkedAt: currentHealthIso() };
+        recordOutcome({ subject, ok: false, error: failure, health });
+        return { ok: false, error: failure };
+      }
+      let response;
+      try {
+        response = await fetchImpl(target, {
+          method: connector.test.method,
+          headers,
+          signal: AbortSignal.timeout(CONNECTION_TEST_TIMEOUT_MS),
+        });
+      } catch (error) {
+        const timeout = error?.name === 'TimeoutError';
+        const failure = {
+          code: timeout ? 'connection_test_timeout' : 'upstream_unavailable',
+          status: 502,
+          message: timeout ? 'Connection test timed out' : 'Connection test failed',
+        };
+        const health = { status: 'unreachable', code: failure.code, checkedAt: currentHealthIso() };
+        recordOutcome({ subject, ok: false, error: failure, health });
+        return { ok: false, error: failure };
+      }
+      // Classify the non-2xx status IMMEDIATELY, BEFORE reading/retaining the
+      // body: a hostile or throwing 401/403 body must still map to
+      // unauthorized/forbidden and is never consumed (its body is
+      // best-effort-cancelled without being read).
+      if (!response.ok) {
+        void discardResponseBody(response);
+        let failure;
+        let healthStatus;
+        if (response.status === 401) {
+          failure = { code: 'connector_unauthorized', status: 401, message: 'Access key is invalid or expired' };
+          healthStatus = 'unauthorized';
+        } else if (response.status === 403) {
+          failure = { code: 'connector_forbidden', status: 403, message: 'Access key does not have permission' };
+          healthStatus = 'forbidden';
+        } else {
+          // timeout/network/5xx/other unsuccessful safe tests→unreachable.
+          // A failing response is never labeled reachable.
+          failure = {
+            code: 'upstream_error',
+            status: response.status >= 400 && response.status < 500 ? response.status : 502,
+            message: `Business system rejected the connection test (${response.status})`,
+          };
+          healthStatus = 'unreachable';
+        }
+        const health = { status: healthStatus, code: failure.code, checkedAt: currentHealthIso() };
+        recordOutcome({ subject, ok: false, error: failure, health });
+        return { ok: false, error: failure };
+      }
+      // 2xx: consume the body through the SHARED streaming-bounded reader
+      // (Content-Length early rejection, cancel on chunk overflow, bounded
+      // memory). A read/overflow failure is a stable actionable unreachable
+      // upstream failure, cached with the true checkedAt.
+      let body;
+      try {
+        body = await readResponseBytes(response, MAX_UPSTREAM_BYTES, 'Connection test response');
+      } catch (error) {
+        const tooLarge = error?.code === 'hosted_payload_too_large';
+        const failure = {
+          code: tooLarge ? 'upstream_response_too_large' : 'upstream_unavailable',
+          status: 502,
+          message: tooLarge ? 'Connection test response is too large' : 'Connection test failed',
+        };
+        const health = { status: 'unreachable', code: failure.code, checkedAt: currentHealthIso() };
+        recordOutcome({ subject, ok: false, error: failure, health });
+        return { ok: false, error: failure };
+      }
+      // True network probe timestamp: captured AFTER the verified response
+      // and preserved verbatim on cache hits and joins.
+      const checkedAt = currentHealthIso();
+      const outcome = {
+        ok: true,
+        status: response.status,
+        requestId,
+        checkedAt,
+      };
+      recordOutcome({ subject, ok: true, body: outcome, health: { status: 'reachable', checkedAt } });
+      return { ok: true, body: outcome };
+    })();
+    connectorTestInFlight.set(key, { subject, token, promise });
+    promise.then(() => {
+      const entry = connectorTestInFlight.get(key);
+      if (entry && entry.promise === promise) connectorTestInFlight.delete(key);
+    }, () => {
+      const entry = connectorTestInFlight.get(key);
+      if (entry && entry.promise === promise) connectorTestInFlight.delete(key);
+    });
+    const result = await promise;
+    if (result.ok) return { ...result.body };
+    throwConnectorTestError(result.error);
+  };
+
+  const warmRemoteLifecycle = async ({ concurrency = 4 } = {}) => {
+    // The manager seam is the authoritative Remote-delivery allowlist for
+    // startup. Discovery also contains Local, Hosted, and configured roots,
+    // so it must never be used as a fallback source of warm-up jobs.
+    if (typeof listEnabledRemoteExtensions !== 'function') return { warmed: 0 };
+    let remoteIds;
     try {
-      response = await fetchImpl(target, {
-        method: connector.test.method,
-        headers,
-        signal: AbortSignal.timeout(CONNECTION_TEST_TIMEOUT_MS),
-      });
-    } catch (error) {
-      const timeout = error?.name === 'TimeoutError';
-      setConnectionHealth(extensionId, connectorId, 'unreachable', timeout ? 'connection_test_timeout' : 'upstream_unavailable');
-      throw new InteractiveUIRuntimeError(
-        timeout ? 'Connection test timed out' : 'Connection test failed',
-        502,
-        timeout ? 'connection_test_timeout' : 'upstream_unavailable',
-      );
+      remoteIds = await listEnabledRemoteExtensions();
+    } catch {
+      return { warmed: 0 };
     }
-    const body = await response.arrayBuffer();
-    if (body.byteLength > MAX_UPSTREAM_BYTES) throw new InteractiveUIRuntimeError('Connection test response is too large', 502, 'upstream_response_too_large');
-    if (!response.ok) {
-      if (response.status === 401) {
-        setConnectionHealth(extensionId, connectorId, 'unauthorized', 'connector_unauthorized');
-        throw new InteractiveUIRuntimeError('Access key is invalid or expired', 401, 'connector_unauthorized');
-      }
-      if (response.status === 403) {
-        setConnectionHealth(extensionId, connectorId, 'forbidden', 'connector_forbidden');
-        throw new InteractiveUIRuntimeError('Access key does not have permission', 403, 'connector_forbidden');
-      }
-      setConnectionHealth(extensionId, connectorId, 'reachable', 'upstream_error');
-      throw new InteractiveUIRuntimeError(`Business system rejected the connection test (${response.status})`, response.status >= 400 && response.status < 500 ? response.status : 502, 'upstream_error');
+    if (!Array.isArray(remoteIds)) return { warmed: 0 };
+
+    const enabledRemoteIds = [];
+    const seen = new Set();
+    for (const extensionId of remoteIds) {
+      if (typeof extensionId !== 'string'
+        || !EXTENSION_ID_PATTERN.test(extensionId)
+        || seen.has(extensionId)) continue;
+      seen.add(extensionId);
+      enabledRemoteIds.push(extensionId);
     }
-    const health = setConnectionHealth(extensionId, connectorId, 'reachable');
-    return { ok: true, status: response.status, requestId, checkedAt: health.checkedAt };
+    if (enabledRemoteIds.length === 0) return { warmed: 0 };
+
+    const allowed = new Set(enabledRemoteIds);
+    const { extensions } = await loadExtensions();
+    const discoveredById = new Map();
+    for (const extension of extensions) {
+      if (allowed.has(extension.id) && !discoveredById.has(extension.id)) {
+        discoveredById.set(extension.id, extension);
+      }
+    }
+
+    // Startup coverage for enabled manager-owned Remote apps whose executable
+    // root is currently excluded (persisted required-update block): the
+    // lifecycle prepare runs the check so a superseded block can clear and
+    // the dynamic root can return. Connector health for these ids is not
+    // probeable without discovery (the connector of the preserved old shell
+    // is authoritative and unchanged), so they only prepare. There is exactly
+    // one job per valid allowlisted Remote id; discovered connectors are only
+    // optional health work within that Remote job.
+    const jobs = enabledRemoteIds.map((extensionId) => ({
+      extensionId,
+      connectorIds: (discoveredById.get(extensionId)?.connectors ?? [])
+        .filter((connector) => Boolean(connector.test))
+        .map((connector) => connector.id),
+    }));
+    // FROZEN production cap: at most 4 workers regardless of the caller's
+    // input (99/Infinity/invalid all clamp to 4; 0/negative degrade to 1).
+    // A zero-job run still settles immediately.
+    const maxWorkers = Math.max(1, Math.min(
+      4,
+      Number.isInteger(concurrency) ? concurrency : 4,
+      jobs.length,
+    ));
+    let index = 0;
+    const workers = Array.from({ length: maxWorkers }, async () => {
+      while (index < jobs.length) {
+        const job = jobs[index];
+        index += 1;
+        try {
+          await prepareForExtensionUse(job.extensionId, 'startup');
+          for (const connectorId of job.connectorIds) {
+            await testConnection(job.extensionId, connectorId, { force: false }).catch(() => undefined);
+          }
+        } catch {
+          // Per-extension isolation: one broken/blocked Remote never blocks
+          // unrelated extensions or the warm-up itself.
+        }
+      }
+    });
+    await Promise.all(workers);
+    return { warmed: jobs.length };
   };
 
   const getViewDescriptor = async (viewId, toolName = '', { launchSource = 'tool' } = {}) => {
-    const { extension, view } = await findView(viewId);
+    let found = await findView(viewId);
+    // Phase R3: Remote lifecycle prepare; an automatic update reloads the
+    // discovery so the descriptor binds to the fresh signed contract.
+    if (await prepareForExtensionUse(found.extension.id)) found = await findView(viewId);
+    const { extension, view } = found;
     if (launchSource !== 'workbench' && view.tools.length > 0 && (!toolName || !view.tools.includes(toolName))) {
       throw new InteractiveUIRuntimeError(`Tool ${toolName || '(missing)'} is not bound to view ${viewId}`, 403, 'tool_view_mismatch');
     }
@@ -1122,7 +1529,9 @@ export const createInteractiveUIRuntime = ({
   };
 
   const getNativeBundle = async (extensionId, viewId) => {
-    const { extension, view } = await findView(viewId);
+    let found = await findView(viewId);
+    if (await prepareForExtensionUse(found.extension.id)) found = await findView(viewId);
+    const { extension, view } = found;
     if (extension.id !== extensionId || view.runtime !== 'native') {
       throw new InteractiveUIRuntimeError('Native extension asset was not found', 404, 'asset_not_found');
     }
@@ -1144,7 +1553,9 @@ export const createInteractiveUIRuntime = ({
   };
 
   const getInstalledArtifactDescriptor = async (artifactId, toolName = '', { launchSource = 'tool' } = {}) => {
-    const { extension, artifact } = await findInstalledArtifact(artifactId);
+    let found = await findInstalledArtifact(artifactId);
+    if (await prepareForExtensionUse(found.extension.id)) found = await findInstalledArtifact(artifactId);
+    const { extension, artifact } = found;
     if (launchSource !== 'workbench' && artifact.tools.length > 0 && (!toolName || !artifact.tools.includes(toolName))) {
       throw new InteractiveUIRuntimeError(`Tool ${toolName || '(missing)'} is not bound to HTML Artifact ${artifactId}`, 403, 'tool_artifact_mismatch');
     }
@@ -1185,10 +1596,17 @@ export const createInteractiveUIRuntime = ({
   };
 
   const getExtensionIcon = async (extensionId) => {
-    const { extensions } = await loadExtensions();
-    const extension = extensions.find((candidate) => candidate.id === extensionId);
+    let extensions = (await loadExtensions()).extensions;
+    let extension = extensions.find((candidate) => candidate.id === extensionId);
     if (!extension || !extension.icon) {
       throw new InteractiveUIRuntimeError('Extension icon was not found', 404, 'asset_not_found');
+    }
+    if (await prepareForExtensionUse(extension.id)) {
+      extensions = (await loadExtensions()).extensions;
+      extension = extensions.find((candidate) => candidate.id === extensionId);
+      if (!extension || !extension.icon) {
+        throw new InteractiveUIRuntimeError('Extension icon was not found', 404, 'asset_not_found');
+      }
     }
     const entryPath = resolveEntryPath(path, extension.directory, extension.icon, ['.svg', '.png']);
     const content = await readExtensionEntry({
@@ -1247,9 +1665,16 @@ export const createInteractiveUIRuntime = ({
       throw new InteractiveUIRuntimeError('Installed Workbench tile source is incomplete', 400, 'invalid_workbench_tile');
     }
     const { extensions } = await loadExtensions();
-    const extension = extensions.find((candidate) => candidate.id === input.source.extensionId);
+    let extension = extensions.find((candidate) => candidate.id === input.source.extensionId);
     if (!extension) {
       throw new InteractiveUIRuntimeError('Workbench extension was not found', 404, 'extension_not_found');
+    }
+    if (await prepareForExtensionUse(extension.id, 'workbench')) {
+      const reloaded = (await loadExtensions()).extensions;
+      extension = reloaded.find((candidate) => candidate.id === input.source.extensionId);
+      if (!extension) {
+        throw new InteractiveUIRuntimeError('Workbench extension was not found', 404, 'extension_not_found');
+      }
     }
     const view = extension.views.find((candidate) => candidate.id === input.source.surfaceId);
     const artifact = extension.artifacts.find((candidate) => candidate.id === input.source.surfaceId);
@@ -1316,7 +1741,21 @@ export const createInteractiveUIRuntime = ({
       );
     }
     const { extensions } = await loadExtensions();
-    const extension = extensions.find((candidate) => candidate.id === input.source.extensionId);
+    let extension = extensions.find((candidate) => candidate.id === input.source.extensionId);
+    if (extension && await prepareForExtensionUse(extension.id, 'workbench')) {
+      // After an automatic update, RELOADED discovery is authoritative: never
+      // fall back to the stale pre-update descriptor — if the extension is no
+      // longer discoverable, fail controlled.
+      const reloaded = (await loadExtensions()).extensions;
+      extension = reloaded.find((candidate) => candidate.id === input.source.extensionId) ?? null;
+      if (!extension) {
+        throw new InteractiveUIRuntimeError(
+          'Workbench migration target is unavailable',
+          409,
+          'workbench_migration_unavailable',
+        );
+      }
+    }
     const view = extension?.views.find((candidate) => candidate.id === input.source.surfaceId);
     const artifact = extension?.artifacts.find((candidate) => candidate.id === input.source.surfaceId);
     const surface = view ?? artifact;
@@ -1375,7 +1814,9 @@ export const createInteractiveUIRuntime = ({
   };
 
   const getInstalledArtifactDocument = async (extensionId, artifactId) => {
-    const { extension, artifact } = await findInstalledArtifact(artifactId);
+    let found = await findInstalledArtifact(artifactId);
+    if (await prepareForExtensionUse(found.extension.id)) found = await findInstalledArtifact(artifactId);
+    const { extension, artifact } = found;
     if (extension.id !== extensionId) {
       throw new InteractiveUIRuntimeError('Installed HTML Artifact asset was not found', 404, 'asset_not_found');
     }
@@ -1406,7 +1847,16 @@ export const createInteractiveUIRuntime = ({
     if (usesView === usesArtifact) {
       throw new InteractiveUIRuntimeError('Action must identify exactly one Interactive UI view or HTML Artifact', 400, 'invalid_request');
     }
-    const resolved = usesView ? await findView(request.viewId) : await findInstalledArtifact(request.artifactId);
+    let resolved = usesView ? await findView(request.viewId) : await findInstalledArtifact(request.artifactId);
+    // Phase R3: Remote lifecycle prepare BEFORE any business request; when an
+    // automatic update switched the active manifest, RE-RESOLVE the surface so
+    // the action binds to the fresh signed contract.
+    const applied = await prepareForExtensionUse(resolved.extension.id);
+    if (applied) {
+      resolved = usesView
+        ? await findView(request.viewId)
+        : await findInstalledArtifact(request.artifactId);
+    }
     const extension = resolved.extension;
     if (extension.id !== request.extensionId) {
       throw new InteractiveUIRuntimeError(
@@ -1457,13 +1907,62 @@ export const createInteractiveUIRuntime = ({
     }
     const declaredConnector = extension.connectors.find((candidate) => candidate.id === action.connector);
     if (!declaredConnector) throw new InteractiveUIRuntimeError('Action connector is unavailable', 503, 'connector_unavailable');
-    const connector = await resolveEffectiveConnector(extension.id, declaredConnector);
+    // EARLY connector/credential-resolution stage: the action cannot proceed
+    // without current credentials/configuration. If the connection store
+    // rejects (or the effective endpoint cannot be resolved) HERE, prior
+    // settled/in-flight connector-test evidence and any live reachable health
+    // must NOT survive — detach the evidence, replace health with a sanitized
+    // non-reachable state, and surface a fixed safe error. Raw
+    // credential/configuration/error text is never exposed, and NO connector
+    // test or business action request is sent after this failure. A
+    // controlled connector_unconfigured stays connector_unconfigured/503;
+    // unexpected configuration/credential-store errors map to
+    // credential_unavailable/502.
+    let connector;
+    try {
+      connector = await resolveEffectiveConnector(extension.id, declaredConnector);
+    } catch (error) {
+      detachConnectorTestEvidence(extension.id, declaredConnector.id);
+      const unconfigured = error?.code === 'connector_unconfigured';
+      const code = unconfigured ? 'connector_unconfigured' : 'credential_unavailable';
+      setConnectionHealth(extension.id, declaredConnector.id, 'unreachable', code);
+      throw new InteractiveUIRuntimeError(
+        unconfigured ? 'Connector endpoint is not configured' : 'Connector credentials are unavailable',
+        unconfigured ? 503 : 502,
+        code,
+      );
+    }
     const target = new URL(action.request.path.slice(1), connector.baseUrl.endsWith('/') ? connector.baseUrl : `${connector.baseUrl}/`);
     if (target.origin !== connector.origin) throw new InteractiveUIRuntimeError('Action target escaped the connector origin', 403, 'network_not_allowed');
 
+    // Phase R3: before the real business request, require a cached/coalesced
+    // connector test when the connector declares one. ANY health failure
+    // returns an actionable stable error and sends ZERO business action
+    // request — a failing response is never labeled reachable and empty
+    // success is never fabricated.
+    if (connector.test) {
+      await testConnection(extension.id, declaredConnector.id, { force: false });
+    }
+
     const requestId = crypto.randomUUID();
     const headers = new Headers({ Accept: 'application/json', 'X-OpenChamber-Request-Id': requestId });
-    await applyConnectorAuthentication(extension.id, connector, headers);
+    // If the preflight succeeded but THIS action's authentication fails (e.g.
+    // the credential was removed in between), detach the test evidence and
+    // replace reachable health with the proper non-reachable state; the raw
+    // credential/error text is never exposed.
+    try {
+      await applyConnectorAuthentication(extension.id, connector, headers);
+    } catch (error) {
+      detachConnectorTestEvidence(extension.id, connector.id);
+      const unconfigured = error?.code === 'connector_unconfigured';
+      const code = unconfigured ? 'connector_unconfigured' : 'credential_unavailable';
+      setConnectionHealth(extension.id, connector.id, 'unreachable', code);
+      throw new InteractiveUIRuntimeError(
+        unconfigured ? 'Connector credentials are not configured' : 'Connector credentials are unavailable',
+        unconfigured ? 503 : 502,
+        code,
+      );
+    }
     const init = {
       method: action.request.method,
       headers,
@@ -1489,21 +1988,21 @@ export const createInteractiveUIRuntime = ({
       response = await fetchImpl(target, init);
     } catch (error) {
       const message = error?.name === 'TimeoutError' ? 'Business system request timed out' : 'Business system request failed';
+      // A failed real business request invalidates/detaches any prior
+      // connector-test evidence (settled cache + in-flight joinability +
+      // token), so the next action must obtain FRESH safe-test evidence and a
+      // stale concurrent test can never overwrite this newer failure health.
+      detachConnectorTestEvidence(extension.id, connector.id);
       setConnectionHealth(extension.id, connector.id, 'unreachable', 'upstream_unavailable');
       throw new InteractiveUIRuntimeError(message, 502, 'upstream_unavailable');
     }
-    const body = await response.arrayBuffer();
-    if (body.byteLength > MAX_UPSTREAM_BYTES) throw new InteractiveUIRuntimeError('Business system response is too large', 502, 'upstream_response_too_large');
-    const text = new TextDecoder().decode(body);
-    let data = null;
-    if (text.trim()) {
-      try {
-        data = JSON.parse(text);
-      } catch {
-        throw new InteractiveUIRuntimeError('Business system returned invalid JSON', 502, 'invalid_upstream_response');
-      }
-    }
+    // Classify the non-2xx status IMMEDIATELY, BEFORE reading/retaining the
+    // body: a hostile or throwing 401/403 body must still map to
+    // connector_unauthorized/connector_forbidden and is never consumed.
     if (!response.ok) {
+      detachConnectorTestEvidence(extension.id, connector.id);
+      // Best-effort cancel the non-2xx body WITHOUT consuming it.
+      void discardResponseBody(response);
       if (response.status === 401) {
         setConnectionHealth(extension.id, connector.id, 'unauthorized', 'connector_unauthorized');
         throw new InteractiveUIRuntimeError('Access key is invalid or expired', 401, 'connector_unauthorized');
@@ -1512,12 +2011,44 @@ export const createInteractiveUIRuntime = ({
         setConnectionHealth(extension.id, connector.id, 'forbidden', 'connector_forbidden');
         throw new InteractiveUIRuntimeError('Access key does not have permission', 403, 'connector_forbidden');
       }
-      setConnectionHealth(extension.id, connector.id, 'reachable', 'upstream_error');
+      // All other failed HTTP/upstream conditions are unreachable evidence
+      // (never reachable); the response body is not retained.
+      setConnectionHealth(extension.id, connector.id, 'unreachable', 'upstream_error');
       throw new InteractiveUIRuntimeError(
         `Business system rejected the request (${response.status})`,
         response.status >= 400 && response.status < 500 ? response.status : 502,
         'upstream_error',
       );
+    }
+    // 2xx: consume the body through the SHARED streaming-bounded reader
+    // (Content-Length early rejection, cancel on chunk overflow, bounded
+    // memory). A read/overflow failure is a stable actionable unreachable
+    // upstream failure; prior preflight evidence is detached before recording
+    // it so stale completion can never overwrite it.
+    let body;
+    try {
+      body = await readResponseBytes(response, MAX_UPSTREAM_BYTES, 'Business system response');
+    } catch (error) {
+      const tooLarge = error?.code === 'hosted_payload_too_large';
+      const code = tooLarge ? 'upstream_response_too_large' : 'upstream_unavailable';
+      detachConnectorTestEvidence(extension.id, connector.id);
+      setConnectionHealth(extension.id, connector.id, 'unreachable', code);
+      throw new InteractiveUIRuntimeError(
+        tooLarge ? 'Business system response is too large' : 'Business system response could not be read',
+        502,
+        code,
+      );
+    }
+    const text = new TextDecoder().decode(body);
+    let data = null;
+    if (text.trim()) {
+      try {
+        data = JSON.parse(text);
+      } catch {
+        detachConnectorTestEvidence(extension.id, connector.id);
+        setConnectionHealth(extension.id, connector.id, 'unreachable', 'invalid_upstream_response');
+        throw new InteractiveUIRuntimeError('Business system returned invalid JSON', 502, 'invalid_upstream_response');
+      }
     }
     logger.info?.('[InteractiveUI] Business action completed', {
       requestId,
@@ -1575,53 +2106,192 @@ export const createInteractiveUIRuntime = ({
     };
   };
 
+  // Phase R3: trims the manager lifecycle summary to the SAFE Workbench
+  // catalog shape (status, health, blocked, consent flag) with a strict
+  // ALLOWLIST normalizer — only the documented enum strings, a valid
+  // timestamp string or null, stable safe codes, and a boolean are accepted.
+  // Every object/array/unknown-shaped value is dropped, so an injected
+  // callback can never relay arbitrary nested data, hashes, keys, paths, or
+  // secrets into the supposedly safe Workbench catalog. Returns null for
+  // non-record input.
+  const CATALOG_LIFECYCLE_STATUSES = new Set(['none', 'available', 'required']);
+  const CATALOG_HEALTH_STATUSES = new Set(['unknown', 'reachable', 'unreachable', 'trust_invalid']);
+  const CATALOG_SAFE_CODE_PATTERN = /^[a-z0-9_]+$/;
+  const safeCatalogLifecycle = (lifecycle) => {
+    if (!isRecord(lifecycle)) return null;
+    const status = typeof lifecycle.status === 'string' && CATALOG_LIFECYCLE_STATUSES.has(lifecycle.status)
+      ? lifecycle.status
+      : 'none';
+    const health = isRecord(lifecycle.health) ? lifecycle.health : {};
+    const healthStatus = typeof health.status === 'string' && CATALOG_HEALTH_STATUSES.has(health.status)
+      ? health.status
+      : 'unknown';
+    const checkedAt = typeof health.checkedAt === 'string'
+      && Number.isFinite(Date.parse(health.checkedAt))
+      ? health.checkedAt
+      : null;
+    const code = typeof health.code === 'string' && CATALOG_SAFE_CODE_PATTERN.test(health.code)
+      ? health.code
+      : null;
+    const blockedCode = isRecord(lifecycle.blocked)
+      && typeof lifecycle.blocked.code === 'string'
+      && CATALOG_SAFE_CODE_PATTERN.test(lifecycle.blocked.code)
+      ? lifecycle.blocked.code
+      : null;
+    return {
+      status,
+      health: {
+        status: healthStatus,
+        checkedAt,
+        ...(code ? { code } : {}),
+      },
+      ...(blockedCode ? { blocked: { code: blockedCode } } : {}),
+      requiresUserConfirmation: lifecycle.requiresUserConfirmation === true,
+    };
+  };
+
+  // Bounded fan-out helper for catalog-time Remote work: a HARD cap of 4
+  // workers with per-item isolation (one slow/broken Remote never multiplies
+  // timeouts serially, never blocks unrelated items, and never exceeds the
+  // cap).
+  const runBoundedConcurrently = async (items, worker) => {
+    const maxWorkers = Math.max(1, Math.min(4, items.length));
+    let index = 0;
+    const workers = Array.from({ length: maxWorkers }, async () => {
+      while (index < items.length) {
+        const item = items[index];
+        index += 1;
+        await worker(item);
+      }
+    });
+    await Promise.all(workers);
+  };
+
   const getWorkbenchCatalog = async () => {
-    const { extensions, errors } = await loadExtensions();
+    const first = await loadExtensions();
+    // Phase R3: every extension runs the Remote lifecycle prepare BEFORE the
+    // catalog is built with BOUNDED concurrency (hard cap 4) and per-extension
+    // isolation; an automatic update reloads discovery. One bad/blocked
+    // extension never blocks unrelated entries.
+    let appliedAny = false;
+    await runBoundedConcurrently(first.extensions, async (extension) => {
+      try {
+        if (await prepareForExtensionUse(extension.id, 'workbench')) appliedAny = true;
+      } catch {
+        // The extension stays visible in the catalog with its blocked state.
+      }
+    });
+    const { extensions, errors } = appliedAny ? await loadExtensions() : first;
+    const catalogExtensions = extensions.map((extension) => ({
+      id: extension.id,
+      name: extension.name,
+      shortName: extension.shortName,
+      version: extension.version,
+      iconPath: extension.icon
+        ? `/api/interactive-ui/extensions/${encodeURIComponent(extension.id)}/icon`
+        : null,
+      surfaces: [
+        ...extension.views.map((view) => ({
+          extensionId: extension.id,
+          extensionVersion: extension.version,
+          surfaceId: view.id,
+          surfaceKind: 'view',
+          form: 'interactive-ui',
+          runtime: view.runtime,
+          title: view.title,
+          description: view.dashboard?.description ?? null,
+          manualLaunch: view.dashboard?.manualLaunch ?? {
+            enabled: false,
+            missingRequiredPaths: [],
+            reason: 'dashboard-contract-missing',
+          },
+          dashboard: view.dashboard,
+        })),
+        ...extension.artifacts.map((artifact) => ({
+          extensionId: extension.id,
+          extensionVersion: extension.version,
+          surfaceId: artifact.id,
+          surfaceKind: 'artifact',
+          form: 'html-artifact',
+          runtime: 'artifact',
+          title: artifact.title,
+          description: artifact.dashboard?.description ?? null,
+          manualLaunch: artifact.dashboard?.manualLaunch ?? {
+            enabled: false,
+            missingRequiredPaths: [],
+            reason: 'dashboard-contract-missing',
+          },
+          dashboard: artifact.dashboard,
+        })),
+      ],
+      links: extension.links,
+    }));
+    // CATALOG-ONLY SEAM: enabled manager-owned Remote apps whose persisted
+    // status (required block / trust-invalid) excludes their executable root
+    // stay VISIBLE as blocked (name/version/surfaces/lifecycle, every launch
+    // disabled) after a fresh manager/runtime restart. No resolver/launch
+    // authority, no internal paths/keys/hashes beyond the safe lifecycle
+    // contract, no Remote resource fetches; per-extension isolation.
+    if (typeof getBlockedCatalogEntries === 'function') {
+      let blockedEntries = [];
+      try {
+        blockedEntries = await getBlockedCatalogEntries();
+      } catch {
+        blockedEntries = [];
+      }
+      for (const entry of Array.isArray(blockedEntries) ? blockedEntries : []) {
+        if (!isRecord(entry) || typeof entry.id !== 'string') continue;
+        if (catalogExtensions.some((candidate) => candidate.id === entry.id)) continue;
+        const surfaces = Array.isArray(entry.surfaces)
+          ? entry.surfaces.flatMap((surface) => {
+              if (!isRecord(surface) || typeof surface.surfaceId !== 'string') return [];
+              return [{
+                extensionId: entry.id,
+                extensionVersion: typeof entry.version === 'string' ? entry.version : '',
+                surfaceId: surface.surfaceId,
+                surfaceKind: surface.surfaceKind === 'artifact' ? 'artifact' : 'view',
+                form: surface.surfaceKind === 'artifact' ? 'html-artifact' : 'interactive-ui',
+                runtime: surface.surfaceKind === 'artifact'
+                  ? 'artifact'
+                  : (surface.runtime === 'native' ? 'native' : 'declarative'),
+                title: typeof surface.title === 'string' && surface.title.trim()
+                  ? surface.title.trim()
+                  : surface.surfaceId,
+                description: null,
+                manualLaunch: { enabled: false, missingRequiredPaths: [], reason: 'blocked-required' },
+                dashboard: null,
+              }];
+            })
+          : [];
+        catalogExtensions.push({
+          id: entry.id,
+          name: typeof entry.name === 'string' && entry.name.trim() ? entry.name.trim() : entry.id,
+          shortName: typeof entry.name === 'string' && entry.name.trim() ? entry.name.trim() : entry.id,
+          version: typeof entry.version === 'string' ? entry.version : '',
+          iconPath: null, // never fetch a Remote icon for a blocked app
+          surfaces,
+          links: [],
+        });
+      }
+    }
+    const lifecycleByExtension = new Map();
+    await runBoundedConcurrently(catalogExtensions, async (extension) => {
+      if (typeof getExtensionLifecycle !== 'function') return;
+      try {
+        const lifecycle = await getExtensionLifecycle(extension.id);
+        const safe = safeCatalogLifecycle(lifecycle);
+        if (safe) lifecycleByExtension.set(extension.id, safe);
+      } catch {
+        // Per-extension isolation: a broken Remote yields no lifecycle block.
+      }
+    });
     return {
       apiVersion: 1,
-      extensions: extensions.map((extension) => ({
-        id: extension.id,
-        name: extension.name,
-        shortName: extension.shortName,
-        version: extension.version,
-        iconPath: extension.icon
-          ? `/api/interactive-ui/extensions/${encodeURIComponent(extension.id)}/icon`
-          : null,
-        surfaces: [
-          ...extension.views.map((view) => ({
-            extensionId: extension.id,
-            extensionVersion: extension.version,
-            surfaceId: view.id,
-            surfaceKind: 'view',
-            form: 'interactive-ui',
-            runtime: view.runtime,
-            title: view.title,
-            description: view.dashboard?.description ?? null,
-            manualLaunch: view.dashboard?.manualLaunch ?? {
-              enabled: false,
-              missingRequiredPaths: [],
-              reason: 'dashboard-contract-missing',
-            },
-            dashboard: view.dashboard,
-          })),
-          ...extension.artifacts.map((artifact) => ({
-            extensionId: extension.id,
-            extensionVersion: extension.version,
-            surfaceId: artifact.id,
-            surfaceKind: 'artifact',
-            form: 'html-artifact',
-            runtime: 'artifact',
-            title: artifact.title,
-            description: artifact.dashboard?.description ?? null,
-            manualLaunch: artifact.dashboard?.manualLaunch ?? {
-              enabled: false,
-              missingRequiredPaths: [],
-              reason: 'dashboard-contract-missing',
-            },
-            dashboard: artifact.dashboard,
-          })),
-        ],
-        links: extension.links,
+      extensions: catalogExtensions.map((extension) => ({
+        ...extension,
+        ...(lifecycleByExtension.has(extension.id)
+          ? { lifecycle: lifecycleByExtension.get(extension.id) }
+          : {}),
       })),
       errors,
     };
@@ -1658,6 +2328,7 @@ export const createInteractiveUIRuntime = ({
     removeRemoteConnection,
     removeExtensionConnections,
     testConnection,
+    warmRemoteLifecycle,
     getViewDescriptor,
     getNativeBundle,
     getExtensionIcon,

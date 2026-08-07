@@ -452,6 +452,29 @@ export const registerInteractiveUIRoutes = (app, {
     }
   });
 
+  app.post('/api/interactive-ui/manager/extensions/:extensionId/remote/update-check', express.json({ limit: '16kb' }), async (req, res) => {
+    try {
+      res.setHeader('Cache-Control', 'no-store');
+      res.json(await manager.checkRemoteUpdate(req.params.extensionId, {
+        force: req.body?.force === true,
+      }));
+    } catch (error) {
+      sendError(res, error);
+    }
+  });
+
+  app.post('/api/interactive-ui/manager/extensions/:extensionId/remote/update-apply', express.json({ limit: '16kb' }), async (req, res) => {
+    try {
+      res.setHeader('Cache-Control', 'no-store');
+      res.json(await manager.applyRemoteUpdate(req.params.extensionId, {
+        confirmedManifestHash: req.body?.confirmedManifestHash,
+        confirmedPublisherFingerprint: req.body?.confirmedPublisherFingerprint,
+      }));
+    } catch (error) {
+      sendError(res, error);
+    }
+  });
+
   app.post('/api/interactive-ui/manager/extensions/:extensionId/rollback', async (req, res) => {
     try {
       res.json(await manager.rollback(req.params.extensionId));
@@ -790,10 +813,25 @@ export const registerInteractiveUIRoutes = (app, {
     }
   });
 
-  app.post('/api/interactive-ui/connections/:extensionId/:connectorId/test', async (req, res) => {
+  app.post('/api/interactive-ui/connections/:extensionId/:connectorId/test', express.json({ limit: '16kb' }), async (req, res) => {
     try {
       res.setHeader('Cache-Control', 'no-store');
-      res.json(await runtime.testConnection(req.params.extensionId, req.params.connectorId));
+      // Manual health always uses force (bypasses a settled TTL entry while
+      // still joining an in-flight probe). An optional update check also runs
+      // forced and contributes a safe update result when the extension is a
+      // Remote app; the response may include it.
+      const health = await runtime.testConnection(req.params.extensionId, req.params.connectorId, { force: true });
+      if (req.body?.checkForUpdates !== true) {
+        res.json(health);
+        return;
+      }
+      let update = null;
+      try {
+        update = await manager.checkRemoteUpdate(req.params.extensionId, { force: true });
+      } catch (error) {
+        if (error?.code !== 'remote_extension_required' && error?.code !== 'extension_not_found') throw error;
+      }
+      res.json(update ? { ...health, update } : health);
     } catch (error) {
       sendError(res, error);
     }

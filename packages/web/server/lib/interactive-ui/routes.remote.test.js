@@ -42,7 +42,11 @@ const canonicalize = (value) => {
   return Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonicalize(value[key])]));
 };
 
-const createRemoteManifest = (keys) => {
+const createRemoteManifest = (keys, {
+  version = '1.0.0',
+  update = undefined,
+  extraAction = false,
+} = {}) => {
   const view = Buffer.from(JSON.stringify({
     $schema: 'openchamber://declarative-view/v1',
     id: 'com.acme.remote.overview',
@@ -62,7 +66,8 @@ const createRemoteManifest = (keys) => {
   }];
   const unsigned = {
     $schema: HOSTED_OCIX_MANIFEST_SCHEMA,
-    app: { id: 'com.acme.remote', version: '1.0.0', publishedAt: '2026-08-05T00:00:00.000Z' },
+    app: { id: 'com.acme.remote', version, publishedAt: '2026-08-05T00:00:00.000Z' },
+    ...(update !== undefined ? { update } : {}),
     publisher: {
       id: 'com.acme.publisher',
       name: 'Acme',
@@ -74,7 +79,7 @@ const createRemoteManifest = (keys) => {
       networkOrigins: ['https://api.example.com'],
       externalLinkOrigins: [],
       credentialScopes: ['crm.read'],
-      actionIds: ['com.acme.remote.read'],
+      actionIds: extraAction ? ['com.acme.remote.read', 'com.acme.remote.export'] : ['com.acme.remote.read'],
       agentToolNames: ['remote_open'],
       clipboard: false,
       popups: false,
@@ -84,7 +89,7 @@ const createRemoteManifest = (keys) => {
       $schema: 'openchamber://extension/v1',
       id: 'com.acme.remote',
       name: 'Acme Remote',
-      version: '1.0.0',
+      version,
       icon: 'ui/icon.svg',
       agentRouting: {
         domain: 'remote',
@@ -97,6 +102,7 @@ const createRemoteManifest = (keys) => {
         type: 'http',
         baseUrl: 'https://api.example.com',
         auth: { type: 'api-key' },
+        test: { method: 'GET', path: '/health' },
       }],
       views: [{
         id: 'com.acme.remote.overview',
@@ -106,7 +112,17 @@ const createRemoteManifest = (keys) => {
         routing: { intents: ['remote.overview'], priority: 80, operation: 'read' },
         displayModes: ['inline', 'workspace'],
       }],
-      actions: [{
+      actions: extraAction ? [{
+        id: 'com.acme.remote.read',
+        connector: 'crm',
+        risk: 'read',
+        request: { method: 'GET', path: '/crm' },
+      }, {
+        id: 'com.acme.remote.export',
+        connector: 'crm',
+        risk: 'write',
+        request: { method: 'POST', path: '/crm/export' },
+      }] : [{
         id: 'com.acme.remote.read',
         connector: 'crm',
         risk: 'read',
@@ -141,6 +157,7 @@ const createApp = async ({
   const opencodeConfigDirectory = await createTemporaryDirectory('ocix-remote-routes-opencode-');
   const keys = generatePublisherKeyPair();
   const manifest = createRemoteManifest(keys);
+  const holder = { document: manifest.document };
   const requested = [];
   const requests = [];
   let resourceMode = 'ok';
@@ -149,7 +166,13 @@ const createApp = async ({
     requested.push(value);
     requests.push({ url: value, headers: { ...(init?.headers ?? {}) } });
     if (value === 'https://apps.example.com/manifest.json') {
-      return new Response(JSON.stringify(manifest.document), {
+      return new Response(JSON.stringify(holder.document), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+    if (value === 'https://api.example.com/health') {
+      return new Response(JSON.stringify({ ok: true }), {
         status: 200,
         headers: { 'Content-Type': 'application/json' },
       });
@@ -239,6 +262,8 @@ const createApp = async ({
     requests,
     runtime,
     manager,
+    holder,
+    keys,
     setResourceMode: (mode) => {
       resourceMode = mode;
     },
@@ -876,5 +901,179 @@ describe('Remote OCIX routes', () => {
     expect(JSON.stringify(view.body)).not.toContain('sk-lazy-secret-42');
     await expect(fs.stat(path.join(dataDirectory, 'interactive-ui', 'remote-cache')))
       .rejects.toMatchObject({ code: 'ENOENT' });
+  });
+});
+
+describe('Remote OCIX update routes (Phase R3)', () => {
+  const connect = async (app) => {
+    const inspection = await request(app)
+      .post('/api/interactive-ui/manager/remote/inspect')
+      .send({ appEntryUrl: 'https://apps.example.com/manifest.json' });
+    const response = await request(app)
+      .post('/api/interactive-ui/manager/remote/connect')
+      .send(connectBody(inspection));
+    expect(response.status).toBe(201);
+    return inspection;
+  };
+
+  test('update-check classifies expansion without applying; update-apply requires exact confirmation and stays metadata-only', async () => {
+    const { app, holder, requested, keys } = await createApp({});
+    await connect(app);
+
+    holder.document = createRemoteManifest(keys, {
+      version: '2.0.0',
+      extraAction: true,
+      update: { changeSummary: 'Adds export action' },
+    }).document;
+    const check = await request(app)
+      .post('/api/interactive-ui/manager/extensions/com.acme.remote/remote/update-check')
+      .send({ force: true });
+    expect(check.status).toBe(200);
+    expect(check.body).toMatchObject({
+      status: 'available',
+      currentVersion: '1.0.0',
+      remoteVersion: '2.0.0',
+      permissionDelta: 'expanded',
+      requiresUserConfirmation: true,
+      health: { status: 'reachable' },
+      changeSummary: 'Adds export action',
+    });
+    expect(check.body.addedPermissions.actionIds).toEqual(['com.acme.remote.export']);
+    expect(JSON.stringify(check.body)).not.toContain('BEGIN PUBLIC KEY');
+    expect(JSON.stringify(check.body)).not.toContain('installationId');
+
+    // Apply without the exact confirmation: rejected, nothing changes.
+    const rejected = await request(app)
+      .post('/api/interactive-ui/manager/extensions/com.acme.remote/remote/update-apply')
+      .send({});
+    expect(rejected.status).toBe(403);
+    expect(rejected.body.code).toBe('remote_confirmation_required');
+
+    // Confirmed apply switches the accepted contract atomically and fetches
+    // ZERO declared resource bytes.
+    const applied = await request(app)
+      .post('/api/interactive-ui/manager/extensions/com.acme.remote/remote/update-apply')
+      .send({
+        confirmedManifestHash: check.body.remoteManifestHash,
+        confirmedPublisherFingerprint: check.body.publisherFingerprint,
+      });
+    expect(applied.status).toBe(200);
+    expect(applied.body).toMatchObject({ applied: true, previousVersion: '1.0.0' });
+    const snapshot = await request(app).get('/api/interactive-ui/manager');
+    expect(snapshot.body.extensions[0].activeVersion).toBe('2.0.0');
+    expect(snapshot.body.extensions[0].versions['2.0.0'].remote.acceptedManifest.version).toBe('2.0.0');
+    expect(requested.some((url) => url.includes('overview') || url.includes('icon'))).toBe(false);
+
+    // A subsequent check reports no update.
+    const after = await request(app)
+      .post('/api/interactive-ui/manager/extensions/com.acme.remote/remote/update-check')
+      .send({ force: true });
+    expect(after.body.status).toBe('none');
+  });
+
+  test('update-check reports required updates as blocked-with-consent state and version reuse fails stably', async () => {
+    const { app, holder, keys } = await createApp({});
+    await connect(app);
+
+    holder.document = createRemoteManifest(keys, {
+      version: '2.0.0',
+      extraAction: true,
+      update: { required: true, changeSummary: 'Mandatory export fix' },
+    }).document;
+    const required = await request(app)
+      .post('/api/interactive-ui/manager/extensions/com.acme.remote/remote/update-check')
+      .send({ force: true });
+    expect(required.status).toBe(200);
+    expect(required.body).toMatchObject({
+      status: 'required',
+      remoteVersion: '2.0.0',
+      requiresUserConfirmation: true,
+    });
+
+    // Same semantic version with different signed content: stable error.
+    holder.document = createRemoteManifest(keys, {
+      update: { changeSummary: 're-signed' },
+    }).document;
+    const reused = await request(app)
+      .post('/api/interactive-ui/manager/extensions/com.acme.remote/remote/update-check')
+      .send({ force: true });
+    expect(reused.status).toBe(409);
+    expect(reused.body.code).toBe('remote_update_version_reuse');
+  });
+
+  test('connection test with checkForUpdates returns health plus a safe update result', async () => {
+    const { app, holder, keys } = await createApp({});
+    await connect(app);
+
+    const health = await request(app)
+      .post('/api/interactive-ui/connections/com.acme.remote/crm/test')
+      .send({});
+    expect(health.status).toBe(200);
+    expect(health.body).toMatchObject({ ok: true });
+
+    holder.document = createRemoteManifest(keys, {
+      version: '2.0.0',
+      extraAction: true,
+    }).document;
+    const combined = await request(app)
+      .post('/api/interactive-ui/connections/com.acme.remote/crm/test')
+      .send({ checkForUpdates: true });
+    expect(combined.status).toBe(200);
+    expect(combined.body).toMatchObject({ ok: true });
+    expect(combined.body.update).toMatchObject({
+      status: 'available',
+      remoteVersion: '2.0.0',
+      permissionDelta: 'expanded',
+      requiresUserConfirmation: true,
+    });
+    expect(JSON.stringify(combined.body)).not.toContain('BEGIN PUBLIC KEY');
+
+    // Non-Remote extensions simply omit the update result; an uninstalled
+    // extension fails at the health probe (404) without touching the update
+    // check.
+    const localOnly = await createApp({});
+    const response = await request(localOnly.app)
+      .post('/api/interactive-ui/connections/com.acme.remote/crm/test')
+      .send({ checkForUpdates: true });
+    expect(response.status).toBe(404);
+    expect(response.body.code).toBe('extension_not_found');
+  });
+
+  test('route-level update-check persists the required block and the response agrees with the manager state', async () => {
+    const { app, holder, keys } = await createApp({});
+    await connect(app);
+    holder.document = createRemoteManifest(keys, {
+      version: '2.0.0',
+      extraAction: true,
+      update: { required: true, changeSummary: 'mandatory' },
+    }).document;
+
+    const check = await request(app)
+      .post('/api/interactive-ui/manager/extensions/com.acme.remote/remote/update-check')
+      .send({ force: true });
+    expect(check.status).toBe(200);
+    // The response is consistent with the DURABLE state: status required +
+    // blocked persisted before the API reported success.
+    expect(check.body).toMatchObject({
+      status: 'required',
+      remoteVersion: '2.0.0',
+      requiresUserConfirmation: true,
+      blocked: {
+        code: 'remote_update_required_blocked',
+        required: true,
+        version: '2.0.0',
+        reason: 'confirmation-required',
+      },
+    });
+    expect(JSON.stringify(check.body)).not.toContain('BEGIN PUBLIC KEY');
+    const snapshot = await request(app).get('/api/interactive-ui/manager');
+    expect(snapshot.body.extensions[0].activeVersion).toBe('1.0.0'); // check applied nothing
+    expect(snapshot.body.extensions[0].versions['1.0.0'].remote.blocked).toMatchObject({
+      required: true,
+      version: '2.0.0',
+      reason: 'confirmation-required',
+    });
+    expect(JSON.stringify(snapshot.body)).not.toContain('BEGIN PUBLIC KEY');
+    expect(JSON.stringify(snapshot.body)).not.toContain('installationId');
   });
 });

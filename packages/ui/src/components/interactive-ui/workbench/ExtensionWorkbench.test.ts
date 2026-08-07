@@ -1,11 +1,12 @@
 import { describe, expect, test } from 'bun:test';
 
 import type { McpAppResultEnvelope } from '@/lib/interactive-ui/mcpApp';
-import type { WorkbenchGeneratedSnapshot } from '@/lib/interactive-ui/workbench';
+import type { WorkbenchExtensionDescriptor, WorkbenchGeneratedSnapshot } from '@/lib/interactive-ui/workbench';
 import {
   persistMcpAppWorkbenchSnapshot,
   persistMcpAppOriginToolPart,
   refreshMcpAppWorkbenchSnapshot,
+  resolveWorkbenchExtensionLifecycleState,
   resolveWorkbenchMcpAppFocusDisplayMode,
   resolveWorkbenchPrimaryDisplayAction,
 } from './ExtensionWorkbench';
@@ -149,5 +150,60 @@ describe('Extension Workbench MCP App entry', () => {
     expect(persisted.state.status).toBe('completed');
     expect(writtenOutput).toContain('Revision 5');
     expect(writtenOutput).toContain('"revision":5');
+  });
+});
+
+describe('Extension Workbench Remote lifecycle state (Phase R3)', () => {
+  const baseExtension = (overrides: Record<string, unknown> = {}): WorkbenchExtensionDescriptor => ({
+    id: 'com.acme.remote',
+    name: 'Acme Remote',
+    shortName: 'Remote',
+    version: '1.0.0',
+    iconPath: null,
+    surfaces: [{
+      extensionId: 'com.acme.remote',
+      extensionVersion: '1.0.0',
+      surfaceId: 'com.acme.remote.overview',
+      surfaceKind: 'view',
+      form: 'interactive-ui',
+      runtime: 'declarative',
+      title: 'Overview',
+      description: null,
+      manualLaunch: { enabled: true, missingRequiredPaths: [], reason: undefined },
+      dashboard: null,
+    }],
+    links: [],
+    ...overrides,
+  });
+
+  test('blocks launching only for required/trust_invalid/blocked, not merely unreachable', () => {
+    expect(resolveWorkbenchExtensionLifecycleState(baseExtension())).toEqual({
+      blocked: false,
+      unreachable: false,
+      warning: false,
+    });
+    // Unreachable is a warning; surfaces stay launchable (read-only capable).
+    expect(resolveWorkbenchExtensionLifecycleState(baseExtension({
+      lifecycle: { status: 'none', health: { status: 'unreachable', checkedAt: '2026-08-05T00:00:00.000Z', code: 'hosted_manifest_unavailable' } },
+    }))).toEqual({ blocked: false, unreachable: true, warning: true });
+    // Required update: blocked.
+    expect(resolveWorkbenchExtensionLifecycleState(baseExtension({
+      lifecycle: { status: 'required', health: { status: 'reachable', checkedAt: '2026-08-05T00:00:00.000Z' }, requiresUserConfirmation: true },
+    }))).toEqual({ blocked: true, unreachable: false, warning: true });
+    // Persisted blocked detail: blocked.
+    expect(resolveWorkbenchExtensionLifecycleState(baseExtension({
+      lifecycle: { status: 'none', health: { status: 'reachable', checkedAt: '2026-08-05T00:00:00.000Z' }, blocked: { code: 'remote_update_required_blocked' } },
+    }))).toEqual({ blocked: true, unreachable: false, warning: true });
+    // trust_invalid health: blocked even with no status/blocked field.
+    expect(resolveWorkbenchExtensionLifecycleState(baseExtension({
+      lifecycle: { status: 'none', health: { status: 'trust_invalid', checkedAt: null, code: 'publisher_untrusted' } },
+    }))).toEqual({ blocked: true, unreachable: false, warning: true });
+    // Healthy extension with consent-awaiting available update stays usable.
+    expect(resolveWorkbenchExtensionLifecycleState(baseExtension({
+      lifecycle: { status: 'available', health: { status: 'reachable', checkedAt: '2026-08-05T00:00:00.000Z' }, requiresUserConfirmation: true },
+    }))).toEqual({ blocked: false, unreachable: false, warning: false });
+    // Missing lifecycle block never crashes the catalog.
+    expect(resolveWorkbenchExtensionLifecycleState(baseExtension({ lifecycle: undefined })))
+      .toEqual({ blocked: false, unreachable: false, warning: false });
   });
 });

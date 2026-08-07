@@ -192,6 +192,20 @@ const surfaceKey = (extensionId: string, surfaceId: string): string => (
   `${extensionId}:${surfaceId}`
 );
 
+// eslint-disable-next-line react-refresh/only-export-components -- Pure catalog lifecycle classifier is covered by focused tests.
+export const resolveWorkbenchExtensionLifecycleState = (extension: WorkbenchExtensionDescriptor): {
+  blocked: boolean;
+  unreachable: boolean;
+  warning: boolean;
+} => {
+  const lifecycle = extension.lifecycle;
+  const blocked = lifecycle?.blocked != null
+    || lifecycle?.status === 'required'
+    || lifecycle?.health.status === 'trust_invalid';
+  const unreachable = !blocked && lifecycle?.health.status === 'unreachable';
+  return { blocked, unreachable, warning: blocked || unreachable };
+};
+
 const relationshipColor = (groupId: string | undefined): string | undefined => {
   if (!groupId) return undefined;
   let hash = 0;
@@ -354,56 +368,85 @@ const WorkbenchCatalog: React.FC<WorkbenchCatalogProps> = ({
           <p className="px-2 py-5 typography-ui-caption text-muted-foreground">
             {t('workbench.catalog.empty')}
           </p>
-        ) : extensions.map((extension) => (
-          <section key={extension.id} className="mb-4">
-            <div className="flex items-center gap-2 px-2 py-1.5">
-              <div
-                className="flex size-7 shrink-0 items-center justify-center rounded-lg border border-border/60 bg-[var(--surface-elevated)] typography-micro font-semibold"
-                aria-hidden
-              >
-                {extension.shortName.slice(0, 2).toUpperCase()}
+        ) : extensions.map((extension) => {
+          // Phase R3: safe extension-level lifecycle state. Blocked/required/
+          // trust_invalid extensions are visibly blocked (launching disabled);
+          // unreachable is a warning that keeps read-only capability.
+          const lifecycleState = resolveWorkbenchExtensionLifecycleState(extension);
+          let lifecycleWarning = null;
+          if (lifecycleState.blocked) {
+            lifecycleWarning = t('workbench.catalog.lifecycleBlocked');
+          } else if (lifecycleState.unreachable) {
+            lifecycleWarning = t('workbench.catalog.lifecycleUnreachable');
+          }
+          return (
+            <section key={extension.id} className="mb-4">
+              <div className="flex items-center gap-2 px-2 py-1.5">
+                <div
+                  className="flex size-7 shrink-0 items-center justify-center rounded-lg border border-border/60 bg-[var(--surface-elevated)] typography-micro font-semibold"
+                  aria-hidden
+                >
+                  {extension.shortName.slice(0, 2).toUpperCase()}
+                </div>
+                <div className="min-w-0">
+                  <h3 className="truncate typography-ui-label font-semibold">{extension.shortName}</h3>
+                  <p className="truncate typography-micro text-muted-foreground">{extension.name}</p>
+                </div>
               </div>
-              <div className="min-w-0">
-                <h3 className="truncate typography-ui-label font-semibold">{extension.shortName}</h3>
-                <p className="truncate typography-micro text-muted-foreground">{extension.name}</p>
-              </div>
-            </div>
-            <div className="space-y-1">
-              {extension.surfaces.map((surface) => {
-                const disabled = !surface.manualLaunch.enabled;
-                const reason = surface.manualLaunch.reason
-                  || (disabled ? t('workbench.catalog.requiresContext') : undefined);
-                return (
-                  <button
-                    key={surface.surfaceId}
-                    type="button"
-                    disabled={disabled}
-                    title={reason}
-                    aria-describedby={disabled ? `${surface.surfaceId}-reason` : undefined}
-                    onClick={() => onLaunch(extension, surface)}
-                    className={cn(
-                      'group w-full rounded-lg px-2 py-2 text-left transition-colors',
-                      'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60',
-                      disabled
-                        ? 'cursor-not-allowed opacity-50'
-                        : 'hover:bg-interactive-hover active:bg-interactive-active',
-                    )}
-                  >
-                    <span className="block truncate typography-ui-caption font-medium">{surface.title}</span>
-                    <span className="mt-0.5 flex items-center gap-1.5 typography-micro text-muted-foreground">
-                      <span>{getSurfaceLabel(surface)}</span>
-                      {disabled && (
-                        <span id={`${surface.surfaceId}-reason`} className="truncate">
-                          · {reason}
-                        </span>
+              {lifecycleWarning && (
+                <p
+                  className={cn(
+                    'mx-2 mb-1 rounded-md px-2 py-1 typography-micro',
+                    lifecycleState.blocked
+                      ? 'bg-[var(--status-error)]/10 text-[var(--status-error)]'
+                      : 'bg-[var(--status-warning)]/10 text-[var(--status-warning)]',
+                  )}
+                  role={lifecycleState.blocked ? 'alert' : 'status'}
+                >
+                  {lifecycleWarning}
+                </p>
+              )}
+              <div className="space-y-1">
+                {extension.surfaces.map((surface) => {
+                  const disabled = lifecycleState.blocked || !surface.manualLaunch.enabled;
+                  let reason = surface.manualLaunch.reason;
+                  if (lifecycleState.blocked) {
+                    reason = t('workbench.catalog.lifecycleBlockedReason');
+                  } else if (disabled) {
+                    reason = reason ?? t('workbench.catalog.requiresContext');
+                  }
+                  return (
+                    <button
+                      key={surface.surfaceId}
+                      type="button"
+                      disabled={disabled}
+                      title={reason}
+                      aria-describedby={disabled ? `${surface.surfaceId}-reason` : undefined}
+                      onClick={() => onLaunch(extension, surface)}
+                      className={cn(
+                        'group w-full rounded-lg px-2 py-2 text-left transition-colors',
+                        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60',
+                        disabled
+                          ? 'cursor-not-allowed opacity-50'
+                          : 'hover:bg-interactive-hover active:bg-interactive-active',
                       )}
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-          </section>
-        ))}
+                    >
+                      <span className="block truncate typography-ui-caption font-medium">{surface.title}</span>
+                      <span className="mt-0.5 flex items-center gap-1.5 typography-micro text-muted-foreground">
+                        <span>{getSurfaceLabel(surface)}</span>
+                        {disabled && (
+                          <span id={`${surface.surfaceId}-reason`} className="truncate">
+                            · {reason}
+                          </span>
+                        )}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </section>
+          );
+        })}
       </div>
       <div
         className={cn(

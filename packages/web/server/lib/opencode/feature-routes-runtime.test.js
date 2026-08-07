@@ -99,9 +99,11 @@ const startRemoteFixture = async () => {
   const iconBytes = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"><rect width="10" height="10"/></svg>');
   const resourceRequests = [];
   let document;
+  let manifestRequests = 0;
   const server = http.createServer((req, res) => {
     const pathname = new URL(req.url, 'http://127.0.0.1').pathname;
     if (pathname === '/manifest.json') {
+      manifestRequests += 1;
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(document));
       return;
@@ -206,7 +208,17 @@ const startRemoteFixture = async () => {
       ).toString('base64'),
     },
   };
-  return { origin, view, iconBytes, resourceRequests };
+  return {
+    origin,
+    view,
+    iconBytes,
+    resourceRequests,
+    keys,
+    manifestRequests: () => manifestRequests,
+    publish: (nextDocument) => {
+      document = nextDocument;
+    },
+  };
 };
 
 const createMinimalRouteDependencies = ({ openchamberDataDir, opencodeConfigDirectory, configuredRoot }) => ({
@@ -489,5 +501,272 @@ describe('Interactive UI runtime production wiring (public registerRoutes path)'
       expect(serialized).not.toContain(dependencies.processLike.env.OPENCHAMBER_DATA_DIR);
       expect(serialized).not.toContain('configured-copy');
     }
+  });
+
+  it('wires Remote lifecycle prepare/getLifecycle and the background warm-up through the registered runtime', async () => {
+    const { server } = await createRegisteredServer();
+    const fixture = await startRemoteFixture();
+    await connectRemoteThroughRoutes(server, fixture);
+    const before = fixture.manifestRequests();
+    // The Workbench catalog trigger runs prepareExtensionUse + getExtension-
+    // Lifecycle through the wired production callbacks: the Remote lifecycle
+    // probe runs (coalesced/cached) and the safe summary appears.
+    const catalog = await request(server).get('/api/interactive-ui/workbench/catalog');
+    expect(catalog.status).toBe(200);
+    expect(fixture.manifestRequests()).toBeGreaterThan(before);
+    const remoteEntry = catalog.body.extensions.find((entry) => entry.id === 'com.acme.remote');
+    expect(remoteEntry.lifecycle).toMatchObject({
+      status: 'none',
+      health: { status: 'reachable' },
+    });
+    expect(JSON.stringify(catalog.body)).not.toContain('BEGIN PUBLIC KEY');
+
+    // Publish a permission-expansion update signed by the same key and apply
+    // it through the production route (metadata-only, zero resource bytes).
+    const unsigned = JSON.parse(JSON.stringify(fixture.view)); // placeholder
+    const buildV2 = () => {
+      const base = JSON.parse(JSON.stringify({
+        $schema: HOSTED_OCIX_MANIFEST_SCHEMA,
+        app: { id: 'com.acme.remote', version: '2.0.0', publishedAt: '2026-08-06T00:00:00.000Z' },
+        update: { required: false, changeSummary: 'Adds export action' },
+        publisher: {
+          id: 'com.acme.publisher',
+          name: 'Acme',
+          keyId: 'release-2026',
+          publicKey: fixture.keys.publicKey,
+        },
+        permissions: {
+          resourceOrigins: [fixture.origin],
+          networkOrigins: ['https://api.example.com'],
+          externalLinkOrigins: [],
+          credentialScopes: ['crm.read'],
+          actionIds: ['com.acme.remote.read', 'com.acme.remote.export'],
+          agentToolNames: ['remote_open'],
+          clipboard: false,
+          popups: false,
+          nativeCode: false,
+        },
+        extension: {
+          $schema: 'openchamber://extension/v1',
+          id: 'com.acme.remote',
+          name: 'Acme Remote',
+          version: '2.0.0',
+          icon: 'ui/icon.svg',
+          agentRouting: {
+            domain: 'remote',
+            intents: ['remote.overview'],
+            examples: { en: ['Open Acme Remote'] },
+            dataAuthority: 'user-provided',
+          },
+          connectors: [{
+            id: 'crm',
+            type: 'http',
+            baseUrl: 'https://api.example.com',
+            auth: { type: 'api-key' },
+          }],
+          views: [{
+            id: 'com.acme.remote.overview',
+            runtime: 'declarative',
+            entry: 'ui/overview.view.json',
+            tools: ['remote_open'],
+            routing: { intents: ['remote.overview'], priority: 80, operation: 'read' },
+            displayModes: ['inline', 'workspace'],
+          }],
+          actions: [{
+            id: 'com.acme.remote.read',
+            connector: 'crm',
+            risk: 'read',
+            request: { method: 'GET', path: '/crm' },
+          }, {
+            id: 'com.acme.remote.export',
+            connector: 'crm',
+            risk: 'write',
+            request: { method: 'POST', path: '/crm/export' },
+          }],
+          permissions: { network: ['https://api.example.com'] },
+          trust: { mode: 'declarative', signature: 'production' },
+        },
+        resources: [{
+          path: 'ui/overview.view.json',
+          url: `${fixture.origin}/ui/overview.view.json`,
+          mimeType: 'application/json',
+          sha256: hostedSha256(fixture.view),
+        }, {
+          path: 'ui/icon.svg',
+          url: `${fixture.origin}/ui/icon.svg`,
+          mimeType: 'image/svg+xml',
+          sha256: hostedSha256(fixture.iconBytes),
+        }],
+      }));
+      const signature = crypto.sign(
+        null,
+        Buffer.from(JSON.stringify(canonicalize(base))),
+        crypto.createPrivateKey(fixture.keys.privateKey),
+      ).toString('base64');
+      return {
+        ...base,
+        signature: { algorithm: 'ed25519', keyId: 'release-2026', value: signature },
+      };
+    };
+    fixture.publish(buildV2());
+    const check = await request(server)
+      .post('/api/interactive-ui/manager/extensions/com.acme.remote/remote/update-check')
+      .send({ force: true });
+    expect(check.status).toBe(200);
+    expect(check.body).toMatchObject({
+      status: 'available',
+      remoteVersion: '2.0.0',
+      permissionDelta: 'expanded',
+      requiresUserConfirmation: true,
+    });
+    const apply = await request(server)
+      .post('/api/interactive-ui/manager/extensions/com.acme.remote/remote/update-apply')
+      .send({
+        confirmedManifestHash: check.body.remoteManifestHash,
+        confirmedPublisherFingerprint: check.body.publisherFingerprint,
+      });
+    expect(apply.status).toBe(200);
+    expect(apply.body).toMatchObject({ applied: true, previousVersion: '1.0.0' });
+    // ZERO declared resource bytes were fetched by the update path.
+    expect(fixture.resourceRequests).toEqual([]);
+    const manager = await request(server).get('/api/interactive-ui/manager');
+    expect(manager.body.extensions[0].activeVersion).toBe('2.0.0');
+    expect(JSON.stringify(manager.body)).not.toContain('BEGIN PUBLIC KEY');
+    expect(JSON.stringify(manager.body)).not.toContain('installationId');
+  });
+
+  it('recovers a superseded persisted required block through real production triggers without ever issuing the blocked root first', async () => {
+    const { server } = await createRegisteredServer();
+    const fixture = await startRemoteFixture();
+    await connectRemoteThroughRoutes(server, fixture);
+
+    const buildDocument = ({ version, update, extraAction }) => {
+      const base = JSON.parse(JSON.stringify({
+        $schema: HOSTED_OCIX_MANIFEST_SCHEMA,
+        app: { id: 'com.acme.remote', version, publishedAt: '2026-08-06T00:00:00.000Z' },
+        ...(update ? { update } : {}),
+        publisher: {
+          id: 'com.acme.publisher',
+          name: 'Acme',
+          keyId: 'release-2026',
+          publicKey: fixture.keys.publicKey,
+        },
+        permissions: {
+          resourceOrigins: [fixture.origin],
+          networkOrigins: ['https://api.example.com'],
+          externalLinkOrigins: [],
+          credentialScopes: ['crm.read'],
+          actionIds: extraAction
+            ? ['com.acme.remote.read', 'com.acme.remote.export']
+            : ['com.acme.remote.read'],
+          agentToolNames: ['remote_open'],
+          clipboard: false,
+          popups: false,
+          nativeCode: false,
+        },
+        extension: {
+          $schema: 'openchamber://extension/v1',
+          id: 'com.acme.remote',
+          name: 'Acme Remote',
+          version,
+          icon: 'ui/icon.svg',
+          agentRouting: {
+            domain: 'remote',
+            intents: ['remote.overview'],
+            examples: { en: ['Open Acme Remote'] },
+            dataAuthority: 'user-provided',
+          },
+          connectors: [{
+            id: 'crm',
+            type: 'http',
+            baseUrl: 'https://api.example.com',
+            auth: { type: 'api-key' },
+          }],
+          views: [{
+            id: 'com.acme.remote.overview',
+            runtime: 'declarative',
+            entry: 'ui/overview.view.json',
+            tools: ['remote_open'],
+            routing: { intents: ['remote.overview'], priority: 80, operation: 'read' },
+            displayModes: ['inline', 'workspace'],
+          }],
+          actions: extraAction ? [{
+            id: 'com.acme.remote.read',
+            connector: 'crm',
+            risk: 'read',
+            request: { method: 'GET', path: '/crm' },
+          }, {
+            id: 'com.acme.remote.export',
+            connector: 'crm',
+            risk: 'write',
+            request: { method: 'POST', path: '/crm/export' },
+          }] : [{
+            id: 'com.acme.remote.read',
+            connector: 'crm',
+            risk: 'read',
+            request: { method: 'GET', path: '/crm' },
+          }],
+          permissions: { network: ['https://api.example.com'] },
+          trust: { mode: 'declarative', signature: 'production' },
+        },
+        resources: [{
+          path: 'ui/overview.view.json',
+          url: `${fixture.origin}/ui/overview.view.json`,
+          mimeType: 'application/json',
+          sha256: hostedSha256(fixture.view),
+        }, {
+          path: 'ui/icon.svg',
+          url: `${fixture.origin}/ui/icon.svg`,
+          mimeType: 'image/svg+xml',
+          sha256: hostedSha256(fixture.iconBytes),
+        }],
+      }));
+      const signature = crypto.sign(
+        null,
+        Buffer.from(JSON.stringify(canonicalize(base))),
+        crypto.createPrivateKey(fixture.keys.privateKey),
+      ).toString('base64');
+      return {
+        ...base,
+        signature: { algorithm: 'ed25519', keyId: 'release-2026', value: signature },
+      };
+    };
+
+    // Publish a REQUIRED + expansion update and trigger the Workbench catalog
+    // path: the manager prepare persists the block and fails closed
+    // per-extension, while the catalog still serves with the blocked summary.
+    fixture.publish(buildDocument({ version: '2.0.0', update: { required: true }, extraAction: true }));
+    const catalog = await request(server).get('/api/interactive-ui/workbench/catalog');
+    expect(catalog.status).toBe(200);
+    const blockedEntry = catalog.body.extensions.find((entry) => entry.id === 'com.acme.remote');
+    expect(blockedEntry.lifecycle).toMatchObject({
+      status: 'required',
+      blocked: { code: 'remote_update_required_blocked' },
+    });
+    // While blocked, the executable root is NEVER issued: the registry cannot
+    // see the app even though it is enabled and manager-owned.
+    const blockedRegistry = await request(server).get('/api/interactive-ui/extensions');
+    expect(blockedRegistry.status).toBe(200);
+    expect(blockedRegistry.body.extensions.some((entry) => entry.id === 'com.acme.remote')).toBe(false);
+
+    // The vendor publishes a valid REACHABLE non-required candidate: a manual
+    // update-check supersedes and clears the obsolete persisted block
+    // (classification only), so the dynamic root returns.
+    fixture.publish(buildDocument({ version: '2.0.0', update: { changeSummary: 'Now optional' }, extraAction: false }));
+    const check = await request(server)
+      .post('/api/interactive-ui/manager/extensions/com.acme.remote/remote/update-check')
+      .send({ force: true });
+    expect(check.status).toBe(200);
+    expect(check.body).toMatchObject({
+      status: 'available',
+      remoteVersion: '2.0.0',
+      requiresUserConfirmation: false,
+      health: { status: 'reachable' },
+    });
+    const unblockedRegistry = await request(server).get('/api/interactive-ui/extensions');
+    expect(unblockedRegistry.status).toBe(200);
+    expect(unblockedRegistry.body.extensions.some((entry) => entry.id === 'com.acme.remote')).toBe(true);
+    // Zero declared resource bytes were fetched by the whole lifecycle path.
+    expect(fixture.resourceRequests).toEqual([]);
   });
 });

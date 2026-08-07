@@ -861,6 +861,7 @@ describe('Remote OCIX manifest verification', () => {
     publisherName = 'Acme',
     connectors = [{ id: 'crm', type: 'http', baseUrl: 'https://api.example.com', auth: { type: 'api-key' } }],
     native = false,
+    update = undefined,
   } = {}) => {
     const view = Buffer.from(JSON.stringify({
       $schema: 'openchamber://declarative-view/v1',
@@ -880,6 +881,7 @@ describe('Remote OCIX manifest verification', () => {
         version: '1.0.0',
         publishedAt: '2026-08-05T00:00:00.000Z',
       },
+      ...(update !== undefined ? { update } : {}),
       publisher: {
         id: publisherId,
         name: publisherName,
@@ -1100,5 +1102,68 @@ describe('Remote OCIX manifest verification', () => {
     });
     expect(verified.manifestHash).toMatch(/^sha256-/);
     expect(requested).toEqual(['https://apps.example.com/manifest.json']);
+  });
+
+  it('normalizes signed update metadata to safe required/changeSummary defaults', () => {
+    const { document } = remoteFixture();
+    const verified = verifyRemoteOcixManifest({ document });
+    expect(verified.update).toEqual({ required: false, changeSummary: null });
+
+    const required = verifyRemoteOcixManifest({
+      document: remoteFixture({ update: {
+        required: true,
+        changeSummary: '  Security fix: rotate the access key.  ',
+        unknownField: 'never exposed',
+      } }).document,
+    });
+    expect(required.update).toEqual({
+      required: true,
+      changeSummary: 'Security fix: rotate the access key.',
+    });
+    expect(JSON.stringify(required.update)).not.toContain('never exposed');
+  });
+
+  it('rejects invalid signed update metadata with stable invalid_hosted_manifest behavior', () => {
+    const fixture = remoteFixture();
+    const base = fixture.document;
+    const { keys } = fixture;
+    const resignWithKeys = (value) => {
+      const { signature: _oldSignature, ...payload } = value;
+      return {
+        ...payload,
+        signature: {
+          algorithm: 'ed25519',
+          keyId: value.signature.keyId,
+          value: crypto.sign(
+            null,
+            Buffer.from(JSON.stringify(canonicalize(payload))),
+            keys.privateKey,
+          ).toString('base64'),
+        },
+      };
+    };
+    for (const update of [
+      'required',
+      { required: 'yes' },
+      { required: 1 },
+      { changeSummary: '' },
+      { changeSummary: '   ' },
+      { changeSummary: 42 },
+      { changeSummary: 'x'.repeat(2001) },
+    ]) {
+      expect(() => verifyRemoteOcixManifest({
+        document: resignWithKeys({ ...base, update }),
+      })).toThrow(expect.objectContaining({ code: 'invalid_hosted_manifest' }));
+    }
+    // A 2000-character summary is accepted.
+    const boundary = verifyRemoteOcixManifest({
+      document: resignWithKeys({ ...base, update: { changeSummary: 'x'.repeat(2000) } }),
+    });
+    expect(boundary.update.changeSummary).toHaveLength(2000);
+    // The update metadata is covered by the manifest signature: tampering
+    // after signing invalidates the signature.
+    const tampered = { ...base, update: { required: true } };
+    expect(() => verifyRemoteOcixManifest({ document: tampered }))
+      .toThrow(expect.objectContaining({ code: 'invalid_hosted_signature', status: 403 }));
   });
 });

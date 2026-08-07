@@ -64,6 +64,12 @@ import { createInteractiveUIWorkbenchStore } from '../interactive-ui/workbench-s
 // Local installs (their exact disk path); Hosted and Remote manager-owned
 // bytes are ALWAYS returned as verified Buffers from inside the manager
 // mutation queue. Runtimes without a manager resolver stay non-Remote.
+// Phase R3 additionally binds the manager Remote lifecycle: prepareExtensionUse
+// runs check + same-key none/reduced automatic apply before every surface/
+// artifact/Workbench/action use (trust_invalid and required-blocked fail
+// closed; unreachable keeps the old signed contract usable), and
+// getExtensionLifecycle supplies the safe lifecycle summary for the Workbench
+// catalog.
 const createInteractiveUIRuntimeForRoutes = ({
   fsPromises,
   path,
@@ -98,6 +104,18 @@ const createInteractiveUIRuntimeForRoutes = ({
   authorizeExtensionAuthority: (extensionId, authority) => (
     manager.authorizeExtensionAuthority(extensionId, authority)
   ),
+  prepareExtensionUse: (extensionId, options) => (
+    manager.prepareRemoteUse(extensionId, options)
+  ),
+  getExtensionLifecycle: (extensionId) => manager.getRemoteLifecycle(extensionId),
+  // Startup warm-up seam: enabled manager-owned Remote ids even when their
+  // executable root is excluded (persisted required-update block), so a
+  // superseded block can clear and the root can return.
+  listEnabledRemoteExtensions: () => manager.getEnabledRemoteExtensionIds(),
+  // Catalog-only visibility seam: blocked/trust-invalid Remote apps stay
+  // visible in the Workbench catalog with every launch disabled (no
+  // resolver/launch authority, no Remote resource fetches).
+  getBlockedCatalogEntries: () => manager.getBlockedRemoteCatalogEntries(),
 });
 
 export const createFeatureRoutesRuntime = (dependencies) => {
@@ -221,23 +239,37 @@ export const createFeatureRoutesRuntime = (dependencies) => {
       pathImpl: path,
       cryptoImpl: crypto,
     });
+    const interactiveUIRuntime = createInteractiveUIRuntimeForRoutes({
+      fsPromises,
+      path,
+      crypto,
+      environment: processLike.env,
+      connectionStore: interactiveUIConnectionStore,
+      logger: console,
+      manager: interactiveUIExtensionManager,
+      builtInRootDirectory: builtInInteractiveUIRuntime.rootDirectory,
+      configuredRoots: configuredInteractiveUIRoots,
+    });
     registerInteractiveUIRoutes(app, {
       express,
       manager: interactiveUIExtensionManager,
       artifactStore: htmlArtifactStore,
       workbenchStore: interactiveUIWorkbenchStore,
       uiAuthController,
-      runtime: createInteractiveUIRuntimeForRoutes({
-        fsPromises,
-        path,
-        crypto,
-        environment: processLike.env,
-        connectionStore: interactiveUIConnectionStore,
-        logger: console,
-        manager: interactiveUIExtensionManager,
-        builtInRootDirectory: builtInInteractiveUIRuntime.rootDirectory,
-        configuredRoots: configuredInteractiveUIRoots,
-      }),
+      runtime: interactiveUIRuntime,
+    });
+
+    // Phase R3: start the Remote lifecycle warm-up (enabled extensions and
+    // connections) in the BACKGROUND without awaiting it — server route
+    // registration/startup is never delayed. Per-extension failures are
+    // already caught inside the runtime; only stable non-secret context is
+    // logged here.
+    void interactiveUIRuntime.warmRemoteLifecycle({ concurrency: 4 }).catch((error) => {
+      console.error('[InteractiveUI] Remote lifecycle warm-up failed', {
+        code: typeof error?.code === 'string' && /^[a-z0-9_]+$/.test(error.code)
+          ? error.code
+          : 'warm_remote_lifecycle_failed',
+      });
     });
 
     registerSettingsUtilityRoutes(app, {
