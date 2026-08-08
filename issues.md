@@ -413,18 +413,18 @@
 - Goal / user outcome: Valid Agent Generated and Installed Declarative views render with approved primitives, bindings, actions, state notices, and no horizontal overflow.
 - First-principles root cause: The target has no Declarative host renderer.
 - Core acceptance invariant: Only sanitized layouts/primitives/actions render; malformed/stale/error states remain explicit; one failed widget cannot erase unrelated content.
-- Dependencies: issue-015, issue-016
+- Dependencies: issue-015, issue-016, issue-022
 - Dispatch order: Renderer after schemas/bindings.
 - Ownership: `packages/ui/src/components/interactive-ui/DeclarativeInteractiveView.tsx`; `packages/ui/src/components/interactive-ui/DeclarativeInteractiveView.test.tsx`; `packages/ui/src/components/interactive-ui/InteractiveUIView.tsx`; `packages/ui/src/components/interactive-ui/InteractiveUIStateNotice.tsx`; `packages/ui/src/components/interactive-ui/InteractiveUIStateNotice.test.tsx`.
 - Focused verification: Run Declarative/state-notice tests and UI typecheck; inspect malformed, action, narrow-layout, and overflow boundaries.
 - Pi binding: unassigned
 - Pi attempts: none
 - Primary attempts: not eligible while Pi retries remain
-- Current evidence: Five feature-owned donor files; final donor behavior includes Host Confirmation carry-forward and must be reconciled with issue-025.
+- Current evidence: Five feature-owned donor files; `DeclarativeInteractiveView.tsx` imports issue-022's suspended `DeclarativeAdvancedPrimitives.tsx`, while `InteractiveUIView.tsx` imports the suspended native registry. Final donor behavior also includes Host Confirmation carry-forward and must be reconciled with issue-025.
 - Suspension decision: n/a
 - Resume condition: n/a
 - Continuation decision: Enables issue-026.
-- Next action: Queue after issues 015-016; preserve target UI primitives.
+- Next action: Do not dispatch while issue-022 is suspended; queue only after its explicit resumption and acceptance, preserving target UI primitives.
 
 ## issue-022: Restore Trusted Native and Host Native UI Kit
 
@@ -448,7 +448,7 @@
 
 ## issue-023: Restore the HTML Artifact sandbox bridge
 
-- Status: READY
+- Status: RESOLVED
 - Classification: NORMAL
 - Goal / user outcome: HTML Artifacts communicate through a versioned, size/rate-limited host bridge without direct business or privileged API access.
 - First-principles root cause: The target lacks the Artifact bridge parser/host-init boundary.
@@ -457,14 +457,14 @@
 - Dispatch order: Security bridge before Artifact view.
 - Ownership: `packages/ui/src/lib/interactive-ui/artifactBridge.ts`; `packages/ui/src/lib/interactive-ui/artifactBridge.test.ts`.
 - Focused verification: Run bridge tests and UI typecheck; malformed, rate, size, origin, business-authority, and safe-init cases pass.
-- Pi binding: unassigned
-- Pi attempts: none
-- Primary attempts: not eligible while Pi retries remain
-- Current evidence: Two donor-only bridge files. `artifactBusinessRequest.ts` imports the issue-019 client seam and is moved to issue-025 so this security parser can remain independently testable.
+- Pi binding: run/session `79b71ec9-e8d8-47d9-84aa-f813e51f8973`, base `8f8c0b5d5d3cabcc84e79df97f962de61e81e86a`, final revision 2, supervised-local without sandbox. Revision 0 reached `ready` with host/Pi PIDs null and was content-hash-identically integrated. Its temporary state was cleaned too early; to preserve the plugin-mandated same-run correction boundary, the exact run/session ID and candidate worktree were minimally rehydrated at the same base and hashes before correction 1. No replacement run was created and the attempt counter remained zero until the correction call. Revision 2 settled `needs-attention` with host/Pi PIDs null; after its policy-clean partial diff was hash-integrated and the attempt budget exhausted, the exact worktree and run/session directory were deleted and absence verified.
+- Pi attempts: correction 1 requested after fresh Sol/High and primary reproductions proved non-atomic proxy rereads, structured-clone-preserved array expando size bypasses, unbounded lease passthrough, invalid limit/clock rate-limit bypasses, and a nullable success-result response that leaves requests uncorrelated. Correction 2 (final Pi attempt) requested after primary inspection proved correction 1 still rereads top-level builder inputs: stateful root proxies produced 100,000-character `channelId` values in both host-init and result fallback messages. Its claimed payload-proxy regression wrapped the wrong object, ordinary sparse arrays were over-rejected, the two rate windows shared one clock, and `__proto__` token copying was not own-data safe.
+- Primary attempts: attempt 1 after Pi exhaustion fixed the remaining invalid-options semantic gap: an explicitly present non-number rate limit or non-object options value previously fell back to the default allowance instead of failing closed. The exact edit makes non-plain/non-object options and present non-number descriptors resolve to CAPTURE_FAILED; focused verification passed 47/47 with 145 assertions. Attempt 2 (final) replaced five test-only matchers unsupported by the repository's Bun type declarations with equivalent boolean/try-catch assertions; the full ten-file suite passes 165/165 with 549 assertions, and UI typecheck now reports only the pre-existing issue-054 missing `@modelcontextprotocol/ext-apps` dependency. No primary repair attempts remain.
+- Current evidence: Revision 0 restored the pure bridge and passed its initial tests but fresh Sol returned `fix-first` on five adversarial boundaries. Correction 1 fixed the deep parser snapshot, array expandos, lease reconstruction, invalid rate config/time, and correlated oversized-success failure but left top-level builder TOCTOU. Correction 2 exhausted Pi retries and settled `needs-attention` without handoff after policy-clean partial edits; its content-hash-identical candidate supplied root captures, complete-message caps, independent clocks, sparse handling, and actual proxy regressions. After two bounded primary repairs, independent reproductions return captured payload text `short`, 189/273-byte business/host root-proxy messages, reject array expandos, and deny invalid limits. The focused bridge suite passes 47/47; the ten-file suite passes 165/165; `git diff --check` passes; candidate-owned TypeScript errors are zero and only issue-054's missing `@modelcontextprotocol/ext-apps` remains. A new fresh Sol/High final reviewer returned `ship` with no actionable issue-023 findings; residual nullable host-init handling is explicitly assigned to dependent issue-024.
 - Suspension decision: n/a
 - Resume condition: n/a
 - Continuation decision: Enables issue-024 and issue-025.
-- Next action: Queue behind issue-017.
+- Next action: Commit only the accepted bridge files and this ledger update; queue issue-024 from the resulting immutable base while preserving its explicit nullable host-init handling requirement.
 
 ## issue-024: Restore the Agent Generated HTML Artifact host
 
