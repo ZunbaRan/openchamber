@@ -228,7 +228,7 @@
 
 ## issue-012: Restore Remote resource cache, TTL, and hash validation
 
-- Status: IN_PROGRESS
+- Status: VERIFYING
 - Classification: NORMAL
 - Goal / user outcome: Remote resources load lazily from a signed index, validate MIME/hash/size, and obey deterministic TTL/cache provenance.
 - First-principles root cause: The target lacks the Remote resource cache authority boundary.
@@ -1198,9 +1198,9 @@
 - Ownership: `packages/web/server/lib/interactive-ui/remote-ocix.js`; `packages/web/server/lib/interactive-ui/hosted-ocix.test.js` (append exactly the donor Remote imports and `Remote OCIX manifest verification` describe to the accepted Hosted-only test).
 - Focused verification: Run full Hosted/Remote test and package-format test; inspect publisher/key/signature/binding negative paths and confirm the final test file is byte-identical to donor.
 - Pi binding: batch `de3cf10c-71d3-40b1-8f0f-2689aec02ad1`, lane `remote-verifier`, run/session `e302865f-ddc3-41eb-8469-de13f1257cf6`, worktree `/Users/loloru/.codex/sol-pi-advisor/worktrees/e302865f-ddc3-41eb-8469-de13f1257cf6`, base `581d980e439eb2d31d0e1e158787700ef52d781e`, revision 0, host PID 89708 at dispatch, supervised-local without sandbox.
-- Pi attempts: none
+- Pi attempts: revision 0 rejected before integration. The structured handoff claimed both owned files changed, but host-observed Git evidence reported `changedPaths: []`, empty diff digest `e3b0c442...`, and the actual worktree had no `remote-ocix.js` and retained the trimmed non-donor Hosted test. Correction 1 must write into the bound worktree and prove host-visible state before handoff.
 - Primary attempts: not eligible while Pi retries remain
-- Current evidence: Hosted-only suite passes 16/16; donor's remaining Remote block begins at its explicit describe boundary and production verifier is 217 lines using accepted package/Hosted helpers.
+- Current evidence: Revision-0 worker prose is false relative to authoritative worktree state; no implementation exists yet. Hosted-only suite remains accepted, and correction 1 stays bound to the same run/session and exact issue ID.
 - Suspension decision: n/a
 - Resume condition: n/a
 - Continuation decision: Enables issue-011 Remote connect/consent and Manager preflight.
