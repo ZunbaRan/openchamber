@@ -288,7 +288,7 @@
 
 ## issue-015: Restore Interactive UI result and type schemas
 
-- Status: READY
+- Status: IN_PROGRESS
 - Classification: NORMAL
 - Goal / user outcome: Agent-generated Interactive UI envelopes and shared descriptors parse into deterministic bounded types with safe fallback.
 - First-principles root cause: The target has no OCIX result/type schema boundary; runtime error classification depends on the later client seam and is moved to issue-019.
@@ -297,7 +297,7 @@
 - Dispatch order: Parallel Shared UI schema wave E with issue-018; disjoint paths and independent tests, no shared generated artifacts or lockfiles.
 - Ownership: `packages/ui/src/lib/interactive-ui/result.ts`; `packages/ui/src/lib/interactive-ui/result.test.ts`; `packages/ui/src/lib/interactive-ui/types.ts`.
 - Focused verification: Run focused result tests and package UI typecheck; inspect malformed fallback behavior.
-- Pi binding: unassigned
+- Pi binding: batch `890c27e1-fefa-41a5-9a84-fc88db99182b`, lane `interactive-result`, run/session `d5225500-91ce-4f31-b22b-b78b60980d11`, worktree `/Users/loloru/.codex/sol-pi-advisor/worktrees/d5225500-91ce-4f31-b22b-b78b60980d11`, base `4619f4bd73232d855537f7b2802d13d6f28235a0`, revision 0, host PID 93898 at dispatch, supervised-local without sandbox.
 - Pi attempts: none
 - Primary attempts: not eligible while Pi retries remain
 - Current evidence: All files are donor-only.
@@ -348,7 +348,7 @@
 
 ## issue-018: Restore MCP App host binding and persistable state
 
-- Status: READY
+- Status: IN_PROGRESS
 - Classification: NORMAL
 - Goal / user outcome: OpenChamber parses completed ToolPart MCP metadata into an exact host binding and a size-bounded persistable envelope.
 - First-principles root cause: The target has no MCP App host state/binding module.
@@ -357,7 +357,7 @@
 - Dispatch order: Parallel Shared UI schema wave E with issue-015; the MCP binding/state module is self-contained and owns no path or interface consumed by its sibling.
 - Ownership: `packages/ui/src/lib/interactive-ui/mcpApp.ts`; `packages/ui/src/lib/interactive-ui/mcpApp.test.ts`.
 - Focused verification: Run focused MCP App UI tests and UI typecheck; all identity mismatch and size/error boundaries pass.
-- Pi binding: unassigned
+- Pi binding: batch `890c27e1-fefa-41a5-9a84-fc88db99182b`, lane `mcp-app-state`, run/session `c24d8c17-1209-4c30-9637-34f7ca6f3577`, worktree `/Users/loloru/.codex/sol-pi-advisor/worktrees/c24d8c17-1209-4c30-9637-34f7ca6f3577`, base `4619f4bd73232d855537f7b2802d13d6f28235a0`, revision 0, host PID 93899 at dispatch, supervised-local without sandbox.
 - Pi attempts: none
 - Primary attempts: not eligible while Pi retries remain
 - Current evidence: Both files are donor-only.
