@@ -286,16 +286,16 @@
 - Continuation decision: Enables all OpenChamber UI client/runtime work.
 - Next action: Queue after server DAG acceptance.
 
-## issue-015: Restore Interactive UI result and state schemas
+## issue-015: Restore Interactive UI result and type schemas
 
 - Status: READY
 - Classification: NORMAL
-- Goal / user outcome: Agent-generated Interactive UI envelopes parse into deterministic ready/error/stale states with safe fallback.
-- First-principles root cause: The target has no OCIX result/state schema boundary.
-- Core acceptance invariant: Valid envelopes round-trip; malformed/unknown/oversized data yields explicit fallback and never executes unvalidated layout/action data.
-- Dependencies: issue-014
-- Dispatch order: First shared UI schema lane.
-- Ownership: `packages/ui/src/lib/interactive-ui/result.ts`; `packages/ui/src/lib/interactive-ui/result.test.ts`; `packages/ui/src/lib/interactive-ui/state.ts`; `packages/ui/src/lib/interactive-ui/types.ts`.
+- Goal / user outcome: Agent-generated Interactive UI envelopes and shared descriptors parse into deterministic bounded types with safe fallback.
+- First-principles root cause: The target has no OCIX result/type schema boundary; runtime error classification depends on the later client seam and is moved to issue-019.
+- Core acceptance invariant: Valid envelopes round-trip; malformed/unknown/oversized data returns null and never exposes unvalidated layout/action data as a typed result.
+- Dependencies: none
+- Dispatch order: Parallel Shared UI schema wave E with issue-018; disjoint paths and independent tests, no shared generated artifacts or lockfiles.
+- Ownership: `packages/ui/src/lib/interactive-ui/result.ts`; `packages/ui/src/lib/interactive-ui/result.test.ts`; `packages/ui/src/lib/interactive-ui/types.ts`.
 - Focused verification: Run focused result tests and package UI typecheck; inspect malformed fallback behavior.
 - Pi binding: unassigned
 - Pi attempts: none
@@ -304,7 +304,7 @@
 - Suspension decision: n/a
 - Resume condition: n/a
 - Continuation decision: Enables issues 016, 021, and 026.
-- Next action: Queue after server integration.
+- Next action: Dispatch in Shared UI schema wave E from the current immutable base.
 
 ## issue-016: Restore bindings and generated-layout sanitization
 
@@ -315,7 +315,7 @@
 - Core acceptance invariant: Unknown paths/actions/primitives and malformed/oversized layouts fail closed; valid bindings preserve intended values without code execution.
 - Dependencies: issue-015
 - Dispatch order: Schema lane before Declarative renderer.
-- Ownership: `packages/ui/src/lib/interactive-ui/bindings.ts`; `packages/ui/src/lib/interactive-ui/bindings.test.ts`; `packages/ui/src/lib/interactive-ui/generatedLayout.ts`; `packages/ui/src/lib/interactive-ui/generatedLayout.test.ts`.
+- Ownership: `packages/ui/src/lib/interactive-ui/bindings.ts`; `packages/ui/src/lib/interactive-ui/bindings.test.ts`; `packages/ui/src/lib/interactive-ui/generatedLayout.ts`; `packages/ui/src/lib/interactive-ui/generatedLayout.test.ts`; `packages/ui/src/lib/interactive-ui/metricIcons.ts`.
 - Focused verification: Run both focused tests and UI typecheck; all malformed and unauthorized cases reject deterministically.
 - Pi binding: unassigned
 - Pi attempts: none
@@ -335,7 +335,7 @@
 - Core acceptance invariant: Source identity and sandbox/business bindings cannot be confused; malformed/unknown payloads never cross into a more privileged renderer.
 - Dependencies: issue-015
 - Dispatch order: Schema lane before Artifact hosts.
-- Ownership: `packages/ui/src/lib/interactive-ui/artifactResult.ts`; `packages/ui/src/lib/interactive-ui/artifactResult.test.ts`; `packages/ui/src/lib/interactive-ui/installedArtifactResult.ts`; `packages/ui/src/lib/interactive-ui/installedArtifactResult.test.ts`; `packages/ui/src/lib/interactive-ui/artifactState.ts`.
+- Ownership: `packages/ui/src/lib/interactive-ui/artifactResult.ts`; `packages/ui/src/lib/interactive-ui/artifactResult.test.ts`; `packages/ui/src/lib/interactive-ui/installedArtifactResult.ts`; `packages/ui/src/lib/interactive-ui/installedArtifactResult.test.ts`.
 - Focused verification: Run both schema test files and UI typecheck; cross-source and malformed cases fail closed.
 - Pi binding: unassigned
 - Pi attempts: none
@@ -353,8 +353,8 @@
 - Goal / user outcome: OpenChamber parses completed ToolPart MCP metadata into an exact host binding and a size-bounded persistable envelope.
 - First-principles root cause: The target has no MCP App host state/binding module.
 - Core acceptance invariant: Tool/server/resource/session/message/part identity remains exact; malformed or oversized model context/persisted state is rejected; diagnostics contain no secrets.
-- Dependencies: OpenCode issue-006; issue-015
-- Dispatch order: Host contract after backend capability/HTTP behavior.
+- Dependencies: OpenCode issue-006
+- Dispatch order: Parallel Shared UI schema wave E with issue-015; the MCP binding/state module is self-contained and owns no path or interface consumed by its sibling.
 - Ownership: `packages/ui/src/lib/interactive-ui/mcpApp.ts`; `packages/ui/src/lib/interactive-ui/mcpApp.test.ts`.
 - Focused verification: Run focused MCP App UI tests and UI typecheck; all identity mismatch and size/error boundaries pass.
 - Pi binding: unassigned
@@ -364,7 +364,7 @@
 - Suspension decision: n/a
 - Resume condition: n/a
 - Continuation decision: Enables issues 028-029 and 026.
-- Next action: Queue after OpenCode capability route is accepted.
+- Next action: Dispatch in Shared UI schema wave E from the current immutable base.
 
 ## issue-019: Restore the browser OCIX manager client
 
@@ -373,9 +373,9 @@
 - Goal / user outcome: Settings and Workbench call explicit OCIX runtime APIs with correct runtime URL/auth switching and truthful failure semantics.
 - First-principles root cause: The target has no shared client for OpenChamber-owned extension/runtime endpoints.
 - Core acceptance invariant: Runtime switching invalidates stale requests; failures are not converted to empty authoritative state; credentials are never persisted or logged client-side.
-- Dependencies: issue-014
+- Dependencies: issue-014, issue-015, issue-017
 - Dispatch order: Client seam before Settings/Workbench UI.
-- Ownership: `packages/ui/src/lib/interactive-ui/client.ts`; `packages/ui/src/lib/interactive-ui/extensionManager.ts`; `packages/ui/src/lib/interactive-ui/extensionManager.test.ts`.
+- Ownership: `packages/ui/src/lib/interactive-ui/client.ts`; `packages/ui/src/lib/interactive-ui/state.ts`; `packages/ui/src/lib/interactive-ui/artifactState.ts`; `packages/ui/src/lib/interactive-ui/extensionManager.ts`; `packages/ui/src/lib/interactive-ui/extensionManager.test.ts`.
 - Focused verification: Run extension-manager client tests and UI typecheck; request fidelity, switching, failed fetch, and cleanup pass.
 - Pi binding: unassigned
 - Pi attempts: none
