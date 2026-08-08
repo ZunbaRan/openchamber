@@ -428,23 +428,23 @@
 
 ## issue-022: Restore Trusted Native and Host Native UI Kit
 
-- Status: READY
+- Status: IN_PROGRESS
 - Classification: NORMAL
 - Goal / user outcome: Trusted Native OCIX views render only registered components with the Style v2 token contract.
 - First-principles root cause: The target lacks native registries and UI Kit.
 - Core acceptance invariant: Unknown components/props/actions fail closed; registered primitives receive scoped tokens and cannot escape the host authority boundary.
 - Dependencies: issue-015, issue-016
-- Dispatch order: Parallel-capable with issue-021 only after shared schemas freeze, but serial by default.
+- Dispatch order: Parallel feature contract wave G with issue-030; paths and protocols are disjoint and shared schemas are frozen.
 - Ownership: `packages/ui/src/components/interactive-ui/NativeUIKit.tsx`; `packages/ui/src/components/interactive-ui/NativeUIKit.test.tsx`; `packages/ui/src/components/interactive-ui/nativeRegistry.ts`; `packages/ui/src/components/interactive-ui/nativeUIKitRegistry.ts`; `packages/ui/src/components/interactive-ui/DeclarativeAdvancedPrimitives.tsx`.
 - Focused verification: Run NativeUIKit tests and UI typecheck; unknown registry/prop/action cases reject and scoped tokens render.
-- Pi binding: unassigned
+- Pi binding: batch `6082af75-0b49-4f8e-8d17-e5091142a832`, lane `trusted-native-uikit`, run/session `b8138028-60a6-4e30-92ae-2fb03d111778`, worktree `/Users/loloru/.codex/sol-pi-advisor/worktrees/b8138028-60a6-4e30-92ae-2fb03d111778`, base `09faafbe2d91c6436f50e37e38cfbccf7888fa0c`, revision 0, host PID 15695 at dispatch, supervised-local without sandbox.
 - Pi attempts: none
 - Primary attempts: not eligible while Pi retries remain
 - Current evidence: Five donor-only feature files.
 - Suspension decision: n/a
 - Resume condition: n/a
 - Continuation decision: Enables issue-026 and Style acceptance.
-- Next action: Queue after schemas.
+- Next action: Inspect the policy-bound Pi candidate and independently verify registry/authority boundaries.
 
 ## issue-023: Restore the HTML Artifact sandbox bridge
 
@@ -455,12 +455,12 @@
 - Core acceptance invariant: Origin/version/type/size/rate violations fail closed; Agent Generated content cannot invoke business APIs; safe messages preserve exact request identity.
 - Dependencies: issue-017
 - Dispatch order: Security bridge before Artifact view.
-- Ownership: `packages/ui/src/lib/interactive-ui/artifactBridge.ts`; `packages/ui/src/lib/interactive-ui/artifactBridge.test.ts`; `packages/ui/src/components/interactive-ui/artifactBusinessRequest.ts`.
+- Ownership: `packages/ui/src/lib/interactive-ui/artifactBridge.ts`; `packages/ui/src/lib/interactive-ui/artifactBridge.test.ts`.
 - Focused verification: Run bridge tests and UI typecheck; malformed, rate, size, origin, business-authority, and safe-init cases pass.
 - Pi binding: unassigned
 - Pi attempts: none
 - Primary attempts: not eligible while Pi retries remain
-- Current evidence: Three donor-only files.
+- Current evidence: Two donor-only bridge files. `artifactBusinessRequest.ts` imports the issue-019 client seam and is moved to issue-025 so this security parser can remain independently testable.
 - Suspension decision: n/a
 - Resume condition: n/a
 - Continuation decision: Enables issue-024 and issue-025.
@@ -493,9 +493,9 @@
 - Goal / user outcome: Third-party Installed Artifacts can request business writes only through a host-top-layer confirmation with Cancel as safe focus and exactly one write after Confirm.
 - First-principles root cause: The clean target lacks the Installed Artifact confirmation host; the latest implementation exists only as an uncommitted descendant donor.
 - Core acceptance invariant: Escape/Cancel perform zero upstream writes and preserve authoritative pending state; Confirm performs exactly one request-bound write; popup cannot be trapped inside the sandbox; secrets never enter the frame.
-- Dependencies: issue-006, issue-017, issue-023, issue-024
+- Dependencies: issue-006, issue-017, issue-019, issue-023, issue-024
 - Dispatch order: Serial security/UI lane after gateway and Artifact host. It explicitly does not resume suspended issue-001.
-- Ownership: `packages/ui/src/components/interactive-ui/InstalledArtifactConfirmationHost.tsx`; `packages/ui/src/components/interactive-ui/InstalledArtifactConfirmationHost.test.tsx`; `packages/ui/src/components/interactive-ui/InteractiveConfirmationDialog.tsx`; `packages/ui/src/components/interactive-ui/HTMLArtifactView.tsx`.
+- Ownership: `packages/ui/src/components/interactive-ui/InstalledArtifactConfirmationHost.tsx`; `packages/ui/src/components/interactive-ui/InstalledArtifactConfirmationHost.test.tsx`; `packages/ui/src/components/interactive-ui/InteractiveConfirmationDialog.tsx`; `packages/ui/src/components/interactive-ui/HTMLArtifactView.tsx`; `packages/ui/src/components/interactive-ui/artifactBusinessRequest.ts`.
 - Focused verification: Run Installed Artifact host tests and conversation-browser Confirm/Escape/Cancel evidence; exactly 0/0/1 writes and host-top-layer focus are required.
 - Pi binding: unassigned
 - Pi attempts: none
@@ -588,23 +588,23 @@
 
 ## issue-030: Restore Generative Widget parsing and sanitization
 
-- Status: READY
+- Status: IN_PROGRESS
 - Classification: NORMAL
 - Goal / user outcome: Streaming/final `show-widget` fences parse deterministically and produce sandbox-safe HTML/CSS/JS under fixed CSP/allowlist limits.
 - First-principles root cause: The target has no Generative Widget wire parser or sanitizer.
 - Core acceptance invariant: Partial fences do not leak raw executable content; malformed/oversized/disallowed URLs/CSP/connect behavior fail closed; finalized valid widgets persist identically.
 - Dependencies: OpenCode issue-007
-- Dispatch order: First Widget UI contract.
+- Dispatch order: Parallel feature contract wave G with issue-022; paths and protocols are disjoint and the OpenCode prompt contract is committed.
 - Ownership: `packages/ui/src/lib/generative-widget/parseShowWidget.ts`; `packages/ui/src/lib/generative-widget/parseShowWidget.test.ts`; `packages/ui/src/lib/generative-widget/sanitizer.ts`; `packages/ui/src/lib/generative-widget/sanitizer.test.ts`.
 - Focused verification: Run parser/sanitizer tests and UI typecheck; streaming, malformed, CSP, allowlist, and size cases pass.
-- Pi binding: unassigned
+- Pi binding: batch `6082af75-0b49-4f8e-8d17-e5091142a832`, lane `generative-widget-contract`, run/session `aad823b5-b73d-40ff-91bf-eacfbacb14ed`, worktree `/Users/loloru/.codex/sol-pi-advisor/worktrees/aad823b5-b73d-40ff-91bf-eacfbacb14ed`, base `09faafbe2d91c6436f50e37e38cfbccf7888fa0c`, revision 0, host PID 15696 at dispatch, supervised-local without sandbox.
 - Pi attempts: none
 - Primary attempts: not eligible while Pi retries remain
 - Current evidence: Four donor-only files.
 - Suspension decision: n/a
 - Resume condition: n/a
 - Continuation decision: Enables issues 031-034.
-- Next action: Queue after OpenCode prompt contract.
+- Next action: Inspect the policy-bound Pi candidate and independently verify streaming/sandbox fail-closed boundaries.
 
 ## issue-031: Restore Generative Widget runtime bridges and height cache
 
