@@ -106,25 +106,25 @@
 - Continuation decision: Enables route/runtime and client-manager issues.
 - Next action: Queue behind issue-004.
 
-## issue-006: Restore Connector Secret Store and Business Gateway authority
+## issue-006: Restore the Connector Secret Store authority boundary
 
 - Status: READY
 - Classification: NORMAL
-- Goal / user outcome: Third-party extensions can call approved business actions while credentials remain server-side and confirmation/revision conflicts are enforced.
-- First-principles root cause: The target lacks the fork connection store and gateway authority boundary.
-- Core acceptance invariant: Secrets never enter browser responses/logs; 401/403/409 remain distinct; confirmed writes use exact granted connection/action/revision and failures preserve prior state.
-- Dependencies: issue-005
-- Dispatch order: Serial security-domain lane before Artifact/Installed UI wiring.
+- Goal / user outcome: Connector credentials remain in an owner-only server store and can be bound, replaced, tested, and removed without leaking secret material or crossing installation ownership.
+- First-principles root cause: The target lacks the fork's server-only connection store; Business Gateway routing consumes this authority later but is not part of this storage slice.
+- Core acceptance invariant: Reads expose metadata only; raw credentials never enter returned snapshots or errors; installation-bound updates/removals fail closed on identity mismatch; failed atomic writes preserve prior state.
+- Dependencies: none
+- Dispatch order: Parallel storage wave A with issues 007 and 009. All three start from the same immutable base, own pairwise-disjoint files, freeze no shared generated artifact or lockfile, and have independent focused tests. Business Gateway routing remains in issue-008.
 - Ownership: `packages/web/server/lib/interactive-ui/connection-store.js`; `packages/web/server/lib/interactive-ui/connection-store.test.js`.
-- Focused verification: Focused tests prove non-retention, permission denial, revision conflict, write confirmation, cleanup, and failure rollback.
+- Focused verification: Run the focused connection-store test; credential non-retention, opaque-key validation, installation binding, replacement/removal, permissions, and failure preservation pass.
 - Pi binding: unassigned
 - Pi attempts: none
 - Primary attempts: not eligible while Pi retries remain
 - Current evidence: Files are feature-owned donor additions and absent from target.
 - Suspension decision: n/a
 - Resume condition: n/a
-- Continuation decision: Enables issues 008, 016, and 025.
-- Next action: Queue behind issue-005.
+- Continuation decision: Enables issue-008's Business Gateway wiring and the later credential review UI.
+- Next action: Dispatch in parallel storage wave A from the post-issue-004 base.
 
 ## issue-007: Restore authoritative Artifact persistence
 
@@ -133,8 +133,8 @@
 - Goal / user outcome: Artifact content/references persist and materialize deterministically without partial writes or cross-project leakage.
 - First-principles root cause: The target lacks the fork Artifact Store.
 - Core acceptance invariant: Create/read/update/delete are project-scoped and atomic; malformed/stale references fail without erasing valid content.
-- Dependencies: issue-005
-- Dispatch order: Serial storage-domain lane before Artifact routes and UI.
+- Dependencies: none
+- Dispatch order: Parallel storage wave A with issues 006 and 009; ownership and tests are disjoint, and no sibling consumes another sibling's output.
 - Ownership: `packages/web/server/lib/interactive-ui/artifact-store.js`; `packages/web/server/lib/interactive-ui/artifact-store.test.js`.
 - Focused verification: Focused artifact-store tests prove round-trip, isolation, stale/malformed handling, and failed-write preservation.
 - Pi binding: unassigned
@@ -144,7 +144,7 @@
 - Suspension decision: n/a
 - Resume condition: n/a
 - Continuation decision: Enables issue-008.
-- Next action: Queue behind issue-005.
+- Next action: Dispatch in parallel storage wave A from the post-issue-004 base.
 
 ## issue-008: Restore Artifact and Business Gateway server routes
 
@@ -173,8 +173,8 @@
 - Goal / user outcome: Project boards, tiles, layout, context, and link state persist authoritatively with deterministic version handling.
 - First-principles root cause: The target lacks the Workbench store/version contract.
 - Core acceptance invariant: Round-trip preserves board identity and layout; malformed/stale/future data is handled explicitly; failed reads/writes never clear valid state.
-- Dependencies: issue-005
-- Dispatch order: Server persistence before Workbench client state/UI.
+- Dependencies: none
+- Dispatch order: Parallel storage wave A with issues 006 and 007; the four owned Workbench files form one persistence/version contract and do not overlap sibling storage authorities.
 - Ownership: `packages/web/server/lib/interactive-ui/workbench-store.js`; `packages/web/server/lib/interactive-ui/workbench-store.test.js`; `packages/web/server/lib/interactive-ui/workbench-version.js`; `packages/web/server/lib/interactive-ui/workbench-version.test.js`.
 - Focused verification: Run both focused test files; round-trip, version, malformed, missing-versus-empty, and failed-write cases pass.
 - Pi binding: unassigned
@@ -184,7 +184,7 @@
 - Suspension decision: n/a
 - Resume condition: n/a
 - Continuation decision: Enables issues 038-042.
-- Next action: Queue behind issue-005.
+- Next action: Dispatch in parallel storage wave A from the post-issue-004 base.
 
 ## issue-010: Restore the built-in Agent Runtime package
 
