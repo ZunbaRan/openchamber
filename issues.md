@@ -1108,7 +1108,7 @@
 
 ## issue-056: Restore the pure Interactive UI routing contract
 
-- Status: READY
+- Status: IN_PROGRESS
 - Classification: NORMAL
 - Goal / user outcome: Extension and surface routing metadata is normalized deterministically and rejects malformed, ambiguous, oversized, or unsafe declarations before any runtime or package authority consumes it.
 - First-principles root cause: `package-format.js` and the later runtime require one pure routing normalizer, but the original issue-013 bundled it with a separate remote lifecycle state machine.
@@ -1117,7 +1117,7 @@
 - Dispatch order: Parallel contract wave B with issue-057. Both start from the same immutable base, own disjoint files, use only Bun/Node built-ins, freeze independent schemas, and have independent focused tests.
 - Ownership: `packages/web/server/lib/interactive-ui/routing.js`; `packages/web/server/lib/interactive-ui/routing.test.js`.
 - Focused verification: Run the focused routing test and inspect canonicalization, limits, unknown fields, duplicates, and failure codes.
-- Pi binding: unassigned
+- Pi binding: batch `a773e3b8-9f5d-405d-b187-7c9c3db74eef`, lane `routing-contract`, run/session `9adf5974-f703-4abf-aeef-8ce7565c5217`, worktree `/Users/loloru/.codex/sol-pi-advisor/worktrees/9adf5974-f703-4abf-aeef-8ce7565c5217`, base `d7b3dd63e8c436e3d9976a7c1c70e038388dbfc8`, revision 0, host PID 84711 at dispatch, supervised-local without sandbox.
 - Pi attempts: none
 - Primary attempts: not eligible while Pi retries remain
 - Current evidence: Both files are donor-only; `package-format.js` currently cannot execute directly in the integration tree until this contract and issue-057 land.
@@ -1128,7 +1128,7 @@
 
 ## issue-057: Restore the pure dashboard and icon contract
 
-- Status: READY
+- Status: IN_PROGRESS
 - Classification: NORMAL
 - Goal / user outcome: Extension dashboards, slots, tiles, layout modes, and icon assets are normalized and bounded before signing, installation, routing, or rendering.
 - First-principles root cause: `package-format.js` needs dashboard/icon validation, but original issue-008 bundled this pure schema with authenticated HTTP routes and Business Gateway behavior.
@@ -1137,7 +1137,7 @@
 - Dispatch order: Parallel contract wave B with issue-056; same base, disjoint files, frozen independent schema, no shared generated output or dependency metadata.
 - Ownership: `packages/web/server/lib/interactive-ui/dashboard-contract.js`; `packages/web/server/lib/interactive-ui/dashboard-contract.test.js`.
 - Focused verification: Run the focused dashboard-contract test and inspect containment, slot/layout bounds, duplicate handling, icon validation, and stable errors.
-- Pi binding: unassigned
+- Pi binding: batch `a773e3b8-9f5d-405d-b187-7c9c3db74eef`, lane `dashboard-contract`, run/session `03cabd94-0668-45e9-81cb-3cee015e5561`, worktree `/Users/loloru/.codex/sol-pi-advisor/worktrees/03cabd94-0668-45e9-81cb-3cee015e5561`, base `d7b3dd63e8c436e3d9976a7c1c70e038388dbfc8`, revision 0, host PID 84712 at dispatch, supervised-local without sandbox.
 - Pi attempts: none
 - Primary attempts: not eligible while Pi retries remain
 - Current evidence: Both files are donor-only and imported directly by the accepted package-format boundary.
