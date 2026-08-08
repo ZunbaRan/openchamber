@@ -308,7 +308,7 @@
 
 ## issue-016: Restore bindings and generated-layout sanitization
 
-- Status: IN_PROGRESS
+- Status: RESOLVED
 - Classification: NORMAL
 - Goal / user outcome: Declarative views bind only approved data/actions and sanitize generated layout before rendering.
 - First-principles root cause: The target lacks OCIX binding and layout validation.
@@ -320,15 +320,15 @@
 - Pi binding: batch `a66627cb-bb8b-48d6-9dac-9a0a9311aa0d`, lane `bindings-layout`, run/session `2f972e96-320f-40f2-8477-50aea44107ac`, worktree `/Users/loloru/.codex/sol-pi-advisor/worktrees/2f972e96-320f-40f2-8477-50aea44107ac`, base `d2e0ae2fe5d80dba956f75bcae2ba1253ea3ab9e`, revision 0, host PID 7252 at dispatch, supervised-local without sandbox.
 - Pi attempts: none
 - Primary attempts: not eligible while Pi retries remain
-- Current evidence: Five donor-only files.
+- Current evidence: Pi revision 0 is policy-clean and byte-identical to donor for all five owned files; primary reran 14/14 focused tests, final integrated contract verification passed 61/61, `type-check:ui` passed, and two fresh Sol reviews found no issue-016 defect. The ended Pi worktree/run were cleaned and their absence verified.
 - Suspension decision: n/a
 - Resume condition: n/a
 - Continuation decision: Enables issues 021-022.
-- Next action: Inspect the policy-bound Pi candidate and independently verify sanitizer fail-closed boundaries.
+- Next action: Resolved; downstream issues 021-022 remain gated by their other dependencies.
 
 ## issue-017: Restore Artifact and Installed Artifact result schemas
 
-- Status: IN_PROGRESS
+- Status: RESOLVED
 - Classification: NORMAL
 - Goal / user outcome: Agent-generated and installed HTML Artifact envelopes remain distinct, validated, persistable, and safely fallback-capable.
 - First-principles root cause: The target lacks both Artifact result contracts and their state model.
@@ -338,13 +338,13 @@
 - Ownership: `packages/ui/src/lib/interactive-ui/artifactResult.ts`; `packages/ui/src/lib/interactive-ui/artifactResult.test.ts`; `packages/ui/src/lib/interactive-ui/installedArtifactResult.ts`; `packages/ui/src/lib/interactive-ui/installedArtifactResult.test.ts`.
 - Focused verification: Run both schema test files and UI typecheck; cross-source and malformed cases fail closed.
 - Pi binding: batch `a66627cb-bb8b-48d6-9dac-9a0a9311aa0d`, lane `artifact-result-schemas`, run/session `307c2b12-92dc-4f9a-84c2-f699005a61a2`, worktree `/Users/loloru/.codex/sol-pi-advisor/worktrees/307c2b12-92dc-4f9a-84c2-f699005a61a2`, base `d2e0ae2fe5d80dba956f75bcae2ba1253ea3ab9e`, revision 0, host PID 7253 at dispatch, supervised-local without sandbox.
-- Pi attempts: none
+- Pi attempts: correction 1 implemented raw-input bounded UTF-8 counters and expanded tests; correction 2 requested because its claimed synthetic early-exit tests only used ordinary padded strings and did not prove the counters stop at `limit + 1` reads.
 - Primary attempts: not eligible while Pi retries remain
-- Current evidence: Four donor-only files.
+- Current evidence: Revision 0 was rejected for unbounded preflight work. Correction 1 implemented raw-input bounded UTF-8 counters but its early-exit evidence was inadequate. Correction 2 left production unchanged and added deterministic read-count tests proving short-circuit at cap+1 for both parsers. Final verification passed 14/14 focused Artifact tests, 61/61 combined contract tests, and `type-check:ui`; fresh Sol final review returned ACCEPT with no findings. The ended Pi worktree/run were cleaned and their absence verified.
 - Suspension decision: n/a
 - Resume condition: n/a
 - Continuation decision: Enables issues 023-025 and 026.
-- Next action: Inspect the policy-bound Pi candidate and independently verify schema/source fail-closed boundaries.
+- Next action: Resolved; downstream issues 023-026 remain gated by their other dependencies.
 
 ## issue-018: Restore MCP App host binding and persistable state
 
