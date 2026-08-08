@@ -288,7 +288,7 @@
 
 ## issue-015: Restore Interactive UI result and type schemas
 
-- Status: IN_PROGRESS
+- Status: RESOLVED
 - Classification: NORMAL
 - Goal / user outcome: Agent-generated Interactive UI envelopes and shared descriptors parse into deterministic bounded types with safe fallback.
 - First-principles root cause: The target has no OCIX result/type schema boundary; runtime error classification depends on the later client seam and is moved to issue-019.
@@ -298,13 +298,13 @@
 - Ownership: `packages/ui/src/lib/interactive-ui/result.ts`; `packages/ui/src/lib/interactive-ui/result.test.ts`; `packages/ui/src/lib/interactive-ui/types.ts`.
 - Focused verification: Run focused result tests and package UI typecheck; inspect malformed fallback behavior.
 - Pi binding: batch `890c27e1-fefa-41a5-9a84-fc88db99182b`, lane `interactive-result`, run/session `d5225500-91ce-4f31-b22b-b78b60980d11`, worktree `/Users/loloru/.codex/sol-pi-advisor/worktrees/d5225500-91ce-4f31-b22b-b78b60980d11`, base `4619f4bd73232d855537f7b2802d13d6f28235a0`, revision 0, host PID 93898 at dispatch, supervised-local without sandbox.
-- Pi attempts: none
-- Primary attempts: not eligible while Pi retries remain
-- Current evidence: All files are donor-only.
+- Pi attempts: correction 1 fixed UTF-8 byte semantics; correction 2 exhausted the Pi budget after implementing the early-exit shape but hanging in a scratch-only infinite probe. The probe did not modify repository files and the run was aborted with both PIDs null.
+- Primary attempts: attempt 1 independently applied and verified the bounded early-exit repair; attempt 2 added durable exact-boundary and read-count regression tests and corrected this ledger after final-review feedback. No primary repair budget remains.
+- Current evidence: Revision 0 failed UTF-8 sizing review; Pi correction 1 fixed byte semantics but not early exit; Pi correction 2 hung in scratch and was aborted. Primary fallback short-circuits after 1,048,577 ASCII code-unit reads, accepts exactly 1 MiB, rejects 1 MiB+1, and retains the multibyte regression. Final integrated verification passed 8/8 result tests, 33/33 combined wave tests, and `type-check:ui`; fresh final Sol review reported no code findings. The Pi worktree/run were cleaned and their absence verified.
 - Suspension decision: n/a
 - Resume condition: n/a
 - Continuation decision: Enables issues 016, 021, and 026.
-- Next action: Dispatch in Shared UI schema wave E from the current immutable base.
+- Next action: Resolved; issue-016 and issue-017 may proceed from the committed integration base.
 
 ## issue-016: Restore bindings and generated-layout sanitization
 
@@ -320,7 +320,7 @@
 - Pi binding: unassigned
 - Pi attempts: none
 - Primary attempts: not eligible while Pi retries remain
-- Current evidence: Four donor-only files.
+- Current evidence: Five donor-only files.
 - Suspension decision: n/a
 - Resume condition: n/a
 - Continuation decision: Enables issues 021-022.
@@ -340,7 +340,7 @@
 - Pi binding: unassigned
 - Pi attempts: none
 - Primary attempts: not eligible while Pi retries remain
-- Current evidence: Five files are donor-only.
+- Current evidence: Four donor-only files.
 - Suspension decision: n/a
 - Resume condition: n/a
 - Continuation decision: Enables issues 023-025 and 026.
@@ -348,7 +348,7 @@
 
 ## issue-018: Restore MCP App host binding and persistable state
 
-- Status: IN_PROGRESS
+- Status: RESOLVED
 - Classification: NORMAL
 - Goal / user outcome: OpenChamber parses completed ToolPart MCP metadata into an exact host binding and a size-bounded persistable envelope.
 - First-principles root cause: The target has no MCP App host state/binding module.
@@ -360,11 +360,11 @@
 - Pi binding: batch `890c27e1-fefa-41a5-9a84-fc88db99182b`, lane `mcp-app-state`, run/session `c24d8c17-1209-4c30-9637-34f7ca6f3577`, worktree `/Users/loloru/.codex/sol-pi-advisor/worktrees/c24d8c17-1209-4c30-9637-34f7ca6f3577`, base `4619f4bd73232d855537f7b2802d13d6f28235a0`, revision 0, host PID 93899 at dispatch, supervised-local without sandbox.
 - Pi attempts: none
 - Primary attempts: not eligible while Pi retries remain
-- Current evidence: Both files are donor-only.
+- Current evidence: Pi revision 0 is policy-clean and byte-identical to donor for both owned files; final integrated verification passed 25/25 MCP App tests, 33/33 combined wave tests, and `type-check:ui`. Three fresh Sol reviews reported no issue-018 findings. The Pi worktree/run were cleaned after PID/Pi PID became null and their absence was verified.
 - Suspension decision: n/a
 - Resume condition: n/a
 - Continuation decision: Enables issues 028-029 and 026.
-- Next action: Dispatch in Shared UI schema wave E from the current immutable base.
+- Next action: Resolved; downstream issues 028-029 and 026 remain gated by their other dependencies.
 
 ## issue-019: Restore the browser OCIX manager client
 
