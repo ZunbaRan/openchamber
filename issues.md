@@ -228,7 +228,7 @@
 
 ## issue-012: Restore Remote resource cache, TTL, and hash validation
 
-- Status: READY
+- Status: IN_PROGRESS
 - Classification: NORMAL
 - Goal / user outcome: Remote resources load lazily from a signed index, validate MIME/hash/size, and obey deterministic TTL/cache provenance.
 - First-principles root cause: The target lacks the Remote resource cache authority boundary.
@@ -237,7 +237,7 @@
 - Dispatch order: Parallel dependency wave D with issue-060. It owns only the in-memory cache/test, issue-060 owns verifier/test-completion files, and neither consumes the sibling output.
 - Ownership: `packages/web/server/lib/interactive-ui/remote-resource-cache.js`; `packages/web/server/lib/interactive-ui/remote-resource-cache.test.js`.
 - Focused verification: Focused cache tests prove lazy fetch, hash/MIME/size rejection, TTL, provenance, partial failure, and valid-cache retention.
-- Pi binding: unassigned
+- Pi binding: batch `de3cf10c-71d3-40b1-8f0f-2689aec02ad1`, lane `remote-cache`, run/session `dd622d8b-5b2a-4338-9d3f-1994ac413aaa`, worktree `/Users/loloru/.codex/sol-pi-advisor/worktrees/dd622d8b-5b2a-4338-9d3f-1994ac413aaa`, base `581d980e439eb2d31d0e1e158787700ef52d781e`, revision 0, host PID 89709 at dispatch, supervised-local without sandbox.
 - Pi attempts: none
 - Primary attempts: not eligible while Pi retries remain
 - Current evidence: Feature-owned donor files are absent from target.
@@ -1188,7 +1188,7 @@
 
 ## issue-060: Restore the direct Remote signed-manifest verifier
 
-- Status: READY
+- Status: IN_PROGRESS
 - Classification: NORMAL
 - Goal / user outcome: A direct Remote app URL can be verified as a signed Hosted manifest whose embedded publisher identity/key and surface-tool bindings are canonical, self-consistent, and safe before trust or credential writes.
 - First-principles root cause: issue-058 restored the Hosted transport kernel but deliberately excluded the donor test's separate Remote verifier describe because `remote-ocix.js` was not yet present.
@@ -1197,7 +1197,7 @@
 - Dispatch order: Parallel dependency wave D with issue-012; same immutable base, disjoint ownership, no sibling dependency, generated output, lockfile, or shared production interface change.
 - Ownership: `packages/web/server/lib/interactive-ui/remote-ocix.js`; `packages/web/server/lib/interactive-ui/hosted-ocix.test.js` (append exactly the donor Remote imports and `Remote OCIX manifest verification` describe to the accepted Hosted-only test).
 - Focused verification: Run full Hosted/Remote test and package-format test; inspect publisher/key/signature/binding negative paths and confirm the final test file is byte-identical to donor.
-- Pi binding: unassigned
+- Pi binding: batch `de3cf10c-71d3-40b1-8f0f-2689aec02ad1`, lane `remote-verifier`, run/session `e302865f-ddc3-41eb-8469-de13f1257cf6`, worktree `/Users/loloru/.codex/sol-pi-advisor/worktrees/e302865f-ddc3-41eb-8469-de13f1257cf6`, base `581d980e439eb2d31d0e1e158787700ef52d781e`, revision 0, host PID 89708 at dispatch, supervised-local without sandbox.
 - Pi attempts: none
 - Primary attempts: not eligible while Pi retries remain
 - Current evidence: Hosted-only suite passes 16/16; donor's remaining Remote block begins at its explicit describe boundary and production verifier is 217 lines using accepted package/Hosted helpers.
