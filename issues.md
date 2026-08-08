@@ -428,23 +428,23 @@
 
 ## issue-022: Restore Trusted Native and Host Native UI Kit
 
-- Status: IN_PROGRESS
-- Classification: NORMAL
+- Status: SUSPENDED
+- Classification: BLOCKING
 - Goal / user outcome: Trusted Native OCIX views render only registered components with the Style v2 token contract.
 - First-principles root cause: The target lacks native registries and UI Kit.
 - Core acceptance invariant: Unknown components/props/actions fail closed; registered primitives receive scoped tokens and cannot escape the host authority boundary.
 - Dependencies: issue-015, issue-016
 - Dispatch order: Parallel feature contract wave G with issue-030; paths and protocols are disjoint and shared schemas are frozen.
-- Ownership: `packages/ui/src/components/interactive-ui/NativeUIKit.tsx`; `packages/ui/src/components/interactive-ui/NativeUIKit.test.tsx`; `packages/ui/src/components/interactive-ui/nativeRegistry.ts`; `packages/ui/src/components/interactive-ui/nativeUIKitRegistry.ts`; `packages/ui/src/components/interactive-ui/DeclarativeAdvancedPrimitives.tsx`.
+- Ownership: `packages/ui/src/components/interactive-ui/NativeUIKit.tsx`; `packages/ui/src/components/interactive-ui/NativeUIKit.test.tsx`; `packages/ui/src/components/interactive-ui/nativeRegistry.ts`; `packages/ui/src/components/interactive-ui/nativeUIKitRegistry.ts`; `packages/ui/src/components/interactive-ui/DeclarativeAdvancedPrimitives.tsx`; narrow authority-generation seam in `packages/ui/src/lib/runtime-url.ts` required to distinguish A→B→same-A resolver reinstalls.
 - Focused verification: Run NativeUIKit tests and UI typecheck; unknown registry/prop/action cases reject and scoped tokens render.
-- Pi binding: batch `6082af75-0b49-4f8e-8d17-e5091142a832`, lane `trusted-native-uikit`, run/session `b8138028-60a6-4e30-92ae-2fb03d111778`, worktree `/Users/loloru/.codex/sol-pi-advisor/worktrees/b8138028-60a6-4e30-92ae-2fb03d111778`, base `09faafbe2d91c6436f50e37e38cfbccf7888fa0c`, revision 0, host PID 15695 at dispatch, supervised-local without sandbox.
-- Pi attempts: none
-- Primary attempts: not eligible while Pi retries remain
-- Current evidence: Five donor-only feature files.
-- Suspension decision: n/a
-- Resume condition: n/a
-- Continuation decision: Enables issue-026 and Style acceptance.
-- Next action: Inspect the policy-bound Pi candidate and independently verify registry/authority boundaries.
+- Pi binding: settled batch `6082af75-0b49-4f8e-8d17-e5091142a832`, lane `trusted-native-uikit`, run/session `b8138028-60a6-4e30-92ae-2fb03d111778`, base `09faafbe2d91c6436f50e37e38cfbccf7888fa0c`, final revision 2, final host/Pi PIDs null, supervised-local without sandbox. Exact worktree and run/log directory were deleted and absence verified after the repair budget was exhausted.
+- Pi attempts: correction 1 requested after final review found non-atomic/runtime-global native registration and unbounded advanced primitive traversal/spread; correction 2 requested after primary inspection proved correction 1's object-identity load key can never cache repeat loads and its single activation disposer overwrites earlier extension cleanup.
+- Primary attempts: attempt 1 fixed correction 2's TypeScript errors and importer-test restoration; attempt 2 (final) added a monotonic runtime authority generation, collision-free JSON tuple keys, non-deduplicating disposer storage, clear-before-cleanup rollback, runtime component/result validation, and six adversarial regressions. No repair attempts remain under the user's explicit cap.
+- Current evidence: The final implementation passes all 30 Native/UIKit/bounds tests and the full restored contract suite passes 117/117, but a fresh Sol reviewer reproduced two remaining High defects. (1) `disposeScope()` invokes old-scope disposers while `currentScope` still points at that old scope; if a disposer re-enters `loadNativeExtension()` after A→B, the nested call creates and loads B scope 1, then the outer `scopeFor()` overwrites it with B scope 2. The nested view becomes unreachable and its disposer is orphaned forever, violating exactly-once cleanup. (2) `loadNativeExtensionNow()` awaits token refresh before its only authority-generation check; an immediate A→B switch before the first microtask still constructs an A asset URL with post-switch global auth and calls the importer under stale authority, rejecting only after the import. Passing tests therefore do not establish the host-authority invariant. Native-owned TypeScript errors are otherwise clear; the unrelated issue-054 dependency seam remains the only typecheck error.
+- Suspension decision: Mandatory stop after two Pi corrections and two primary repairs failed final adversarial acceptance. No third Native modification is authorized. The uncommitted Native candidate remains preserved in the integration worktree for audit but is not accepted as resolved.
+- Resume condition: Explicit user authorization to reopen issue-022 with a refreshed repair budget and a revised design that (a) installs/detaches the new current scope before invoking old disposers so reentrant loads cannot be overwritten, (b) checks resolver generation immediately after token refresh and before URL construction/import as well as after import, and (c) adds deterministic regressions for both reproduced sequences plus a fresh Sol acceptance review.
+- Continuation decision: Blocks issue-026 and final Trusted Native/Style acceptance. Independent P0 issues that do not depend on issue-022 may continue.
+- Next action: Await explicit resumption; do not dispatch Pi or modify Native registry/runtime-generation paths.
 
 ## issue-023: Restore the HTML Artifact sandbox bridge
 
@@ -588,8 +588,8 @@
 
 ## issue-030: Restore Generative Widget parsing and sanitization
 
-- Status: IN_PROGRESS
-- Classification: NORMAL
+- Status: SUSPENDED
+- Classification: BLOCKING
 - Goal / user outcome: Streaming/final `show-widget` fences parse deterministically and produce sandbox-safe HTML/CSS/JS under fixed CSP/allowlist limits.
 - First-principles root cause: The target has no Generative Widget wire parser or sanitizer.
 - Core acceptance invariant: Partial fences do not leak raw executable content; malformed/oversized/disallowed URLs/CSP/connect behavior fail closed; finalized valid widgets persist identically.
@@ -597,14 +597,14 @@
 - Dispatch order: Parallel feature contract wave G with issue-022; paths and protocols are disjoint and the OpenCode prompt contract is committed.
 - Ownership: `packages/ui/src/lib/generative-widget/parseShowWidget.ts`; `packages/ui/src/lib/generative-widget/parseShowWidget.test.ts`; `packages/ui/src/lib/generative-widget/sanitizer.ts`; `packages/ui/src/lib/generative-widget/sanitizer.test.ts`.
 - Focused verification: Run parser/sanitizer tests and UI typecheck; streaming, malformed, CSP, allowlist, and size cases pass.
-- Pi binding: batch `6082af75-0b49-4f8e-8d17-e5091142a832`, lane `generative-widget-contract`, run/session `aad823b5-b73d-40ff-91bf-eacfbacb14ed`, worktree `/Users/loloru/.codex/sol-pi-advisor/worktrees/aad823b5-b73d-40ff-91bf-eacfbacb14ed`, base `09faafbe2d91c6436f50e37e38cfbccf7888fa0c`, revision 0, host PID 15696 at dispatch, supervised-local without sandbox.
-- Pi attempts: none
-- Primary attempts: not eligible while Pi retries remain
-- Current evidence: Four donor-only files.
-- Suspension decision: n/a
-- Resume condition: n/a
-- Continuation decision: Enables issues 031-034.
-- Next action: Inspect the policy-bound Pi candidate and independently verify streaming/sandbox fail-closed boundaries.
+- Pi binding: settled batch `6082af75-0b49-4f8e-8d17-e5091142a832`, lane `generative-widget-contract`, run/session `aad823b5-b73d-40ff-91bf-eacfbacb14ed`, base `09faafbe2d91c6436f50e37e38cfbccf7888fa0c`, final revision 2, final host/Pi PIDs null, supervised-local without sandbox. Exact worktree and run/log directory were deleted and absence verified after primary integration.
+- Pi attempts: correction 1 fixed bounded coverage and regression evidence; correction 2 requested after final review proved the streaming URL sanitizer accepts entity-obfuscated `javascript:` and SVG `xlink:href` payloads.
+- Primary attempts: attempt 1 replaced regex-only browser sanitization with DOMPurify plus parsed-DOM receiver defense and bounded every parser/sanitizer entry; attempt 2 (final) rejects non-string/empty `widget_code` and non-string `title` at the wire boundary so downstream `title.trim()` cannot throw.
+- Current evidence: Both Pi corrections and both primary repairs are exhausted. DOMPurify/receiver hardening passes real-browser adversarial verification, the final parser/sanitizer focused suite passes 27/27, and the full restored suite passed 117/117 before the final wire-type regression. Nevertheless, a fresh Sol reviewer reproduced a remaining deterministic-wire failure in `extractTruncatedWidget()`: it slices all content after the opening `widget_code` quote. Partial `{"widget_code":"<div>abcdefghij</div>","title":"x"` is emitted with `widget_code` containing the escaped `,"title":"x"` suffix, while appending `}` produces clean finalized code; streaming and final identity therefore diverge. The same truncated path accepts `{"title":123,"widget_code":"<div>abcdefghij` despite the optional title's string-only contract. Passing tests do not cover these two truncated cases, so the core deterministic/fail-closed invariant is not established.
+- Suspension decision: Mandatory stop after two Pi corrections and two primary repairs failed final adversarial acceptance. No third Widget modification is authorized. The uncommitted Widget candidate remains preserved in the integration worktree for audit but is not accepted as resolved.
+- Resume condition: Explicit user authorization to reopen issue-030 with a refreshed repair budget and a revised truncated JSON state machine that decodes only the still-open `widget_code` string, validates any already-observed `title` token before emitting, proves partial→final content/key identity, and adds both exact reviewer reproductions before a fresh Sol acceptance review.
+- Continuation decision: Blocks issues 031-034 and final Generative Widget acceptance. Independent P0 issues may continue.
+- Next action: Await explicit resumption; do not dispatch Pi or modify Generative Widget parser/sanitizer paths.
 
 ## issue-031: Restore Generative Widget runtime bridges and height cache
 
