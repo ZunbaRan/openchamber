@@ -68,7 +68,7 @@
 
 ## issue-004: Restore signed OCIX package parsing and verification
 
-- Status: READY
+- Status: RESOLVED
 - Classification: NORMAL
 - Goal / user outcome: The target server accepts only structurally valid, size-bounded, correctly signed `.ocix` packages with deterministic identity.
 - First-principles root cause: The clean upstream target has no OCIX package-format boundary.
@@ -77,14 +77,14 @@
 - Dispatch order: First OpenChamber server contract; manager/trust behavior depends on it.
 - Ownership: `packages/web/server/lib/interactive-ui/package-format.js`; `packages/web/server/lib/interactive-ui/package-format.test.js`.
 - Focused verification: Run the focused package-format Node test; positive and every rejection boundary pass.
-- Pi binding: unassigned
-- Pi attempts: none
-- Primary attempts: not eligible while Pi retries remain
-- Current evidence: Both files are absent from target and present in donor.
+- Pi binding: settled run/session `8938db19-0f65-4f28-a12f-ce3a6362ad23`; detached base `4efc8f5d98c0472a1dd9fad4cee58518015a5cf0`; revision 0; host/Pi PIDs null; serial supervised-local execution. Exact worktree and run directory are cleaned after the accepted commit.
+- Pi attempts: revision 0 accepted without correction; the candidate ported exactly the two owned files and reported the currently absent peer-module dependency honestly.
+- Primary attempts: no implementation repair required; applied the policy-clean candidate, verified exact donor hashes, and ran the focused behavior test against the byte-identical donor module set.
+- Current evidence: Candidate and donor SHA-256 values match exactly (`package-format.js` `2f26a86a...`, test `fc22b78e...`); integration syntax checks and `git diff --check` pass. The byte-identical donor module set passes the focused package-format test 11/11 with 26 assertions. Direct integration execution remains part of the Phase 3 aggregate gate after `routing.js`, `dashboard-contract.js`, and `hosted-ocix.js` land; there is no fallback or stub for those authoritative peers.
 - Suspension decision: n/a
 - Resume condition: n/a
-- Continuation decision: Enables issue-005.
-- Next action: Queue after OpenCode dependency chain begins or run as an independent later serial lane.
+- Continuation decision: Enables issue-005; aggregate Phase 3 verification will rerun this test from the integration tree once its three authoritative peer modules land.
+- Next action: Commit the accepted package-format boundary, clean the exact Pi artifacts immediately, then dispatch issue-005 from the new immutable base.
 
 ## issue-005: Restore extension trust, install, update, rollback, and uninstall
 
