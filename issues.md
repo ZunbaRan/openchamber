@@ -1108,7 +1108,7 @@
 
 ## issue-056: Restore the pure Interactive UI routing contract
 
-- Status: IN_PROGRESS
+- Status: RESOLVED
 - Classification: NORMAL
 - Goal / user outcome: Extension and surface routing metadata is normalized deterministically and rejects malformed, ambiguous, oversized, or unsafe declarations before any runtime or package authority consumes it.
 - First-principles root cause: `package-format.js` and the later runtime require one pure routing normalizer, but the original issue-013 bundled it with a separate remote lifecycle state machine.
@@ -1117,18 +1117,18 @@
 - Dispatch order: Parallel contract wave B with issue-057. Both start from the same immutable base, own disjoint files, use only Bun/Node built-ins, freeze independent schemas, and have independent focused tests.
 - Ownership: `packages/web/server/lib/interactive-ui/routing.js`; `packages/web/server/lib/interactive-ui/routing.test.js`.
 - Focused verification: Run the focused routing test and inspect canonicalization, limits, unknown fields, duplicates, and failure codes.
-- Pi binding: batch `a773e3b8-9f5d-405d-b187-7c9c3db74eef`, lane `routing-contract`, run/session `9adf5974-f703-4abf-aeef-8ce7565c5217`, worktree `/Users/loloru/.codex/sol-pi-advisor/worktrees/9adf5974-f703-4abf-aeef-8ce7565c5217`, base `d7b3dd63e8c436e3d9976a7c1c70e038388dbfc8`, revision 0, host PID 84711 at dispatch, supervised-local without sandbox.
-- Pi attempts: none
-- Primary attempts: not eligible while Pi retries remain
-- Current evidence: Both files are donor-only; `package-format.js` currently cannot execute directly in the integration tree until this contract and issue-057 land.
+- Pi binding: batch `a773e3b8-9f5d-405d-b187-7c9c3db74eef`, lane `routing-contract`, run/session `9adf5974-f703-4abf-aeef-8ce7565c5217`, worktree `/Users/loloru/.codex/sol-pi-advisor/worktrees/9adf5974-f703-4abf-aeef-8ce7565c5217`, base `d7b3dd63e8c436e3d9976a7c1c70e038388dbfc8`, revision 0, final host/Pi PIDs null, supervised-local without sandbox; exact worktree/run removed after accepted commit.
+- Pi attempts: revision 0 accepted without correction; exact two-file donor port with no dependency/Git mutation, policy violation, or scope drift. Six contract tests passed; two broader corpus tests truthfully exposed the separate missing-fixture root cause recorded as issue-059.
+- Primary attempts: no implementation repair required; independently reran the six core routing tests in candidate/integration and the complete byte-identical suite in the donor fixture tree.
+- Current evidence: Candidate/integration are byte-identical to donor (`routing.js` SHA-256 `cd731b4e...`, test `b2931b28...`). The six pure-contract tests pass 6/6 with 22 assertions in candidate and integration; the exact full suite passes 8/8 with 131 assertions in donor. Missing example corpus files are not hidden or trimmed and are tracked by issue-059; syntax and `git diff --check` pass.
 - Suspension decision: n/a
 - Resume condition: n/a
 - Continuation decision: Enables direct package-format verification and issue-013 runtime lifecycle work.
-- Next action: Dispatch in parallel contract wave B from the current immutable base.
+- Next action: Commit contract wave B, clean the exact Pi worktree/run immediately, then run the full suite after issue-059 restores its acceptance corpus.
 
 ## issue-057: Restore the pure dashboard and icon contract
 
-- Status: IN_PROGRESS
+- Status: RESOLVED
 - Classification: NORMAL
 - Goal / user outcome: Extension dashboards, slots, tiles, layout modes, and icon assets are normalized and bounded before signing, installation, routing, or rendering.
 - First-principles root cause: `package-format.js` needs dashboard/icon validation, but original issue-008 bundled this pure schema with authenticated HTTP routes and Business Gateway behavior.
@@ -1137,14 +1137,14 @@
 - Dispatch order: Parallel contract wave B with issue-056; same base, disjoint files, frozen independent schema, no shared generated output or dependency metadata.
 - Ownership: `packages/web/server/lib/interactive-ui/dashboard-contract.js`; `packages/web/server/lib/interactive-ui/dashboard-contract.test.js`.
 - Focused verification: Run the focused dashboard-contract test and inspect containment, slot/layout bounds, duplicate handling, icon validation, and stable errors.
-- Pi binding: batch `a773e3b8-9f5d-405d-b187-7c9c3db74eef`, lane `dashboard-contract`, run/session `03cabd94-0668-45e9-81cb-3cee015e5561`, worktree `/Users/loloru/.codex/sol-pi-advisor/worktrees/03cabd94-0668-45e9-81cb-3cee015e5561`, base `d7b3dd63e8c436e3d9976a7c1c70e038388dbfc8`, revision 0, host PID 84712 at dispatch, supervised-local without sandbox.
-- Pi attempts: none
-- Primary attempts: not eligible while Pi retries remain
-- Current evidence: Both files are donor-only and imported directly by the accepted package-format boundary.
+- Pi binding: batch `a773e3b8-9f5d-405d-b187-7c9c3db74eef`, lane `dashboard-contract`, run/session `03cabd94-0668-45e9-81cb-3cee015e5561`, worktree `/Users/loloru/.codex/sol-pi-advisor/worktrees/03cabd94-0668-45e9-81cb-3cee015e5561`, base `d7b3dd63e8c436e3d9976a7c1c70e038388dbfc8`, revision 0, final host/Pi PIDs null, supervised-local without sandbox; exact worktree/run removed after accepted commit.
+- Pi attempts: revision 0 accepted without correction; exact two-file donor port with no dependency/Git mutation, policy violation, or scope drift.
+- Primary attempts: no implementation repair required; independently reran the focused suite and inspected path containment, SVG/PNG hardening, schema/node/count bounds, slot/layout consistency, and safe context handling.
+- Current evidence: Candidate/integration are byte-identical to donor (`dashboard-contract.js` SHA-256 `4f4af728...`, test `6363ee17...`). Candidate and integration each pass 7/7 with 22 assertions; syntax and `git diff --check` pass.
 - Suspension decision: n/a
 - Resume condition: n/a
 - Continuation decision: Enables direct package-format verification and issue-008 route wiring.
-- Next action: Dispatch in parallel contract wave B from the current immutable base.
+- Next action: Commit contract wave B and clean the exact Pi worktree/run immediately; issue-058 can then run from a complete package-format import base.
 
 ## issue-058: Restore the signed Hosted OCIX kernel
 
@@ -1165,3 +1165,23 @@
 - Resume condition: n/a
 - Continuation decision: Enables direct package-format completion and issue-011 Remote connect/consent.
 - Next action: Queue immediately after issues 056-057 are accepted and integrated.
+
+## issue-059: Restore the routing acceptance corpus fixtures
+
+- Status: READY
+- Classification: NORMAL
+- Goal / user outcome: The pure routing contract is verified against the real bilingual example capabilities and the frozen 17-case product corpus in the target integration tree.
+- First-principles root cause: The accepted routing test contains two product-corpus checks, but the clean upstream target lacks the five donor fixture documents they read.
+- Core acceptance invariant: Three example manifests expose the expected bounded tool/intent graph; the bilingual corpus has at least 20 valid cases; the unified corpus has exactly 17 unique cases and its frozen category/tool distribution.
+- Dependencies: issue-056
+- Dispatch order: Parallel contract wave C with issue-058. It owns only static fixture documents, issue-058 owns only the Hosted kernel/test, neither consumes the sibling output, and both start from the same immutable base.
+- Ownership: `examples/interactive-ui/builtin-visualization/openchamber.extension.json`; `examples/interactive-ui/acme-crm/openchamber.extension.json`; `examples/interactive-ui/acme-sales/openchamber.extension.json`; `examples/interactive-ui/routing-cases.json`; `examples/interactive-ui/unified-acceptance-corpus.json`.
+- Focused verification: Run the complete routing test 8/8 and inspect corpus schemas, unique IDs, tool/intent references, category counts, locale set, and exact donor hashes.
+- Pi binding: unassigned
+- Pi attempts: none
+- Primary attempts: not eligible while Pi retries remain
+- Current evidence: The six pure routing tests pass; the remaining two fail only with ENOENT for these five files, while the exact suite passes 8/8 in donor.
+- Suspension decision: n/a
+- Resume condition: n/a
+- Continuation decision: Closes the complete issue-056 acceptance command and feeds later product routing gates.
+- Next action: Dispatch in parallel contract wave C after contract wave B is committed.
