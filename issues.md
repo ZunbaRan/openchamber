@@ -151,12 +151,12 @@
 - Status: READY
 - Classification: NORMAL
 - Goal / user outcome: Explicit OCIX routes expose artifact materialization and approved business requests before the generic OpenCode proxy.
-- First-principles root cause: The clean target has no OCIX route contract or dashboard validation.
+- First-principles root cause: The clean target has no OCIX route contract; dashboard schema validation is restored independently by issue-057.
 - Core acceptance invariant: Route order is explicit; auth/project/extension binding is authoritative; malformed and unauthorized requests fail closed; fetch failure never masquerades as empty success.
-- Dependencies: issue-006, issue-007
+- Dependencies: issue-006, issue-007, issue-057
 - Dispatch order: Serial after both authoritative stores.
-- Ownership: `packages/web/server/lib/interactive-ui/routes.js`; `packages/web/server/lib/interactive-ui/routes.artifact.test.js`; `packages/web/server/lib/interactive-ui/dashboard-contract.js`; `packages/web/server/lib/interactive-ui/dashboard-contract.test.js`.
-- Focused verification: Run focused route/artifact/dashboard tests and inspect route registration order.
+- Ownership: `packages/web/server/lib/interactive-ui/routes.js`; `packages/web/server/lib/interactive-ui/routes.artifact.test.js`.
+- Focused verification: Run focused route/artifact tests and inspect route registration order against the accepted dashboard contract.
 - Pi binding: unassigned
 - Pi attempts: none
 - Primary attempts: not eligible while Pi retries remain
@@ -213,10 +213,10 @@
 - Goal / user outcome: A signed Remote Manifest URL plus Access Key can be inspected/connected with publisher identity, permission review, and consent preserved.
 - First-principles root cause: The target lacks Remote OCIX manifest lifecycle and hosted adapter.
 - Core acceptance invariant: Inspect does not fetch signed resources; manifest identity/signature/slot/key requests are request-bound; credentials remain server-side; failed reconnect does not clear a valid shell.
-- Dependencies: issue-004, issue-005, issue-006
+- Dependencies: issue-004, issue-005, issue-006, issue-058
 - Dispatch order: Serial remote trust-domain lane before cache/update behavior.
-- Ownership: `packages/web/server/lib/interactive-ui/remote-ocix.js`; `packages/web/server/lib/interactive-ui/hosted-ocix.js`; `packages/web/server/lib/interactive-ui/hosted-ocix.test.js`; `packages/web/server/lib/interactive-ui/routes.remote.test.js`.
-- Focused verification: Focused hosted/remote route tests prove inspect/connect separation, signature/slot/key errors, non-retention, and valid-shell preservation.
+- Ownership: `packages/web/server/lib/interactive-ui/remote-ocix.js`; `packages/web/server/lib/interactive-ui/routes.remote.test.js`.
+- Focused verification: Focused Remote route tests prove inspect/connect separation, signature/slot/key errors, non-retention, and valid-shell preservation against the accepted Hosted kernel.
 - Pi binding: unassigned
 - Pi attempts: none
 - Primary attempts: not eligible while Pi retries remain
@@ -251,12 +251,12 @@
 - Status: READY
 - Classification: NORMAL
 - Goal / user outcome: Connected Remote apps expose truthful health/update state and require re-consent when signed identity/permissions change.
-- First-principles root cause: The target has no OCIX remote routing/update state machine.
+- First-principles root cause: The target has no OCIX runtime health/update state machine; pure routing normalization is restored independently by issue-056.
 - Core acceptance invariant: Health is request-bound; stale responses cannot overwrite newer state; changed publisher/permissions fail closed into re-consent; failed update preserves the prior runnable version.
-- Dependencies: issue-011, issue-012
+- Dependencies: issue-011, issue-012, issue-056
 - Dispatch order: Serial after cache semantics.
-- Ownership: `packages/web/server/lib/interactive-ui/routing.js`; `packages/web/server/lib/interactive-ui/routing.test.js`; `packages/web/server/lib/interactive-ui/runtime.js`; `packages/web/server/lib/interactive-ui/runtime.test.js`.
-- Focused verification: Focused routing/runtime tests prove stale response ordering, update rollback, health, and re-consent transitions.
+- Ownership: `packages/web/server/lib/interactive-ui/runtime.js`; `packages/web/server/lib/interactive-ui/runtime.test.js`.
+- Focused verification: Focused runtime tests prove stale response ordering, update rollback, health, and re-consent transitions against the accepted routing contract.
 - Pi binding: unassigned
 - Pi attempts: none
 - Primary attempts: not eligible while Pi retries remain
@@ -1105,3 +1105,63 @@
 - Resume condition: n/a
 - Continuation decision: A clean result permits fresh Sol review; a bounded violation becomes the final Pi lane under this stable issue ID.
 - Next action: Recompute after issue-054, then dispatch only if a concrete parity violation exists.
+
+## issue-056: Restore the pure Interactive UI routing contract
+
+- Status: READY
+- Classification: NORMAL
+- Goal / user outcome: Extension and surface routing metadata is normalized deterministically and rejects malformed, ambiguous, oversized, or unsafe declarations before any runtime or package authority consumes it.
+- First-principles root cause: `package-format.js` and the later runtime require one pure routing normalizer, but the original issue-013 bundled it with a separate remote lifecycle state machine.
+- Core acceptance invariant: Valid routing metadata round-trips to the bounded canonical form; unknown fields/enums, duplicate or conflicting identities, unsafe examples, and exceeded limits fail closed with stable errors.
+- Dependencies: none
+- Dispatch order: Parallel contract wave B with issue-057. Both start from the same immutable base, own disjoint files, use only Bun/Node built-ins, freeze independent schemas, and have independent focused tests.
+- Ownership: `packages/web/server/lib/interactive-ui/routing.js`; `packages/web/server/lib/interactive-ui/routing.test.js`.
+- Focused verification: Run the focused routing test and inspect canonicalization, limits, unknown fields, duplicates, and failure codes.
+- Pi binding: unassigned
+- Pi attempts: none
+- Primary attempts: not eligible while Pi retries remain
+- Current evidence: Both files are donor-only; `package-format.js` currently cannot execute directly in the integration tree until this contract and issue-057 land.
+- Suspension decision: n/a
+- Resume condition: n/a
+- Continuation decision: Enables direct package-format verification and issue-013 runtime lifecycle work.
+- Next action: Dispatch in parallel contract wave B from the current immutable base.
+
+## issue-057: Restore the pure dashboard and icon contract
+
+- Status: READY
+- Classification: NORMAL
+- Goal / user outcome: Extension dashboards, slots, tiles, layout modes, and icon assets are normalized and bounded before signing, installation, routing, or rendering.
+- First-principles root cause: `package-format.js` needs dashboard/icon validation, but original issue-008 bundled this pure schema with authenticated HTTP routes and Business Gateway behavior.
+- Core acceptance invariant: Valid dashboards/icons normalize deterministically; traversal, undeclared/malformed icons, duplicate/unknown slots, invalid layout modes, excessive KPI/slot counts, and oversized values fail closed.
+- Dependencies: none
+- Dispatch order: Parallel contract wave B with issue-056; same base, disjoint files, frozen independent schema, no shared generated output or dependency metadata.
+- Ownership: `packages/web/server/lib/interactive-ui/dashboard-contract.js`; `packages/web/server/lib/interactive-ui/dashboard-contract.test.js`.
+- Focused verification: Run the focused dashboard-contract test and inspect containment, slot/layout bounds, duplicate handling, icon validation, and stable errors.
+- Pi binding: unassigned
+- Pi attempts: none
+- Primary attempts: not eligible while Pi retries remain
+- Current evidence: Both files are donor-only and imported directly by the accepted package-format boundary.
+- Suspension decision: n/a
+- Resume condition: n/a
+- Continuation decision: Enables direct package-format verification and issue-008 route wiring.
+- Next action: Dispatch in parallel contract wave B from the current immutable base.
+
+## issue-058: Restore the signed Hosted OCIX kernel
+
+- Status: READY
+- Classification: NORMAL
+- Goal / user outcome: Hosted/Remote signed manifest documents, safe resource paths, publisher envelopes, permissions, update metadata, redirects, MIME, size, and SHA validation are available as one fail-closed transport/kernel boundary.
+- First-principles root cause: `package-format.js` imports Hosted delivery normalization, while original issue-011 mixed the reusable signed kernel with Manager-bound Remote connect and credential transactions.
+- Core acceptance invariant: A valid signed manifest verifies and materializes its exact declared resources; unsafe URL/path/origin/redirect/MIME/size/hash/signature/update inputs fail before exposing bytes or state.
+- Dependencies: issue-004, issue-056, issue-057
+- Dispatch order: Serial after contract wave B because its focused test imports `package-format.js`, whose direct imports must all exist on the lane base.
+- Ownership: `packages/web/server/lib/interactive-ui/hosted-ocix.js`; `packages/web/server/lib/interactive-ui/hosted-ocix.test.js`.
+- Focused verification: Run focused Hosted OCIX and package-format tests together; inspect bounded streaming, redirect/origin validation, signature/hash/MIME checks, safe paths, and update metadata.
+- Pi binding: unassigned
+- Pi attempts: none
+- Primary attempts: not eligible while Pi retries remain
+- Current evidence: Donor files are feature-owned; production module uses only Node built-ins, while its test consumes the already accepted package-format boundary.
+- Suspension decision: n/a
+- Resume condition: n/a
+- Continuation decision: Enables direct package-format completion and issue-011 Remote connect/consent.
+- Next action: Queue immediately after issues 056-057 are accepted and integrated.
