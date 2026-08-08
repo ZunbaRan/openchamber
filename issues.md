@@ -213,10 +213,10 @@
 - Goal / user outcome: A signed Remote Manifest URL plus Access Key can be inspected/connected with publisher identity, permission review, and consent preserved.
 - First-principles root cause: The target lacks Remote OCIX manifest lifecycle and hosted adapter.
 - Core acceptance invariant: Inspect does not fetch signed resources; manifest identity/signature/slot/key requests are request-bound; credentials remain server-side; failed reconnect does not clear a valid shell.
-- Dependencies: issue-004, issue-005, issue-006, issue-058
+- Dependencies: issue-004, issue-005, issue-006, issue-008, issue-012, issue-058, issue-060
 - Dispatch order: Serial remote trust-domain lane before cache/update behavior.
-- Ownership: `packages/web/server/lib/interactive-ui/remote-ocix.js`; `packages/web/server/lib/interactive-ui/hosted-ocix.test.js` (restore only the donor `Remote OCIX manifest verification` imports/describe after `remote-ocix.js` exists); `packages/web/server/lib/interactive-ui/routes.remote.test.js`.
-- Focused verification: Restore and run the Remote verification block plus focused Remote route tests; prove inspect/connect separation, signature/slot/key errors, non-retention, and valid-shell preservation against the accepted Hosted kernel.
+- Ownership: `packages/web/server/lib/interactive-ui/routes.remote.test.js`.
+- Focused verification: Run focused Remote route tests against the accepted Manager/routes/Remote verifier/cache contracts; prove inspect/connect separation, signature/slot/key errors, non-retention, and valid-shell preservation.
 - Pi binding: unassigned
 - Pi attempts: none
 - Primary attempts: not eligible while Pi retries remain
@@ -233,8 +233,8 @@
 - Goal / user outcome: Remote resources load lazily from a signed index, validate MIME/hash/size, and obey deterministic TTL/cache provenance.
 - First-principles root cause: The target lacks the Remote resource cache authority boundary.
 - Core acceptance invariant: Inspect performs zero resource fetches; first surface load validates exact signed identity; stale/poisoned/mismatched resources never replace valid cache; one failure does not erase unrelated resources.
-- Dependencies: issue-011
-- Dispatch order: Serial after Remote shell/consent contract.
+- Dependencies: issue-058
+- Dispatch order: Parallel dependency wave D with issue-060. It owns only the in-memory cache/test, issue-060 owns verifier/test-completion files, and neither consumes the sibling output.
 - Ownership: `packages/web/server/lib/interactive-ui/remote-resource-cache.js`; `packages/web/server/lib/interactive-ui/remote-resource-cache.test.js`.
 - Focused verification: Focused cache tests prove lazy fetch, hash/MIME/size rejection, TTL, provenance, partial failure, and valid-cache retention.
 - Pi binding: unassigned
@@ -244,7 +244,7 @@
 - Suspension decision: n/a
 - Resume condition: n/a
 - Continuation decision: Enables issue-013 and final Remote acceptance.
-- Next action: Queue behind issue-011.
+- Next action: Dispatch in parallel dependency wave D from the post-wave-C base.
 
 ## issue-013: Restore Remote health, update, and re-consent routing
 
@@ -1185,3 +1185,23 @@
 - Resume condition: n/a
 - Continuation decision: Closes the complete issue-056 acceptance command and feeds later product routing gates.
 - Next action: Commit contract wave C and remove the exact Pi worktree/run immediately.
+
+## issue-060: Restore the direct Remote signed-manifest verifier
+
+- Status: READY
+- Classification: NORMAL
+- Goal / user outcome: A direct Remote app URL can be verified as a signed Hosted manifest whose embedded publisher identity/key and surface-tool bindings are canonical, self-consistent, and safe before trust or credential writes.
+- First-principles root cause: issue-058 restored the Hosted transport kernel but deliberately excluded the donor test's separate Remote verifier describe because `remote-ocix.js` was not yet present.
+- Core acceptance invariant: Embedded Ed25519 key/fingerprint/signature/keyId/publisher identity and hosted tool bindings must agree exactly; missing, malformed, tampered, conflicting, reserved, or ambiguous inputs fail before returning a verified candidate.
+- Dependencies: issue-004, issue-058
+- Dispatch order: Parallel dependency wave D with issue-012; same immutable base, disjoint ownership, no sibling dependency, generated output, lockfile, or shared production interface change.
+- Ownership: `packages/web/server/lib/interactive-ui/remote-ocix.js`; `packages/web/server/lib/interactive-ui/hosted-ocix.test.js` (append exactly the donor Remote imports and `Remote OCIX manifest verification` describe to the accepted Hosted-only test).
+- Focused verification: Run full Hosted/Remote test and package-format test; inspect publisher/key/signature/binding negative paths and confirm the final test file is byte-identical to donor.
+- Pi binding: unassigned
+- Pi attempts: none
+- Primary attempts: not eligible while Pi retries remain
+- Current evidence: Hosted-only suite passes 16/16; donor's remaining Remote block begins at its explicit describe boundary and production verifier is 217 lines using accepted package/Hosted helpers.
+- Suspension decision: n/a
+- Resume condition: n/a
+- Continuation decision: Enables issue-011 Remote connect/consent and Manager preflight.
+- Next action: Dispatch in parallel dependency wave D from the post-wave-C base.
