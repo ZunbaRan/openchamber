@@ -308,43 +308,43 @@
 
 ## issue-016: Restore bindings and generated-layout sanitization
 
-- Status: READY
+- Status: IN_PROGRESS
 - Classification: NORMAL
 - Goal / user outcome: Declarative views bind only approved data/actions and sanitize generated layout before rendering.
 - First-principles root cause: The target lacks OCIX binding and layout validation.
 - Core acceptance invariant: Unknown paths/actions/primitives and malformed/oversized layouts fail closed; valid bindings preserve intended values without code execution.
 - Dependencies: issue-015
-- Dispatch order: Schema lane before Declarative renderer.
+- Dispatch order: Parallel Shared UI contract wave F with issue-017; paths are disjoint and both consume only committed issue-015 types.
 - Ownership: `packages/ui/src/lib/interactive-ui/bindings.ts`; `packages/ui/src/lib/interactive-ui/bindings.test.ts`; `packages/ui/src/lib/interactive-ui/generatedLayout.ts`; `packages/ui/src/lib/interactive-ui/generatedLayout.test.ts`; `packages/ui/src/lib/interactive-ui/metricIcons.ts`.
 - Focused verification: Run both focused tests and UI typecheck; all malformed and unauthorized cases reject deterministically.
-- Pi binding: unassigned
+- Pi binding: batch `a66627cb-bb8b-48d6-9dac-9a0a9311aa0d`, lane `bindings-layout`, run/session `2f972e96-320f-40f2-8477-50aea44107ac`, worktree `/Users/loloru/.codex/sol-pi-advisor/worktrees/2f972e96-320f-40f2-8477-50aea44107ac`, base `d2e0ae2fe5d80dba956f75bcae2ba1253ea3ab9e`, revision 0, host PID 7252 at dispatch, supervised-local without sandbox.
 - Pi attempts: none
 - Primary attempts: not eligible while Pi retries remain
 - Current evidence: Five donor-only files.
 - Suspension decision: n/a
 - Resume condition: n/a
 - Continuation decision: Enables issues 021-022.
-- Next action: Queue behind issue-015.
+- Next action: Inspect the policy-bound Pi candidate and independently verify sanitizer fail-closed boundaries.
 
 ## issue-017: Restore Artifact and Installed Artifact result schemas
 
-- Status: READY
+- Status: IN_PROGRESS
 - Classification: NORMAL
 - Goal / user outcome: Agent-generated and installed HTML Artifact envelopes remain distinct, validated, persistable, and safely fallback-capable.
 - First-principles root cause: The target lacks both Artifact result contracts and their state model.
 - Core acceptance invariant: Source identity and sandbox/business bindings cannot be confused; malformed/unknown payloads never cross into a more privileged renderer.
 - Dependencies: issue-015
-- Dispatch order: Schema lane before Artifact hosts.
+- Dispatch order: Parallel Shared UI contract wave F with issue-016; paths are disjoint and both consume only committed issue-015 types.
 - Ownership: `packages/ui/src/lib/interactive-ui/artifactResult.ts`; `packages/ui/src/lib/interactive-ui/artifactResult.test.ts`; `packages/ui/src/lib/interactive-ui/installedArtifactResult.ts`; `packages/ui/src/lib/interactive-ui/installedArtifactResult.test.ts`.
 - Focused verification: Run both schema test files and UI typecheck; cross-source and malformed cases fail closed.
-- Pi binding: unassigned
+- Pi binding: batch `a66627cb-bb8b-48d6-9dac-9a0a9311aa0d`, lane `artifact-result-schemas`, run/session `307c2b12-92dc-4f9a-84c2-f699005a61a2`, worktree `/Users/loloru/.codex/sol-pi-advisor/worktrees/307c2b12-92dc-4f9a-84c2-f699005a61a2`, base `d2e0ae2fe5d80dba956f75bcae2ba1253ea3ab9e`, revision 0, host PID 7253 at dispatch, supervised-local without sandbox.
 - Pi attempts: none
 - Primary attempts: not eligible while Pi retries remain
 - Current evidence: Four donor-only files.
 - Suspension decision: n/a
 - Resume condition: n/a
 - Continuation decision: Enables issues 023-025 and 026.
-- Next action: Queue behind issue-015.
+- Next action: Inspect the policy-bound Pi candidate and independently verify schema/source fail-closed boundaries.
 
 ## issue-018: Restore MCP App host binding and persistable state
 
