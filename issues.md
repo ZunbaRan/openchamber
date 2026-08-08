@@ -228,7 +228,7 @@
 
 ## issue-012: Restore Remote resource cache, TTL, and hash validation
 
-- Status: VERIFYING
+- Status: RESOLVED
 - Classification: NORMAL
 - Goal / user outcome: Remote resources load lazily from a signed index, validate MIME/hash/size, and obey deterministic TTL/cache provenance.
 - First-principles root cause: The target lacks the Remote resource cache authority boundary.
@@ -237,14 +237,14 @@
 - Dispatch order: Parallel dependency wave D with issue-060. It owns only the in-memory cache/test, issue-060 owns verifier/test-completion files, and neither consumes the sibling output.
 - Ownership: `packages/web/server/lib/interactive-ui/remote-resource-cache.js`; `packages/web/server/lib/interactive-ui/remote-resource-cache.test.js`.
 - Focused verification: Focused cache tests prove lazy fetch, hash/MIME/size rejection, TTL, provenance, partial failure, and valid-cache retention.
-- Pi binding: batch `de3cf10c-71d3-40b1-8f0f-2689aec02ad1`, lane `remote-cache`, run/session `dd622d8b-5b2a-4338-9d3f-1994ac413aaa`, worktree `/Users/loloru/.codex/sol-pi-advisor/worktrees/dd622d8b-5b2a-4338-9d3f-1994ac413aaa`, base `581d980e439eb2d31d0e1e158787700ef52d781e`, revision 0, host PID 89709 at dispatch, supervised-local without sandbox.
-- Pi attempts: none
-- Primary attempts: not eligible while Pi retries remain
-- Current evidence: Feature-owned donor files are absent from target.
+- Pi binding: batch `de3cf10c-71d3-40b1-8f0f-2689aec02ad1`, lane `remote-cache`, run/session `dd622d8b-5b2a-4338-9d3f-1994ac413aaa`, worktree `/Users/loloru/.codex/sol-pi-advisor/worktrees/dd622d8b-5b2a-4338-9d3f-1994ac413aaa`, base `581d980e439eb2d31d0e1e158787700ef52d781e`, revision 0, final host/Pi PIDs null, supervised-local without sandbox; exact worktree/run removed after accepted commit.
+- Pi attempts: revision 0 accepted without correction; exact two-file donor port with no dependency/Git mutation, policy violation, or scope drift.
+- Primary attempts: no implementation repair required; independently reran the focused suite and inspected exact subject keys, inclusive TTL/clock bounds, per-hit rehash, corruption-safe accounting/eviction, defensive copies, coalescing, failure isolation, and clear-vs-inflight epochs.
+- Current evidence: Both files are byte-identical to donor (`remote-resource-cache.js` SHA-256 `d693b687...`, test `87bae3a9...`). Candidate and integration pass 18/18 with 135 assertions; combined Hosted/Remote/cache/package gate passes 55/55 with 287 assertions; syntax and `git diff --check` pass.
 - Suspension decision: n/a
 - Resume condition: n/a
 - Continuation decision: Enables issue-013 and final Remote acceptance.
-- Next action: Dispatch in parallel dependency wave D from the post-wave-C base.
+- Next action: Commit dependency wave D and clean the exact Pi worktree/run immediately; Manager integration may now consume the accepted cache.
 
 ## issue-013: Restore Remote health, update, and re-consent routing
 
@@ -1188,7 +1188,7 @@
 
 ## issue-060: Restore the direct Remote signed-manifest verifier
 
-- Status: IN_PROGRESS
+- Status: RESOLVED
 - Classification: NORMAL
 - Goal / user outcome: A direct Remote app URL can be verified as a signed Hosted manifest whose embedded publisher identity/key and surface-tool bindings are canonical, self-consistent, and safe before trust or credential writes.
 - First-principles root cause: issue-058 restored the Hosted transport kernel but deliberately excluded the donor test's separate Remote verifier describe because `remote-ocix.js` was not yet present.
@@ -1197,11 +1197,11 @@
 - Dispatch order: Parallel dependency wave D with issue-012; same immutable base, disjoint ownership, no sibling dependency, generated output, lockfile, or shared production interface change.
 - Ownership: `packages/web/server/lib/interactive-ui/remote-ocix.js`; `packages/web/server/lib/interactive-ui/hosted-ocix.test.js` (append exactly the donor Remote imports and `Remote OCIX manifest verification` describe to the accepted Hosted-only test).
 - Focused verification: Run full Hosted/Remote test and package-format test; inspect publisher/key/signature/binding negative paths and confirm the final test file is byte-identical to donor.
-- Pi binding: batch `de3cf10c-71d3-40b1-8f0f-2689aec02ad1`, lane `remote-verifier`, run/session `e302865f-ddc3-41eb-8469-de13f1257cf6`, worktree `/Users/loloru/.codex/sol-pi-advisor/worktrees/e302865f-ddc3-41eb-8469-de13f1257cf6`, base `581d980e439eb2d31d0e1e158787700ef52d781e`, revision 0, host PID 89708 at dispatch, supervised-local without sandbox.
-- Pi attempts: revision 0 rejected before integration. The structured handoff claimed both owned files changed, but host-observed Git evidence reported `changedPaths: []`, empty diff digest `e3b0c442...`, and the actual worktree had no `remote-ocix.js` and retained the trimmed non-donor Hosted test. Correction 1 must write into the bound worktree and prove host-visible state before handoff.
-- Primary attempts: not eligible while Pi retries remain
-- Current evidence: Revision-0 worker prose is false relative to authoritative worktree state; no implementation exists yet. Hosted-only suite remains accepted, and correction 1 stays bound to the same run/session and exact issue ID.
+- Pi binding: batch `de3cf10c-71d3-40b1-8f0f-2689aec02ad1`, lane `remote-verifier`, run/session `e302865f-ddc3-41eb-8469-de13f1257cf6`, worktree `/Users/loloru/.codex/sol-pi-advisor/worktrees/e302865f-ddc3-41eb-8469-de13f1257cf6`, base `581d980e439eb2d31d0e1e158787700ef52d781e`, correction revision 1, final host/Pi PIDs null, supervised-local without sandbox; exact worktree/run removed after accepted commit.
+- Pi attempts: revision 0 rejected: structured prose claimed success while host evidence showed an empty bound-worktree diff; inspection then revealed the same intended bytes had been written to the integration worktree instead of the bound worktree. Correction 1 reused the same session, wrote exactly the two owned paths in the bound worktree, produced host-visible digest `0e33d9c2...`, and passed all checks.
+- Primary attempts: no implementation repair required; treated the wrong-worktree write as unaccepted until correction 1 produced the authoritative patch, then verified candidate/integration byte equality and reran the security suites.
+- Current evidence: `remote-ocix.js` and final `hosted-ocix.test.js` are byte-identical to donor. Correction candidate and integration pass Hosted/Remote + package 37/37 with 152 assertions; combined cache gate passes 55/55 with 287 assertions; syntax and `git diff --check` pass. Negative coverage includes missing/malformed publisher/key, keyId mismatch, invalid Ed25519 key, wrong-key signature, tamper, unsigned/identity mismatch, connector cardinality, and signed update metadata.
 - Suspension decision: n/a
 - Resume condition: n/a
 - Continuation decision: Enables issue-011 Remote connect/consent and Manager preflight.
-- Next action: Dispatch in parallel dependency wave D from the post-wave-C base.
+- Next action: Commit dependency wave D and clean the exact Pi worktree/run immediately; issue-011 and Manager preflight may consume the accepted verifier.
