@@ -80,7 +80,7 @@
 - Pi binding: settled run/session `8938db19-0f65-4f28-a12f-ce3a6362ad23`; detached base `4efc8f5d98c0472a1dd9fad4cee58518015a5cf0`; revision 0; host/Pi PIDs null; serial supervised-local execution. Exact worktree and run directory are cleaned after the accepted commit.
 - Pi attempts: revision 0 accepted without correction; the candidate ported exactly the two owned files and reported the currently absent peer-module dependency honestly.
 - Primary attempts: no implementation repair required; applied the policy-clean candidate, verified exact donor hashes, and ran the focused behavior test against the byte-identical donor module set.
-- Current evidence: Candidate and donor SHA-256 values match exactly (`package-format.js` `2f26a86a...`, test `fc22b78e...`); integration syntax checks and `git diff --check` pass. The byte-identical donor module set passes the focused package-format test 11/11 with 26 assertions. Direct integration execution remains part of the Phase 3 aggregate gate after `routing.js`, `dashboard-contract.js`, and `hosted-ocix.js` land; there is no fallback or stub for those authoritative peers.
+- Current evidence: Candidate and donor SHA-256 values match exactly (`package-format.js` `2f26a86a...`, test `fc22b78e...`); integration syntax checks and `git diff --check` pass. After issues 056-058 restored all authoritative peers, the direct integration focused suite passes 11/11; the combined routing/dashboard/Hosted/package contract gate passes 42/42 with 267 assertions. There is no fallback or stub for those peers.
 - Suspension decision: n/a
 - Resume condition: n/a
 - Continuation decision: Enables issue-005; aggregate Phase 3 verification will rerun this test from the integration tree once its three authoritative peer modules land.
@@ -215,8 +215,8 @@
 - Core acceptance invariant: Inspect does not fetch signed resources; manifest identity/signature/slot/key requests are request-bound; credentials remain server-side; failed reconnect does not clear a valid shell.
 - Dependencies: issue-004, issue-005, issue-006, issue-058
 - Dispatch order: Serial remote trust-domain lane before cache/update behavior.
-- Ownership: `packages/web/server/lib/interactive-ui/remote-ocix.js`; `packages/web/server/lib/interactive-ui/routes.remote.test.js`.
-- Focused verification: Focused Remote route tests prove inspect/connect separation, signature/slot/key errors, non-retention, and valid-shell preservation against the accepted Hosted kernel.
+- Ownership: `packages/web/server/lib/interactive-ui/remote-ocix.js`; `packages/web/server/lib/interactive-ui/hosted-ocix.test.js` (restore only the donor `Remote OCIX manifest verification` imports/describe after `remote-ocix.js` exists); `packages/web/server/lib/interactive-ui/routes.remote.test.js`.
+- Focused verification: Restore and run the Remote verification block plus focused Remote route tests; prove inspect/connect separation, signature/slot/key errors, non-retention, and valid-shell preservation against the accepted Hosted kernel.
 - Pi binding: unassigned
 - Pi attempts: none
 - Primary attempts: not eligible while Pi retries remain
@@ -1120,7 +1120,7 @@
 - Pi binding: batch `a773e3b8-9f5d-405d-b187-7c9c3db74eef`, lane `routing-contract`, run/session `9adf5974-f703-4abf-aeef-8ce7565c5217`, worktree `/Users/loloru/.codex/sol-pi-advisor/worktrees/9adf5974-f703-4abf-aeef-8ce7565c5217`, base `d7b3dd63e8c436e3d9976a7c1c70e038388dbfc8`, revision 0, final host/Pi PIDs null, supervised-local without sandbox; exact worktree/run removed after accepted commit.
 - Pi attempts: revision 0 accepted without correction; exact two-file donor port with no dependency/Git mutation, policy violation, or scope drift. Six contract tests passed; two broader corpus tests truthfully exposed the separate missing-fixture root cause recorded as issue-059.
 - Primary attempts: no implementation repair required; independently reran the six core routing tests in candidate/integration and the complete byte-identical suite in the donor fixture tree.
-- Current evidence: Candidate/integration are byte-identical to donor (`routing.js` SHA-256 `cd731b4e...`, test `b2931b28...`). The six pure-contract tests pass 6/6 with 22 assertions in candidate and integration; the exact full suite passes 8/8 with 131 assertions in donor. Missing example corpus files are not hidden or trimmed and are tracked by issue-059; syntax and `git diff --check` pass.
+- Current evidence: Candidate/integration are byte-identical to donor (`routing.js` SHA-256 `cd731b4e...`, test `b2931b28...`). The six pure-contract tests pass 6/6 with 22 assertions in candidate/integration; after issue-059 restored the exact corpus inputs, the direct integration suite passes the complete 8/8 with 131 assertions. Syntax and `git diff --check` pass.
 - Suspension decision: n/a
 - Resume condition: n/a
 - Continuation decision: Enables direct package-format verification and issue-013 runtime lifecycle work.
@@ -1148,7 +1148,7 @@
 
 ## issue-058: Restore the signed Hosted OCIX kernel
 
-- Status: IN_PROGRESS
+- Status: RESOLVED
 - Classification: NORMAL
 - Goal / user outcome: Hosted/Remote signed manifest documents, safe resource paths, publisher envelopes, permissions, update metadata, redirects, MIME, size, and SHA validation are available as one fail-closed transport/kernel boundary.
 - First-principles root cause: `package-format.js` imports Hosted delivery normalization, while original issue-011 mixed the reusable signed kernel with Manager-bound Remote connect and credential transactions.
@@ -1157,18 +1157,18 @@
 - Dispatch order: Serial after contract wave B because its focused test imports `package-format.js`, whose direct imports must all exist on the lane base.
 - Ownership: `packages/web/server/lib/interactive-ui/hosted-ocix.js`; `packages/web/server/lib/interactive-ui/hosted-ocix.test.js`.
 - Focused verification: Run focused Hosted OCIX and package-format tests together; inspect bounded streaming, redirect/origin validation, signature/hash/MIME checks, safe paths, and update metadata.
-- Pi binding: batch `c1f041cc-38d4-46f8-9071-6c64905587e9`, lane `hosted-kernel`, run/session `11b9c292-53fa-46da-8f3c-6afe839bd74d`, worktree `/Users/loloru/.codex/sol-pi-advisor/worktrees/11b9c292-53fa-46da-8f3c-6afe839bd74d`, base `6b0366ad45820489d2a5c769e093b1d0621c0aba`, revision 0, host PID 86825 at dispatch, supervised-local without sandbox.
-- Pi attempts: none
-- Primary attempts: not eligible while Pi retries remain
-- Current evidence: Donor files are feature-owned; production module uses only Node built-ins, while its test consumes the already accepted package-format boundary.
+- Pi binding: batch `c1f041cc-38d4-46f8-9071-6c64905587e9`, lane `hosted-kernel`, run/session `11b9c292-53fa-46da-8f3c-6afe839bd74d`, worktree `/Users/loloru/.codex/sol-pi-advisor/worktrees/11b9c292-53fa-46da-8f3c-6afe839bd74d`, base `6b0366ad45820489d2a5c769e093b1d0621c0aba`, revision 0, final host/Pi PIDs null, supervised-local without sandbox; exact worktree/run removed after accepted commit.
+- Pi attempts: revision 0 accepted without correction; production kernel is byte-identical to donor. The test was decomposed at the existing describe boundary to exclude the donor's separate Remote verifier block; that exact block is now explicitly owned by issue-011 rather than deleted.
+- Primary attempts: no implementation repair required; independently reran Hosted + package-format suites in candidate/integration and inspected signature, origin/redirect, URL/path, stream overflow/cancel, MIME/hash/size, Native trust, materialization, and cache-integrity paths.
+- Current evidence: `hosted-ocix.js` is byte-identical to donor (SHA-256 `f9391239...`). The focused candidate/integration Hosted + package suites pass 27/27 with 114 assertions; combined routing/dashboard/Hosted/package gate passes 42/42 with 267 assertions. The scoped test contains all 16 donor Hosted tests; the separate Remote describe remains tracked by issue-011.
 - Suspension decision: n/a
 - Resume condition: n/a
 - Continuation decision: Enables direct package-format completion and issue-011 Remote connect/consent.
-- Next action: Queue immediately after issues 056-057 are accepted and integrated.
+- Next action: Commit contract wave C, clean the exact Pi worktree/run immediately, then consume the kernel in issue-011.
 
 ## issue-059: Restore the routing acceptance corpus fixtures
 
-- Status: IN_PROGRESS
+- Status: RESOLVED
 - Classification: NORMAL
 - Goal / user outcome: The pure routing contract is verified against the real bilingual example capabilities and the frozen 17-case product corpus in the target integration tree.
 - First-principles root cause: The accepted routing test contains two product-corpus checks, but the clean upstream target lacks the five donor fixture documents they read.
@@ -1177,11 +1177,11 @@
 - Dispatch order: Parallel contract wave C with issue-058. It owns only static fixture documents, issue-058 owns only the Hosted kernel/test, neither consumes the sibling output, and both start from the same immutable base.
 - Ownership: `examples/interactive-ui/builtin-visualization/openchamber.extension.json`; `examples/interactive-ui/acme-crm/openchamber.extension.json`; `examples/interactive-ui/acme-sales/openchamber.extension.json`; `examples/interactive-ui/routing-cases.json`; `examples/interactive-ui/unified-acceptance-corpus.json`.
 - Focused verification: Run the complete routing test 8/8 and inspect corpus schemas, unique IDs, tool/intent references, category counts, locale set, and exact donor hashes.
-- Pi binding: batch `c1f041cc-38d4-46f8-9071-6c64905587e9`, lane `routing-corpus`, run/session `8fea6414-3b84-4637-832b-d2a9208e3f8c`, worktree `/Users/loloru/.codex/sol-pi-advisor/worktrees/8fea6414-3b84-4637-832b-d2a9208e3f8c`, base `6b0366ad45820489d2a5c769e093b1d0621c0aba`, revision 0, host PID 86826 at dispatch, supervised-local without sandbox.
-- Pi attempts: none
-- Primary attempts: not eligible while Pi retries remain
-- Current evidence: The six pure routing tests pass; the remaining two fail only with ENOENT for these five files, while the exact suite passes 8/8 in donor.
+- Pi binding: batch `c1f041cc-38d4-46f8-9071-6c64905587e9`, lane `routing-corpus`, run/session `8fea6414-3b84-4637-832b-d2a9208e3f8c`, worktree `/Users/loloru/.codex/sol-pi-advisor/worktrees/8fea6414-3b84-4637-832b-d2a9208e3f8c`, base `6b0366ad45820489d2a5c769e093b1d0621c0aba`, revision 0, final host/Pi PIDs null, supervised-local without sandbox; exact worktree/run removed after accepted commit.
+- Pi attempts: revision 0 accepted without correction; exactly five allowed static JSON files, byte-identical to donor, with no dependency/Git mutation, policy violation, or scope drift.
+- Primary attempts: no implementation repair required; independently reran the full routing suite in candidate/integration and audited JSON parsing, schemas, unique IDs, references, category/tool counts, and locales.
+- Current evidence: All five files match donor exactly. Routing integration passes 8/8 with 131 assertions; `routing-cases.json` has 20 cases; unified corpus has exactly 17 unique cases with the frozen 6/5/3/3 category and expected-tool distribution and only `zh-CN`/`en` locales.
 - Suspension decision: n/a
 - Resume condition: n/a
 - Continuation decision: Closes the complete issue-056 acceptance command and feeds later product routing gates.
-- Next action: Dispatch in parallel contract wave C after contract wave B is committed.
+- Next action: Commit contract wave C and remove the exact Pi worktree/run immediately.

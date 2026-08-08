@@ -1,0 +1,25 @@
+{
+  "$schema": "openchamber://interactive-ui-routing-cases/v1",
+  "cases": [
+    { "id": "zh-crm-overview", "locale": "zh-CN", "prompt": "打开企业 CRM 工作台", "expectedTool": "crm_open_dashboard", "expectedIntent": "crm.overview" },
+    { "id": "zh-crm-customers", "locale": "zh-CN", "prompt": "看看重点客户列表", "expectedTool": "crm_open_dashboard", "expectedIntent": "crm.customer.view" },
+    { "id": "zh-crm-pipeline", "locale": "zh-CN", "prompt": "销售管道现在怎么样", "expectedTool": "crm_open_dashboard", "expectedIntent": "crm.pipeline.view" },
+    { "id": "zh-crm-opportunity", "locale": "zh-CN", "prompt": "查看 CRM 里的商机", "expectedTool": "crm_open_dashboard", "expectedIntent": "crm.opportunity.view" },
+    { "id": "zh-crm-followup", "locale": "zh-CN", "prompt": "有哪些客户需要跟进", "expectedTool": "crm_open_dashboard", "expectedIntent": "crm.followup.view" },
+    { "id": "en-crm-overview", "locale": "en", "prompt": "Open the enterprise CRM workspace", "expectedTool": "crm_open_dashboard", "expectedIntent": "crm.overview" },
+    { "id": "en-crm-pipeline", "locale": "en", "prompt": "Show the current opportunity pipeline", "expectedTool": "crm_open_dashboard", "expectedIntent": "crm.pipeline.view" },
+    { "id": "en-crm-followup", "locale": "en", "prompt": "Which CRM accounts need follow-up?", "expectedTool": "crm_open_dashboard", "expectedIntent": "crm.followup.view" },
+    { "id": "zh-sales-summary", "locale": "zh-CN", "prompt": "查看华东区本月销售概览", "expectedTool": "sales_get_summary", "expectedIntent": "sales.summary" },
+    { "id": "zh-sales-dashboard", "locale": "zh-CN", "prompt": "打开销售看板", "expectedTool": "sales_get_dashboard", "expectedIntent": "sales.dashboard" },
+    { "id": "en-sales-summary", "locale": "en", "prompt": "Show the monthly sales summary", "expectedTool": "sales_get_summary", "expectedIntent": "sales.summary" },
+    { "id": "en-sales-dashboard", "locale": "en", "prompt": "Open the regional sales dashboard", "expectedTool": "sales_get_dashboard", "expectedIntent": "sales.dashboard" },
+    { "id": "zh-generic-flow", "locale": "zh-CN", "prompt": "画一下 LLM 强化学习流程", "expectedTool": "interactive_ui", "expectedIntent": "visualization.process" },
+    { "id": "zh-generic-chart", "locale": "zh-CN", "prompt": "把我刚给的数据画成趋势图", "expectedTool": "interactive_ui", "expectedIntent": "visualization.chart" },
+    { "id": "zh-generic-table", "locale": "zh-CN", "prompt": "把这组结果整理成对比表", "expectedTool": "interactive_ui", "expectedIntent": "visualization.table" },
+    { "id": "en-generic-flow", "locale": "en", "prompt": "Visualize the RLHF workflow", "expectedTool": "interactive_ui", "expectedIntent": "visualization.process" },
+    { "id": "en-generic-chart", "locale": "en", "prompt": "Chart the numbers I supplied", "expectedTool": "interactive_ui", "expectedIntent": "visualization.chart" },
+    { "id": "explicit-tool", "locale": "zh-CN", "prompt": "使用 crm_open_dashboard 打开 CRM", "expectedTool": "crm_open_dashboard", "expectedIntent": "crm.overview" },
+    { "id": "crm-unconfigured", "locale": "zh-CN", "prompt": "查看 CRM 管道（连接尚未配置）", "expectedTool": "crm_open_dashboard", "expectedIntent": "crm.pipeline.view" },
+    { "id": "crm-no-fake-fallback", "locale": "en", "prompt": "Our CRM is disconnected; still show me what setup is required", "expectedTool": "crm_open_dashboard", "expectedIntent": "crm.overview" }
+  ]
+}
