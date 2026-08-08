@@ -108,7 +108,7 @@
 
 ## issue-006: Restore the Connector Secret Store authority boundary
 
-- Status: READY
+- Status: IN_PROGRESS
 - Classification: NORMAL
 - Goal / user outcome: Connector credentials remain in an owner-only server store and can be bound, replaced, tested, and removed without leaking secret material or crossing installation ownership.
 - First-principles root cause: The target lacks the fork's server-only connection store; Business Gateway routing consumes this authority later but is not part of this storage slice.
@@ -117,7 +117,7 @@
 - Dispatch order: Parallel storage wave A with issues 007 and 009. All three start from the same immutable base, own pairwise-disjoint files, freeze no shared generated artifact or lockfile, and have independent focused tests. Business Gateway routing remains in issue-008.
 - Ownership: `packages/web/server/lib/interactive-ui/connection-store.js`; `packages/web/server/lib/interactive-ui/connection-store.test.js`.
 - Focused verification: Run the focused connection-store test; credential non-retention, opaque-key validation, installation binding, replacement/removal, permissions, and failure preservation pass.
-- Pi binding: unassigned
+- Pi binding: batch `3280cee8-c9a0-4298-b0a9-c3da59940939`, lane `secret-store`, run/session `9d533fc2-d8a5-4aa2-a8de-3f7533e6b064`, worktree `/Users/loloru/.codex/sol-pi-advisor/worktrees/9d533fc2-d8a5-4aa2-a8de-3f7533e6b064`, base `f7ba23f42445ef2f239c4973131d415481827c02`, revision 0, host PID 82327 at dispatch, supervised-local without sandbox.
 - Pi attempts: none
 - Primary attempts: not eligible while Pi retries remain
 - Current evidence: Files are feature-owned donor additions and absent from target.
@@ -128,7 +128,7 @@
 
 ## issue-007: Restore authoritative Artifact persistence
 
-- Status: READY
+- Status: IN_PROGRESS
 - Classification: NORMAL
 - Goal / user outcome: Artifact content/references persist and materialize deterministically without partial writes or cross-project leakage.
 - First-principles root cause: The target lacks the fork Artifact Store.
@@ -137,7 +137,7 @@
 - Dispatch order: Parallel storage wave A with issues 006 and 009; ownership and tests are disjoint, and no sibling consumes another sibling's output.
 - Ownership: `packages/web/server/lib/interactive-ui/artifact-store.js`; `packages/web/server/lib/interactive-ui/artifact-store.test.js`.
 - Focused verification: Focused artifact-store tests prove round-trip, isolation, stale/malformed handling, and failed-write preservation.
-- Pi binding: unassigned
+- Pi binding: batch `3280cee8-c9a0-4298-b0a9-c3da59940939`, lane `artifact-store`, run/session `f8c91fe7-56e1-43f2-af68-93338c35c7ba`, worktree `/Users/loloru/.codex/sol-pi-advisor/worktrees/f8c91fe7-56e1-43f2-af68-93338c35c7ba`, base `f7ba23f42445ef2f239c4973131d415481827c02`, revision 0, host PID 82328 at dispatch, supervised-local without sandbox.
 - Pi attempts: none
 - Primary attempts: not eligible while Pi retries remain
 - Current evidence: Feature-owned files exist only in donor.
@@ -168,7 +168,7 @@
 
 ## issue-009: Restore Workbench persistence and versioning
 
-- Status: READY
+- Status: IN_PROGRESS
 - Classification: NORMAL
 - Goal / user outcome: Project boards, tiles, layout, context, and link state persist authoritatively with deterministic version handling.
 - First-principles root cause: The target lacks the Workbench store/version contract.
@@ -177,7 +177,7 @@
 - Dispatch order: Parallel storage wave A with issues 006 and 007; the four owned Workbench files form one persistence/version contract and do not overlap sibling storage authorities.
 - Ownership: `packages/web/server/lib/interactive-ui/workbench-store.js`; `packages/web/server/lib/interactive-ui/workbench-store.test.js`; `packages/web/server/lib/interactive-ui/workbench-version.js`; `packages/web/server/lib/interactive-ui/workbench-version.test.js`.
 - Focused verification: Run both focused test files; round-trip, version, malformed, missing-versus-empty, and failed-write cases pass.
-- Pi binding: unassigned
+- Pi binding: batch `3280cee8-c9a0-4298-b0a9-c3da59940939`, lane `workbench-store`, run/session `836de744-f5e4-4661-913e-2de0b6186bf1`, worktree `/Users/loloru/.codex/sol-pi-advisor/worktrees/836de744-f5e4-4661-913e-2de0b6186bf1`, base `f7ba23f42445ef2f239c4973131d415481827c02`, revision 0, host PID 82329 at dispatch, supervised-local without sandbox.
 - Pi attempts: none
 - Primary attempts: not eligible while Pi retries remain
 - Current evidence: Four files are donor-only.
