@@ -35,8 +35,12 @@ const createManager = async (options = {}) => {
 };
 
 const trustPathFor = (dataDirectory) => path.join(dataDirectory, 'interactive-ui', 'trust.json');
+const statePathFor = (dataDirectory) => path.join(dataDirectory, 'interactive-ui', 'installations.json');
+const versionsPathFor = (dataDirectory) => path.join(dataDirectory, 'extensions');
+const stagingPathFor = (dataDirectory) => path.join(dataDirectory, 'interactive-ui', 'staging');
+const trashPathFor = (dataDirectory) => path.join(dataDirectory, 'interactive-ui', 'trash');
 
-const createExtension = async ({ extensionId = 'com.acme.operations' } = {}) => {
+const createExtension = async ({ extensionId = 'com.acme.operations', version = '1.0.0', delivery } = {}) => {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'ocix-extension-'));
   temporaryDirectories.push(directory);
   // View/surface ids derive from the extension id so over-bound fixtures stay
@@ -49,19 +53,23 @@ const createExtension = async ({ extensionId = 'com.acme.operations' } = {}) => 
     $schema: 'openchamber://extension/v1',
     id: extensionId,
     name: 'Acme Operations',
-    version: '1.0.0',
+    version,
     connectors: [],
     views: [{ id: viewId, runtime: 'declarative', entry: 'ui/view.json', tools: ['operations_open'] }],
     actions: [],
     permissions: { network: [] },
     trust: { mode: 'declarative', signature: 'production' },
+    ...(delivery === undefined ? {} : { delivery }),
   }, null, 2));
   await fs.writeFile(path.join(directory, 'ui', 'view.json'), JSON.stringify({
     $schema: 'openchamber://declarative-view/v1',
     id: viewId,
     layout: { type: 'text', value: 'Hello' },
   }));
-  await fs.writeFile(path.join(directory, 'agent-runtime', 'tools', 'operations_open.ts'), 'export default { description: "Open operations" };\n');
+  await fs.writeFile(
+    path.join(directory, 'agent-runtime', 'tools', 'operations_open.ts'),
+    `export default { description: "Open operations ${version}" };\n`,
+  );
   await fs.writeFile(path.join(directory, 'agent-runtime', 'skills', 'acme-operations', 'SKILL.md'), '---\nname: acme-operations\ndescription: Open operations views.\n---\n');
   return directory;
 };
@@ -72,9 +80,11 @@ const signPackage = async ({
   publisherId = 'com.acme.publisher',
   publisherName = 'Acme',
   extensionId = 'com.acme.operations',
+  version = '1.0.0',
+  delivery,
 } = {}) => {
   const packed = await createExtensionPackage({
-    extensionDirectory: await createExtension({ extensionId }),
+    extensionDirectory: await createExtension({ extensionId, version, delivery }),
     privateKey: keys.privateKey,
     publisherId,
     publisherName,
@@ -667,6 +677,443 @@ describe('Interactive UI extension trust manager', () => {
     await expect(manager.inspectPackage(archive.toBuffer())).rejects.toMatchObject({
       code: 'invalid_signature',
       status: 403,
+    });
+  });
+
+  describe('Local extension lifecycle', () => {
+    it('requires trusted package authority before extraction and validates injected adapter types', async () => {
+      expect(() => managerAt('/tmp', { validateStagedPackage: true })).toThrow('staged validator is invalid');
+      expect(() => managerAt('/tmp', { reconcileActivation: true })).toThrow('activation reconciler is invalid');
+
+      const { dataDirectory } = await createManager();
+      const packed = await signPackage();
+      let validationCalls = 0;
+      let activationCalls = 0;
+      const manager = managerAt(dataDirectory, {
+        validateStagedPackage: async () => { validationCalls += 1; },
+        reconcileActivation: async () => {
+          activationCalls += 1;
+          return { openCode: {}, rollback: async () => {} };
+        },
+      });
+
+      await expect(manager.installPackage(packed.buffer)).rejects.toMatchObject({
+        code: 'publisher_untrusted',
+        status: 403,
+      });
+      expect(validationCalls).toBe(0);
+      expect(activationCalls).toBe(0);
+
+      await manager.trustPublisher({
+        id: 'com.acme.publisher', name: 'Acme', keyId: 'release-2026', publicKey: packed.keys.publicKey,
+      });
+      const unknownDelivery = await signPackage({ keys: packed.keys, delivery: {} });
+      await expect(manager.installPackage(unknownDelivery.buffer)).rejects.toMatchObject({
+        code: 'unsupported_delivery',
+        status: 409,
+      });
+      expect(validationCalls).toBe(0);
+      expect(activationCalls).toBe(0);
+      await expect(fs.stat(stagingPathFor(dataDirectory))).rejects.toMatchObject({ code: 'ENOENT' });
+      await expect(fs.stat(versionsPathFor(dataDirectory))).rejects.toMatchObject({ code: 'ENOENT' });
+      await expect(fs.stat(statePathFor(dataDirectory))).rejects.toMatchObject({ code: 'ENOENT' });
+    });
+
+    it('installs only after staging validation and commits sanitized durable state plus a verified root', async () => {
+      const { dataDirectory } = await createManager();
+      const packed = await signPackage();
+      const events = [];
+      const manager = managerAt(dataDirectory, {
+        validateStagedPackage: async ({ directory, verified }) => {
+          events.push('validate');
+          expect(directory.startsWith(stagingPathFor(dataDirectory))).toBe(true);
+          expect(verified.publisherTrusted).toBe(true);
+          expect(await fs.readFile(path.join(directory, 'openchamber.extension.json'), 'utf8')).toContain('com.acme.operations');
+          await expect(fs.stat(statePathFor(dataDirectory))).rejects.toMatchObject({ code: 'ENOENT' });
+        },
+        reconcileActivation: async ({ previousState, nextState, versionsDirectory }) => {
+          events.push('activate');
+          expect(previousState.extensions).toEqual({});
+          expect(nextState.extensions['com.acme.operations'].activeVersion).toBe('1.0.0');
+          expect(versionsDirectory).toBe(versionsPathFor(dataDirectory));
+          await expect(fs.stat(statePathFor(dataDirectory))).rejects.toMatchObject({ code: 'ENOENT' });
+          return {
+            openCode: { changed: true, reloaded: true, external: false, managedPath: dataDirectory },
+            rollback: async () => { events.push('rollback'); },
+          };
+        },
+      });
+      await manager.trustPublisher({
+        id: 'com.acme.publisher',
+        name: 'Acme',
+        keyId: 'release-2026',
+        publicKey: packed.keys.publicKey,
+      });
+
+      const installed = await manager.installPackage(packed.buffer);
+      expect(events).toEqual(['validate', 'activate']);
+      expect(installed).toMatchObject({
+        installed: true,
+        extension: { id: 'com.acme.operations', enabled: true, activeVersion: '1.0.0' },
+        openCode: { changed: true, reloaded: true, external: false },
+      });
+      expect(JSON.stringify(installed)).not.toContain('fileHashes');
+      expect(JSON.stringify(installed)).not.toContain('generationId');
+      expect(JSON.stringify(installed)).not.toContain(dataDirectory);
+
+      const state = JSON.parse(await fs.readFile(statePathFor(dataDirectory), 'utf8'));
+      expect(state.$schema).toBe('openchamber://extension-manager-state/v1');
+      expect(state.extensions['com.acme.operations'].versions['1.0.0']).toMatchObject({
+        delivery: 'local',
+        source: { type: 'file' },
+        publisher: { id: 'com.acme.publisher', keyId: 'release-2026' },
+      });
+      expect(Object.keys(state.extensions['com.acme.operations'].versions['1.0.0'].fileHashes).length).toBeGreaterThan(1);
+      expect(typeof state.extensions['com.acme.operations'].versions['1.0.0'].generationId).toBe('string');
+      expect((await fs.stat(statePathFor(dataDirectory))).mode & 0o777).toBe(0o600);
+      expect((await fs.stat(path.dirname(statePathFor(dataDirectory)))).mode & 0o777).toBe(0o700);
+
+      const listed = await manager.list();
+      expect(listed.extensions).toEqual([expect.objectContaining({ id: 'com.acme.operations', activeVersion: '1.0.0' })]);
+      expect(JSON.stringify(listed)).not.toContain('fileHashes');
+      expect(JSON.stringify(listed)).not.toContain('generationId');
+      expect(JSON.stringify(listed)).not.toContain(dataDirectory);
+      expect(JSON.stringify(listed)).not.toContain('BEGIN PUBLIC KEY');
+
+      const roots = await managerAt(dataDirectory).getEnabledExtensionRoots();
+      expect(roots).toHaveLength(1);
+      expect(roots[0].directory).toBe(path.join(versionsPathFor(dataDirectory), 'com.acme.operations', '1.0.0'));
+      expect(roots[0].provenance.generation).toBe(state.extensions['com.acme.operations'].versions['1.0.0'].generationId);
+    });
+
+    it('updates, preserves idempotence, rejects same-version substitution, toggles, rolls back, and recoverably uninstalls', async () => {
+      const { dataDirectory } = await createManager();
+      const keys = generatePublisherKeyPair();
+      const versionOne = await signPackage({ keys, version: '1.0.0' });
+      const versionTwo = await signPackage({ keys, version: '1.1.0' });
+      const substituted = await signPackage({ keys, version: '1.0.0', publisherName: 'Acme Changed' });
+      const activations = [];
+      const manager = managerAt(dataDirectory, {
+        validateStagedPackage: async () => {},
+        reconcileActivation: async ({ nextState }) => {
+          const extension = nextState.extensions['com.acme.operations'];
+          activations.push(extension
+            ? { activeVersion: extension.activeVersion, enabled: extension.enabled }
+            : { removed: true });
+          return { openCode: { changed: true }, rollback: async () => {} };
+        },
+      });
+      await manager.trustPublisher({
+        id: 'com.acme.publisher',
+        name: 'Acme',
+        keyId: 'release-2026',
+        publicKey: keys.publicKey,
+      });
+
+      expect((await manager.installPackage(versionOne.buffer)).installed).toBe(true);
+      expect((await manager.installPackage(versionOne.buffer)).installed).toBe(false);
+      expect(activations).toHaveLength(1);
+      await expect(manager.installPackage(substituted.buffer)).rejects.toMatchObject({ code: 'version_conflict', status: 409 });
+      expect(activations).toHaveLength(1);
+
+      const updated = await manager.installPackage(versionTwo.buffer);
+      expect(updated.extension.activeVersion).toBe('1.1.0');
+      expect(updated.extension.activationHistory).toEqual(['1.0.0']);
+      expect(Object.keys(updated.extension.versions)).toEqual(['1.0.0', '1.1.0']);
+
+      expect((await manager.setEnabled('com.acme.operations', false)).enabled).toBe(false);
+      expect(await manager.getEnabledExtensionRoots()).toEqual([]);
+      expect((await manager.setEnabled('com.acme.operations', true)).enabled).toBe(true);
+
+      const rolledBack = await manager.rollback('com.acme.operations');
+      expect(rolledBack.activeVersion).toBe('1.0.0');
+      expect(rolledBack.activationHistory).toEqual(['1.1.0']);
+      expect((await manager.getEnabledExtensionRoots())[0].directory.endsWith(path.join('com.acme.operations', '1.0.0'))).toBe(true);
+
+      const removed = await manager.uninstall('com.acme.operations');
+      expect(removed.removed).toBe(true);
+      expect(typeof removed.recoveryId).toBe('string');
+      expect('recoveryPath' in removed).toBe(false);
+      expect(removed.recoveryId).not.toContain(dataDirectory);
+      expect(JSON.stringify(removed)).not.toContain(dataDirectory);
+      expect((await fs.stat(path.join(trashPathFor(dataDirectory), removed.recoveryId))).isDirectory()).toBe(true);
+      expect((await manager.list()).extensions).toEqual([]);
+      expect(await manager.getEnabledExtensionRoots()).toEqual([]);
+      await expect(fs.stat(path.join(versionsPathFor(dataDirectory), 'com.acme.operations')))
+        .rejects.toMatchObject({ code: 'ENOENT' });
+      expect(activations).toEqual([
+        { activeVersion: '1.0.0', enabled: true },
+        { activeVersion: '1.1.0', enabled: true },
+        { activeVersion: '1.1.0', enabled: false },
+        { activeVersion: '1.1.0', enabled: true },
+        { activeVersion: '1.0.0', enabled: true },
+        { removed: true },
+      ]);
+    });
+
+    it('cleans staging and performs no activation when staged validation fails', async () => {
+      const { dataDirectory } = await createManager();
+      const packed = await signPackage();
+      await managerAt(dataDirectory).trustPublisher({
+        id: 'com.acme.publisher',
+        name: 'Acme',
+        keyId: 'release-2026',
+        publicKey: packed.keys.publicKey,
+      });
+      let activationCalls = 0;
+      const manager = managerAt(dataDirectory, {
+        validateStagedPackage: async () => { throw new Error('invalid staged runtime'); },
+        reconcileActivation: async () => {
+          activationCalls += 1;
+          return { openCode: {}, rollback: async () => {} };
+        },
+      });
+
+      await expect(manager.installPackage(packed.buffer)).rejects.toMatchObject({ code: 'extension_validation_failed' });
+      expect(activationCalls).toBe(0);
+      expect(await fs.readdir(stagingPathFor(dataDirectory))).toEqual([]);
+      await expect(fs.stat(path.join(versionsPathFor(dataDirectory), 'com.acme.operations')))
+        .rejects.toMatchObject({ code: 'ENOENT' });
+      await expect(fs.stat(statePathFor(dataDirectory))).rejects.toMatchObject({ code: 'ENOENT' });
+    });
+
+    it('refuses an unmanaged destination without overwriting or activating it', async () => {
+      const { dataDirectory } = await createManager();
+      const packed = await signPackage();
+      await managerAt(dataDirectory).trustPublisher({
+        id: 'com.acme.publisher', name: 'Acme', keyId: 'release-2026', publicKey: packed.keys.publicKey,
+      });
+      const destination = path.join(versionsPathFor(dataDirectory), 'com.acme.operations', '1.0.0');
+      await fs.mkdir(destination, { recursive: true });
+      await fs.writeFile(path.join(destination, 'user-owned.txt'), 'preserve');
+      let activationCalls = 0;
+      const manager = managerAt(dataDirectory, {
+        validateStagedPackage: async () => {},
+        reconcileActivation: async () => {
+          activationCalls += 1;
+          return { openCode: {}, rollback: async () => {} };
+        },
+      });
+
+      await expect(manager.installPackage(packed.buffer)).rejects.toMatchObject({
+        code: 'unmanaged_version_conflict',
+        status: 409,
+      });
+      expect(activationCalls).toBe(0);
+      expect(await fs.readFile(path.join(destination, 'user-owned.txt'), 'utf8')).toBe('preserve');
+      expect(await fs.readdir(stagingPathFor(dataDirectory))).toEqual([]);
+      await expect(fs.stat(statePathFor(dataDirectory))).rejects.toMatchObject({ code: 'ENOENT' });
+    });
+
+    it('removes the moved version and preserves empty durable state when activation rejects atomically', async () => {
+      const { dataDirectory } = await createManager();
+      const packed = await signPackage();
+      await managerAt(dataDirectory).trustPublisher({
+        id: 'com.acme.publisher', name: 'Acme', keyId: 'release-2026', publicKey: packed.keys.publicKey,
+      });
+      let selfRollback = false;
+      const manager = managerAt(dataDirectory, {
+        validateStagedPackage: async () => {},
+        reconcileActivation: async () => {
+          selfRollback = true;
+          throw new InteractiveUIExtensionManagerError('activation failed', 'activation_failed', 500);
+        },
+      });
+
+      await expect(manager.installPackage(packed.buffer)).rejects.toMatchObject({ code: 'activation_failed' });
+      expect(selfRollback).toBe(true);
+      expect(await fs.readdir(stagingPathFor(dataDirectory))).toEqual([]);
+      await expect(fs.stat(path.join(versionsPathFor(dataDirectory), 'com.acme.operations')))
+        .rejects.toMatchObject({ code: 'ENOENT' });
+      await expect(fs.stat(statePathFor(dataDirectory))).rejects.toMatchObject({ code: 'ENOENT' });
+    });
+
+    it('rolls activation back and removes a new version when the durable state write fails', async () => {
+      const { dataDirectory } = await createManager();
+      const packed = await signPackage();
+      await managerAt(dataDirectory).trustPublisher({
+        id: 'com.acme.publisher', name: 'Acme', keyId: 'release-2026', publicKey: packed.keys.publicKey,
+      });
+      const failingFs = {
+        ...fs,
+        writeFile: async (filePath, ...rest) => {
+          if (String(filePath).includes('installations.json.') && String(filePath).endsWith('.tmp')) {
+            throw new Error('simulated state failure');
+          }
+          return fs.writeFile(filePath, ...rest);
+        },
+      };
+      let rollbacks = 0;
+      const manager = managerAt(dataDirectory, {
+        fsImpl: failingFs,
+        validateStagedPackage: async () => {},
+        reconcileActivation: async () => ({
+          openCode: { changed: true },
+          rollback: async () => { rollbacks += 1; },
+        }),
+      });
+
+      await expect(manager.installPackage(packed.buffer)).rejects.toMatchObject({ code: 'manager_write_failed', status: 500 });
+      expect(rollbacks).toBe(1);
+      expect(await fs.readdir(stagingPathFor(dataDirectory))).toEqual([]);
+      await expect(fs.stat(path.join(versionsPathFor(dataDirectory), 'com.acme.operations')))
+        .rejects.toMatchObject({ code: 'ENOENT' });
+      await expect(fs.stat(statePathFor(dataDirectory))).rejects.toMatchObject({ code: 'ENOENT' });
+      expect((await fs.readdir(path.dirname(statePathFor(dataDirectory))))
+        .filter((name) => name.startsWith('installations.json.') && name.endsWith('.tmp'))).toEqual([]);
+      expect((await managerAt(dataDirectory).list()).publishers).toHaveLength(1);
+    });
+
+    it('preserves the previous version and exact state when an update state write fails', async () => {
+      const { dataDirectory } = await createManager();
+      const keys = generatePublisherKeyPair();
+      const versionOne = await signPackage({ keys, version: '1.0.0' });
+      const versionTwo = await signPackage({ keys, version: '1.1.0' });
+      const healthy = managerAt(dataDirectory, {
+        validateStagedPackage: async () => {},
+        reconcileActivation: async () => ({ openCode: {}, rollback: async () => {} }),
+      });
+      await healthy.trustPublisher({
+        id: 'com.acme.publisher', name: 'Acme', keyId: 'release-2026', publicKey: keys.publicKey,
+      });
+      await healthy.installPackage(versionOne.buffer);
+      const before = await fs.readFile(statePathFor(dataDirectory), 'utf8');
+      const failingFs = {
+        ...fs,
+        writeFile: async (filePath, ...rest) => {
+          if (String(filePath).includes('installations.json.') && String(filePath).endsWith('.tmp')) throw new Error('disk full');
+          return fs.writeFile(filePath, ...rest);
+        },
+      };
+      let rollbacks = 0;
+      const failing = managerAt(dataDirectory, {
+        fsImpl: failingFs,
+        validateStagedPackage: async () => {},
+        reconcileActivation: async () => ({ openCode: {}, rollback: async () => { rollbacks += 1; } }),
+      });
+
+      await expect(failing.installPackage(versionTwo.buffer)).rejects.toMatchObject({ code: 'manager_write_failed' });
+      expect(rollbacks).toBe(1);
+      expect(await fs.readFile(statePathFor(dataDirectory), 'utf8')).toBe(before);
+      expect((await healthy.list()).extensions[0].activeVersion).toBe('1.0.0');
+      expect((await fs.stat(path.join(versionsPathFor(dataDirectory), 'com.acme.operations', '1.0.0'))).isDirectory()).toBe(true);
+      await expect(fs.stat(path.join(versionsPathFor(dataDirectory), 'com.acme.operations', '1.1.0')))
+        .rejects.toMatchObject({ code: 'ENOENT' });
+    });
+
+    it('restores the managed version tree when uninstall state persistence fails', async () => {
+      const { dataDirectory } = await createManager();
+      const packed = await signPackage();
+      const healthy = managerAt(dataDirectory, {
+        validateStagedPackage: async () => {},
+        reconcileActivation: async () => ({ openCode: {}, rollback: async () => {} }),
+      });
+      await healthy.trustPublisher({
+        id: 'com.acme.publisher', name: 'Acme', keyId: 'release-2026', publicKey: packed.keys.publicKey,
+      });
+      await healthy.installPackage(packed.buffer);
+      const before = await fs.readFile(statePathFor(dataDirectory), 'utf8');
+      const failingFs = {
+        ...fs,
+        writeFile: async (filePath, ...rest) => {
+          if (String(filePath).includes('installations.json.') && String(filePath).endsWith('.tmp')) throw new Error('disk full');
+          return fs.writeFile(filePath, ...rest);
+        },
+      };
+      let rollbacks = 0;
+      const failing = managerAt(dataDirectory, {
+        fsImpl: failingFs,
+        reconcileActivation: async () => ({ openCode: {}, rollback: async () => { rollbacks += 1; } }),
+      });
+
+      await expect(failing.uninstall('com.acme.operations')).rejects.toMatchObject({ code: 'manager_write_failed' });
+      expect(rollbacks).toBe(1);
+      expect(await fs.readFile(statePathFor(dataDirectory), 'utf8')).toBe(before);
+      expect((await fs.stat(path.join(versionsPathFor(dataDirectory), 'com.acme.operations', '1.0.0'))).isDirectory()).toBe(true);
+      expect(await fs.readdir(trashPathFor(dataDirectory))).toEqual([]);
+    });
+
+    it('serializes concurrent installs without overlapping validation or losing either version', async () => {
+      const { dataDirectory } = await createManager();
+      const keys = generatePublisherKeyPair();
+      const versionOne = await signPackage({ keys, version: '1.0.0' });
+      const versionTwo = await signPackage({ keys, version: '1.1.0' });
+      let activeValidations = 0;
+      let maximumActiveValidations = 0;
+      const manager = managerAt(dataDirectory, {
+        validateStagedPackage: async () => {
+          activeValidations += 1;
+          maximumActiveValidations = Math.max(maximumActiveValidations, activeValidations);
+          await Promise.resolve();
+          activeValidations -= 1;
+        },
+        reconcileActivation: async () => ({ openCode: {}, rollback: async () => {} }),
+      });
+      await manager.trustPublisher({
+        id: 'com.acme.publisher', name: 'Acme', keyId: 'release-2026', publicKey: keys.publicKey,
+      });
+
+      await Promise.all([manager.installPackage(versionOne.buffer), manager.installPackage(versionTwo.buffer)]);
+      expect(maximumActiveValidations).toBe(1);
+      const extension = (await manager.list()).extensions[0];
+      expect(extension.activeVersion).toBe('1.1.0');
+      expect(Object.keys(extension.versions)).toEqual(['1.0.0', '1.1.0']);
+      expect(extension.activationHistory).toEqual(['1.0.0']);
+    });
+
+    it('fails closed on tampered rollback/enable targets and quarantines a corrupt active root per extension', async () => {
+      const { dataDirectory } = await createManager();
+      const keys = generatePublisherKeyPair();
+      const versionOne = await signPackage({ keys, version: '1.0.0' });
+      const versionTwo = await signPackage({ keys, version: '1.1.0' });
+      const warnings = [];
+      const manager = managerAt(dataDirectory, {
+        validateStagedPackage: async () => {},
+        reconcileActivation: async () => ({ openCode: {}, rollback: async () => {} }),
+        logger: { warn: (message) => warnings.push(message) },
+      });
+      await manager.trustPublisher({
+        id: 'com.acme.publisher', name: 'Acme', keyId: 'release-2026', publicKey: keys.publicKey,
+      });
+      await manager.installPackage(versionOne.buffer);
+      await manager.installPackage(versionTwo.buffer);
+      await fs.writeFile(
+        path.join(versionsPathFor(dataDirectory), 'com.acme.operations', '1.0.0', 'ui', 'view.json'),
+        '{"tampered":true}',
+      );
+
+      await expect(manager.rollback('com.acme.operations')).rejects.toMatchObject({ code: 'extension_integrity_failed' });
+      expect((await manager.list()).extensions[0].activeVersion).toBe('1.1.0');
+
+      await fs.writeFile(
+        path.join(versionsPathFor(dataDirectory), 'com.acme.operations', '1.1.0', 'ui', 'view.json'),
+        '{"tampered":true}',
+      );
+      expect(await manager.getEnabledExtensionRoots()).toEqual([]);
+      expect(await manager.getEnabledExtensionRoots()).toEqual([]);
+      expect(warnings).toHaveLength(1);
+      await manager.setEnabled('com.acme.operations', false);
+      await expect(manager.setEnabled('com.acme.operations', true)).rejects.toMatchObject({ code: 'extension_integrity_failed' });
+      expect((await manager.list()).extensions[0].enabled).toBe(false);
+    });
+
+    it('rejects corrupt or widened durable installation state instead of exposing it', async () => {
+      const { dataDirectory } = await createManager();
+      const packed = await signPackage();
+      const manager = managerAt(dataDirectory, {
+        validateStagedPackage: async () => {},
+        reconcileActivation: async () => ({ openCode: {}, rollback: async () => {} }),
+      });
+      await manager.trustPublisher({
+        id: 'com.acme.publisher', name: 'Acme', keyId: 'release-2026', publicKey: packed.keys.publicKey,
+      });
+      await manager.installPackage(packed.buffer);
+      const state = JSON.parse(await fs.readFile(statePathFor(dataDirectory), 'utf8'));
+      state.extensions['com.acme.operations'].versions['1.0.0'].managedPath = '/tmp/leak';
+      await fs.writeFile(statePathFor(dataDirectory), JSON.stringify(state));
+
+      await expect(manager.list()).rejects.toMatchObject({ code: 'manager_data_corrupt', status: 500 });
+      await expect(manager.getEnabledExtensionRoots()).rejects.toMatchObject({ code: 'manager_data_corrupt', status: 500 });
     });
   });
 

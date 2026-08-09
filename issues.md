@@ -1208,7 +1208,7 @@
 
 ## issue-061: Restore transactional Local extension lifecycle
 
-- Status: READY
+- Status: RESOLVED
 - Classification: NORMAL
 - Goal / user outcome: Trusted Local OCIX packages install, update, enable/disable, roll back, and uninstall without leaving files, durable state, or activation state partially applied.
 - First-principles root cause: The target has no persistent installation lifecycle, and the donor hard-wires not-yet-restored runtime validation and Agent Runtime reconciliation into the same implementation.
@@ -1217,14 +1217,14 @@
 - Dispatch order: Serial extension of the accepted Manager trust interface; same-file ownership forbids parallel dispatch.
 - Ownership: `packages/web/server/lib/interactive-ui/manager.js`; `packages/web/server/lib/interactive-ui/manager.test.js`.
 - Focused verification: `bun run --cwd packages/web test -- server/lib/interactive-ui/manager.test.js`; lifecycle cases cover install/update/idempotence/version conflict, enable/disable, rollback history, failed validation, failed state commit, activation rollback, and recoverable uninstall.
-- Pi binding: unassigned
-- Pi attempts: none
-- Primary attempts: not eligible while Pi retries remain
-- Current evidence: The 2026-07-20 donor contains the causal transaction shape but directly imports unresolved modules. The settled seam keeps one deep Manager interface and accepts two internal adapters at construction: a staged-package validator and an activation reconciler; production adapters arrive from issues 014 and 010, while lifecycle tests use local stand-ins.
+- Pi binding: not dispatched. The user made an emergency workflow change before `pi_lane_start` on 2026-08-09 and explicitly assigned planning, implementation, verification, and acceptance to the primary task; no issue-061 Pi worktree, run, session, or log directory was created.
+- Pi attempts: none; the workflow was cancelled before any Pi run started, so there is no Pi correction count or cleanup target.
+- Primary attempts: Direct implementation round 1 added the frozen Local state schema, signed extraction/integrity checks, two injected transaction adapters, lifecycle APIs, sanitized snapshots, and failure-atomic state/version/activation ordering. The first focused run passed 48/50; both failures proved a first-install activation/state failure removed signed files but left an empty `<extensions>/<id>` directory. The exact fix removes that parent only when empty, so update rollback still preserves accepted versions; focused rerun passed 50/50. Semantic audit round 2 found the donor-shaped uninstall result exposed an absolute managed `recoveryPath`, contrary to the current distribution contract. The exact fix retains recoverable trash but returns only an opaque `recoveryId` and constrains the injected OpenCode result to three booleans; focused rerun passed 51/51 and the 10-file regression passed 160/160.
+- Current evidence: The accepted two-file implementation verifies an already-trusted Local signature before any extraction, rejects every explicit/unknown delivery field in this slice, writes only exact signed files under a unique owner-only staging root, validates before destination/activation, rejects unmanaged and same-version/different-content collisions, serializes every lifecycle mutation, persists owner-only atomic state, and uses activation rollback plus version cleanup/restore on later failure. Public list/install/toggle/rollback/uninstall results omit file hashes, generation IDs, public keys, absolute paths, and adapter extras; only the explicitly internal `getEnabledExtensionRoots` carries managed path plus lifecycle generation after re-hashing the complete installed file set. Verification: 51/51 focused Manager + Package Format tests; 160/160 across all 10 Interactive UI server test files; `lint:web`, node syntax, and `git diff --check` pass. `type-check:web` reports only existing issue-054 (`@modelcontextprotocol/ext-apps` missing from `mcpApp.ts`). `dead-code` exits 0 with the existing repository inventory; it reports no new Manager file/export issue, and host Git inspection confirms no package/lockfile mutation despite its `Saved lockfile` diagnostic. No owning `DOCUMENTATION.md` exists yet; issue-063 remains the planned documentation closure after issue-062 freezes the Manager seam.
 - Suspension decision: n/a
 - Resume condition: n/a
 - Continuation decision: Enables issues 010 and 062; issue-014 waits for both.
-- Next action: Queue immediately after issue-005 is accepted and committed.
+- Next action: Commit only `issues.md` and the two accepted Manager files, then use that immutable commit as issue-062's serial base; issue-010 remains independently enabled and issue-014 waits for both.
 
 ## issue-062: Restore signed Marketplace manager flow
 
