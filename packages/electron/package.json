@@ -46,8 +46,9 @@
     "verify:update-manifest": "node ./scripts/verify-update-manifest.mjs",
     "package": "bun run build:web-assets && bun run prepare:opencode-cli && bun run bundle:main && bun run rebuild:native && node ./scripts/package.mjs",
     "finalize:latest-yml": "node ./scripts/finalize-latest-yml.mjs",
-    "type-check": "node --check ./main.mjs && node --check ./preload.mjs",
-    "lint": "node -e \"process.exit(0)\""
+    "type-check": "node --check ./main.mjs && node --check ./preload.mjs && node --check ./artifact-runner.mjs && node --check ./artifact-runner-preload.cjs && node --check ./desktop-binary-save.mjs",
+    "lint": "node -e \"process.exit(0)\"",
+    "test:artifact-runner": "node --test ./artifact-runner.test.mjs"
   },
   "build": {
     "appId": "dev.openchamber.desktop",

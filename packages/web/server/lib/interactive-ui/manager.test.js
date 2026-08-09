@@ -173,6 +173,9 @@ const createRemoteManifest = ({
   viewEntry,
   resourcePath,
   viewText,
+  update,
+  connectorId = 'crm',
+  extraAction = false,
   extensionExtra = {},
   topLevelExtra = {},
 } = {}) => {
@@ -185,7 +188,7 @@ const createRemoteManifest = ({
   const entryMimeType = native ? 'text/javascript' : 'application/json';
   const declaredResourcePath = resourcePath ?? entryPath;
   const resolvedConnectors = connectors ?? [{
-    id: 'crm',
+    id: connectorId,
     type: 'http',
     baseUrl: 'https://api.example.com',
     auth: { type: 'api-key' },
@@ -197,6 +200,7 @@ const createRemoteManifest = ({
       version,
       publishedAt: `2026-08-0${version === '1.0.0' ? '5' : '6'}T00:00:00.000Z`,
     },
+    ...(update === undefined ? {} : { update }),
     publisher: {
       id: publisherId,
       name: publisherName,
@@ -208,7 +212,9 @@ const createRemoteManifest = ({
       networkOrigins: [...extensionNetwork],
       externalLinkOrigins: [],
       credentialScopes: ['crm.read'],
-      actionIds: ['com.acme.remote.read'],
+      actionIds: extraAction
+        ? ['com.acme.remote.read', 'com.acme.remote.export']
+        : ['com.acme.remote.read'],
       agentToolNames: [toolName],
       clipboard: false,
       popups: false,
@@ -236,10 +242,15 @@ const createRemoteManifest = ({
       }],
       actions: [{
         id: 'com.acme.remote.read',
-        connector: 'crm',
+        connector: connectorId,
         risk: 'read',
         request: { method: 'GET', path: '/crm' },
-      }],
+      }, ...(extraAction ? [{
+        id: 'com.acme.remote.export',
+        connector: connectorId,
+        risk: 'write',
+        request: { method: 'POST', path: '/crm/export' },
+      }] : [])],
       permissions: { network: extensionNetwork },
       trust: { mode: native ? 'native-code' : 'declarative', signature: 'production' },
       ...extensionExtra,
@@ -1924,6 +1935,26 @@ describe('Interactive UI extension trust manager', () => {
 
   describe('Remote OCIX manager regression contract', () => {
     const appEntryUrl = 'https://apps.example.com/manifest.json';
+    const statefulRemoteFetch = (holder, requested = []) => async (url) => {
+      const value = String(url);
+      requested.push(value);
+      if (value === appEntryUrl && holder.document) {
+        return new Response(JSON.stringify(holder.document), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      return new Response('unavailable', { status: 503 });
+    };
+
+    const connectLifecycleRemote = async (manager) => {
+      const inspection = await manager.inspectRemote(appEntryUrl);
+      return manager.connectRemote({
+        appEntryUrl,
+        confirmedPublisherFingerprint: inspection.publisher.fingerprint,
+        confirmedManifestHash: inspection.manifest.manifestHash,
+      });
+    };
 
     it('inspects one signed manifest without writes or resource fetches', async () => {
       const dataDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'ocix-manager-remote-inspect-'));
@@ -2625,6 +2656,1025 @@ describe('Interactive UI extension trust manager', () => {
       expect(calls).toHaveLength(1);
       expect(calls[0][0]).toBe('configure');
       expect(calls[0]).not.toContain('stale-secret');
+    });
+
+    it('reports request-bound Remote health and classifies permission expansion without mutating the active contract', async () => {
+      const dataDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'ocix-manager-remote-lifecycle-'));
+      temporaryDirectories.push(dataDirectory);
+      const keys = generatePublisherKeyPair();
+      const v1 = createRemoteManifest({ keys });
+      const v2 = createRemoteManifest({
+        keys,
+        version: '2.0.0',
+        extraAction: true,
+        update: { changeSummary: 'Adds export action' },
+      });
+      const holder = { document: v1.document };
+      const requested = [];
+      const manager = remoteManagerAt(dataDirectory, {
+        fetchImpl: statefulRemoteFetch(holder, requested),
+      });
+      await connectLifecycleRemote(manager);
+      holder.document = v2.document;
+
+      const lifecycle = await manager.checkRemoteUpdate('com.acme.remote', { force: true });
+      expect(lifecycle).toMatchObject({
+        status: 'available',
+        currentVersion: '1.0.0',
+        remoteVersion: '2.0.0',
+        changeSummary: 'Adds export action',
+        permissionDelta: 'expanded',
+        addedPermissions: { actionIds: ['com.acme.remote.export'] },
+        keyChanged: false,
+        requiresUserConfirmation: true,
+        health: { status: 'reachable', checkedAt: expect.any(String) },
+      });
+      expect(JSON.stringify(lifecycle)).not.toContain('BEGIN PUBLIC KEY');
+      expect(JSON.stringify(lifecycle)).not.toContain('installationId');
+      expect((await manager.list()).extensions[0].activeVersion).toBe('1.0.0');
+      expect(requested.every((url) => url === appEntryUrl)).toBe(true);
+    });
+
+    it('applies an exactly confirmed Remote update with installation-scoped re-consent and preserves rollback', async () => {
+      const dataDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'ocix-manager-remote-apply-'));
+      temporaryDirectories.push(dataDirectory);
+      const keys = generatePublisherKeyPair();
+      const rotatedKeys = generatePublisherKeyPair();
+      const v1 = createRemoteManifest({ keys });
+      const v2 = createRemoteManifest({
+        keys: rotatedKeys,
+        version: '2.0.0',
+        publisherKeyId: 'release-2027',
+        update: { changeSummary: 'Rotates signing key' },
+      });
+      const holder = { document: v1.document };
+      const manager = remoteManagerAt(dataDirectory, { fetchImpl: statefulRemoteFetch(holder) });
+      await connectLifecycleRemote(manager);
+      holder.document = v2.document;
+
+      const lifecycle = await manager.checkRemoteUpdate('com.acme.remote', { force: true });
+      expect(lifecycle).toMatchObject({ keyChanged: true, requiresUserConfirmation: true });
+      await expect(manager.applyRemoteUpdate('com.acme.remote', {})).rejects.toMatchObject({
+        code: 'remote_confirmation_required',
+        status: 403,
+      });
+      await expect(manager.applyRemoteUpdate('com.acme.remote', {
+        confirmedManifestHash: lifecycle.remoteManifestHash,
+        confirmedPublisherFingerprint: lifecycle.publisherFingerprint,
+      })).resolves.toMatchObject({ applied: true, previousVersion: '1.0.0' });
+
+      const snapshot = await manager.list();
+      expect(snapshot.publishers).toEqual([]);
+      expect(snapshot.extensions[0].activeVersion).toBe('2.0.0');
+      expect(snapshot.extensions[0].versions['2.0.0'].remote).not.toHaveProperty('publisherPublicKey');
+      expect(snapshot.extensions[0].versions['1.0.0']).toBeTruthy();
+      await expect(manager.rollback('com.acme.remote')).resolves.toMatchObject({ activeVersion: '1.0.0' });
+    });
+
+    it('persists a required-update block before failure and cannot bypass it after restart', async () => {
+      const dataDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'ocix-manager-remote-required-'));
+      temporaryDirectories.push(dataDirectory);
+      const keys = generatePublisherKeyPair();
+      const v1 = createRemoteManifest({ keys });
+      const required = createRemoteManifest({
+        keys,
+        version: '2.0.0',
+        extraAction: true,
+        update: { required: true, changeSummary: 'Required permission expansion' },
+      });
+      const holder = { document: v1.document };
+      const manager = remoteManagerAt(dataDirectory, { fetchImpl: statefulRemoteFetch(holder) });
+      await connectLifecycleRemote(manager);
+      holder.document = required.document;
+
+      await expect(manager.prepareRemoteUse('com.acme.remote', { trigger: 'surface', force: true }))
+        .rejects.toMatchObject({ code: 'remote_update_required_blocked', status: 409 });
+      expect((await manager.list()).extensions[0].versions['1.0.0'].remote.blocked).toMatchObject({
+        required: true,
+        version: '2.0.0',
+      });
+
+      const restarted = remoteManagerAt(dataDirectory, {
+        fetchImpl: async () => new Response('unavailable', { status: 503 }),
+      });
+      await expect(restarted.prepareRemoteUse('com.acme.remote', { trigger: 'surface', force: true }))
+        .rejects.toMatchObject({ code: 'remote_update_required_blocked' });
+      expect(await restarted.getEnabledExtensionRoots()).toEqual([]);
+    });
+
+    it('does not let generic rollback bypass an active required-update block', async () => {
+      const dataDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'ocix-manager-remote-rollback-blocked-'));
+      temporaryDirectories.push(dataDirectory);
+      const keys = generatePublisherKeyPair();
+      const v1 = createRemoteManifest({ keys });
+      const v2 = createRemoteManifest({ keys, version: '2.0.0' });
+      const required = createRemoteManifest({
+        keys,
+        version: '3.0.0',
+        extraAction: true,
+        update: { required: true, changeSummary: 'Required export update' },
+      });
+      const holder = { document: v1.document };
+      const manager = remoteManagerAt(dataDirectory, { fetchImpl: statefulRemoteFetch(holder) });
+      await connectLifecycleRemote(manager);
+      holder.document = v2.document;
+      await expect(manager.applyRemoteUpdate('com.acme.remote', {})).resolves.toMatchObject({ applied: true });
+      holder.document = required.document;
+      await expect(manager.prepareRemoteUse('com.acme.remote', { force: true }))
+        .rejects.toMatchObject({ code: 'remote_update_required_blocked', status: 409 });
+      await expect(manager.rollback('com.acme.remote'))
+        .rejects.toMatchObject({ code: 'remote_update_required_blocked', status: 409 });
+      expect((await manager.list()).extensions[0].activeVersion).toBe('2.0.0');
+    });
+
+    it('clears historical blocked metadata after a successful required update so rollback remains runnable', async () => {
+      const dataDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'ocix-manager-remote-required-rollback-'));
+      temporaryDirectories.push(dataDirectory);
+      const keys = generatePublisherKeyPair();
+      const v1 = createRemoteManifest({ keys });
+      const required = createRemoteManifest({
+        keys,
+        version: '2.0.0',
+        update: { required: true, changeSummary: 'Required metadata update' },
+      });
+      const holder = { document: v1.document };
+      const manager = remoteManagerAt(dataDirectory, { fetchImpl: statefulRemoteFetch(holder) });
+      await connectLifecycleRemote(manager);
+      holder.document = required.document;
+      await expect(manager.applyRemoteUpdate('com.acme.remote', {})).resolves.toMatchObject({ applied: true });
+      const snapshot = await manager.list();
+      expect(snapshot.extensions[0].versions['1.0.0'].remote).not.toHaveProperty('blocked');
+      await expect(manager.rollback('com.acme.remote')).resolves.toMatchObject({ activeVersion: '1.0.0' });
+      expect(await manager.getEnabledExtensionRoots()).toHaveLength(1);
+    });
+
+    it('keeps the prior Remote root usable after a mid-write candidate failure and restart', async () => {
+      const dataDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'ocix-manager-remote-midwrite-'));
+      temporaryDirectories.push(dataDirectory);
+      const keys = generatePublisherKeyPair();
+      const v1 = createRemoteManifest({ keys });
+      const v2 = createRemoteManifest({ keys, version: '2.0.0' });
+      const holder = { document: v1.document };
+      let failCandidate = false;
+      let candidateLinks = 0;
+      const failingFs = {
+        ...fs,
+        link: async (source, target) => {
+          const value = String(target);
+          const candidatePath = value.includes(path.join('extensions', 'com.acme.remote', '2.0.0'))
+            && !value.endsWith('.openchamber.remote-incomplete');
+          if (failCandidate && candidatePath) {
+            candidateLinks += 1;
+            if (candidateLinks === 2) throw new Error('injected candidate publication failure');
+          }
+          return fs.link(source, target);
+        },
+      };
+      const manager = remoteManagerAt(dataDirectory, {
+        fsImpl: failingFs,
+        fetchImpl: statefulRemoteFetch(holder),
+      });
+      await connectLifecycleRemote(manager);
+      holder.document = v2.document;
+      failCandidate = true;
+      await expect(manager.applyRemoteUpdate('com.acme.remote', {})).rejects.toThrow('injected candidate publication failure');
+      expect(candidateLinks).toBe(2);
+      holder.document = v2.document;
+      const restarted = remoteManagerAt(dataDirectory, { fetchImpl: statefulRemoteFetch(holder) });
+      expect(await restarted.getEnabledExtensionRoots()).toHaveLength(1);
+      expect((await restarted.list()).extensions[0].activeVersion).toBe('1.0.0');
+      await expect(restarted.applyRemoteUpdate('com.acme.remote', {})).resolves.toMatchObject({ applied: true });
+      expect((await restarted.list()).extensions[0].activeVersion).toBe('2.0.0');
+    });
+
+    it('bounds repeated publication residue to the exact target and payload', async () => {
+      const dataDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'ocix-manager-remote-bounded-residue-'));
+      temporaryDirectories.push(dataDirectory);
+      const keys = generatePublisherKeyPair();
+      const v1 = createRemoteManifest({ keys });
+      const v2 = createRemoteManifest({ keys, version: '2.0.0' });
+      const holder = { document: v1.document };
+      const failingFs = {
+        ...fs,
+        link: async (source, target) => {
+          const value = String(target);
+          if (value.includes(path.join('extensions', 'com.acme.remote', '2.0.0'))
+            && !value.endsWith('.openchamber.remote-incomplete')) {
+            throw new Error('repeat exact publication failure');
+          }
+          return fs.link(source, target);
+        },
+      };
+      const manager = remoteManagerAt(dataDirectory, {
+        fsImpl: failingFs,
+        fetchImpl: statefulRemoteFetch(holder),
+      });
+      await connectLifecycleRemote(manager);
+      holder.document = v2.document;
+      await expect(manager.applyRemoteUpdate('com.acme.remote', {})).rejects.toThrow('repeat exact publication failure');
+      const firstEntries = (await fs.readdir(stagingPathFor(dataDirectory))).sort();
+      await expect(manager.applyRemoteUpdate('com.acme.remote', {})).rejects.toThrow('repeat exact publication failure');
+      const secondEntries = (await fs.readdir(stagingPathFor(dataDirectory))).sort();
+      await expect(manager.applyRemoteUpdate('com.acme.remote', {})).rejects.toThrow('repeat exact publication failure');
+      const thirdEntries = (await fs.readdir(stagingPathFor(dataDirectory))).sort();
+      expect(secondEntries).toEqual(firstEntries);
+      expect(thirdEntries).toEqual(firstEntries);
+      expect(firstEntries.filter((entry) => entry.startsWith('.remote-bytes-')).length).toBeGreaterThan(0);
+      expect(await manager.getEnabledExtensionRoots()).toHaveLength(1);
+    });
+
+    it('does not share a mutable staging inode across Remote version targets', async () => {
+      const dataDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'ocix-manager-remote-target-inodes-'));
+      temporaryDirectories.push(dataDirectory);
+      const keys = generatePublisherKeyPair();
+      const v1 = createRemoteManifest({ keys });
+      const v2 = createRemoteManifest({ keys, version: '2.0.0' });
+      const holder = { document: v1.document };
+      const manager = remoteManagerAt(dataDirectory, { fetchImpl: statefulRemoteFetch(holder) });
+      await connectLifecycleRemote(manager);
+      holder.document = v2.document;
+      await expect(manager.applyRemoteUpdate('com.acme.remote', {})).resolves.toMatchObject({ applied: true });
+      const v1Tool = await fs.stat(path.join(
+        dataDirectory,
+        'extensions',
+        'com.acme.remote',
+        '1.0.0',
+        'agent-runtime',
+        'tools',
+        'remote_open.ts',
+      ));
+      const v2Tool = await fs.stat(path.join(
+        dataDirectory,
+        'extensions',
+        'com.acme.remote',
+        '2.0.0',
+        'agent-runtime',
+        'tools',
+        'remote_open.ts',
+      ));
+      expect(`${v2Tool.dev}:${v2Tool.ino}`).not.toBe(`${v1Tool.dev}:${v1Tool.ino}`);
+    });
+
+    it('keeps the prior Remote root authorized when a pending candidate file is truncated', async () => {
+      const dataDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'ocix-manager-remote-truncated-'));
+      temporaryDirectories.push(dataDirectory);
+      const keys = generatePublisherKeyPair();
+      const v1 = createRemoteManifest({ keys });
+      const v2 = createRemoteManifest({ keys, version: '2.0.0' });
+      const holder = { document: v1.document };
+      let candidateLinks = 0;
+      const failingFs = {
+        ...fs,
+        link: async (source, target) => {
+          const value = String(target);
+          const candidatePath = value.includes(path.join('extensions', 'com.acme.remote', '2.0.0'))
+            && !value.endsWith('.openchamber.remote-incomplete');
+          if (candidatePath) {
+            candidateLinks += 1;
+            if (candidateLinks === 2) throw new Error('stop after first candidate file');
+          }
+          return fs.link(source, target);
+        },
+      };
+      const manager = remoteManagerAt(dataDirectory, {
+        fsImpl: failingFs,
+        fetchImpl: statefulRemoteFetch(holder),
+      });
+      await connectLifecycleRemote(manager);
+      holder.document = v2.document;
+      await expect(manager.applyRemoteUpdate('com.acme.remote', {})).rejects.toThrow('stop after first candidate file');
+
+      const candidateManifest = path.join(
+        dataDirectory,
+        'extensions',
+        'com.acme.remote',
+        '2.0.0',
+        HOSTED_OCIX_SIGNED_MANIFEST_FILE,
+      );
+      await fs.writeFile(candidateManifest, '{"partial":', { flag: 'w' });
+      const restarted = remoteManagerAt(dataDirectory, { fetchImpl: statefulRemoteFetch(holder) });
+      expect(await restarted.getEnabledExtensionRoots()).toHaveLength(1);
+      expect((await restarted.list()).extensions[0].activeVersion).toBe('1.0.0');
+      await expect(restarted.applyRemoteUpdate('com.acme.remote', {}))
+        .rejects.toMatchObject({ code: 'remote_shell_integrity_failed', status: 409 });
+      expect(await restarted.getEnabledExtensionRoots()).toHaveLength(1);
+      expect((await restarted.list()).extensions[0].activeVersion).toBe('1.0.0');
+    });
+
+    it('requires an exact marker bound to the durable pending transaction before resume', async () => {
+      const dataDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'ocix-manager-remote-marker-binding-'));
+      temporaryDirectories.push(dataDirectory);
+      const keys = generatePublisherKeyPair();
+      const v1 = createRemoteManifest({ keys });
+      const v2 = createRemoteManifest({ keys, version: '2.0.0' });
+      const holder = { document: v1.document };
+      let candidateLinks = 0;
+      const failingFs = {
+        ...fs,
+        link: async (source, target) => {
+          const value = String(target);
+          const candidatePath = value.includes(path.join('extensions', 'com.acme.remote', '2.0.0'))
+            && !value.endsWith('.openchamber.remote-incomplete');
+          if (candidatePath) {
+            candidateLinks += 1;
+            if (candidateLinks === 2) throw new Error('leave exact pending marker');
+          }
+          return fs.link(source, target);
+        },
+      };
+      const manager = remoteManagerAt(dataDirectory, {
+        fsImpl: failingFs,
+        fetchImpl: statefulRemoteFetch(holder),
+      });
+      await connectLifecycleRemote(manager);
+      holder.document = v2.document;
+      await expect(manager.applyRemoteUpdate('com.acme.remote', {})).rejects.toThrow('leave exact pending marker');
+      const markerPath = path.join(
+        dataDirectory,
+        'extensions',
+        'com.acme.remote',
+        '2.0.0',
+        '.openchamber.remote-incomplete',
+      );
+      const marker = JSON.parse(await fs.readFile(markerPath, 'utf8'));
+      marker.unexpected = 'must-not-be-tolerated';
+      await fs.writeFile(markerPath, `${JSON.stringify(marker)}\n`, { flag: 'w' });
+
+      const restarted = remoteManagerAt(dataDirectory, { fetchImpl: statefulRemoteFetch(holder) });
+      expect(await restarted.getEnabledExtensionRoots()).toHaveLength(1);
+      await expect(restarted.applyRemoteUpdate('com.acme.remote', {}))
+        .rejects.toMatchObject({ code: 'remote_shell_integrity_failed', status: 409 });
+      expect(await restarted.getEnabledExtensionRoots()).toHaveLength(1);
+      expect((await restarted.list()).extensions[0].activeVersion).toBe('1.0.0');
+    });
+
+    it('keeps a retained update marker integrity-bound after the candidate commits', async () => {
+      const dataDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'ocix-manager-remote-active-marker-binding-'));
+      temporaryDirectories.push(dataDirectory);
+      const keys = generatePublisherKeyPair();
+      const v1 = createRemoteManifest({ keys });
+      const v2 = createRemoteManifest({ keys, version: '2.0.0' });
+      const holder = { document: v1.document };
+      const manager = remoteManagerAt(dataDirectory, { fetchImpl: statefulRemoteFetch(holder) });
+      await connectLifecycleRemote(manager);
+      holder.document = v2.document;
+      await expect(manager.applyRemoteUpdate('com.acme.remote', {})).resolves.toMatchObject({ applied: true });
+      const markerPath = path.join(
+        dataDirectory,
+        'extensions',
+        'com.acme.remote',
+        '2.0.0',
+        '.openchamber.remote-incomplete',
+      );
+      const marker = JSON.parse(await fs.readFile(markerPath, 'utf8'));
+      marker.unexpected = 'must-fail-closed';
+      await fs.writeFile(markerPath, `${JSON.stringify(marker)}\n`, { flag: 'w' });
+
+      const restarted = remoteManagerAt(dataDirectory, { fetchImpl: statefulRemoteFetch(holder) });
+      expect(await restarted.getEnabledExtensionRoots()).toEqual([]);
+      expect((await restarted.list()).extensions[0].activeVersion).toBe('2.0.0');
+    });
+
+    it('publishes the pending journal with no-replace semantics', async () => {
+      const dataDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'ocix-manager-remote-journal-race-'));
+      temporaryDirectories.push(dataDirectory);
+      const keys = generatePublisherKeyPair();
+      const v1 = createRemoteManifest({ keys });
+      const v2 = createRemoteManifest({ keys, version: '2.0.0' });
+      const holder = { document: v1.document };
+      let journalRacePath = null;
+      const racingFs = {
+        ...fs,
+        link: async (source, target) => {
+          if (!journalRacePath && String(target).endsWith('com.acme.remote--2.0.0.pending.json')) {
+            journalRacePath = String(target);
+            await fs.writeFile(journalRacePath, 'external-owner', { flag: 'wx', mode: 0o600 });
+            const error = new Error('journal appeared concurrently');
+            error.code = 'EEXIST';
+            throw error;
+          }
+          return fs.link(source, target);
+        },
+      };
+      const manager = remoteManagerAt(dataDirectory, {
+        fsImpl: racingFs,
+        fetchImpl: statefulRemoteFetch(holder),
+      });
+      await connectLifecycleRemote(manager);
+      holder.document = v2.document;
+      await expect(manager.applyRemoteUpdate('com.acme.remote', {}))
+        .rejects.toMatchObject({ code: 'unmanaged_version_conflict', status: 409 });
+      expect(journalRacePath).not.toBeNull();
+      expect(await fs.readFile(journalRacePath, 'utf8')).toBe('external-owner');
+      await expect(fs.stat(path.join(dataDirectory, 'extensions', 'com.acme.remote', '2.0.0')))
+        .rejects.toMatchObject({ code: 'ENOENT' });
+      expect(await manager.getEnabledExtensionRoots()).toHaveLength(1);
+    });
+
+    it('uses no-replace destination reservation when a concurrent writer wins the race', async () => {
+      const dataDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'ocix-manager-remote-no-replace-'));
+      temporaryDirectories.push(dataDirectory);
+      const keys = generatePublisherKeyPair();
+      const v1 = createRemoteManifest({ keys });
+      const v2 = createRemoteManifest({ keys, version: '2.0.0' });
+      const holder = { document: v1.document };
+      let raced = false;
+      const racingFs = {
+        ...fs,
+        mkdir: async (directory, options) => {
+          const value = String(directory);
+          if (!raced && value.endsWith(path.join('extensions', 'com.acme.remote', '2.0.0'))) {
+            raced = true;
+            await fs.mkdir(directory, { mode: 0o700 });
+            await fs.writeFile(path.join(directory, 'sentinel.txt'), 'keep-me', { mode: 0o600, flag: 'wx' });
+            const error = new Error('destination appeared concurrently');
+            error.code = 'EEXIST';
+            throw error;
+          }
+          return fs.mkdir(directory, options);
+        },
+      };
+      const manager = remoteManagerAt(dataDirectory, {
+        fsImpl: racingFs,
+        fetchImpl: statefulRemoteFetch(holder),
+      });
+      await connectLifecycleRemote(manager);
+      holder.document = v2.document;
+      await expect(manager.applyRemoteUpdate('com.acme.remote', {}))
+        .rejects.toMatchObject({ code: 'unmanaged_version_conflict', status: 409 });
+      expect(raced).toBe(true);
+      expect(await fs.readFile(path.join(dataDirectory, 'extensions', 'com.acme.remote', '2.0.0', 'sentinel.txt'), 'utf8'))
+        .toBe('keep-me');
+    });
+
+    it('never removes an outside directory when reservation verification fails', async () => {
+      const dataDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'ocix-manager-remote-directory-cleanup-race-'));
+      temporaryDirectories.push(dataDirectory);
+      const outside = await fs.mkdtemp(path.join(os.tmpdir(), 'ocix-manager-remote-directory-cleanup-outside-'));
+      temporaryDirectories.push(outside);
+      await fs.mkdir(path.join(outside, '2.0.0'));
+      const keys = generatePublisherKeyPair();
+      const v1 = createRemoteManifest({ keys });
+      const v2 = createRemoteManifest({ keys, version: '2.0.0' });
+      const holder = { document: v1.document };
+      let reservedTarget = null;
+      let rejectReservedRealpath = false;
+      let removalAttempted = false;
+      const racingFs = {
+        ...fs,
+        mkdir: async (directory, options) => {
+          const result = await fs.mkdir(directory, options);
+          const value = String(directory);
+          if (value.endsWith(path.join('extensions', 'com.acme.remote', '2.0.0'))) {
+            reservedTarget = value;
+            rejectReservedRealpath = true;
+          }
+          return result;
+        },
+        realpath: async (target) => {
+          const value = String(target);
+          if (rejectReservedRealpath && reservedTarget && value === reservedTarget) {
+            rejectReservedRealpath = false;
+            throw new Error('force reserved directory verification failure');
+          }
+          return fs.realpath(target);
+        },
+        rmdir: async (target) => {
+          const value = String(target);
+          if (!removalAttempted && reservedTarget && value === reservedTarget) {
+            removalAttempted = true;
+            const parent = path.dirname(value);
+            await fs.rename(parent, `${parent}.detached-after-validation`);
+            await fs.symlink(outside, parent);
+          }
+          return fs.rmdir(target);
+        },
+      };
+      const manager = remoteManagerAt(dataDirectory, {
+        fsImpl: racingFs,
+        fetchImpl: statefulRemoteFetch(holder),
+      });
+      await connectLifecycleRemote(manager);
+      holder.document = v2.document;
+      await expect(manager.applyRemoteUpdate('com.acme.remote', {}))
+        .rejects.toThrow('force reserved directory verification failure');
+      expect(removalAttempted).toBe(false);
+      await expect(fs.stat(path.join(outside, '2.0.0'))).resolves.toMatchObject({});
+      expect(await manager.getEnabledExtensionRoots()).toHaveLength(1);
+      expect((await manager.list()).extensions[0].activeVersion).toBe('1.0.0');
+    });
+
+    it('fails closed and leaves only inert no-replace residue when a candidate parent becomes a symlink', async () => {
+      const dataDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'ocix-manager-remote-parent-race-'));
+      temporaryDirectories.push(dataDirectory);
+      const outside = await fs.mkdtemp(path.join(os.tmpdir(), 'ocix-manager-remote-outside-'));
+      temporaryDirectories.push(outside);
+      const keys = generatePublisherKeyPair();
+      const v1 = createRemoteManifest({ keys });
+      const v2 = createRemoteManifest({ keys, version: '2.0.0' });
+      const holder = { document: v1.document };
+      let raced = false;
+      const racingFs = {
+        ...fs,
+        link: async (source, target) => {
+          const value = String(target);
+          if (!raced
+            && value.includes(path.join('extensions', 'com.acme.remote', '2.0.0'))
+            && value.endsWith(path.join('agent-runtime', 'tools', 'remote_open.ts'))) {
+            raced = true;
+            const parent = path.dirname(value);
+            await fs.rename(parent, `${parent}.detached`);
+            await fs.symlink(outside, parent);
+          }
+          return fs.link(source, target);
+        },
+      };
+      const manager = remoteManagerAt(dataDirectory, {
+        fsImpl: racingFs,
+        fetchImpl: statefulRemoteFetch(holder),
+      });
+      await connectLifecycleRemote(manager);
+      holder.document = v2.document;
+      await expect(manager.applyRemoteUpdate('com.acme.remote', {}))
+        .rejects.toMatchObject({ code: 'hosted_agent_runtime_conflict', status: 409 });
+      expect(raced).toBe(true);
+      expect(await fs.readdir(outside)).toEqual(['remote_open.ts']);
+      expect(await manager.getEnabledExtensionRoots()).toHaveLength(1);
+      expect((await manager.list()).extensions[0].activeVersion).toBe('1.0.0');
+    });
+
+    it('never deletes an outside file when a published-link cleanup parent is exchanged after validation', async () => {
+      const dataDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'ocix-manager-remote-link-cleanup-race-'));
+      temporaryDirectories.push(dataDirectory);
+      const outside = await fs.mkdtemp(path.join(os.tmpdir(), 'ocix-manager-remote-link-cleanup-outside-'));
+      temporaryDirectories.push(outside);
+      const keys = generatePublisherKeyPair();
+      const v1 = createRemoteManifest({ keys });
+      const v2 = createRemoteManifest({ keys, version: '2.0.0' });
+      const holder = { document: v1.document };
+      await fs.writeFile(path.join(outside, 'remote_open.ts'), 'external-owner', { flag: 'wx' });
+      let candidateTarget = null;
+      let rejectPostLinkVerification = false;
+      let raced = false;
+      let observeCleanup = false;
+      let stagedCleanupAttempted = false;
+      const racingFs = {
+        ...fs,
+        link: async (source, target) => {
+          const value = String(target);
+          const result = await fs.link(source, target);
+          if (value.includes(path.join('extensions', 'com.acme.remote', '2.0.0'))
+            && value.endsWith(path.join('agent-runtime', 'tools', 'remote_open.ts'))) {
+            candidateTarget = value;
+            rejectPostLinkVerification = true;
+          }
+          return result;
+        },
+        realpath: async (target) => {
+          const value = String(target);
+          if (rejectPostLinkVerification && candidateTarget && value === path.dirname(candidateTarget)) {
+            rejectPostLinkVerification = false;
+            throw new Error('force post-link verification failure');
+          }
+          return fs.realpath(target);
+        },
+        unlink: async (target) => {
+          const value = String(target);
+          if (observeCleanup && value.includes(`${path.sep}.remote-bytes-`) && value.endsWith('.blob')) {
+            stagedCleanupAttempted = true;
+          }
+          if (observeCleanup && !raced && candidateTarget && value === candidateTarget) {
+            raced = true;
+            const parent = path.dirname(value);
+            await fs.rename(parent, `${parent}.detached-after-validation`);
+            await fs.symlink(outside, parent);
+          }
+          return fs.unlink(target);
+        },
+      };
+      const manager = remoteManagerAt(dataDirectory, {
+        fsImpl: racingFs,
+        fetchImpl: statefulRemoteFetch(holder),
+      });
+      await connectLifecycleRemote(manager);
+      holder.document = v2.document;
+      observeCleanup = true;
+      await expect(manager.applyRemoteUpdate('com.acme.remote', {}))
+        .rejects.toThrow('force post-link verification failure');
+      expect(raced).toBe(false);
+      expect(stagedCleanupAttempted).toBe(false);
+      await expect(fs.readFile(path.join(outside, 'remote_open.ts'), 'utf8')).resolves.toBe('external-owner');
+      expect(await manager.getEnabledExtensionRoots()).toHaveLength(1);
+    });
+
+    it('never deletes an outside file when the pending-journal parent is exchanged after validation', async () => {
+      const dataDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'ocix-manager-remote-journal-cleanup-race-'));
+      temporaryDirectories.push(dataDirectory);
+      const outside = await fs.mkdtemp(path.join(os.tmpdir(), 'ocix-manager-remote-journal-cleanup-outside-'));
+      temporaryDirectories.push(outside);
+      const keys = generatePublisherKeyPair();
+      const v1 = createRemoteManifest({ keys });
+      const v2 = createRemoteManifest({ keys, version: '2.0.0' });
+      const holder = { document: v1.document };
+      const outsideJournal = path.join(outside, 'com.acme.remote--2.0.0.pending.json');
+      await fs.writeFile(outsideJournal, 'external-owner', { flag: 'wx' });
+      let raced = false;
+      const racingFs = {
+        ...fs,
+        unlink: async (target) => {
+          const value = String(target);
+          if (!raced && value.endsWith('com.acme.remote--2.0.0.pending.json')) {
+            raced = true;
+            const parent = path.dirname(value);
+            await fs.rename(parent, `${parent}.detached-after-validation`);
+            await fs.writeFile(path.join(outside, path.basename(value)), 'external-owner', { flag: 'wx' });
+            await fs.symlink(outside, parent);
+          }
+          return fs.unlink(target);
+        },
+      };
+      const manager = remoteManagerAt(dataDirectory, {
+        fsImpl: racingFs,
+        fetchImpl: statefulRemoteFetch(holder),
+      });
+      await connectLifecycleRemote(manager);
+      holder.document = v2.document;
+      await expect(manager.applyRemoteUpdate('com.acme.remote', {})).resolves.toMatchObject({ applied: true });
+      expect(raced).toBe(false);
+      await expect(fs.readFile(outsideJournal, 'utf8')).resolves.toBe('external-owner');
+      await expect(fs.readFile(
+        path.join(dataDirectory, 'interactive-ui', 'staging', 'com.acme.remote--2.0.0.pending.json'),
+        'utf8',
+      )).resolves.toContain('openchamber://remote-candidate/v1');
+      expect(await manager.getEnabledExtensionRoots()).toHaveLength(1);
+    });
+
+    it('never deletes an outside file when the incomplete-marker parent is exchanged after validation', async () => {
+      const dataDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'ocix-manager-remote-marker-cleanup-race-'));
+      temporaryDirectories.push(dataDirectory);
+      const outside = await fs.mkdtemp(path.join(os.tmpdir(), 'ocix-manager-remote-marker-cleanup-outside-'));
+      temporaryDirectories.push(outside);
+      const keys = generatePublisherKeyPair();
+      const v1 = createRemoteManifest({ keys });
+      const v2 = createRemoteManifest({ keys, version: '2.0.0' });
+      const holder = { document: v1.document };
+      const outsideMarker = path.join(outside, '.openchamber.remote-incomplete');
+      await fs.writeFile(outsideMarker, 'external-owner', { flag: 'wx' });
+      let raced = false;
+      const racingFs = {
+        ...fs,
+        unlink: async (target) => {
+          const value = String(target);
+          if (!raced && value.endsWith('.openchamber.remote-incomplete')) {
+            raced = true;
+            const parent = path.dirname(value);
+            await fs.rename(parent, `${parent}.detached-after-validation`);
+            await fs.writeFile(path.join(outside, path.basename(value)), 'external-owner', { flag: 'wx' });
+            await fs.symlink(outside, parent);
+          }
+          return fs.unlink(target);
+        },
+      };
+      const manager = remoteManagerAt(dataDirectory, {
+        fsImpl: racingFs,
+        fetchImpl: statefulRemoteFetch(holder),
+      });
+      await connectLifecycleRemote(manager);
+      holder.document = v2.document;
+      await expect(manager.applyRemoteUpdate('com.acme.remote', {})).resolves.toMatchObject({ applied: true });
+      expect(raced).toBe(false);
+      await expect(fs.readFile(outsideMarker, 'utf8')).resolves.toBe('external-owner');
+      await expect(fs.readFile(
+        path.join(dataDirectory, 'extensions', 'com.acme.remote', '2.0.0', '.openchamber.remote-incomplete'),
+        'utf8',
+      )).resolves.toContain('openchamber://remote-candidate-marker/v1');
+      expect(await manager.getEnabledExtensionRoots()).toHaveLength(1);
+    });
+
+    it('sanitizes arbitrary Remote metadata adapter codes and rejects Remote name changes', async () => {
+      const dataDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'ocix-manager-remote-safe-probe-'));
+      temporaryDirectories.push(dataDirectory);
+      const keys = generatePublisherKeyPair();
+      const v1 = createRemoteManifest({ keys });
+      const v2 = createRemoteManifest({ keys, version: '2.0.0', extensionName: 'Changed Name' });
+      const holder = { document: v1.document };
+      let rejectWithAdapterCode = false;
+      const manager = remoteManagerAt(dataDirectory, {
+        fetchImpl: statefulRemoteFetch(holder),
+        validateRemoteMetadata: async ({ extension }) => {
+          if (rejectWithAdapterCode) {
+            throw new InteractiveUIExtensionManagerError('adapter detail', 'adapter_private_code', 499, { secret: 'nope' });
+          }
+          return { connectors: extension.connectors };
+        },
+      });
+      await connectLifecycleRemote(manager);
+      rejectWithAdapterCode = true;
+      const sanitized = await manager.getRemoteLifecycle('com.acme.remote');
+      expect(sanitized.health).toMatchObject({ status: 'trust_invalid', code: 'invalid_hosted_manifest' });
+      expect(JSON.stringify(sanitized)).not.toContain('adapter_private_code');
+      rejectWithAdapterCode = false;
+      holder.document = v2.document;
+      await expect(manager.checkRemoteUpdate('com.acme.remote', { force: true }))
+        .rejects.toMatchObject({ code: 'remote_name_changed', status: 409 });
+      await expect(manager.applyRemoteUpdate('com.acme.remote', {}))
+        .rejects.toMatchObject({ code: 'remote_name_changed', status: 409 });
+    });
+
+    it('includes artifact surfaces in blocked Remote catalog entries', async () => {
+      const dataDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'ocix-manager-remote-blocked-artifact-'));
+      temporaryDirectories.push(dataDirectory);
+      const keys = generatePublisherKeyPair();
+      const artifactExtension = {
+        resourcePath: 'ui/overview.html',
+        extensionExtra: {
+          views: [],
+          artifacts: [{ id: 'com.acme.remote.report', entry: 'ui/overview.html', tools: [] }],
+        },
+      };
+      const v1 = createRemoteManifest({ keys, ...artifactExtension });
+      const required = createRemoteManifest({
+        keys,
+        version: '2.0.0',
+        ...artifactExtension,
+        extraAction: true,
+        update: { required: true, changeSummary: 'Required artifact update' },
+      });
+      const holder = { document: v1.document };
+      const manager = remoteManagerAt(dataDirectory, { fetchImpl: statefulRemoteFetch(holder) });
+      await connectLifecycleRemote(manager);
+      holder.document = required.document;
+      await expect(manager.prepareRemoteUse('com.acme.remote', { force: true }))
+        .rejects.toMatchObject({ code: 'remote_update_required_blocked' });
+      const entries = await manager.getBlockedRemoteCatalogEntries();
+      expect(entries[0].surfaces).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          surfaceId: 'com.acme.remote.report',
+          surfaceKind: 'artifact',
+          form: 'html-artifact',
+        }),
+      ]));
+    });
+
+    it('never exposes blocked catalog surfaces from an unbound replacement manifest', async () => {
+      const dataDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'ocix-manager-remote-blocked-tamper-'));
+      temporaryDirectories.push(dataDirectory);
+      const keys = generatePublisherKeyPair();
+      const extensionShape = {
+        resourcePath: 'ui/overview.html',
+        extensionExtra: {
+          views: [],
+          artifacts: [{ id: 'com.acme.remote.report', entry: 'ui/overview.html', tools: [] }],
+        },
+      };
+      const v1 = createRemoteManifest({ keys, ...extensionShape });
+      const required = createRemoteManifest({
+        keys,
+        version: '2.0.0',
+        ...extensionShape,
+        extraAction: true,
+        update: { required: true, changeSummary: 'Required artifact update' },
+      });
+      const holder = { document: v1.document };
+      const manager = remoteManagerAt(dataDirectory, { fetchImpl: statefulRemoteFetch(holder) });
+      await connectLifecycleRemote(manager);
+      holder.document = required.document;
+      await expect(manager.prepareRemoteUse('com.acme.remote', { force: true }))
+        .rejects.toMatchObject({ code: 'remote_update_required_blocked' });
+
+      const attacker = createRemoteManifest({
+        keys: generatePublisherKeyPair(),
+        resourcePath: 'ui/evil.html',
+        extensionExtra: {
+          views: [],
+          artifacts: [{ id: 'com.acme.remote.evil', entry: 'ui/evil.html', tools: [] }],
+        },
+      });
+      const shell = path.join(dataDirectory, 'extensions', 'com.acme.remote', '1.0.0');
+      await fs.writeFile(
+        path.join(shell, HOSTED_OCIX_SIGNED_MANIFEST_FILE),
+        JSON.stringify(attacker.document),
+      );
+
+      const [entry] = await manager.getBlockedRemoteCatalogEntries();
+      expect(entry).toMatchObject({ id: 'com.acme.remote', version: '1.0.0', surfaces: [] });
+      expect(JSON.stringify(entry)).not.toContain('com.acme.remote.evil');
+    });
+
+    it('keeps the exact prior Remote version runnable when update activation fails', async () => {
+      const dataDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'ocix-manager-remote-update-failure-'));
+      temporaryDirectories.push(dataDirectory);
+      const keys = generatePublisherKeyPair();
+      const v1 = createRemoteManifest({ keys });
+      const v2 = createRemoteManifest({ keys, version: '2.0.0' });
+      const holder = { document: v1.document };
+      let activationCalls = 0;
+      const manager = remoteManagerAt(dataDirectory, {
+        fetchImpl: statefulRemoteFetch(holder),
+        reconcileActivation: async () => {
+          activationCalls += 1;
+          if (activationCalls === 2) {
+            throw new InteractiveUIExtensionManagerError('activation failed', 'activation_failed', 500);
+          }
+          return { openCode: {}, rollback: async () => {} };
+        },
+      });
+      await connectLifecycleRemote(manager);
+      const beforeState = await fs.readFile(statePathFor(dataDirectory), 'utf8');
+      const beforeConsents = await fs.readFile(remoteConsentsPathFor(dataDirectory), 'utf8');
+      holder.document = v2.document;
+
+      await expect(manager.applyRemoteUpdate('com.acme.remote', {})).rejects.toMatchObject({
+        code: 'activation_failed',
+      });
+      const snapshot = await manager.list();
+      expect(snapshot.extensions[0].activeVersion).toBe('1.0.0');
+      expect(await fs.readFile(statePathFor(dataDirectory), 'utf8')).toBe(beforeState);
+      expect(await fs.readFile(remoteConsentsPathFor(dataDirectory), 'utf8')).toBe(beforeConsents);
+      expect(await manager.getEnabledExtensionRoots()).toHaveLength(1);
+    });
+
+    it('discards a stale health response after a newer Remote contract commits', async () => {
+      const dataDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'ocix-manager-remote-stale-probe-'));
+      temporaryDirectories.push(dataDirectory);
+      const keys = generatePublisherKeyPair();
+      const v1 = createRemoteManifest({ keys });
+      const v2 = createRemoteManifest({ keys, version: '2.0.0' });
+      const v3 = createRemoteManifest({ keys, version: '3.0.0' });
+      const holder = { document: v1.document };
+      let pauseNext = false;
+      let releaseProbe;
+      let markProbeStarted;
+      const probeStarted = new Promise((resolve) => { markProbeStarted = resolve; });
+      const probeGate = new Promise((resolve) => { releaseProbe = resolve; });
+      const slowFetch = async (url) => {
+        if (String(url) !== appEntryUrl) return new Response('unavailable', { status: 503 });
+        const captured = holder.document;
+        if (pauseNext) {
+          pauseNext = false;
+          markProbeStarted();
+          await probeGate;
+        }
+        return new Response(JSON.stringify(captured), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      };
+      const first = remoteManagerAt(dataDirectory, { fetchImpl: slowFetch });
+      await connectLifecycleRemote(first);
+      holder.document = v2.document;
+      pauseNext = true;
+      const staleCheck = first.checkRemoteUpdate('com.acme.remote', { force: true });
+      await probeStarted;
+
+      holder.document = v3.document;
+      const second = remoteManagerAt(dataDirectory, { fetchImpl: statefulRemoteFetch(holder) });
+      await expect(second.applyRemoteUpdate('com.acme.remote', {})).resolves.toMatchObject({
+        applied: true,
+        previousVersion: '1.0.0',
+      });
+      releaseProbe();
+
+      await expect(staleCheck).resolves.toMatchObject({
+        status: 'none',
+        currentVersion: '3.0.0',
+        remoteVersion: null,
+        health: { status: 'reachable' },
+      });
+      expect((await first.list()).extensions[0].activeVersion).toBe('3.0.0');
+    });
+
+    it('rejects version reuse, optional downgrade, and connector rebinding without changing the installed Remote', async () => {
+      const dataDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'ocix-manager-remote-candidate-errors-'));
+      temporaryDirectories.push(dataDirectory);
+      const keys = generatePublisherKeyPair();
+      const v1 = createRemoteManifest({ keys });
+      const holder = { document: v1.document };
+      const manager = remoteManagerAt(dataDirectory, { fetchImpl: statefulRemoteFetch(holder) });
+      await connectLifecycleRemote(manager);
+      const before = await fs.readFile(statePathFor(dataDirectory), 'utf8');
+
+      holder.document = createRemoteManifest({
+        keys,
+        update: { changeSummary: 'Different content under the same version' },
+      }).document;
+      await expect(manager.checkRemoteUpdate('com.acme.remote', { force: true }))
+        .rejects.toMatchObject({ code: 'remote_update_version_reuse', status: 409 });
+
+      holder.document = createRemoteManifest({ keys, version: '0.9.0' }).document;
+      await expect(manager.checkRemoteUpdate('com.acme.remote', { force: true }))
+        .rejects.toMatchObject({ code: 'remote_update_rollback_not_required', status: 403 });
+
+      holder.document = createRemoteManifest({ keys, version: '2.0.0', connectorId: 'replacement' }).document;
+      await expect(manager.checkRemoteUpdate('com.acme.remote', { force: true }))
+        .rejects.toMatchObject({ code: 'remote_connector_changed', status: 409 });
+
+      expect(await fs.readFile(statePathFor(dataDirectory), 'utf8')).toBe(before);
+      expect((await manager.list()).extensions[0].activeVersion).toBe('1.0.0');
+    });
+
+    it('fails closed on scoped-key substitution, publisher replacement, and a conflicting global candidate slot', async () => {
+      const dataDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'ocix-manager-remote-update-trust-'));
+      temporaryDirectories.push(dataDirectory);
+      const keys = generatePublisherKeyPair();
+      const otherKeys = generatePublisherKeyPair();
+      const rotatedKeys = generatePublisherKeyPair();
+      const holder = { document: createRemoteManifest({ keys }).document };
+      const manager = remoteManagerAt(dataDirectory, { fetchImpl: statefulRemoteFetch(holder) });
+      await connectLifecycleRemote(manager);
+      const before = await fs.readFile(statePathFor(dataDirectory), 'utf8');
+
+      holder.document = createRemoteManifest({ keys: otherKeys, version: '2.0.0' }).document;
+      await expect(manager.checkRemoteUpdate('com.acme.remote', { force: true }))
+        .rejects.toMatchObject({ code: 'remote_trust_conflict', status: 403 });
+
+      holder.document = createRemoteManifest({
+        keys: otherKeys,
+        version: '2.0.0',
+        publisherId: 'com.other.publisher',
+        publisherKeyId: 'release-2027',
+      }).document;
+      await expect(manager.checkRemoteUpdate('com.acme.remote', { force: true }))
+        .rejects.toMatchObject({ code: 'remote_publisher_changed', status: 403 });
+
+      await manager.trustPublisher({
+        id: 'com.acme.publisher',
+        name: 'Acme',
+        keyId: 'release-2027',
+        publicKey: otherKeys.publicKey,
+      });
+      holder.document = createRemoteManifest({
+        keys: rotatedKeys,
+        version: '2.0.0',
+        publisherKeyId: 'release-2027',
+      }).document;
+      await expect(manager.checkRemoteUpdate('com.acme.remote', { force: true }))
+        .rejects.toMatchObject({ code: 'remote_trust_conflict', status: 403 });
+
+      expect(await fs.readFile(statePathFor(dataDirectory), 'utf8')).toBe(before);
+      expect((await manager.list()).extensions[0].activeVersion).toBe('1.0.0');
+    });
+
+    it('uses an inclusive bounded Remote probe TTL and coalesces one in-flight request per installed subject', async () => {
+      const dataDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'ocix-manager-remote-probe-cache-'));
+      temporaryDirectories.push(dataDirectory);
+      const keys = generatePublisherKeyPair();
+      const v1 = createRemoteManifest({ keys });
+      const holder = { document: v1.document };
+      const requested = [];
+      let currentTime = 1_000_000;
+      const manager = remoteManagerAt(dataDirectory, {
+        fetchImpl: statefulRemoteFetch(holder, requested),
+        now: () => currentTime,
+        remoteProbeTtlMs: 45_000,
+      });
+      await connectLifecycleRemote(manager);
+      const count = () => requested.filter((url) => url === appEntryUrl).length;
+      const baseline = count();
+
+      await manager.checkRemoteUpdate('com.acme.remote');
+      expect(count()).toBe(baseline + 1);
+      await manager.checkRemoteUpdate('com.acme.remote');
+      expect(count()).toBe(baseline + 1);
+      currentTime += 45_000;
+      await manager.checkRemoteUpdate('com.acme.remote');
+      expect(count()).toBe(baseline + 1);
+      currentTime += 1;
+      await manager.checkRemoteUpdate('com.acme.remote');
+      expect(count()).toBe(baseline + 2);
+
+      const coalescingData = await fs.mkdtemp(path.join(os.tmpdir(), 'ocix-manager-remote-probe-coalesce-'));
+      temporaryDirectories.push(coalescingData);
+      let networkCalls = 0;
+      let gateActive = false;
+      let release;
+      let markStarted;
+      const gate = new Promise((resolve) => { release = resolve; });
+      const started = new Promise((resolve) => { markStarted = resolve; });
+      const coalescingFetch = async () => {
+        networkCalls += 1;
+        if (gateActive) {
+          markStarted();
+          await gate;
+        }
+        return new Response(JSON.stringify(v1.document), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      };
+      const coalescing = remoteManagerAt(coalescingData, { fetchImpl: coalescingFetch });
+      await connectLifecycleRemote(coalescing);
+      const beforeConcurrent = networkCalls;
+      gateActive = true;
+      const first = coalescing.checkRemoteUpdate('com.acme.remote', { force: true });
+      await started;
+      const second = coalescing.checkRemoteUpdate('com.acme.remote', { force: true });
+      release();
+      await expect(Promise.all([first, second])).resolves.toMatchObject([
+        { status: 'none' },
+        { status: 'none' },
+      ]);
+      expect(networkCalls).toBe(beforeConcurrent + 1);
     });
   });
 

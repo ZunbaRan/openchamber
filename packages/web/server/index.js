@@ -16,7 +16,10 @@ import { createManagedTunnelConfigRuntime } from './lib/tunnels/managed-config.j
 import { createTunnelProviderRegistry } from './lib/tunnels/registry.js';
 import { createCloudflareTunnelProvider } from './lib/tunnels/providers/cloudflare.js';
 import { createNgrokTunnelProvider } from './lib/tunnels/providers/ngrok.js';
-import { createRequestSecurityRuntime } from './lib/security/request-security.js';
+import {
+  PACKAGED_CLIENT_CORS_ALLOWED_HEADERS,
+  createRequestSecurityRuntime,
+} from './lib/security/request-security.js';
 import {
   getUnauthenticatedLanErrorMessage,
   isNetworkExposedBindHost,
@@ -1448,7 +1451,7 @@ async function main(options = {}) {
       res.setHeader('Access-Control-Allow-Origin', origin);
       res.setHeader('Access-Control-Allow-Credentials', 'true');
       res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
-      res.setHeader('Access-Control-Allow-Headers', 'Content-Type,Authorization,Accept,X-Requested-With,Cache-Control,X-OpenCode-Directory,X-OpenCode-Directory-Encoding');
+      res.setHeader('Access-Control-Allow-Headers', PACKAGED_CLIENT_CORS_ALLOWED_HEADERS.join(','));
       res.setHeader('Access-Control-Expose-Headers', 'x-next-cursor');
       res.setHeader('Vary', 'Origin');
       if (req.method === 'OPTIONS') {
@@ -1658,6 +1661,10 @@ async function main(options = {}) {
     getOpenChamberEventClients: () => uiOpenChamberEventClients,
     writeSseEvent,
     permissionAutoAcceptRuntime,
+    express,
+    processLike: process,
+    uiAuthController,
+    openchamberVersion: OPENCHAMBER_VERSION,
   });
 
   const previewProxyRuntime = createPreviewProxyRuntime({

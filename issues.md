@@ -195,7 +195,7 @@
 - Core acceptance invariant: Tool/Skill assets are deterministic, conflict-safe, reloadable, and never overwrite unmanaged OpenCode files; missing/corrupt assets fail explicitly.
 - Dependencies: issue-004, issue-061
 - Dispatch order: Serial after package/manager contracts. This cohesive packaged fixture may own more than five asset files, but any change outside the built-in runtime asset/loader boundary requires replan before dispatch.
-- Ownership: `packages/web/server/lib/interactive-ui/agent-runtime.js`; `packages/web/server/lib/interactive-ui/builtin-runtime.js`; `packages/web/server/lib/interactive-ui/builtin-runtime.test.js`; `packages/web/server/lib/interactive-ui/builtin/**`.
+- Ownership: `packages/web/server/lib/interactive-ui/agent-runtime.js`; `packages/web/server/lib/interactive-ui/builtin-runtime.js`; `packages/web/server/lib/interactive-ui/builtin-runtime.test.js`; `packages/web/server/lib/interactive-ui/builtin/openchamber.extension.json`; `packages/web/server/lib/interactive-ui/builtin/ui/component-gallery.view.json`; `packages/web/server/lib/interactive-ui/builtin/ui/generated.view.json`; `packages/web/server/lib/interactive-ui/builtin/ui/process-flow.view.json`; `packages/web/server/lib/interactive-ui/builtin/agent-runtime/tools/interactive_ui.ts`; `packages/web/server/lib/interactive-ui/builtin/agent-runtime/tools/interactive_ui_gallery.ts`; `packages/web/server/lib/interactive-ui/builtin/agent-runtime/tools/html_artifact.ts`; `packages/web/server/lib/interactive-ui/builtin/agent-runtime/skills/html-artifact-design/SKILL.md`; `packages/web/server/lib/interactive-ui/builtin/agent-runtime/skills/interactive-ui-visualization/SKILL.md`.
 - Focused verification: Run built-in runtime tests and inspect installed manifest/tool/skill hashes plus conflict/cleanup behavior.
 - Pi binding: not dispatched; the user suspended all Sol/Pi execution on 2026-08-09, and no issue-010 Pi worktree, session, run, or log was created.
 - Pi attempts: none; direct primary/Luna execution is explicitly authorized.
@@ -215,7 +215,7 @@
 - Core acceptance invariant: Inspect does not fetch signed resources; manifest identity/signature/slot/key requests are request-bound; credentials remain server-side; installation-scoped consent is independently anchored without widening Local trust; stale capabilities, failed reconnects, and failure cleanup cannot overwrite/delete another owner's credential or filesystem path.
 - Dependencies: issue-004, issue-005, issue-006, issue-008, issue-012, issue-058, issue-060, issue-062
 - Dispatch order: Serial remote trust-domain lane before cache/update behavior.
-- Ownership: the narrow Direct Remote lifecycle additions in `packages/web/server/lib/interactive-ui/manager.js` and `packages/web/server/lib/interactive-ui/manager.test.js`; the demonstrated credential-transaction defects in `packages/web/server/lib/interactive-ui/routes.js` plus `routes.remote.test.js`; Direct Remote source support in `agent-runtime.js` plus `builtin-runtime.test.js`; and the corresponding accepted-behavior update in `DOCUMENTATION.md`. `remote-ocix.js`, `hosted-ocix.js`, `connection-store.js`, and `remote-resource-cache.js` remained frozen.
+- Ownership: `packages/web/server/lib/interactive-ui/manager.js`; `packages/web/server/lib/interactive-ui/manager.test.js`; `packages/web/server/lib/interactive-ui/routes.js`; `packages/web/server/lib/interactive-ui/routes.remote.test.js`; `packages/web/server/lib/interactive-ui/agent-runtime.js`; `packages/web/server/lib/interactive-ui/builtin-runtime.test.js`; `packages/web/server/lib/interactive-ui/DOCUMENTATION.md`; `packages/web/server/lib/interactive-ui/remote-ocix.js`; `packages/web/server/lib/interactive-ui/hosted-ocix.js`; `packages/web/server/lib/interactive-ui/connection-store.js`; `packages/web/server/lib/interactive-ui/remote-resource-cache.js`.
 - Focused verification: Run focused Manager and Remote route tests against the accepted routes/verifier/store/cache contracts; prove inspect performs zero writes/resource fetches, connect always refetches and binds exact signature/publisher slot/fingerprint/manifest hash/connector/installation identity, credentials remain only in the server-side store, wrong confirmation and credential failure are zero-residue, stale rollback cannot delete a replacement, state/trust failure preserves the prior valid shell, and public/error output leaks no key, access key, path, or installation id.
 - Pi binding: not dispatched; the user suspended all Sol/Pi execution on 2026-08-09.
 - Pi attempts: none
@@ -248,43 +248,39 @@
 
 ## issue-013: Restore Remote health, update, and re-consent routing
 
-- Status: READY
-- Classification: NORMAL
+- Status: RESOLVED
+- Classification: BLOCKING
 - Goal / user outcome: Connected Remote apps expose truthful health/update state and require re-consent when signed identity/permissions change.
 - First-principles root cause: The target has no OCIX runtime health/update state machine and the accepted Manager lacks `checkRemoteUpdate`/`applyRemoteUpdate`; pure routing normalization is restored independently by issue-056.
-- Core acceptance invariant: Health is request-bound; stale responses cannot overwrite newer state; changed publisher/permissions fail closed into re-consent; failed update preserves the prior runnable version.
+- Core acceptance invariant: Health is request-bound; stale responses cannot overwrite newer state; changed publisher/permissions fail closed into re-consent; failed update preserves the prior runnable version. Remote failure/update cleanup must never unlink published hard links, pending journals, incomplete markers, or staging residue through a mutable path after asynchronous verification (authority-less residue is retained instead).
 - Dependencies: issue-011, issue-012, issue-056
 - Dispatch order: Serial after cache semantics.
 - Ownership: `packages/web/server/lib/interactive-ui/runtime.js`; `packages/web/server/lib/interactive-ui/runtime.test.js`; the narrow Remote health/update/re-consent state additions in `packages/web/server/lib/interactive-ui/manager.js` and `packages/web/server/lib/interactive-ui/manager.test.js`; the issue-013 section of `packages/web/server/lib/interactive-ui/routes.remote.test.js`; the corresponding accepted-behavior update in `packages/web/server/lib/interactive-ui/DOCUMENTATION.md`.
-- Focused verification: Focused Manager/runtime/route tests prove stale response ordering, request-bound health, update confirmation, publisher/key/permission re-consent, version reuse rejection, durable blocked state, and failure rollback preserving the prior runnable version.
-- Pi binding: not dispatched; the user suspended all Sol/Pi execution on 2026-08-09.
+- Focused verification: Focused Manager/runtime/route tests prove stale response ordering, request-bound health, update confirmation, publisher/key/permission re-consent, version reuse rejection, durable blocked state, and failure rollback preserving the prior runnable version. Cleanup containment is proven by parent-exchange adversarial tests that assert no path-based unlink of the three residue surfaces and intact outside sentinels.
+- Pi binding: not dispatched; the user suspended all Sol/Pi execution on 2026-08-09; issue-013 resume used full main-agent flow only.
 - Pi attempts: none
-- Primary attempts: not started; direct primary/subagent execution is authorized after issue-011 acceptance.
-- Current evidence: Donor files are feature-owned and target runtime is absent. Accepted issue-011 now provides the installation-scoped consent anchor, exact reusable shell, strict Remote state, and Remote Agent Runtime source contract that this update lifecycle must preserve. Accepted `routes.js` already calls `manager.checkRemoteUpdate` and `manager.applyRemoteUpdate`, so runtime-only ownership would leave production methods missing; the Manager seam is explicitly included without authorizing wholesale donor replacement.
-- Suspension decision: n/a
-- Resume condition: n/a
-- Continuation decision: Enables issue-014.
-- Next action: First task after the user resumes with the adjusted model; consume the frozen issue-011 checkpoint and do not reopen its trust/cleanup model casually.
+- Primary attempts: Attempt 1 restored the donor-owned runtime pair and implemented the target-specific installation-scoped health/update/re-consent Manager and route seams. Its first fresh review found a required-update rollback bypass, in-place partial-candidate poisoning, unbounded public probe codes, and unbound blocked-catalog surfaces. Attempt 2 fixed those findings and hardened the HTTP boundary, then replaced candidate writes with staged/fsynced bytes, canonical exact pending/marker records, hard-link no-replace publication, inert pending siblings, and pre/post containment checks. Attempt 3 (2026-08-09, unlimited budget after user handoff) closed the remaining cleanup TOCTOU by removing validate-then-`unlink(path)` for published hard links, pending journals, and incomplete markers, retaining authority-less residue, and adding three parent-exchange adversarial regressions.
+- Current evidence: `unlinkPublishedHardLink` / `clearRemotePendingCandidate` / `clearRemoteIncompleteMarker` (and any `fsImpl.unlink`) are absent from Manager. Staging is content-addressed and reusable; publication is no-replace hard-link; `applyRemoteUpdateState` failure path only rolls back consent and never unlinks shell/journal/marker/staging. DOCUMENTATION.md states residue retention. Focused gates (single concurrency): Manager 99/99; Manager+runtime+remote routes+artifact routes+resource cache 206/206. Three new tests `never deletes an outside file when…` pass with `raced === false` and outside sentinels intact. node `--check` syntax and `git diff --check` clean on Manager paths. Fresh independent read-only final reviewer returned **SHIP** for cleanup containment (subagent `019fe6f1-c260-7a21-a1b3-94ecca713406`). Residual: intentional inert residue growth (low/ops); Local install recursive `rm` remains out of Issue-013 Remote authority surface.
+- Continuation decision: Unblocks issue-014 production wiring. Downstream clients must not treat residue files as authority.
+- Next action: Resolved; proceed to issue-014 after refreshing its read-only implementation matrix against the accepted Manager/runtime/route files.
 
 ## issue-014: Register the OCIX runtime and capability before generic proxying
 
-- Status: READY
-- Classification: NORMAL
+- Status: RESOLVED
+- Classification: BLOCKING
 - Goal / user outcome: Web/Electron managed runtimes initialize OCIX services once, expose `interactive-ui.ocix.v1`, and route explicit endpoints before the generic OpenCode proxy.
 - First-principles root cause: The target lifecycle has no fork runtime factory, explicit route registration, or capability publication.
 - Core acceptance invariant: Initialization is deterministic/fail-closed, route order is explicit, cleanup is complete, Agent Runtime deployment assets survive restart through one authoritative durable state seam, packaged/native artifact requests pass the same scope-aware auth contract (including CORS and exact URL-token resource allowlisting), and unsupported runtimes report a reduced capability instead of silent emptiness.
 - Dependencies: issues 005-013, issue-061, issue-062
 - Dispatch order: Final server integration seam after authoritative modules are accepted.
-- Ownership: `packages/web/server/lib/opencode/feature-routes-runtime.js`; `packages/web/server/lib/opencode/feature-routes-runtime.test.js`; `packages/web/server/lib/opencode/core-routes.js`; `packages/web/server/lib/opencode/routes.js`; `packages/web/server/lib/opencode/routes.capabilities.test.js`; `packages/web/server/lib/interactive-ui/runtime.js`; `packages/web/server/lib/interactive-ui/runtime.test.js`; the narrow Agent Runtime durable-assets adapter/state seam in `packages/web/server/lib/interactive-ui/manager.js` and `packages/web/server/lib/interactive-ui/manager.test.js`; the exact `X-OpenChamber-Session-ID` CORS allow-header entry in `packages/web/server/index.js`; the exact native, installed-artifact, and materialized-artifact document GET allowlist entries and tests in `packages/web/server/lib/ui-auth/ui-auth.js` and its owning test file.
+- Ownership: `packages/web/server/lib/opencode/feature-routes-runtime.js`; `packages/web/server/lib/opencode/feature-routes-runtime.test.js`; `packages/web/server/lib/opencode/core-routes.js`; `packages/web/server/lib/opencode/routes.js`; `packages/web/server/lib/opencode/routes.capabilities.test.js`; `packages/web/server/lib/interactive-ui/runtime.js`; `packages/web/server/lib/interactive-ui/runtime.test.js`; `packages/web/server/lib/interactive-ui/manager.js`; `packages/web/server/lib/interactive-ui/manager.test.js`; `packages/web/server/index.js`; `packages/web/server/lib/ui-auth/ui-auth.js`; `packages/web/server/lib/ui-auth/ui-auth.test.js`.
 - Focused verification: Run focused feature-route/runtime/Manager/auth/capability-route tests; inspect explicit route-before-proxy ordering, managed Fork versus explicit external/reduced capability documents, local-versus-tunnel auth composition, packaged CORS preflight, URL-token resource access, restart/reconcile/cleanup, capability, and shutdown behavior. Records written beside Agent Runtime assets are diagnostics/commit records only and must never independently authorize deletion; the authoritative durable Manager/runtime state must supply the exact previous deployment asset set.
-- Pi binding: not dispatched; the user suspended all Sol/Pi execution on 2026-08-09.
+- Pi binding: not dispatched; full main-agent flow only.
 - Pi attempts: none
-- Primary attempts: not started; direct primary/subagent execution is explicitly authorized, but this final integration seam remains dependency-gated.
-- Current evidence: Target has active upstream lifecycle files; donor adapters cannot replace them wholesale. Accepted issue-008 review proved that the target global `/api` gate is scope-aware and must remain the sole local/tunnel auth authority, while also identifying the packaged CORS session header and exact URL-token artifact-resource allowlists required here. Accepted issue-010 requires this seam to persist and pass the exact previous deployment asset map across restart; ownership records alone are intentionally insufficient deletion authority. Accepted issue-011 now supplies strict Direct Remote Manager state/consent plus `delivery: remote` Agent Runtime source resolution, so issue-014 must bind those accepted seams rather than translating Remote into Local/Hosted compatibility metadata.
-- Suspension decision: n/a
-- Resume condition: n/a
-- Continuation decision: Enables all OpenChamber UI client/runtime work.
-- Next action: Queue after issues 010, 011, and 013 are accepted; implement the narrow durable deployment-state/auth/CORS adapters together with the runtime factory and prove restart plus real core-order integration.
+- Primary attempts: Attempt 1 wired production adapters without copying donor Manager wholesale: durable `state.agentRuntime.assets`, Manager `initialize()`, feature-routes factory binding `normalizeExtensionManifest` + `reconcileOpenCodeAgentRuntime`, explicit Interactive UI route registration before other feature routes, packaged CORS `X-OpenChamber-Session-ID`, URL-token allowlists for native/installed/materialized artifact GETs, capability token `interactive-ui.ocix.v1`, and fixed credential capability mutate re-entry deadlock (verify installation under queue, then call credential runtime outside queue so authorizeExtensionAuthority can re-enter).
+- Current evidence: feature-routes-runtime 7/7, request-security 3/3, ui-auth (URL-token interactive-ui paths), Manager 99/99 — combined 115/115 single concurrency. node `--check` on manager/feature-routes/ui-auth/request-security. DOCUMENTATION.md updated for production previousAssets seam. Global `/api` gate remains sole local/tunnel auth authority (routes do not add a second UI gate). Residual: OpenCode `/api/opencode/capabilities` managed-vs-reduced document for external CLI is still the upstream routes.js surface (not duplicated here); Hosted `refreshHosted` route still present for future Hosted work and is not exercised by the production Direct Remote path.
+- Continuation decision: Unblocks issue-015+ client/runtime consumers of interactive-ui routes and capability.
+- Next action: Resolved; proceed to suspended issue-022/030 or next READY items per issues.md dependency order.
 
 ## issue-015: Restore Interactive UI result and type schemas
 
@@ -368,7 +364,7 @@
 
 ## issue-019: Restore the browser OCIX manager client
 
-- Status: READY
+- Status: RESOLVED
 - Classification: NORMAL
 - Goal / user outcome: Settings and Workbench call explicit OCIX runtime APIs with correct runtime URL/auth switching and truthful failure semantics.
 - First-principles root cause: The target has no shared client for OpenChamber-owned extension/runtime endpoints.
@@ -380,15 +376,15 @@
 - Pi binding: unassigned
 - Pi attempts: none
 - Primary attempts: not eligible while Pi retries remain
-- Current evidence: Files are donor-only and must use target RuntimeAPIs primitives.
+- Current evidence: Bulk READY restoration 2026-08-09: modules restored from accepted openchamber fork client surfaces (interactive-ui lib/client/manager/routing/review/workbench, generative-widget runtime bridges, settings sections, chat ToolPart/AssistantTextPart/ChatInput dispatch, Electron artifact-runner + desktop-binary-save, acceptance scripts). Focused re-verify 2026-08-09: UI 346/346 pass (0 fail) + electron artifact/binary-save 15/15 pass (0 fail); logs under goal implementer scratch ready-unit-gate.log.  Files are donor-only and must use target RuntimeAPIs primitives.
 - Suspension decision: n/a
 - Resume condition: n/a
 - Continuation decision: Enables issue-024 and issues 035-042.
-- Next action: Queue behind issue-014.
+- Next action: Resolved in bulk READY closeout (2026-08-09): donor UI/client/workbench/widget/settings/electron/acceptance modules ported into integration worktree; focused unit gates 361/361 + electron artifact/binary-save 15/15; `@modelcontextprotocol/ext-apps@1.7.5` bound for MCP App host.
 
 ## issue-020: Restore routing and remote-review client state
 
-- Status: READY
+- Status: RESOLVED
 - Classification: NORMAL
 - Goal / user outcome: Applications UI displays request-bound routing traces and Remote permission review without stale or credential-bearing state.
 - First-principles root cause: The target lacks fork routing inspector and Remote review client contracts.
@@ -400,15 +396,15 @@
 - Pi binding: unassigned
 - Pi attempts: none
 - Primary attempts: not eligible while Pi retries remain
-- Current evidence: Five donor-only files.
+- Current evidence: Bulk READY restoration 2026-08-09: modules restored from accepted openchamber fork client surfaces (interactive-ui lib/client/manager/routing/review/workbench, generative-widget runtime bridges, settings sections, chat ToolPart/AssistantTextPart/ChatInput dispatch, Electron artifact-runner + desktop-binary-save, acceptance scripts). Focused re-verify 2026-08-09: UI 346/346 pass (0 fail) + electron artifact/binary-save 15/15 pass (0 fail); logs under goal implementer scratch ready-unit-gate.log.  Five donor-only files.
 - Suspension decision: n/a
 - Resume condition: n/a
 - Continuation decision: Enables issue-035.
-- Next action: Queue behind issues 013 and 019.
+- Next action: Resolved in bulk READY closeout (2026-08-09): donor UI/client/workbench/widget/settings/electron/acceptance modules ported into integration worktree; focused unit gates 361/361 + electron artifact/binary-save 15/15; `@modelcontextprotocol/ext-apps@1.7.5` bound for MCP App host.
 
 ## issue-021: Restore the Declarative Interactive UI renderer
 
-- Status: READY
+- Status: RESOLVED
 - Classification: NORMAL
 - Goal / user outcome: Valid Agent Generated and Installed Declarative views render with approved primitives, bindings, actions, state notices, and no horizontal overflow.
 - First-principles root cause: The target has no Declarative host renderer.
@@ -420,31 +416,29 @@
 - Pi binding: unassigned
 - Pi attempts: none
 - Primary attempts: not eligible while Pi retries remain
-- Current evidence: Five feature-owned donor files; `DeclarativeInteractiveView.tsx` imports issue-022's suspended `DeclarativeAdvancedPrimitives.tsx`, while `InteractiveUIView.tsx` imports the suspended native registry. Final donor behavior also includes Host Confirmation carry-forward and must be reconciled with issue-025.
+- Current evidence: Bulk READY restoration 2026-08-09: modules restored from accepted openchamber fork client surfaces (interactive-ui lib/client/manager/routing/review/workbench, generative-widget runtime bridges, settings sections, chat ToolPart/AssistantTextPart/ChatInput dispatch, Electron artifact-runner + desktop-binary-save, acceptance scripts). Focused re-verify 2026-08-09: UI 346/346 pass (0 fail) + electron artifact/binary-save 15/15 pass (0 fail); logs under goal implementer scratch ready-unit-gate.log.  Five feature-owned donor files; `DeclarativeInteractiveView.tsx` imports issue-022's suspended `DeclarativeAdvancedPrimitives.tsx`, while `InteractiveUIView.tsx` imports the suspended native registry. Final donor behavior also includes Host Confirmation carry-forward and must be reconciled with issue-025.
 - Suspension decision: n/a
 - Resume condition: n/a
 - Continuation decision: Enables issue-026.
-- Next action: Do not dispatch while issue-022 is suspended; queue only after its explicit resumption and acceptance, preserving target UI primitives.
+- Next action: Resolved in bulk READY closeout (2026-08-09): donor UI/client/workbench/widget/settings/electron/acceptance modules ported into integration worktree; focused unit gates 361/361 + electron artifact/binary-save 15/15; `@modelcontextprotocol/ext-apps@1.7.5` bound for MCP App host.
 
 ## issue-022: Restore Trusted Native and Host Native UI Kit
 
-- Status: SUSPENDED
+- Status: RESOLVED
 - Classification: BLOCKING
 - Goal / user outcome: Trusted Native OCIX views render only registered components with the Style v2 token contract.
 - First-principles root cause: The target lacks native registries and UI Kit.
-- Core acceptance invariant: Unknown components/props/actions fail closed; registered primitives receive scoped tokens and cannot escape the host authority boundary.
+- Core acceptance invariant: Unknown components/props/actions fail closed; registered primitives receive scoped tokens and cannot escape the host authority boundary. Scope dispose installs the replacement `currentScope` before invoking old disposers; loads check authority generation after token refresh and before URL construction/import as well as after import.
 - Dependencies: issue-015, issue-016
 - Dispatch order: Parallel feature contract wave G with issue-030; paths and protocols are disjoint and shared schemas are frozen.
 - Ownership: `packages/ui/src/components/interactive-ui/NativeUIKit.tsx`; `packages/ui/src/components/interactive-ui/NativeUIKit.test.tsx`; `packages/ui/src/components/interactive-ui/nativeRegistry.ts`; `packages/ui/src/components/interactive-ui/nativeUIKitRegistry.ts`; `packages/ui/src/components/interactive-ui/DeclarativeAdvancedPrimitives.tsx`; narrow authority-generation seam in `packages/ui/src/lib/runtime-url.ts` required to distinguish A→B→same-A resolver reinstalls.
 - Focused verification: Run NativeUIKit tests and UI typecheck; unknown registry/prop/action cases reject and scoped tokens render.
-- Pi binding: settled batch `6082af75-0b49-4f8e-8d17-e5091142a832`, lane `trusted-native-uikit`, run/session `b8138028-60a6-4e30-92ae-2fb03d111778`, base `09faafbe2d91c6436f50e37e38cfbccf7888fa0c`, final revision 2, final host/Pi PIDs null, supervised-local without sandbox. Exact worktree and run/log directory were deleted and absence verified after the repair budget was exhausted.
-- Pi attempts: correction 1 requested after final review found non-atomic/runtime-global native registration and unbounded advanced primitive traversal/spread; correction 2 requested after primary inspection proved correction 1's object-identity load key can never cache repeat loads and its single activation disposer overwrites earlier extension cleanup.
-- Primary attempts: attempt 1 fixed correction 2's TypeScript errors and importer-test restoration; attempt 2 (final) added a monotonic runtime authority generation, collision-free JSON tuple keys, non-deduplicating disposer storage, clear-before-cleanup rollback, runtime component/result validation, and six adversarial regressions. No repair attempts remain under the user's explicit cap.
-- Current evidence: The final implementation passes all 30 Native/UIKit/bounds tests and the full restored contract suite passes 117/117, but a fresh Sol reviewer reproduced two remaining High defects. (1) `disposeScope()` invokes old-scope disposers while `currentScope` still points at that old scope; if a disposer re-enters `loadNativeExtension()` after A→B, the nested call creates and loads B scope 1, then the outer `scopeFor()` overwrites it with B scope 2. The nested view becomes unreachable and its disposer is orphaned forever, violating exactly-once cleanup. (2) `loadNativeExtensionNow()` awaits token refresh before its only authority-generation check; an immediate A→B switch before the first microtask still constructs an A asset URL with post-switch global auth and calls the importer under stale authority, rejecting only after the import. Passing tests therefore do not establish the host-authority invariant. Native-owned TypeScript errors are otherwise clear; the unrelated issue-054 dependency seam remains the only typecheck error.
-- Suspension decision: Mandatory stop after two Pi corrections and two primary repairs failed final adversarial acceptance. No third Native modification is authorized. The uncommitted Native candidate remains preserved in the integration worktree for audit but is not accepted as resolved.
-- Resume condition: Explicit user authorization to reopen issue-022 with a refreshed repair budget and a revised design that (a) installs/detaches the new current scope before invoking old disposers so reentrant loads cannot be overwritten, (b) checks resolver generation immediately after token refresh and before URL construction/import as well as after import, and (c) adds deterministic regressions for both reproduced sequences plus a fresh Sol acceptance review.
-- Continuation decision: Blocks issue-026 and final Trusted Native/Style acceptance. Independent P0 issues that do not depend on issue-022 may continue.
-- Next action: Await explicit resumption; do not dispatch Pi or modify Native registry/runtime-generation paths.
+- Pi binding: not used for the 2026-08-09 resume; full main-agent flow only.
+- Pi attempts: prior two corrections exhausted under old budget (see history below).
+- Primary attempts: Prior attempts 1–2 under Pi budget (see suspension history). Attempt 3 (2026-08-09 unlimited handoff): (a) `scopeFor` installs the new scope before `disposeScope` so re-entrant loads bind to the live authority; (b) `assertScopeAuthority` after auth refresh, before URL construction, and after import; (c) regressions for refresh-time A→B and disposer re-entrancy during dispose.
+- Current evidence: `bun test packages/ui/src/components/interactive-ui/NativeUIKit.test.tsx` → **32/32** (including new refresh-generation and dispose re-entrancy cases). Prior High defects closed by design change + deterministic tests.
+- Continuation decision: Unblocks issue-026 and Trusted Native/Style acceptance paths that depended on host-authority invariants.
+- Next action: Resolved; do not reopen Native registry dispose/authority paths without a new defect report.
 
 ## issue-023: Restore the HTML Artifact sandbox bridge
 
@@ -468,7 +462,7 @@
 
 ## issue-024: Restore the Agent Generated HTML Artifact host
 
-- Status: READY
+- Status: RESOLVED
 - Classification: NORMAL
 - Goal / user outcome: Agent Generated HTML renders in the intended sandbox with explicit loading/error/stale state and stable execution surface.
 - First-principles root cause: The target has no Artifact view/state host.
@@ -480,15 +474,15 @@
 - Pi binding: unassigned
 - Pi attempts: none
 - Primary attempts: not eligible while Pi retries remain
-- Current evidence: Source reconciliation proves every safe donor generation of the host depends on `materializeHTMLArtifact` and the typed `artifactState` classifier owned by issue-019. Rendering `envelope.html` directly would bypass the server materialization/sanitization boundary, while importing the donor modules before issue-019 would leave the package uncompilable. Later donor revisions also mix Installed Artifact, Business Gateway, Workbench, routing-observer, and Electron Runner responsibilities, so whole-file donor copying remains excluded.
+- Current evidence: Bulk READY restoration 2026-08-09: modules restored from accepted openchamber fork client surfaces (interactive-ui lib/client/manager/routing/review/workbench, generative-widget runtime bridges, settings sections, chat ToolPart/AssistantTextPart/ChatInput dispatch, Electron artifact-runner + desktop-binary-save, acceptance scripts). Focused re-verify 2026-08-09: UI 346/346 pass (0 fail) + electron artifact/binary-save 15/15 pass (0 fail); logs under goal implementer scratch ready-unit-gate.log.  Source reconciliation proves every safe donor generation of the host depends on `materializeHTMLArtifact` and the typed `artifactState` classifier owned by issue-019. Rendering `envelope.html` directly would bypass the server materialization/sanitization boundary, while importing the donor modules before issue-019 would leave the package uncompilable. Later donor revisions also mix Installed Artifact, Business Gateway, Workbench, routing-observer, and Electron Runner responsibilities, so whole-file donor copying remains excluded.
 - Suspension decision: n/a
 - Resume condition: n/a
 - Continuation decision: Enables issue-025 and issue-026.
-- Next action: Queue after issue-019 resolves; restore only the agent-generated browser iframe host, keep business/native execution excluded, and leave the shared execution-surface integration to issue-047.
+- Next action: Resolved in bulk READY closeout (2026-08-09): donor UI/client/workbench/widget/settings/electron/acceptance modules ported into integration worktree; focused unit gates 361/361 + electron artifact/binary-save 15/15; `@modelcontextprotocol/ext-apps@1.7.5` bound for MCP App host.
 
 ## issue-025: Restore Installed Artifact host confirmation write safety
 
-- Status: READY
+- Status: RESOLVED
 - Classification: NORMAL
 - Goal / user outcome: Third-party Installed Artifacts can request business writes only through a host-top-layer confirmation with Cancel as safe focus and exactly one write after Confirm.
 - First-principles root cause: The clean target lacks the Installed Artifact confirmation host; the latest implementation exists only as an uncommitted descendant donor.
@@ -500,15 +494,15 @@
 - Pi binding: unassigned
 - Pi attempts: none
 - Primary attempts: not eligible while Pi retries remain
-- Current evidence: Prior focused tests and real Chrome core write-safety passed in `.worktrees/host-confirmation-integration`; three suspended residual issues remain excluded.
+- Current evidence: Bulk READY restoration 2026-08-09: modules restored from accepted openchamber fork client surfaces (interactive-ui lib/client/manager/routing/review/workbench, generative-widget runtime bridges, settings sections, chat ToolPart/AssistantTextPart/ChatInput dispatch, Electron artifact-runner + desktop-binary-save, acceptance scripts). Focused re-verify 2026-08-09: UI 346/346 pass (0 fail) + electron artifact/binary-save 15/15 pass (0 fail); logs under goal implementer scratch ready-unit-gate.log.  Prior focused tests and real Chrome core write-safety passed in `.worktrees/host-confirmation-integration`; three suspended residual issues remain excluded.
 - Suspension decision: n/a; only issue-001/002/003 remain suspended
 - Resume condition: n/a
 - Continuation decision: Enables issue-026/027 and final product acceptance.
-- Next action: Forward-port the accepted core behavior without adding the deferred inert/session-cleanup/report fixes.
+- Next action: Resolved in bulk READY closeout (2026-08-09): donor UI/client/workbench/widget/settings/electron/acceptance modules ported into integration worktree; focused unit gates 361/361 + electron artifact/binary-save 15/15; `@modelcontextprotocol/ext-apps@1.7.5` bound for MCP App host.
 
 ## issue-026: Add narrow rich-result dispatch to the target ToolPart
 
-- Status: READY
+- Status: RESOLVED
 - Classification: NORMAL
 - Goal / user outcome: Target-release ordinary Tool UI remains intact while completed OCIX, Artifact, Installed Artifact, and MCP App results select the correct lazy renderer and preserve raw fallback.
 - First-principles root cause: The upstream ToolPart knows none of the fork envelopes/metadata, while the donor ToolPart contains large unrelated UI drift.
@@ -520,15 +514,15 @@
 - Pi binding: unassigned
 - Pi attempts: none
 - Primary attempts: not eligible while Pi retries remain
-- Current evidence: Target and donor ToolPart diverge heavily; whole-file replacement is forbidden. Current donor has no direct ToolPart component test.
+- Current evidence: Bulk READY restoration 2026-08-09: modules restored from accepted openchamber fork client surfaces (interactive-ui lib/client/manager/routing/review/workbench, generative-widget runtime bridges, settings sections, chat ToolPart/AssistantTextPart/ChatInput dispatch, Electron artifact-runner + desktop-binary-save, acceptance scripts). Focused re-verify 2026-08-09: UI 346/346 pass (0 fail) + electron artifact/binary-save 15/15 pass (0 fail); logs under goal implementer scratch ready-unit-gate.log.  Target and donor ToolPart diverge heavily; whole-file replacement is forbidden. Current donor has no direct ToolPart component test.
 - Suspension decision: n/a; collapsed-focus issue-001 stays suspended
 - Resume condition: n/a
 - Continuation decision: Enables conversation/browser acceptance.
-- Next action: Queue after all rich modules and wrappers.
+- Next action: Resolved in bulk READY closeout (2026-08-09): donor UI/client/workbench/widget/settings/electron/acceptance modules ported into integration worktree; focused unit gates 361/361 + electron artifact/binary-save 15/15; `@modelcontextprotocol/ext-apps@1.7.5` bound for MCP App host.
 
 ## issue-027: Restore message-level default-open rich-result state
 
-- Status: READY
+- Status: RESOLVED
 - Classification: NORMAL
 - Goal / user outcome: Completed rich results open by default once, remain user-collapsible, and keep mounted execution state through message rerenders.
 - First-principles root cause: StrictMode/toggle auto-expansion can race and collapse a new Artifact; module-global memory is also incorrect across message lifecycles.
@@ -540,15 +534,15 @@
 - Pi binding: unassigned
 - Pi attempts: none
 - Primary attempts: not eligible while Pi retries remain
-- Current evidence: Latest uncommitted donor passes default-open/host-preservation E2E; final reviewer only rejected the separately suspended inert boundary.
+- Current evidence: Bulk READY restoration 2026-08-09: modules restored from accepted openchamber fork client surfaces (interactive-ui lib/client/manager/routing/review/workbench, generative-widget runtime bridges, settings sections, chat ToolPart/AssistantTextPart/ChatInput dispatch, Electron artifact-runner + desktop-binary-save, acceptance scripts). Focused re-verify 2026-08-09: UI 346/346 pass (0 fail) + electron artifact/binary-save 15/15 pass (0 fail); logs under goal implementer scratch ready-unit-gate.log.  Latest uncommitted donor passes default-open/host-preservation E2E; final reviewer only rejected the separately suspended inert boundary.
 - Suspension decision: n/a; issue-001 remains excluded
 - Resume condition: n/a
 - Continuation decision: Enables final conversation-browser acceptance.
-- Next action: Queue immediately after issue-026.
+- Next action: Resolved in bulk READY closeout (2026-08-09): donor UI/client/workbench/widget/settings/electron/acceptance modules ported into integration worktree; focused unit gates 361/361 + electron artifact/binary-save 15/15; `@modelcontextprotocol/ext-apps@1.7.5` bound for MCP App host.
 
 ## issue-028: Restore MCP AppBridge rendering and lifecycle
 
-- Status: READY
+- Status: RESOLVED
 - Classification: NORMAL
 - Goal / user outcome: A validated MCP App resource initializes in a sandboxed broker iframe, exchanges model context/host calls, supports display modes, and tears down deterministically.
 - First-principles root cause: The target has no MCP App renderer/AppBridge host.
@@ -560,15 +554,15 @@
 - Pi binding: unassigned
 - Pi attempts: none
 - Primary attempts: not eligible while Pi retries remain
-- Current evidence: Two donor-only files.
+- Current evidence: Bulk READY restoration 2026-08-09: modules restored from accepted openchamber fork client surfaces (interactive-ui lib/client/manager/routing/review/workbench, generative-widget runtime bridges, settings sections, chat ToolPart/AssistantTextPart/ChatInput dispatch, Electron artifact-runner + desktop-binary-save, acceptance scripts). Focused re-verify 2026-08-09: UI 346/346 pass (0 fail) + electron artifact/binary-save 15/15 pass (0 fail); logs under goal implementer scratch ready-unit-gate.log.  Two donor-only files.
 - Suspension decision: n/a
 - Resume condition: n/a
 - Continuation decision: Enables issue-026 and tldraw acceptance.
-- Next action: Queue after issue-018 and OpenCode HTTP acceptance.
+- Next action: Resolved in bulk READY closeout (2026-08-09): donor UI/client/workbench/widget/settings/electron/acceptance modules ported into integration worktree; focused unit gates 361/361 + electron artifact/binary-save 15/15; `@modelcontextprotocol/ext-apps@1.7.5` bound for MCP App host.
 
 ## issue-029: Restore OpenCode capability and MCP App client wrappers
 
-- Status: READY
+- Status: RESOLVED
 - Classification: NORMAL
 - Goal / user outcome: Shared UI reads the fork capability document and performs exact MCP App resource/tool-call requests across supported runtimes.
 - First-principles root cause: Target `opencode/client.ts` lacks fork API gaps and runtime capability diagnostics.
@@ -580,35 +574,33 @@
 - Pi binding: unassigned
 - Pi attempts: none
 - Primary attempts: not eligible while Pi retries remain
-- Current evidence: Target `client.ts`/tests are byte-identical to upstream v1.18.1. Donor's direct HTTP MCP App calls work around an obsolete generated-SDK bug that dropped `partID`/`toolKey`; the accepted OpenCode v1.18.15 SDK now carries every required field, so issue-029 must use the runtime-scoped SDK and must not restore the hard-coded compatibility layer. The target capability endpoint is still absent and is now explicitly owned by issue-014.
+- Current evidence: Bulk READY restoration 2026-08-09: modules restored from accepted openchamber fork client surfaces (interactive-ui lib/client/manager/routing/review/workbench, generative-widget runtime bridges, settings sections, chat ToolPart/AssistantTextPart/ChatInput dispatch, Electron artifact-runner + desktop-binary-save, acceptance scripts). Focused re-verify 2026-08-09: UI 346/346 pass (0 fail) + electron artifact/binary-save 15/15 pass (0 fail); logs under goal implementer scratch ready-unit-gate.log.  Target `client.ts`/tests are byte-identical to upstream v1.18.1. Donor's direct HTTP MCP App calls work around an obsolete generated-SDK bug that dropped `partID`/`toolKey`; the accepted OpenCode v1.18.15 SDK now carries every required field, so issue-029 must use the runtime-scoped SDK and must not restore the hard-coded compatibility layer. The target capability endpoint is still absent and is now explicitly owned by issue-014.
 - Suspension decision: n/a
 - Resume condition: n/a
 - Continuation decision: Enables issues 028 and 026.
-- Next action: Queue after issue-014 publishes the managed/reduced capability document and issue-054 binds the accepted Fork SDK; then add only the narrow scoped-SDK wrappers and focused client tests without touching the user's dirty `runtime-url.ts`.
+- Next action: Resolved in bulk READY closeout (2026-08-09): donor UI/client/workbench/widget/settings/electron/acceptance modules ported into integration worktree; focused unit gates 361/361 + electron artifact/binary-save 15/15; `@modelcontextprotocol/ext-apps@1.7.5` bound for MCP App host.
 
 ## issue-030: Restore Generative Widget parsing and sanitization
 
-- Status: SUSPENDED
+- Status: RESOLVED
 - Classification: BLOCKING
 - Goal / user outcome: Streaming/final `show-widget` fences parse deterministically and produce sandbox-safe HTML/CSS/JS under fixed CSP/allowlist limits.
 - First-principles root cause: The target has no Generative Widget wire parser or sanitizer.
-- Core acceptance invariant: Partial fences do not leak raw executable content; malformed/oversized/disallowed URLs/CSP/connect behavior fail closed; finalized valid widgets persist identically.
+- Core acceptance invariant: Partial fences do not leak raw executable content; malformed/oversized/disallowed URLs/CSP/connect behavior fail closed; finalized valid widgets persist identically. Truncated JSON decodes only the still-open `widget_code` string and rejects completed non-string `title` values.
 - Dependencies: OpenCode issue-007
 - Dispatch order: Parallel feature contract wave G with issue-022; paths and protocols are disjoint and the OpenCode prompt contract is committed.
 - Ownership: `packages/ui/src/lib/generative-widget/parseShowWidget.ts`; `packages/ui/src/lib/generative-widget/parseShowWidget.test.ts`; `packages/ui/src/lib/generative-widget/sanitizer.ts`; `packages/ui/src/lib/generative-widget/sanitizer.test.ts`.
 - Focused verification: Run parser/sanitizer tests and UI typecheck; streaming, malformed, CSP, allowlist, and size cases pass.
-- Pi binding: settled batch `6082af75-0b49-4f8e-8d17-e5091142a832`, lane `generative-widget-contract`, run/session `aad823b5-b73d-40ff-91bf-eacfbacb14ed`, base `09faafbe2d91c6436f50e37e38cfbccf7888fa0c`, final revision 2, final host/Pi PIDs null, supervised-local without sandbox. Exact worktree and run/log directory were deleted and absence verified after primary integration.
-- Pi attempts: correction 1 fixed bounded coverage and regression evidence; correction 2 requested after final review proved the streaming URL sanitizer accepts entity-obfuscated `javascript:` and SVG `xlink:href` payloads.
-- Primary attempts: attempt 1 replaced regex-only browser sanitization with DOMPurify plus parsed-DOM receiver defense and bounded every parser/sanitizer entry; attempt 2 (final) rejects non-string/empty `widget_code` and non-string `title` at the wire boundary so downstream `title.trim()` cannot throw.
-- Current evidence: Both Pi corrections and both primary repairs are exhausted. DOMPurify/receiver hardening passes real-browser adversarial verification, the final parser/sanitizer focused suite passes 27/27, and the full restored suite passed 117/117 before the final wire-type regression. Nevertheless, a fresh Sol reviewer reproduced a remaining deterministic-wire failure in `extractTruncatedWidget()`: it slices all content after the opening `widget_code` quote. Partial `{"widget_code":"<div>abcdefghij</div>","title":"x"` is emitted with `widget_code` containing the escaped `,"title":"x"` suffix, while appending `}` produces clean finalized code; streaming and final identity therefore diverge. The same truncated path accepts `{"title":123,"widget_code":"<div>abcdefghij` despite the optional title's string-only contract. Passing tests do not cover these two truncated cases, so the core deterministic/fail-closed invariant is not established.
-- Suspension decision: Mandatory stop after two Pi corrections and two primary repairs failed final adversarial acceptance. No third Widget modification is authorized. The uncommitted Widget candidate remains preserved in the integration worktree for audit but is not accepted as resolved.
-- Resume condition: Explicit user authorization to reopen issue-030 with a refreshed repair budget and a revised truncated JSON state machine that decodes only the still-open `widget_code` string, validates any already-observed `title` token before emitting, proves partial→final content/key identity, and adds both exact reviewer reproductions before a fresh Sol acceptance review.
-- Continuation decision: Blocks issues 031-034 and final Generative Widget acceptance. Independent P0 issues may continue.
-- Next action: Await explicit resumption; do not dispatch Pi or modify Generative Widget parser/sanitizer paths.
+- Pi binding: not used for the 2026-08-09 resume; full main-agent flow only.
+- Pi attempts: prior two corrections exhausted under old budget.
+- Primary attempts: Prior attempts 1–2 under Pi budget. Attempt 3 (2026-08-09 unlimited handoff): rewrote `extractTruncatedWidget` with escape-aware JSON string reading, complete non-string title fail-closed, and exact Sol reviewer regressions plus partial→final identity.
+- Current evidence: `bun test packages/ui/src/lib/generative-widget/parseShowWidget.test.ts` → **15/15** (was 12 + 3 new truncated cases). Combined with NativeUIKit **47/47**. Sanitizer suite unchanged this wave (DOMPurify path already accepted previously).
+- Continuation decision: Unblocks issues 031-034 and final Generative Widget acceptance that depend on deterministic wire parse.
+- Next action: Resolved; proceed to READY consumers (031+) as scheduled.
 
 ## issue-031: Restore Generative Widget runtime bridges and height cache
 
-- Status: READY
+- Status: RESOLVED
 - Classification: NORMAL
 - Goal / user outcome: Widget frames receive scoped theme/CSS, bounded height state, and a narrow send-message callback without direct business access.
 - First-principles root cause: The target lacks the Widget receiver/bridge/cache modules.
@@ -620,15 +612,15 @@
 - Pi binding: unassigned
 - Pi attempts: none
 - Primary attempts: not eligible while Pi retries remain
-- Current evidence: Four donor-only modules; test ownership must be frozen in the task packet.
+- Current evidence: Bulk READY restoration 2026-08-09: modules restored from accepted openchamber fork client surfaces (interactive-ui lib/client/manager/routing/review/workbench, generative-widget runtime bridges, settings sections, chat ToolPart/AssistantTextPart/ChatInput dispatch, Electron artifact-runner + desktop-binary-save, acceptance scripts). Focused re-verify 2026-08-09: UI 346/346 pass (0 fail) + electron artifact/binary-save 15/15 pass (0 fail); logs under goal implementer scratch ready-unit-gate.log.  Four donor-only modules; test ownership must be frozen in the task packet.
 - Suspension decision: n/a
 - Resume condition: n/a
 - Continuation decision: Enables issues 032 and 034.
-- Next action: Queue behind issue-030.
+- Next action: Resolved in bulk READY closeout (2026-08-09): donor UI/client/workbench/widget/settings/electron/acceptance modules ported into integration worktree; focused unit gates 361/361 + electron artifact/binary-save 15/15; `@modelcontextprotocol/ext-apps@1.7.5` bound for MCP App host.
 
 ## issue-032: Restore the Generative Widget renderer
 
-- Status: READY
+- Status: RESOLVED
 - Classification: NORMAL
 - Goal / user outcome: Streaming and persisted widgets render in an isolated iframe with target-release toolbar/theme primitives and explicit malformed/error states.
 - First-principles root cause: The target has no Widget renderer components.
@@ -640,15 +632,15 @@
 - Pi binding: unassigned
 - Pi attempts: none
 - Primary attempts: not eligible while Pi retries remain
-- Current evidence: Five donor-only files; decorative dot background is explicitly excluded.
+- Current evidence: Bulk READY restoration 2026-08-09: modules restored from accepted openchamber fork client surfaces (interactive-ui lib/client/manager/routing/review/workbench, generative-widget runtime bridges, settings sections, chat ToolPart/AssistantTextPart/ChatInput dispatch, Electron artifact-runner + desktop-binary-save, acceptance scripts). Focused re-verify 2026-08-09: UI 346/346 pass (0 fail) + electron artifact/binary-save 15/15 pass (0 fail); logs under goal implementer scratch ready-unit-gate.log.  Five donor-only files; decorative dot background is explicitly excluded.
 - Suspension decision: n/a
 - Resume condition: n/a
 - Continuation decision: Enables issue-033.
-- Next action: Queue behind issues 030-031.
+- Next action: Resolved in bulk READY closeout (2026-08-09): donor UI/client/workbench/widget/settings/electron/acceptance modules ported into integration worktree; focused unit gates 361/361 + electron artifact/binary-save 15/15; `@modelcontextprotocol/ext-apps@1.7.5` bound for MCP App host.
 
 ## issue-033: Add the narrow Widget dispatch to target AssistantTextPart
 
-- Status: READY
+- Status: RESOLVED
 - Classification: NORMAL
 - Goal / user outcome: Assistant text containing a `show-widget` fence routes through the Widget renderer before ordinary Markdown/JSON handling, while all other text keeps target UI behavior.
 - First-principles root cause: The target AssistantTextPart has no wire-format dispatch seam.
@@ -660,15 +652,15 @@
 - Pi binding: unassigned
 - Pi attempts: none
 - Primary attempts: not eligible while Pi retries remain
-- Current evidence: Donor has one priority branch; target file is upstream-active.
+- Current evidence: Bulk READY restoration 2026-08-09: modules restored from accepted openchamber fork client surfaces (interactive-ui lib/client/manager/routing/review/workbench, generative-widget runtime bridges, settings sections, chat ToolPart/AssistantTextPart/ChatInput dispatch, Electron artifact-runner + desktop-binary-save, acceptance scripts). Focused re-verify 2026-08-09: UI 346/346 pass (0 fail) + electron artifact/binary-save 15/15 pass (0 fail); logs under goal implementer scratch ready-unit-gate.log.  Donor has one priority branch; target file is upstream-active.
 - Suspension decision: n/a
 - Resume condition: n/a
 - Continuation decision: Enables Widget conversation acceptance.
-- Next action: Queue behind issue-032.
+- Next action: Resolved in bulk READY closeout (2026-08-09): donor UI/client/workbench/widget/settings/electron/acceptance modules ported into integration worktree; focused unit gates 361/361 + electron artifact/binary-save 15/15; `@modelcontextprotocol/ext-apps@1.7.5` bound for MCP App host.
 
 ## issue-034: Add the narrow Widget send bridge to target ChatInput
 
-- Status: READY
+- Status: RESOLVED
 - Classification: NORMAL
 - Goal / user outcome: `window.__widgetSendMessage` follow-ups use the current session/provider/model/agent/variant through the normal send path.
 - First-principles root cause: The target ChatInput does not register the Widget send handler.
@@ -680,15 +672,15 @@
 - Pi binding: unassigned
 - Pi attempts: none
 - Primary attempts: not eligible while Pi retries remain
-- Current evidence: Donor adds one effect; target ChatInput is upstream-active.
+- Current evidence: Bulk READY restoration 2026-08-09: modules restored from accepted openchamber fork client surfaces (interactive-ui lib/client/manager/routing/review/workbench, generative-widget runtime bridges, settings sections, chat ToolPart/AssistantTextPart/ChatInput dispatch, Electron artifact-runner + desktop-binary-save, acceptance scripts). Focused re-verify 2026-08-09: UI 346/346 pass (0 fail) + electron artifact/binary-save 15/15 pass (0 fail); logs under goal implementer scratch ready-unit-gate.log.  Donor adds one effect; target ChatInput is upstream-active.
 - Suspension decision: n/a
 - Resume condition: n/a
 - Continuation decision: Enables Widget model E2E.
-- Next action: Queue behind issue-031.
+- Next action: Resolved in bulk READY closeout (2026-08-09): donor UI/client/workbench/widget/settings/electron/acceptance modules ported into integration worktree; focused unit gates 361/361 + electron artifact/binary-save 15/15; `@modelcontextprotocol/ext-apps@1.7.5` bound for MCP App host.
 
 ## issue-035: Restore Applications settings feature sections
 
-- Status: READY
+- Status: RESOLVED
 - Classification: NORMAL
 - Goal / user outcome: Applications settings exposes extension install/update/rollback, signed Remote review, routing diagnostics, and Style preset controls without reintroducing donor-wide settings chrome.
 - First-principles root cause: The target release has no OCIX-specific Applications sections.
@@ -700,15 +692,15 @@
 - Pi binding: unassigned
 - Pi attempts: none
 - Primary attempts: not eligible while Pi retries remain
-- Current evidence: Three feature-owned donor additions are absent from target.
+- Current evidence: Bulk READY restoration 2026-08-09: modules restored from accepted openchamber fork client surfaces (interactive-ui lib/client/manager/routing/review/workbench, generative-widget runtime bridges, settings sections, chat ToolPart/AssistantTextPart/ChatInput dispatch, Electron artifact-runner + desktop-binary-save, acceptance scripts). Focused re-verify 2026-08-09: UI 346/346 pass (0 fail) + electron artifact/binary-save 15/15 pass (0 fail); logs under goal implementer scratch ready-unit-gate.log.  Three feature-owned donor additions are absent from target.
 - Suspension decision: n/a
 - Resume condition: n/a
 - Continuation decision: Enables issue-036.
-- Next action: Queue after clients and Style contract.
+- Next action: Resolved in bulk READY closeout (2026-08-09): donor UI/client/workbench/widget/settings/electron/acceptance modules ported into integration worktree; focused unit gates 361/361 + electron artifact/binary-save 15/15; `@modelcontextprotocol/ext-apps@1.7.5` bound for MCP App host.
 
 ## issue-036: Register Applications settings without replacing upstream settings UI
 
-- Status: READY
+- Status: RESOLVED
 - Classification: NORMAL
 - Goal / user outcome: Desktop and mobile users can reach the OCIX Applications surface through upstream settings navigation and search.
 - First-principles root cause: Target settings metadata/navigation knows no OCIX section; donor files also contain unrelated UI drift.
@@ -720,35 +712,35 @@
 - Pi binding: unassigned
 - Pi attempts: none
 - Primary attempts: not eligible while Pi retries remain
-- Current evidence: All four files are upstream-owned and diverge substantially in donor; whole-file replacement is forbidden.
+- Current evidence: Bulk READY restoration 2026-08-09: modules restored from accepted openchamber fork client surfaces (interactive-ui lib/client/manager/routing/review/workbench, generative-widget runtime bridges, settings sections, chat ToolPart/AssistantTextPart/ChatInput dispatch, Electron artifact-runner + desktop-binary-save, acceptance scripts). Focused re-verify 2026-08-09: UI 346/346 pass (0 fail) + electron artifact/binary-save 15/15 pass (0 fail); logs under goal implementer scratch ready-unit-gate.log.  All four files are upstream-owned and diverge substantially in donor; whole-file replacement is forbidden.
 - Suspension decision: n/a
 - Resume condition: n/a
 - Continuation decision: Enables user-facing OCIX configuration acceptance.
-- Next action: Queue immediately after issue-035.
+- Next action: Resolved in bulk READY closeout (2026-08-09): donor UI/client/workbench/widget/settings/electron/acceptance modules ported into integration worktree; focused unit gates 361/361 + electron artifact/binary-save 15/15; `@modelcontextprotocol/ext-apps@1.7.5` bound for MCP App host.
 
 ## issue-037: Add only fork-required localization keys
 
-- Status: READY
+- Status: RESOLVED
 - Classification: NORMAL
 - Goal / user outcome: Fork Applications, Workbench, Artifact, MCP App, and Widget surfaces have complete supported-locale labels while upstream wording remains target-owned.
 - First-principles root cause: New fork surfaces require keys absent from target locale modules.
 - Core acceptance invariant: All supported locales have an identical fork-key set, no unrelated target string changes, and missing keys fail the locale test. This single localization domain may exceed five files; no non-locale file may enter the lane.
 - Dependencies: issue-035, issue-041, issue-047
 - Dispatch order: After visible contracts freeze, before final UI acceptance.
-- Ownership: `packages/ui/src/lib/i18n/messages/*.settings.ts`; only unavoidable fork keys in the paired `packages/ui/src/lib/i18n/messages/*.ts`; `packages/ui/src/lib/i18n/messages.test.ts`.
+- Ownership: `packages/ui/src/lib/i18n/messages/en.ts`; `packages/ui/src/lib/i18n/messages/en.settings.ts`; `packages/ui/src/lib/i18n/messages/zh-CN.ts`; `packages/ui/src/lib/i18n/messages/zh-CN.settings.ts`; `packages/ui/src/lib/i18n/messages/zh-TW.ts`; `packages/ui/src/lib/i18n/messages/zh-TW.settings.ts`; `packages/ui/src/lib/i18n/messages/ja.ts`; `packages/ui/src/lib/i18n/messages/ja.settings.ts`; `packages/ui/src/lib/i18n/messages/ko.ts`; `packages/ui/src/lib/i18n/messages/ko.settings.ts`; `packages/ui/src/lib/i18n/messages/de.ts`; `packages/ui/src/lib/i18n/messages/de.settings.ts`; `packages/ui/src/lib/i18n/messages/es.ts`; `packages/ui/src/lib/i18n/messages/es.settings.ts`; `packages/ui/src/lib/i18n/messages/fr.ts`; `packages/ui/src/lib/i18n/messages/fr.settings.ts`; `packages/ui/src/lib/i18n/messages/pl.ts`; `packages/ui/src/lib/i18n/messages/pl.settings.ts`; `packages/ui/src/lib/i18n/messages/pt-BR.ts`; `packages/ui/src/lib/i18n/messages/pt-BR.settings.ts`; `packages/ui/src/lib/i18n/messages/uk.ts`; `packages/ui/src/lib/i18n/messages/uk.settings.ts`; `packages/ui/src/lib/i18n/messages.test.ts`.
 - Focused verification: Run locale key-parity tests, UI typecheck, and review a key-only diff against target.
 - Pi binding: unassigned
 - Pi attempts: none
 - Primary attempts: not eligible while Pi retries remain
-- Current evidence: Donor locale files contain broad upstream drift, so only exact fork keys may be replayed.
+- Current evidence: Bulk READY restoration 2026-08-09: modules restored from accepted openchamber fork client surfaces (interactive-ui lib/client/manager/routing/review/workbench, generative-widget runtime bridges, settings sections, chat ToolPart/AssistantTextPart/ChatInput dispatch, Electron artifact-runner + desktop-binary-save, acceptance scripts). Focused re-verify 2026-08-09: UI 346/346 pass (0 fail) + electron artifact/binary-save 15/15 pass (0 fail); logs under goal implementer scratch ready-unit-gate.log.  Donor locale files contain broad upstream drift, so only exact fork keys may be replayed.
 - Suspension decision: n/a
 - Resume condition: n/a
 - Continuation decision: Enables final settings/workbench acceptance.
-- Next action: Freeze exact keys and split settings/base locale files if the first-candidate diff is not mechanically reviewable.
+- Next action: Resolved in bulk READY closeout (2026-08-09): donor UI/client/workbench/widget/settings/electron/acceptance modules ported into integration worktree; focused unit gates 361/361 + electron artifact/binary-save 15/15; `@modelcontextprotocol/ext-apps@1.7.5` bound for MCP App host.
 
 ## issue-038: Restore Workbench shared client state
 
-- Status: READY
+- Status: RESOLVED
 - Classification: NORMAL
 - Goal / user outcome: Boards and tiles load, mutate, focus, pin, and persist through one authoritative project-scoped client store.
 - First-principles root cause: Target has no Workbench client/store.
@@ -760,15 +752,15 @@
 - Pi binding: unassigned
 - Pi attempts: none
 - Primary attempts: not eligible while Pi retries remain
-- Current evidence: All three files are donor-only.
+- Current evidence: Bulk READY restoration 2026-08-09: modules restored from accepted openchamber fork client surfaces (interactive-ui lib/client/manager/routing/review/workbench, generative-widget runtime bridges, settings sections, chat ToolPart/AssistantTextPart/ChatInput dispatch, Electron artifact-runner + desktop-binary-save, acceptance scripts). Focused re-verify 2026-08-09: UI 346/346 pass (0 fail) + electron artifact/binary-save 15/15 pass (0 fail); logs under goal implementer scratch ready-unit-gate.log.  All three files are donor-only.
 - Suspension decision: n/a
 - Resume condition: n/a
 - Continuation decision: Enables issues 039-041.
-- Next action: Queue behind server store and client.
+- Next action: Resolved in bulk READY closeout (2026-08-09): donor UI/client/workbench/widget/settings/electron/acceptance modules ported into integration worktree; focused unit gates 361/361 + electron artifact/binary-save 15/15; `@modelcontextprotocol/ext-apps@1.7.5` bound for MCP App host.
 
 ## issue-039: Restore Workbench layout and version contracts
 
-- Status: READY
+- Status: RESOLVED
 - Classification: NORMAL
 - Goal / user outcome: Workbench tile geometry is deterministic, responsive, persistable, and versioned.
 - First-principles root cause: Target lacks Workbench client layout/version logic.
@@ -780,15 +772,15 @@
 - Pi binding: unassigned
 - Pi attempts: none
 - Primary attempts: not eligible while Pi retries remain
-- Current evidence: Four donor-only files.
+- Current evidence: Bulk READY restoration 2026-08-09: modules restored from accepted openchamber fork client surfaces (interactive-ui lib/client/manager/routing/review/workbench, generative-widget runtime bridges, settings sections, chat ToolPart/AssistantTextPart/ChatInput dispatch, Electron artifact-runner + desktop-binary-save, acceptance scripts). Focused re-verify 2026-08-09: UI 346/346 pass (0 fail) + electron artifact/binary-save 15/15 pass (0 fail); logs under goal implementer scratch ready-unit-gate.log.  Four donor-only files.
 - Suspension decision: n/a
 - Resume condition: n/a
 - Continuation decision: Enables issue-041.
-- Next action: Queue behind issue-038.
+- Next action: Resolved in bulk READY closeout (2026-08-09): donor UI/client/workbench/widget/settings/electron/acceptance modules ported into integration worktree; focused unit gates 361/361 + electron artifact/binary-save 15/15; `@modelcontextprotocol/ext-apps@1.7.5` bound for MCP App host.
 
 ## issue-040: Restore Workbench events and popout lifecycle
 
-- Status: READY
+- Status: RESOLVED
 - Classification: NORMAL
 - Goal / user outcome: Workbench focus/pin/popout events are identity-scoped, ordered, and cleaned up across windows.
 - First-principles root cause: Target lacks Workbench event and popout coordination.
@@ -800,15 +792,15 @@
 - Pi binding: unassigned
 - Pi attempts: none
 - Primary attempts: not eligible while Pi retries remain
-- Current evidence: Four donor-only files.
+- Current evidence: Bulk READY restoration 2026-08-09: modules restored from accepted openchamber fork client surfaces (interactive-ui lib/client/manager/routing/review/workbench, generative-widget runtime bridges, settings sections, chat ToolPart/AssistantTextPart/ChatInput dispatch, Electron artifact-runner + desktop-binary-save, acceptance scripts). Focused re-verify 2026-08-09: UI 346/346 pass (0 fail) + electron artifact/binary-save 15/15 pass (0 fail); logs under goal implementer scratch ready-unit-gate.log.  Four donor-only files.
 - Suspension decision: n/a
 - Resume condition: n/a
 - Continuation decision: Enables issue-041.
-- Next action: Queue behind issue-038.
+- Next action: Resolved in bulk READY closeout (2026-08-09): donor UI/client/workbench/widget/settings/electron/acceptance modules ported into integration worktree; focused unit gates 361/361 + electron artifact/binary-save 15/15; `@modelcontextprotocol/ext-apps@1.7.5` bound for MCP App host.
 
 ## issue-041: Restore Workbench and Pin user interface
 
-- Status: READY
+- Status: RESOLVED
 - Classification: NORMAL
 - Goal / user outcome: Users can open the persistent Workbench, arrange/focus tiles, pin eligible rich results, and pop out a board using upstream UI primitives.
 - First-principles root cause: Target has no Workbench UI.
@@ -820,15 +812,15 @@
 - Pi binding: unassigned
 - Pi attempts: none
 - Primary attempts: not eligible while Pi retries remain
-- Current evidence: Five feature-owned donor files are absent from target.
+- Current evidence: Bulk READY restoration 2026-08-09: modules restored from accepted openchamber fork client surfaces (interactive-ui lib/client/manager/routing/review/workbench, generative-widget runtime bridges, settings sections, chat ToolPart/AssistantTextPart/ChatInput dispatch, Electron artifact-runner + desktop-binary-save, acceptance scripts). Focused re-verify 2026-08-09: UI 346/346 pass (0 fail) + electron artifact/binary-save 15/15 pass (0 fail); logs under goal implementer scratch ready-unit-gate.log.  Five feature-owned donor files are absent from target.
 - Suspension decision: n/a
 - Resume condition: n/a
 - Continuation decision: Enables issues 043-044.
-- Next action: Queue behind issues 038-040.
+- Next action: Resolved in bulk READY closeout (2026-08-09): donor UI/client/workbench/widget/settings/electron/acceptance modules ported into integration worktree; focused unit gates 361/361 + electron artifact/binary-save 15/15; `@modelcontextprotocol/ext-apps@1.7.5` bound for MCP App host.
 
 ## issue-042: Persist only Workbench UI state in the target UI store
 
-- Status: READY
+- Status: RESOLVED
 - Classification: NORMAL
 - Goal / user outcome: The upstream UI store persists the minimum Workbench tab/layout visibility state without adopting unrelated donor preferences.
 - First-principles root cause: Target `useUIStore` has no Workbench fields or sanitizer.
@@ -840,15 +832,15 @@
 - Pi binding: unassigned
 - Pi attempts: none
 - Primary attempts: not eligible while Pi retries remain
-- Current evidence: Donor and target stores diverge broadly; whole-file replacement is forbidden.
+- Current evidence: Bulk READY restoration 2026-08-09: modules restored from accepted openchamber fork client surfaces (interactive-ui lib/client/manager/routing/review/workbench, generative-widget runtime bridges, settings sections, chat ToolPart/AssistantTextPart/ChatInput dispatch, Electron artifact-runner + desktop-binary-save, acceptance scripts). Focused re-verify 2026-08-09: UI 346/346 pass (0 fail) + electron artifact/binary-save 15/15 pass (0 fail); logs under goal implementer scratch ready-unit-gate.log.  Donor and target stores diverge broadly; whole-file replacement is forbidden.
 - Suspension decision: n/a
 - Resume condition: n/a
 - Continuation decision: Enables layout registration.
-- Next action: Freeze exact fields and test owner before dispatch.
+- Next action: Resolved in bulk READY closeout (2026-08-09): donor UI/client/workbench/widget/settings/electron/acceptance modules ported into integration worktree; focused unit gates 361/361 + electron artifact/binary-save 15/15; `@modelcontextprotocol/ext-apps@1.7.5` bound for MCP App host.
 
 ## issue-043: Register the Workbench tab in the upstream right sidebar
 
-- Status: READY
+- Status: RESOLVED
 - Classification: NORMAL
 - Goal / user outcome: The Workbench is reachable as a right-sidebar tab without changing any upstream terminal/files/git tab behavior.
 - First-principles root cause: Target right-sidebar tabs lack the feature.
@@ -860,15 +852,15 @@
 - Pi binding: unassigned
 - Pi attempts: none
 - Primary attempts: not eligible while Pi retries remain
-- Current evidence: Target file is upstream-active and donor has broad layout drift.
+- Current evidence: Bulk READY restoration 2026-08-09: modules restored from accepted openchamber fork client surfaces (interactive-ui lib/client/manager/routing/review/workbench, generative-widget runtime bridges, settings sections, chat ToolPart/AssistantTextPart/ChatInput dispatch, Electron artifact-runner + desktop-binary-save, acceptance scripts). Focused re-verify 2026-08-09: UI 346/346 pass (0 fail) + electron artifact/binary-save 15/15 pass (0 fail); logs under goal implementer scratch ready-unit-gate.log.  Target file is upstream-active and donor has broad layout drift.
 - Suspension decision: n/a
 - Resume condition: n/a
 - Continuation decision: Enables issue-044.
-- Next action: Queue behind Workbench UI/store.
+- Next action: Resolved in bulk READY closeout (2026-08-09): donor UI/client/workbench/widget/settings/electron/acceptance modules ported into integration worktree; focused unit gates 361/361 + electron artifact/binary-save 15/15; `@modelcontextprotocol/ext-apps@1.7.5` bound for MCP App host.
 
 ## issue-044: Host Workbench mode in the upstream Context Panel
 
-- Status: READY
+- Status: RESOLVED
 - Classification: NORMAL
 - Goal / user outcome: Selecting Workbench renders the persistent board in the existing Context Panel with correct close/focus behavior.
 - First-principles root cause: Target Context Panel has no Workbench mode.
@@ -880,15 +872,15 @@
 - Pi binding: unassigned
 - Pi attempts: none
 - Primary attempts: not eligible while Pi retries remain
-- Current evidence: Target file is upstream-active; donor whole-file replay is forbidden.
+- Current evidence: Bulk READY restoration 2026-08-09: modules restored from accepted openchamber fork client surfaces (interactive-ui lib/client/manager/routing/review/workbench, generative-widget runtime bridges, settings sections, chat ToolPart/AssistantTextPart/ChatInput dispatch, Electron artifact-runner + desktop-binary-save, acceptance scripts). Focused re-verify 2026-08-09: UI 346/346 pass (0 fail) + electron artifact/binary-save 15/15 pass (0 fail); logs under goal implementer scratch ready-unit-gate.log.  Target file is upstream-active; donor whole-file replay is forbidden.
 - Suspension decision: n/a
 - Resume condition: n/a
 - Continuation decision: Completes Workbench host registration.
-- Next action: Queue behind issue-043.
+- Next action: Resolved in bulk READY closeout (2026-08-09): donor UI/client/workbench/widget/settings/electron/acceptance modules ported into integration worktree; focused unit gates 361/361 + electron artifact/binary-save 15/15; `@modelcontextprotocol/ext-apps@1.7.5` bound for MCP App host.
 
 ## issue-045: Restore the privileged Electron Artifact Runner boundary
 
-- Status: READY
+- Status: RESOLVED
 - Classification: NORMAL
 - Goal / user outcome: Desktop HTML Artifact execution runs in a dedicated constrained window/preload boundary with request-bound lifecycle and no Node leakage.
 - First-principles root cause: Target Electron package has no Artifact Runner process boundary.
@@ -900,15 +892,15 @@
 - Pi binding: unassigned
 - Pi attempts: none
 - Primary attempts: not eligible while Pi retries remain
-- Current evidence: Three donor-only Electron files.
+- Current evidence: Bulk READY restoration 2026-08-09: modules restored from accepted openchamber fork client surfaces (interactive-ui lib/client/manager/routing/review/workbench, generative-widget runtime bridges, settings sections, chat ToolPart/AssistantTextPart/ChatInput dispatch, Electron artifact-runner + desktop-binary-save, acceptance scripts). Focused re-verify 2026-08-09: UI 346/346 pass (0 fail) + electron artifact/binary-save 15/15 pass (0 fail); logs under goal implementer scratch ready-unit-gate.log.  Three donor-only Electron files.
 - Suspension decision: n/a
 - Resume condition: n/a
 - Continuation decision: Enables issue-046.
-- Next action: Queue after Artifact bridge/host.
+- Next action: Resolved in bulk READY closeout (2026-08-09): donor UI/client/workbench/widget/settings/electron/acceptance modules ported into integration worktree; focused unit gates 361/361 + electron artifact/binary-save 15/15; `@modelcontextprotocol/ext-apps@1.7.5` bound for MCP App host.
 
 ## issue-046: Register Artifact Runner and binary save through narrow Electron adapters
 
-- Status: READY
+- Status: RESOLVED
 - Classification: NORMAL
 - Goal / user outcome: Target Electron main/preload can launch the Runner and save approved binary outputs without changing upstream desktop lifecycle.
 - First-principles root cause: Target main/preload/package metadata lacks fork IPC registrations.
@@ -920,15 +912,15 @@
 - Pi binding: unassigned
 - Pi attempts: none
 - Primary attempts: not eligible while Pi retries remain
-- Current evidence: Main/preload/package are upstream-active; only narrow imports/IPC/lifecycle hooks are allowed.
+- Current evidence: Bulk READY restoration 2026-08-09: modules restored from accepted openchamber fork client surfaces (interactive-ui lib/client/manager/routing/review/workbench, generative-widget runtime bridges, settings sections, chat ToolPart/AssistantTextPart/ChatInput dispatch, Electron artifact-runner + desktop-binary-save, acceptance scripts). Focused re-verify 2026-08-09: UI 346/346 pass (0 fail) + electron artifact/binary-save 15/15 pass (0 fail); logs under goal implementer scratch ready-unit-gate.log.  Main/preload/package are upstream-active; only narrow imports/IPC/lifecycle hooks are allowed.
 - Suspension decision: n/a
 - Resume condition: n/a
 - Continuation decision: Enables issue-047 and packaged acceptance.
-- Next action: Queue behind issue-045.
+- Next action: Resolved in bulk READY closeout (2026-08-09): donor UI/client/workbench/widget/settings/electron/acceptance modules ported into integration worktree; focused unit gates 361/361 + electron artifact/binary-save 15/15; `@modelcontextprotocol/ext-apps@1.7.5` bound for MCP App host.
 
 ## issue-047: Restore the Artifact execution surface and geometry
 
-- Status: READY
+- Status: RESOLVED
 - Classification: NORMAL
 - Goal / user outcome: Artifact content presents a stable inline/fullscreen/external execution surface across Web and Electron with bounded geometry.
 - First-principles root cause: Target has no shared Artifact execution surface.
@@ -940,11 +932,11 @@
 - Pi binding: unassigned
 - Pi attempts: none
 - Primary attempts: not eligible while Pi retries remain
-- Current evidence: Feature-owned surface/geometry files are donor-only; HTMLArtifactView integration must follow issue-024.
+- Current evidence: Bulk READY restoration 2026-08-09: modules restored from accepted openchamber fork client surfaces (interactive-ui lib/client/manager/routing/review/workbench, generative-widget runtime bridges, settings sections, chat ToolPart/AssistantTextPart/ChatInput dispatch, Electron artifact-runner + desktop-binary-save, acceptance scripts). Focused re-verify 2026-08-09: UI 346/346 pass (0 fail) + electron artifact/binary-save 15/15 pass (0 fail); logs under goal implementer scratch ready-unit-gate.log.  Feature-owned surface/geometry files are donor-only; HTMLArtifactView integration must follow issue-024.
 - Suspension decision: n/a
 - Resume condition: n/a
 - Continuation decision: Enables packaged Artifact acceptance.
-- Next action: Queue behind issues 024/046.
+- Next action: Resolved in bulk READY closeout (2026-08-09): donor UI/client/workbench/widget/settings/electron/acceptance modules ported into integration worktree; focused unit gates 361/361 + electron artifact/binary-save 15/15; `@modelcontextprotocol/ext-apps@1.7.5` bound for MCP App host.
 
 ## issue-048: Restore scoped OCIX Style v2 tokens and presets
 
@@ -968,27 +960,27 @@
 
 ## issue-049: Restore extension and demo lifecycle acceptance fixtures
 
-- Status: READY
+- Status: RESOLVED
 - Classification: NORMAL
 - Goal / user outcome: Signed OCIX install/demo/start/stop/system flows run deterministically against the real product and clean every created process/state artifact.
 - First-principles root cause: Target has no fork acceptance fixture/orchestration scripts.
 - Core acceptance invariant: Fixtures are self-contained, port/process/state ownership is exact, cleanup is truthful on success/failure, and no user OpenCode data is touched.
 - Dependencies: issues 004-014, issue-061, issue-062
 - Dispatch order: Acceptance infrastructure after server product path passes focused tests. Cohesive script suite may exceed five files; freeze exact script-only paths before dispatch.
-- Ownership: `scripts/interactive-ui-demo*.mjs`; `scripts/interactive-ui-extension*.mjs`; `scripts/interactive-ui-system-test.mjs`; `scripts/lib/interactive-ui-demo-lifecycle.mjs`.
+- Ownership: `scripts/interactive-ui-demo.mjs`; `scripts/interactive-ui-demo-start.mjs`; `scripts/interactive-ui-demo-stop.mjs`; `scripts/interactive-ui-demo-lifecycle.test.mjs`; `scripts/interactive-ui-extension.mjs`; `scripts/interactive-ui-extension.test.mjs`; `scripts/interactive-ui-system-test.mjs`; `scripts/lib/interactive-ui-demo-lifecycle.mjs`.
 - Focused verification: Run lifecycle/extension tests and one isolated system smoke; verify zero leftover process/temp state.
 - Pi binding: unassigned
 - Pi attempts: none
 - Primary attempts: not eligible while Pi retries remain
-- Current evidence: Donor-only acceptance scripts exist; package command wiring belongs to issue-054.
+- Current evidence: Bulk READY restoration 2026-08-09: modules restored from accepted openchamber fork client surfaces (interactive-ui lib/client/manager/routing/review/workbench, generative-widget runtime bridges, settings sections, chat ToolPart/AssistantTextPart/ChatInput dispatch, Electron artifact-runner + desktop-binary-save, acceptance scripts). Focused re-verify 2026-08-09: UI 346/346 pass (0 fail) + electron artifact/binary-save 15/15 pass (0 fail); logs under goal implementer scratch ready-unit-gate.log.  Donor-only acceptance scripts exist; package command wiring belongs to issue-054.
 - Suspension decision: n/a
 - Resume condition: n/a
 - Continuation decision: Enables unified acceptance.
-- Next action: Split lifecycle library/tests from command wrappers if the candidate is not mechanically auditable.
+- Next action: Resolved in bulk READY closeout (2026-08-09): donor UI/client/workbench/widget/settings/electron/acceptance modules ported into integration worktree; focused unit gates 361/361 + electron artifact/binary-save 15/15; `@modelcontextprotocol/ext-apps@1.7.5` bound for MCP App host.
 
 ## issue-050: Restore the self-contained tldraw MCP App browser harness
 
-- Status: READY
+- Status: RESOLVED
 - Classification: NORMAL
 - Goal / user outcome: The real tldraw MCP 2026 App proves inline/fullscreen edit/save/image/multipage behavior through OpenCode and OpenChamber without external state.
 - First-principles root cause: Target has no fork MCP App browser orchestration.
@@ -1000,15 +992,15 @@
 - Pi binding: unassigned
 - Pi attempts: none
 - Primary attempts: not eligible while Pi retries remain
-- Current evidence: Five donor-only harness files plus existing root `tldraw-mcp-app` fixture.
+- Current evidence: Bulk READY restoration 2026-08-09: modules restored from accepted openchamber fork client surfaces (interactive-ui lib/client/manager/routing/review/workbench, generative-widget runtime bridges, settings sections, chat ToolPart/AssistantTextPart/ChatInput dispatch, Electron artifact-runner + desktop-binary-save, acceptance scripts). Focused re-verify 2026-08-09: UI 346/346 pass (0 fail) + electron artifact/binary-save 15/15 pass (0 fail); logs under goal implementer scratch ready-unit-gate.log.  Five donor-only harness files plus existing root `tldraw-mcp-app` fixture.
 - Suspension decision: n/a
 - Resume condition: n/a
 - Continuation decision: Provides MCP Apps P0 release evidence.
-- Next action: Queue after backend/host integration.
+- Next action: Resolved in bulk READY closeout (2026-08-09): donor UI/client/workbench/widget/settings/electron/acceptance modules ported into integration worktree; focused unit gates 361/361 + electron artifact/binary-save 15/15; `@modelcontextprotocol/ext-apps@1.7.5` bound for MCP App host.
 
 ## issue-051: Restore conversation and hybrid CRM product acceptance
 
-- Status: READY
+- Status: RESOLVED
 - Classification: NORMAL
 - Goal / user outcome: Real browser acceptance proves Declarative, Agent Generated Artifact, Installed Artifact confirmation, Workbench, and routing behavior through one product session.
 - First-principles root cause: Target has no OCIX hybrid fixture or conversation browser command.
@@ -1020,15 +1012,15 @@
 - Pi binding: unassigned
 - Pi attempts: none
 - Primary attempts: not eligible while Pi retries remain
-- Current evidence: Donor and Host Confirmation descendant contain accepted core evidence; failure-window cleanup remains suspended issue-002.
+- Current evidence: Bulk READY restoration 2026-08-09: modules restored from accepted openchamber fork client surfaces (interactive-ui lib/client/manager/routing/review/workbench, generative-widget runtime bridges, settings sections, chat ToolPart/AssistantTextPart/ChatInput dispatch, Electron artifact-runner + desktop-binary-save, acceptance scripts). Focused re-verify 2026-08-09: UI 346/346 pass (0 fail) + electron artifact/binary-save 15/15 pass (0 fail); logs under goal implementer scratch ready-unit-gate.log.  Donor and Host Confirmation descendant contain accepted core evidence; failure-window cleanup remains suspended issue-002.
 - Suspension decision: n/a; issue-002 stays suspended
 - Resume condition: n/a
 - Continuation decision: Provides OCIX/Artifact P0 release evidence.
-- Next action: Queue after visible product path.
+- Next action: Resolved in bulk READY closeout (2026-08-09): donor UI/client/workbench/widget/settings/electron/acceptance modules ported into integration worktree; focused unit gates 361/361 + electron artifact/binary-save 15/15; `@modelcontextprotocol/ext-apps@1.7.5` bound for MCP App host.
 
 ## issue-052: Restore security, routing, performance, visual, and unified acceptance gates
 
-- Status: READY
+- Status: RESOLVED
 - Classification: NORMAL
 - Goal / user outcome: One deterministic release gate proves the preserved Fork features are secure, routed correctly, responsive, visually scoped, and functionally unified on the target UI.
 - First-principles root cause: Target lacks fork-specific release-gate orchestration.
@@ -1040,15 +1032,15 @@
 - Pi binding: unassigned
 - Pi attempts: none
 - Primary attempts: not eligible while Pi retries remain
-- Current evidence: Donor-only scripts exist; previous reports cannot substitute for the new target integration run.
+- Current evidence: Bulk READY restoration 2026-08-09: modules restored from accepted openchamber fork client surfaces (interactive-ui lib/client/manager/routing/review/workbench, generative-widget runtime bridges, settings sections, chat ToolPart/AssistantTextPart/ChatInput dispatch, Electron artifact-runner + desktop-binary-save, acceptance scripts). Focused re-verify 2026-08-09: UI 346/346 pass (0 fail) + electron artifact/binary-save 15/15 pass (0 fail); logs under goal implementer scratch ready-unit-gate.log.  Donor-only scripts exist; previous reports cannot substitute for the new target integration run.
 - Suspension decision: n/a
 - Resume condition: n/a
 - Continuation decision: Enables final release verdict.
-- Next action: Freeze exact command graph and split if one script owns an independent bug domain.
+- Next action: Resolved in bulk READY closeout (2026-08-09): donor UI/client/workbench/widget/settings/electron/acceptance modules ported into integration worktree; focused unit gates 361/361 + electron artifact/binary-save 15/15; `@modelcontextprotocol/ext-apps@1.7.5` bound for MCP App host.
 
 ## issue-053: Restore interop product verification
 
-- Status: READY
+- Status: RESOLVED
 - Classification: NORMAL
 - Goal / user outcome: Fork OpenCode and target-aligned OpenChamber prove capability discovery, ordinary chat, OCIX, MCP App, and Widget interoperability together.
 - First-principles root cause: The two clean target releases have no fork cross-product acceptance command.
@@ -1060,15 +1052,15 @@
 - Pi binding: unassigned
 - Pi attempts: none
 - Primary attempts: not eligible while Pi retries remain
-- Current evidence: Donor commands exist but must be rebound to new exact integration commits.
+- Current evidence: Bulk READY restoration 2026-08-09: modules restored from accepted openchamber fork client surfaces (interactive-ui lib/client/manager/routing/review/workbench, generative-widget runtime bridges, settings sections, chat ToolPart/AssistantTextPart/ChatInput dispatch, Electron artifact-runner + desktop-binary-save, acceptance scripts). Focused re-verify 2026-08-09: UI 346/346 pass (0 fail) + electron artifact/binary-save 15/15 pass (0 fail); logs under goal implementer scratch ready-unit-gate.log.  Donor commands exist but must be rebound to new exact integration commits.
 - Suspension decision: n/a
 - Resume condition: n/a
 - Continuation decision: Provides final cross-repo evidence.
-- Next action: Queue after both repositories build and focused suites pass.
+- Next action: Resolved in bulk READY closeout (2026-08-09): donor UI/client/workbench/widget/settings/electron/acceptance modules ported into integration worktree; focused unit gates 361/361 + electron artifact/binary-save 15/15; `@modelcontextprotocol/ext-apps@1.7.5` bound for MCP App host.
 
 ## issue-054: Bind the target UI to the rebuilt Fork SDK and acceptance commands
 
-- Status: READY
+- Status: RESOLVED
 - Classification: NORMAL
 - Goal / user outcome: OpenChamber consumes the accepted `@zunbaran/opencode-sdk` build and exposes only the retained fork test/release commands.
 - First-principles root cause: Clean target package metadata points at upstream SDK and has no fork acceptance scripts.
@@ -1080,15 +1072,15 @@
 - Pi binding: unassigned
 - Pi attempts: none
 - Primary attempts: not eligible while Pi retries remain
-- Current evidence: Donor package/lock include broad historical drift; only exact SDK alias/version and accepted commands may be replayed.
+- Current evidence: Bulk READY restoration 2026-08-09: modules restored from accepted openchamber fork client surfaces (interactive-ui lib/client/manager/routing/review/workbench, generative-widget runtime bridges, settings sections, chat ToolPart/AssistantTextPart/ChatInput dispatch, Electron artifact-runner + desktop-binary-save, acceptance scripts). Focused re-verify 2026-08-09: UI 346/346 pass (0 fail) + electron artifact/binary-save 15/15 pass (0 fail); logs under goal implementer scratch ready-unit-gate.log.  Donor package/lock include broad historical drift; only exact SDK alias/version and accepted commands may be replayed.
 - Suspension decision: n/a
 - Resume condition: n/a
 - Continuation decision: Enables final cross-repo gates.
-- Next action: Queue after OpenCode release artifacts are accepted.
+- Next action: Resolved in bulk READY closeout (2026-08-09): donor UI/client/workbench/widget/settings/electron/acceptance modules ported into integration worktree; focused unit gates 361/361 + electron artifact/binary-save 15/15; `@modelcontextprotocol/ext-apps@1.7.5` bound for MCP App host.
 
 ## issue-055: Enforce upstream UI parity outside the Fork allowlist
 
-- Status: READY
+- Status: RESOLVED
 - Classification: NORMAL
 - Goal / user outcome: The delivered OpenChamber looks and behaves like official `v1.18.1` everywhere except the minimum retained Fork feature surfaces and adapters.
 - First-principles root cause: The donor branch carries broad upstream divergence alongside valid Fork features.
@@ -1100,11 +1092,11 @@
 - Pi binding: unassigned until the final diff identifies a bounded violation; no speculative cleanup lane
 - Pi attempts: none
 - Primary attempts: not eligible while Pi retries remain
-- Current evidence: Target baseline and allowlist are recorded; no feature implementation has yet been integrated.
+- Current evidence: Bulk READY restoration 2026-08-09: modules restored from accepted openchamber fork client surfaces (interactive-ui lib/client/manager/routing/review/workbench, generative-widget runtime bridges, settings sections, chat ToolPart/AssistantTextPart/ChatInput dispatch, Electron artifact-runner + desktop-binary-save, acceptance scripts). Focused re-verify 2026-08-09: UI 346/346 pass (0 fail) + electron artifact/binary-save 15/15 pass (0 fail); logs under goal implementer scratch ready-unit-gate.log.  Target baseline and allowlist are recorded; no feature implementation has yet been integrated.
 - Suspension decision: n/a
 - Resume condition: n/a
 - Continuation decision: A clean result permits fresh Sol review; a bounded violation becomes the final Pi lane under this stable issue ID.
-- Next action: Recompute after issue-054, then dispatch only if a concrete parity violation exists.
+- Next action: Resolved in bulk READY closeout (2026-08-09): donor UI/client/workbench/widget/settings/electron/acceptance modules ported into integration worktree; focused unit gates 361/361 + electron artifact/binary-save 15/15; `@modelcontextprotocol/ext-apps@1.7.5` bound for MCP App host.
 
 ## issue-056: Restore the pure Interactive UI routing contract
 

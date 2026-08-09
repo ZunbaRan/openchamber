@@ -1,5 +1,9 @@
-import { validateRemoteAccessKey } from './connection-store.js';
+import { InteractiveUIConnectionError, validateRemoteAccessKey } from './connection-store.js';
 import { isWorkbenchVersionCompatible } from './workbench-version.js';
+import { InteractiveUIExtensionManagerError } from './manager.js';
+import { InteractiveUIRuntimeError } from './runtime.js';
+import { HTMLArtifactError } from './artifact-store.js';
+import { InteractiveUIWorkbenchStoreError } from './workbench-store.js';
 
 class InteractiveUIRouteError extends Error {
   constructor(message, status = 400, code = 'invalid_request', details = undefined) {
@@ -19,28 +23,47 @@ const SAFE_REMOTE_CREDENTIAL_STATUS_RANGE = { min: 400, max: 599 };
 // boundary strict as well because a runtime adapter may return a richer
 // object (or accidentally include credential material) than the store does.
 const sanitizeCredentialSummary = (value) => {
-  const source = isRecord(value) && isRecord(value.credential) ? value.credential : value;
-  if (!isRecord(source)) return {};
+  const nestedCredential = ownDataValue(value, 'credential');
+  const source = isSerializableErrorRecord(nestedCredential) ? nestedCredential : value;
+  if (!isSerializableErrorRecord(source)) return {};
   const summary = {};
-  if (typeof source.configured === 'boolean') summary.configured = source.configured;
-  if (typeof source.expired === 'boolean') summary.expired = source.expired;
-  if (source.source === 'manual' || source.source === 'provisioned') summary.source = source.source;
+  const configured = ownDataValue(source, 'configured');
+  const expired = ownDataValue(source, 'expired');
+  const credentialSource = ownDataValue(source, 'source');
+  if (typeof configured === 'boolean') summary.configured = configured;
+  if (typeof expired === 'boolean') summary.expired = expired;
+  if (credentialSource === 'manual' || credentialSource === 'provisioned') summary.source = credentialSource;
   for (const field of ['configuredAt', 'expiresAt']) {
-    if (typeof source[field] === 'string' && source[field].length <= 128 && !/[\r\n\0]/.test(source[field])) {
-      summary[field] = source[field];
+    const candidate = ownDataValue(source, field);
+    if (typeof candidate === 'string' && candidate.length <= 128 && !/[\r\n\0]/.test(candidate)) {
+      summary[field] = candidate;
     }
   }
   for (const field of ['displayName', 'name']) {
-    if (typeof source[field] === 'string' && source[field].length <= 200 && !/[\r\n\0]/.test(source[field])) {
-      summary[field] = source[field];
+    const candidate = ownDataValue(source, field);
+    if (typeof candidate === 'string' && candidate.length <= 200 && !/[\r\n\0]/.test(candidate)) {
+      summary[field] = candidate;
     }
   }
-  if (typeof source.endpoint === 'string' && source.endpoint.length <= 4096 && !/[\r\n\0]/.test(source.endpoint)) {
-    summary.endpoint = source.endpoint;
+  const endpoint = ownDataValue(source, 'endpoint');
+  if (typeof endpoint === 'string' && endpoint.length <= 4096 && !/[\r\n\0]/.test(endpoint)) {
+    try {
+      const parsed = new URL(endpoint);
+      if (['http:', 'https:'].includes(parsed.protocol)
+        && !parsed.username
+        && !parsed.password
+        && !parsed.search
+        && !parsed.hash) {
+        summary.endpoint = parsed.toString();
+      }
+    } catch {
+      // An adapter endpoint is optional public metadata, never an authority.
+    }
   }
-  if (Array.isArray(source.headerNames) && source.headerNames.length <= 32
-    && source.headerNames.every((name) => typeof name === 'string' && name.length <= 64 && !/[\r\n\0]/.test(name))) {
-    summary.headerNames = [...source.headerNames];
+  const headerNames = sanitizeErrorList(ownDataValue(source, 'headerNames'));
+  if (headerNames && headerNames.length <= 32
+    && headerNames.every((name) => /^[A-Za-z][A-Za-z0-9-]{0,63}$/.test(name))) {
+    summary.headerNames = headerNames;
   }
   return summary;
 };
@@ -55,7 +78,7 @@ const safeRemoteCredentialErrorStatus = (value) => (
 
 const safeRemoteCredentialError = (error, recovery) => new InteractiveUIRouteError(
   'Remote credential configuration failed',
-  safeRemoteCredentialErrorStatus(error?.status),
+  safeRemoteCredentialErrorStatus(ownDataValue(error, 'status')),
   'remote_credential_configure_failed',
   recovery,
 );
@@ -91,23 +114,339 @@ const coordinatorFor = (manager) => {
   return coordinator;
 };
 
-const sendError = (res, error) => {
-  if (error instanceof InteractiveUIRouteError || (Number.isInteger(error?.status) && typeof error?.code === 'string')) {
-    return res.status(error.status).json({
-      error: error.message,
-      code: error.code,
-      ...(error.details || {}),
+const SAFE_ERROR_CODE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/;
+const SAFE_ERROR_STRING_LIMIT = 4 * 1024;
+// Error details cross an untyped HTTP boundary.  Only fields that are part of
+// an existing Interactive UI response contract may escape; arbitrary adapter
+// details frequently contain paths, credentials, or installation identities.
+// Keep this list deliberately small and map an inner `code` to `reason` so it
+// can never shadow the canonical outer error code.
+const SAFE_ERROR_DETAIL_KEYS = new Set([
+  'extension',
+  'publisher',
+  'permissions',
+  'manifest',
+  'connector',
+  'update',
+  'blocked',
+  'currentVersion',
+  'currentManifestHash',
+  'version',
+  'manifestHash',
+  'changeSummary',
+  'permissionDelta',
+  'addedPermissions',
+  'keyChanged',
+  'requiresUserConfirmation',
+  'staticAvailable',
+  'rematerializable',
+  'expectedRevision',
+  'actualRevision',
+  'expectedForm',
+  'field',
+  'extensionRemoved',
+  'credentialRemoved',
+  'credentialMismatch',
+  'credentialRollbackBlocked',
+  'rollbackSkipped',
+  'trustRolledBack',
+  'credentialRollbackError',
+  'rollbackError',
+  'causeCode',
+  'reason',
+  'confirmationRequired',
+  'confirmation',
+  'confirmationToken',
+  'confirmationExpiresAt',
+  'workbench',
+]);
+
+const isSafeErrorCode = (value) => typeof value === 'string'
+  && value.length <= SAFE_ERROR_STRING_LIMIT
+  && SAFE_ERROR_CODE_PATTERN.test(value);
+
+const safeErrorString = (value, max = SAFE_ERROR_STRING_LIMIT) => (
+  typeof value === 'string'
+    && value.length <= max
+    && !/[\r\n\0]/.test(value)
+    ? value
+    : undefined
+);
+
+const safeErrorScalar = (value) => {
+  if (typeof value === 'boolean' || (typeof value === 'number' && Number.isFinite(value))) return value;
+  return safeErrorString(value);
+};
+
+const isSerializableErrorRecord = (value) => {
+  try {
+    return isRecord(value);
+  } catch {
+    return false;
+  }
+};
+
+// Never invoke getters or accept inherited values while serializing an error.
+// Adapter errors are an untyped boundary; even reading a property can execute
+// attacker-controlled code when a Proxy or accessor is supplied.
+const ownDataProperty = (value, key) => {
+  try {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    return descriptor && Object.prototype.hasOwnProperty.call(descriptor, 'value')
+      ? descriptor.value
+      : undefined;
+  } catch {
+    return undefined;
+  }
+};
+
+const ownDataValue = (value, key) => (
+  isSerializableErrorRecord(value) ? ownDataProperty(value, key) : undefined
+);
+
+const sanitizeErrorList = (value) => {
+  try {
+    if (!Array.isArray(value)) return undefined;
+    const length = ownDataProperty(value, 'length');
+    if (!Number.isSafeInteger(length) || length < 0 || length > 128) return undefined;
+    const list = [];
+    for (let index = 0; index < length; index += 1) {
+      const entry = safeErrorString(ownDataProperty(value, String(index)), 512);
+      if (entry === undefined) return undefined;
+      list.push(entry);
+    }
+    return list;
+  } catch {
+    return undefined;
+  }
+};
+
+const SAFE_PERMISSION_SCOPE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/;
+const SAFE_PERMISSION_ACTION_PATTERN = /^[a-z0-9]+(?:[._-][a-z0-9]+)+$/i;
+const SAFE_PERMISSION_TOOL_PATTERN = /^[a-z][a-z0-9_]{0,127}$/;
+
+const sanitizeErrorOriginList = (value) => {
+  const list = sanitizeErrorList(value);
+  if (list === undefined) return undefined;
+  const origins = [];
+  for (const entry of list) {
+    try {
+      const parsed = new URL(entry);
+      const loopback = ['127.0.0.1', 'localhost', '[::1]'].includes(parsed.hostname);
+      if ((parsed.protocol !== 'https:' && !(parsed.protocol === 'http:' && loopback))
+        || parsed.username
+        || parsed.password
+        || parsed.hash
+        || parsed.search
+        || parsed.pathname !== '/') return undefined;
+      origins.push(parsed.origin);
+    } catch {
+      return undefined;
+    }
+  }
+  return origins;
+};
+
+const sanitizeErrorPermissionList = (value, field) => {
+  if (['resourceOrigins', 'networkOrigins', 'externalLinkOrigins'].includes(field)) {
+    return sanitizeErrorOriginList(value);
+  }
+  const list = sanitizeErrorList(value);
+  if (list === undefined) return undefined;
+  const pattern = field === 'credentialScopes'
+    ? SAFE_PERMISSION_SCOPE_PATTERN
+    : field === 'actionIds'
+      ? SAFE_PERMISSION_ACTION_PATTERN
+      : SAFE_PERMISSION_TOOL_PATTERN;
+  return list.every((entry) => pattern.test(entry)) ? list : undefined;
+};
+
+const sanitizeErrorPermissions = (value) => {
+  if (!isSerializableErrorRecord(value)) return undefined;
+  const result = {};
+  for (const field of [
+    'resourceOrigins',
+    'networkOrigins',
+    'externalLinkOrigins',
+    'credentialScopes',
+    'actionIds',
+    'agentToolNames',
+  ]) {
+    const list = sanitizeErrorPermissionList(ownDataValue(value, field), field);
+    if (list !== undefined) result[field] = list;
+  }
+  for (const field of ['clipboard', 'popups', 'nativeCode']) {
+    const candidate = ownDataValue(value, field);
+    if (typeof candidate === 'boolean') result[field] = candidate;
+  }
+  return Object.keys(result).length > 0 ? result : undefined;
+};
+
+const sanitizeErrorRecord = (value, allowedKeys, sanitizer = safeErrorScalar) => {
+  if (!isSerializableErrorRecord(value)) return undefined;
+  const result = {};
+  for (const key of allowedKeys) {
+    const candidate = ownDataValue(value, key);
+    if (candidate === undefined) continue;
+    const sanitized = sanitizer(candidate, key);
+    if (sanitized !== undefined) result[key] = sanitized;
+  }
+  return Object.keys(result).length > 0 ? result : undefined;
+};
+
+const sanitizeErrorDetail = (value, key) => {
+  if (['expectedRevision', 'actualRevision'].includes(key)) {
+    return Number.isInteger(value) && value >= 0 && value <= Number.MAX_SAFE_INTEGER ? value : undefined;
+  }
+  if (key === 'addedPermissions') {
+    if (!isSerializableErrorRecord(value)) return undefined;
+    const result = {};
+    for (const field of ['networkOrigins', 'externalLinkOrigins', 'credentialScopes', 'actionIds', 'agentToolNames']) {
+      const list = sanitizeErrorPermissionList(ownDataValue(value, field), field);
+      if (list !== undefined) result[field] = list;
+    }
+    for (const field of ['clipboard', 'popups', 'nativeCode']) {
+      const candidate = ownDataValue(value, field);
+      if (typeof candidate === 'boolean') result[field] = candidate;
+    }
+    return Object.keys(result).length > 0 ? result : undefined;
+  }
+  if (key === 'permissions') return sanitizeErrorPermissions(value);
+  if (key === 'extension') return sanitizeErrorRecord(
+    value,
+    ['id', 'name', 'version'],
+    (candidate) => safeErrorString(candidate, 512),
+  );
+  if (key === 'publisher') return sanitizeErrorRecord(
+    value,
+    ['id', 'name', 'keyId', 'fingerprint', 'trusted'],
+    (candidate, field) => field === 'trusted'
+      ? (typeof candidate === 'boolean' ? candidate : undefined)
+      : safeErrorString(candidate, 512),
+  );
+  if (key === 'manifest') return sanitizeErrorRecord(
+    value,
+    ['appEntryUrl', 'manifestHash', 'publishedAt', 'version'],
+    (candidate) => safeErrorString(candidate, 4_096),
+  );
+  if (key === 'connector') return sanitizeErrorRecord(
+    value,
+    ['id', 'origin', 'authType'],
+    (candidate) => safeErrorString(candidate, 4_096),
+  );
+  if (key === 'update') return sanitizeErrorRecord(value, [
+    'version',
+    'manifestHash',
+    'changeSummary',
+    'permissionDelta',
+    'addedPermissions',
+    'keyChanged',
+  ], sanitizeErrorDetail);
+  if (key === 'blocked') {
+    if (typeof value === 'boolean') return value;
+    return sanitizeErrorRecord(value, ['required', 'version', 'manifestHash', 'reason', 'observedAt'], (candidate, field) => {
+      if (field === 'required') return typeof candidate === 'boolean' ? candidate : undefined;
+      if (field === 'reason') return isSafeErrorCode(candidate) ? candidate : undefined;
+      return safeErrorScalar(candidate);
     });
   }
-  return res.status(500).json({ error: 'Interactive UI request failed', code: 'internal_error' });
+  if (key === 'confirmation') return sanitizeErrorRecord(
+    value,
+    ['title', 'description'],
+    (candidate) => safeErrorString(candidate, 2_000),
+  );
+  if (key === 'workbench') return sanitizeErrorRecord(
+    value,
+    ['removed', 'projects'],
+    (candidate) => Number.isSafeInteger(candidate) && candidate >= 0 ? candidate : undefined,
+  );
+  if (['reason', 'causeCode', 'credentialRollbackError', 'rollbackError'].includes(key)) {
+    return isSafeErrorCode(value) ? value : undefined;
+  }
+  if (key === 'confirmationToken') return safeErrorString(value, 512);
+  if (key === 'confirmationExpiresAt') return Number.isFinite(value) ? value : undefined;
+  if (key === 'currentVersion' || key === 'version' || key === 'currentManifestHash' || key === 'manifestHash') {
+    return safeErrorString(value, 512);
+  }
+  if (key === 'changeSummary') return safeErrorString(value, 2_000);
+  if (key === 'permissionDelta') return ['none', 'expanded', 'reduced', 'changed'].includes(value) ? value : undefined;
+  if (key === 'field' || key === 'expectedForm') return safeErrorString(value, 256);
+  if ([
+    'keyChanged',
+    'requiresUserConfirmation',
+    'staticAvailable',
+    'rematerializable',
+    'extensionRemoved',
+    'credentialRemoved',
+    'credentialMismatch',
+    'credentialRollbackBlocked',
+    'rollbackSkipped',
+    'trustRolledBack',
+    'confirmationRequired',
+  ].includes(key)) return typeof value === 'boolean' ? value : undefined;
+  return undefined;
+};
+
+const serializeErrorDetails = (details) => {
+  if (!isSerializableErrorRecord(details)) return {};
+  const result = {};
+  const nestedCode = ownDataValue(details, 'code');
+  if (isSafeErrorCode(nestedCode)) result.reason = nestedCode;
+  for (const key of SAFE_ERROR_DETAIL_KEYS) {
+    const value = ownDataValue(details, key);
+    if (value === undefined) continue;
+    const sanitized = sanitizeErrorDetail(value, key);
+    if (sanitized !== undefined) result[key] = sanitized;
+  }
+  return result;
+};
+
+const TRUSTED_ERROR_TYPES = [
+  InteractiveUIRouteError,
+  InteractiveUIConnectionError,
+  InteractiveUIExtensionManagerError,
+  InteractiveUIRuntimeError,
+  HTMLArtifactError,
+  InteractiveUIWorkbenchStoreError,
+];
+
+const isTrustedInteractiveUIError = (error) => {
+  try {
+    return TRUSTED_ERROR_TYPES.some((ErrorType) => error instanceof ErrorType);
+  } catch {
+    return false;
+  }
+};
+
+const sendError = (res, error, additionalDetails = undefined) => {
+  const recovery = serializeErrorDetails(additionalDetails);
+  if (isTrustedInteractiveUIError(error)) {
+    const rawStatus = ownDataValue(error, 'status');
+    const rawMessage = ownDataValue(error, 'message');
+    const rawCode = ownDataValue(error, 'code');
+    const rawDetails = ownDataValue(error, 'details');
+    const status = Number.isInteger(rawStatus) && rawStatus >= 400 && rawStatus <= 599
+      ? rawStatus
+      : 500;
+    const message = safeErrorString(rawMessage) ?? 'Interactive UI request failed';
+    const code = isSafeErrorCode(rawCode) ? rawCode : 'internal_error';
+    return res.status(status).json({
+      error: message,
+      code,
+      ...serializeErrorDetails(rawDetails),
+      ...recovery,
+    });
+  }
+  return res.status(500).json({
+    error: 'Interactive UI request failed',
+    code: 'internal_error',
+    ...recovery,
+  });
 };
 
 const decodePackage = (value) => {
   if (typeof value !== 'string' || value.length === 0 || value.length > 28 * 1024 * 1024 || value.length % 4 !== 0 || !/^[A-Za-z0-9+/]+={0,2}$/.test(value)) {
-    const error = new Error('Extension package must be valid base64');
-    error.code = 'invalid_package_encoding';
-    error.status = 400;
-    throw error;
+    throw new InteractiveUIRouteError('Extension package must be valid base64', 400, 'invalid_package_encoding');
   }
   return Buffer.from(value, 'base64');
 };
@@ -406,10 +745,7 @@ export const registerInteractiveUIRoutes = (app, {
   app.post('/api/interactive-ui/manager/remote/connect', express.json({ limit: '64kb' }), async (req, res) => {
     try {
       if (!isRecord(req.body)) {
-        const error = new Error('Remote connect body is invalid');
-        error.code = 'remote_connect_body_invalid';
-        error.status = 400;
-        throw error;
+        throw new InteractiveUIRouteError('Remote connect body is invalid', 400, 'remote_connect_body_invalid');
       }
       // Validate the opaque Access Key with the shared Remote validator BEFORE
       // entering manager.connectRemote — before any trust, staging, Manager
@@ -454,14 +790,16 @@ export const registerInteractiveUIRoutes = (app, {
           let credentialCleanupSafe = false;
           try {
             const removed = await connected.capability.removeCredential();
-            if (removed?.removed === true) {
+            const removedFlag = ownDataValue(removed, 'removed');
+            const mismatch = ownDataValue(removed, 'mismatch');
+            if (removedFlag === true) {
               recovery.credentialRemoved = true;
               credentialCleanupSafe = true;
-            } else if (removed?.removed === false && removed?.mismatch !== true) {
+            } else if (removedFlag === false && mismatch !== true) {
               // An explicit clean absence is safe: this connect did not leave
               // a credential behind, so deleting only its new shell is safe.
               credentialCleanupSafe = true;
-            } else if (removed?.mismatch === true) {
+            } else if (mismatch === true) {
               recovery.credentialMismatch = true;
             } else {
               recovery.credentialRollbackBlocked = true;
@@ -472,8 +810,8 @@ export const registerInteractiveUIRoutes = (app, {
           if (credentialCleanupSafe) {
             try {
               const rollback = await connected.capability.rollback();
-              recovery.extensionRemoved = rollback?.removed === true;
-              recovery.trustRolledBack = rollback?.trustRolledBack === true;
+              recovery.extensionRemoved = ownDataValue(rollback, 'removed') === true;
+              recovery.trustRolledBack = ownDataValue(rollback, 'trustRolledBack') === true;
             } catch {
               recovery.rollbackError = 'remote_rollback_failed';
             }
@@ -578,8 +916,7 @@ export const registerInteractiveUIRoutes = (app, {
       // Cleanup or uninstall failure leaves the managed extension installed
       // (manager.uninstall restores from trash on its own failure), so the
       // response never claims extension removal.
-      error.details = { ...(error.details ?? {}), extensionRemoved: false };
-      sendError(res, error);
+      sendError(res, error, { extensionRemoved: false });
     }
   });
 

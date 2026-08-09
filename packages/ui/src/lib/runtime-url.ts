@@ -170,14 +170,24 @@ export const createRuntimeUrlResolver = (config: RuntimeUrlConfig = {}): Runtime
 };
 
 let activeRuntimeUrlResolver = createRuntimeUrlResolver();
+let activeRuntimeUrlResolverGeneration = 0;
 
 export const getRuntimeUrlResolver = (): RuntimeUrlResolver => activeRuntimeUrlResolver;
 
+/**
+ * Monotonic authority generation. Resolver object identity alone is not a
+ * sufficient switch boundary because callers may reinstall a previously used
+ * resolver object after visiting another runtime.
+ */
+export const getRuntimeUrlResolverGeneration = (): number => activeRuntimeUrlResolverGeneration;
+
 export const setRuntimeUrlResolver = (resolver: RuntimeUrlResolver): void => {
   activeRuntimeUrlResolver = resolver;
+  activeRuntimeUrlResolverGeneration += 1;
 };
 
 export const configureRuntimeUrlResolver = (config: RuntimeUrlConfig): RuntimeUrlResolver => {
   activeRuntimeUrlResolver = createRuntimeUrlResolver(config);
+  activeRuntimeUrlResolverGeneration += 1;
   return activeRuntimeUrlResolver;
 };

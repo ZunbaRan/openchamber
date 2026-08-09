@@ -56,6 +56,40 @@ export const registerOpenCodeRoutes = (app, dependencies) => {
     return { ok: true, currentVersion };
   };
 
+
+  const readOpenCodeCapabilities = async () => {
+    const response = await fetch(buildOpenCodeUrl('/global/capabilities', ''), {
+      method: 'GET',
+      headers: { Accept: 'application/json', ...getOpenCodeAuthHeaders() },
+    });
+    const payload = await response.json().catch(() => null);
+    if (response.ok) return { supported: true, capabilities: payload };
+    if (response.status === 404) {
+      const healthResponse = await fetch(buildOpenCodeUrl('/global/health', ''), {
+        method: 'GET',
+        headers: { Accept: 'application/json', ...getOpenCodeAuthHeaders() },
+      });
+      const health = await healthResponse.json().catch(() => null);
+      return {
+        supported: false,
+        capabilities: {
+          distribution: 'external-or-official',
+          version: typeof health?.version === 'string' ? health.version.replace(/^v/, '') : null,
+          apiVersion: 'legacy',
+          managedUpdate: false,
+          features: {
+            mcpLegacy: true,
+            mcp20260728: false,
+            mcpApps: false,
+            mcpAppToolCall: false,
+          },
+        },
+        diagnostic: 'The selected external OpenCode CLI does not expose OpenChamber capabilities.',
+      };
+    }
+    throw new Error(payload?.error || response.statusText || 'Failed to read OpenCode capabilities');
+  };
+
   const parseVersionForComparison = (value) => {
     const normalized = String(value || '').replace(/^v/, '').split('+')[0];
     const prereleaseIndex = normalized.indexOf('-');
@@ -278,6 +312,19 @@ export const registerOpenCodeRoutes = (app, dependencies) => {
       return res.status(500).json({
         available: null,
         error: error instanceof Error ? error.message : 'Failed to check OpenCode upgrade status',
+      });
+    }
+  });
+
+
+  app.get('/api/opencode/capabilities', async (_req, res) => {
+    try {
+      return res.json(await readOpenCodeCapabilities());
+    } catch (error) {
+      return res.status(503).json({
+        supported: false,
+        capabilities: null,
+        error: error instanceof Error ? error.message : 'Failed to read OpenCode capabilities',
       });
     }
   });

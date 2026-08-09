@@ -1,4 +1,4 @@
-import type { ProjectEntry, RuntimeAPIs, TerminalShell } from '@/lib/api/types';
+import type { ProjectEntry, TerminalShell } from '@/lib/api/types';
 import { getInjectedBootOutcome } from '@/lib/desktopBoot';
 import type { DraftStarterRef } from '@/lib/draftStarters';
 import type { MobileKeyboardMode } from '@/lib/mobileKeyboardMode';
@@ -12,6 +12,7 @@ type ManagedRemoteTunnelPreset = {
 };
 
 export type UpdateInfo = {
+  updatesEnabled?: boolean;
   available: boolean;
   version?: string;
   currentVersion: string;
@@ -41,8 +42,6 @@ export type SkillCatalogConfig = {
 export type DesktopWindowControlsPosition = 'left' | 'right';
 export type DesktopWindowControlsSide = 'left' | 'right';
 export type DesktopWindowControlAction = 'close' | 'minimize' | 'maximize';
-// No fixed-width constant: control width depends on the style (classic vs traffic-lights).
-export type DesktopWindowControlsStyle = 'classic' | 'traffic-lights';
 
 export type DesktopSettings = {
   themeId?: string;
@@ -107,7 +106,6 @@ export type DesktopSettings = {
     renamedGroups?: Record<string, string>;  // groupId -> custom label
   }>;  // Per-provider custom model groups configuration
   autoDeleteEnabled?: boolean;
-  autoSaveEnabled?: boolean;
   autoDeleteAfterDays?: number;
   sessionRetentionAction?: 'archive' | 'delete';
   tunnelProvider?: string;
@@ -131,10 +129,6 @@ export type DesktopSettings = {
   sessionGoalDefaultBudgetEnabled?: boolean;
   sessionGoalDefaultBudget?: number;
   smallModelOverride?: string; // format: "provider/model"
-  // The walkthrough needs structured output and a roomy context, which the
-  // small model is often deliberately not chosen for. Unset means "use the
-  // small model"; a value replaces it for this feature only.
-  walkthroughModelOverride?: string; // format: "provider/model"
   defaultGitIdentityId?: string; // ''/undefined = unset, 'global' or profile id
   openInAppId?: string;
   autoCreateWorktree?: boolean;
@@ -149,7 +143,6 @@ export type DesktopSettings = {
   pwaOrientation?: 'system' | 'portrait' | 'landscape';
   mobileKeyboardMode?: MobileKeyboardMode;
   desktopWindowControlsPosition?: DesktopWindowControlsPosition;
-  desktopWindowControlsStyle?: DesktopWindowControlsStyle;
   inputSpellcheckEnabled?: boolean;
   showOpenCodeUpdateNotifications?: boolean;
   agentControlToolEnabled?: boolean;
@@ -224,6 +217,7 @@ export type DesktopSettings = {
 };
 
 type DesktopBridgeGlobal = {
+  updatesEnabled?: boolean;
   invoke?: (cmd: string, args?: Record<string, unknown>) => Promise<unknown>;
   openDialog?: (options: Record<string, unknown>) => Promise<unknown>;
   grantFileAccess?: (path: string) => Promise<unknown>;
@@ -259,6 +253,9 @@ export const getElectronPlatform = (): string | null => {
   const platform = (window as unknown as { __OPENCHAMBER_PLATFORM__?: string }).__OPENCHAMBER_PLATFORM__;
   return typeof platform === 'string' ? platform : null;
 };
+
+/** Width of the three in-app window control buttons when placed on the left (3 × w-8). */
+export const DESKTOP_WINDOW_CONTROLS_WIDTH_PX = 96;
 
 /** Default side for in-app window controls (Windows-style, right). */
 export const DEFAULT_DESKTOP_WINDOW_CONTROLS_POSITION: DesktopWindowControlsPosition = 'right';
@@ -308,10 +305,51 @@ export const hasDesktopInvoke = (): boolean => {
 
 export const canUseElectronDesktopIPC = (): boolean => isElectronShell() && hasDesktopInvoke();
 
+// File-writing IPC is intentionally narrower than the generic preload bridge.
+// Electron also exposes that bridge to configured remote pages, while main.mjs
+// only accepts local sidecar and packaged-UI senders for privileged commands.
+// Keep this predicate aligned with that trust boundary without coupling it to
+// whichever OpenCode backend is currently active.
+export const matchesTrustedDesktopFileOrigin = (
+  current: string,
+  injectedLocalOrigin: string,
+): boolean => {
+  const currentUrl = parseUrl(current);
+  if (!currentUrl) return false;
+  if (currentUrl.protocol === 'openchamber-ui:' && currentUrl.hostname === 'app') {
+    return true;
+  }
+
+  const localUrl = parseUrl(injectedLocalOrigin);
+  if (!localUrl) return false;
+  return currentUrl.origin === localUrl.origin;
+};
+
+export const canUseTrustedDesktopFileIPC = (): boolean => {
+  if (!canUseElectronDesktopIPC() || typeof window === 'undefined') return false;
+  const current = window.location.href || window.location.origin;
+  const local = typeof window.__OPENCHAMBER_LOCAL_ORIGIN__ === 'string'
+    ? window.__OPENCHAMBER_LOCAL_ORIGIN__
+    : '';
+  return matchesTrustedDesktopFileOrigin(current, local);
+};
+
+export const isDesktopUpdatesEnabled = (): boolean => getDesktopBridge()?.updatesEnabled === true;
+
 export const invokeDesktop = async <T = unknown>(command: string, args?: Record<string, unknown>): Promise<T | null> => {
   const bridge = getDesktopBridge();
   if (typeof bridge?.invoke !== 'function') return null;
   return bridge.invoke(command, args ?? {}) as Promise<T>;
+};
+
+export const listenDesktopEvent = async (
+  event: string,
+  handler: (payload: unknown) => void,
+): Promise<() => void> => {
+  const bridge = getDesktopBridge();
+  if (!isElectronShell() || typeof bridge?.listen !== 'function') return () => undefined;
+  const unlisten = await bridge.listen(event, (message) => handler(message?.payload));
+  return typeof unlisten === 'function' ? unlisten : () => undefined;
 };
 
 type LaunchAtLoginStatus = {
@@ -561,15 +599,6 @@ export const isWebRuntime = (): boolean => {
   // Default: anything that's not VSCode behaves like web (HTTP UI).
   return !isVSCodeRuntime();
 };
-
-/**
- * Electron reuses the web RuntimeAPIs implementation, so distinguish a browser
- * client from an Electron renderer with both the runtime descriptor and shell.
- */
-export const isBrowserClientRuntime = (
-  platform: RuntimeAPIs['runtime']['platform'],
-  desktopShell = isDesktopShell(),
-): boolean => platform === 'web' && !desktopShell;
 
 export const getDesktopHomeDirectory = async (): Promise<string | null> => {
   if (typeof window !== 'undefined') {
@@ -871,6 +900,102 @@ export const saveDesktopMarkdownFile = async (
   }
 };
 
+export type DesktopBinarySaveOutcome = 'saved' | 'cancelled' | 'unavailable';
+
+let desktopBinarySaveRequestSequence = 0;
+
+const createDesktopBinarySaveRequestId = (): string => {
+  if (typeof globalThis.crypto?.randomUUID === 'function') {
+    return globalThis.crypto.randomUUID();
+  }
+  desktopBinarySaveRequestSequence += 1;
+  return `desktop-save-${Date.now().toString(36)}-${desktopBinarySaveRequestSequence.toString(36)}`;
+};
+
+const encodeDesktopBytes = (bytes: Uint8Array): string => {
+  let binary = '';
+  const chunkSize = 0x8000;
+  for (let offset = 0; offset < bytes.byteLength; offset += chunkSize) {
+    binary += String.fromCharCode(
+      ...bytes.subarray(offset, Math.min(offset + chunkSize, bytes.byteLength)),
+    );
+  }
+  return btoa(binary);
+};
+
+/**
+ * Save an App-produced binary through Electron's trusted main process. The
+ * native Save dialog is the user confirmation required by the MCP Apps file
+ * download contract; cancellation and write failures are observable by the
+ * App instead of being reported as a successful browser-anchor click.
+ */
+export const saveDesktopBinaryFile = async (
+  defaultFileName: string,
+  mimeType: string,
+  bytes: Uint8Array,
+  signal?: AbortSignal,
+): Promise<DesktopBinarySaveOutcome> => {
+  // Saving is a client-local shell operation and remains valid while the
+  // active OpenCode backend is remote. Electron main's sender-origin gate is
+  // the authority boundary; do not couple this to runtime API locality.
+  if (!canUseTrustedDesktopFileIPC()) {
+    return 'unavailable';
+  }
+
+  const trimmedFileName = defaultFileName?.trim();
+  if (!trimmedFileName) {
+    return 'cancelled';
+  }
+
+  if (signal?.aborted) {
+    return 'cancelled';
+  }
+
+  const requestId = createDesktopBinarySaveRequestId();
+  const savePromise = invokeDesktop<{ saved?: boolean; cancelled?: boolean }>(
+    'desktop_save_binary_file',
+    {
+      requestId,
+      defaultFileName: trimmedFileName,
+      mimeType: mimeType?.trim() || 'application/octet-stream',
+      contentBase64: encodeDesktopBytes(bytes),
+    },
+  ).catch((error) => {
+    if (!signal?.aborted) {
+      console.warn('Failed to save binary file', error);
+    }
+    return null;
+  });
+
+  if (!signal) {
+    const result = await savePromise;
+    return result?.saved === true ? 'saved' : 'cancelled';
+  }
+
+  let removeAbortListener: () => void = () => {};
+  const aborted = new Promise<null>((resolve) => {
+    const onAbort = () => {
+      // The native Save dialog cannot be forcibly dismissed consistently on
+      // every platform. Mark the main-process transaction cancelled now so a
+      // later user confirmation cannot create or publish a file.
+      void invokeDesktop('desktop_cancel_binary_file_save', { requestId }).catch(() => null);
+      resolve(null);
+    };
+    signal.addEventListener('abort', onAbort, { once: true });
+    removeAbortListener = () => signal.removeEventListener('abort', onAbort);
+  });
+
+  try {
+    const result = await Promise.race([savePromise, aborted]);
+    if (signal.aborted || result?.saved !== true) {
+      return 'cancelled';
+    }
+    return 'saved';
+  } finally {
+    removeAbortListener();
+  }
+};
+
 export const openDesktopProjectInApp = async (
   projectPath: string,
   appId: string,
@@ -949,6 +1074,11 @@ export const fetchDesktopInstalledApps = async (
 ): Promise<FetchDesktopInstalledAppsResult> => {
   if (!hasDesktopInvoke() || !isDesktopLocalOriginActive()) {
     return { apps: [], success: false, hasCache: false, isCacheStale: false };
+  }
+
+  // Linux desktop does not resolve installed GUI apps; skip the IPC round-trip.
+  if (getElectronPlatform() === 'linux') {
+    return { apps: [], success: true, hasCache: false, isCacheStale: false };
   }
 
   const candidate = Array.isArray(apps) ? apps.filter((value) => typeof value === 'string') : [];

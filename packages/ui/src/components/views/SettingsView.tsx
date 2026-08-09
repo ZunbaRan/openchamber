@@ -43,7 +43,6 @@ import {
 } from '@/components/sections/shared/SettingsSection';
 import { useDeviceInfo } from '@/lib/device';
 import { isDesktopLocalOriginActive, isDesktopShell, isVSCodeRuntime, isWebRuntime } from '@/lib/desktop';
-import { isWindowsArm64 as isWindowsArm64Platform } from '@/lib/platform';
 import { useI18n } from '@/lib/i18n';
 import { Icon } from "@/components/icon/Icon";
 import type { IconName } from "@/components/icon/icons";
@@ -58,6 +57,7 @@ import {
   type SettingsPageMeta,
 } from '@/lib/settings/metadata';
 import { buildSettingsSearchResults, type SettingsSearchResult } from '@/lib/settings/search';
+import { ExtensionManagerPage } from '@/components/sections/interactive-ui/ExtensionManagerPage';
 
 // UI Kit: fixed settings navigation width
 const SETTINGS_NAV_WIDTH = 256;
@@ -105,6 +105,7 @@ const pageOrder: SettingsPageSlug[] = [
   'mcp',
   'plugins',
   // 'content' group — Library
+  'interactive-ui.extensions',
   'magic-prompts',
   'snippets',
   'skills.installed',
@@ -207,6 +208,8 @@ export function getSettingsNavIcon(slug: SettingsPageSlug): IconName | null {
       return null;
     case 'plugins':
       return 'plug-2';
+    case 'interactive-ui.extensions':
+      return 'window';
 
     case 'skills.installed':
       return 'book-open';
@@ -242,11 +245,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose, forceMobile
   const settingsSlug = resolveSettingsSlug(settingsPageRaw);
 
   const [mobileStage, setMobileStage] = React.useState<MobileStage>(initialMobileStage);
-  // Seed with the mount-time slug when opening at the nav stage: the slug
-  // persists across opens, and the deep-link auto-jump below must react only
-  // to slug CHANGES after mount — not re-enter the previously visited page
-  // every time settings reopen.
-  const autoNavSlugRef = React.useRef<string | null>(initialMobileStage === 'nav' ? settingsSlug : null);
+  const autoNavSlugRef = React.useRef<string | null>(null);
 
   // No starter page on desktop: 'home' (fresh state) resolves to General.
   // settingsPage persists in the UI store, so subsequent opens restore the
@@ -283,7 +282,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose, forceMobile
     return isDesktopShell() && typeof window !== 'undefined'
       && (window as unknown as { __OPENCHAMBER_PLATFORM__?: string }).__OPENCHAMBER_PLATFORM__ === 'linux';
   }, []);
-  const isWindowsArm64 = React.useMemo(() => isWindowsArm64Platform(), []);
 
   // keep platform check available for future window chrome tweaks
 
@@ -392,6 +390,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose, forceMobile
         return t('settings.page.mcp.title');
       case 'plugins':
         return t('settings.page.plugins.title');
+      case 'interactive-ui.extensions':
+        return t('settings.page.interactiveUI.title');
       case 'skills.installed':
         return t('settings.page.skills.title');
       case 'skills.catalog':
@@ -427,12 +427,12 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose, forceMobile
   const settingsSearchResults = React.useMemo(() => {
     return buildSettingsSearchResults({
       query: settingsSearchQuery,
-      runtimeCtx: { ...runtimeCtx, isDesktopLocalOrigin, isMac, isWindows, isLinux, isWindowsArm64 },
+      runtimeCtx: { ...runtimeCtx, isDesktopLocalOrigin, isMac, isWindows, isLinux },
       visiblePageSlugs,
       t,
       getPageTitle,
     });
-  }, [getPageTitle, isWindowsArm64, isDesktopLocalOrigin, isMac, isWindows, isLinux, runtimeCtx, settingsSearchQuery, t, visiblePageSlugs]);
+  }, [getPageTitle, isDesktopLocalOrigin, isMac, isWindows, isLinux, runtimeCtx, settingsSearchQuery, t, visiblePageSlugs]);
 
   const prepareSettingsSearchTarget = React.useCallback((result: SettingsSearchResult): string => {
     if (result.id.startsWith('agents.')) {
@@ -681,6 +681,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose, forceMobile
         return <McpPage />;
       case 'plugins':
         return <PluginsPage />;
+      case 'interactive-ui.extensions':
+        return <ExtensionManagerPage />;
       case 'skills.installed':
         return <SkillsPage view="installed" />;
       case 'skills.catalog':
@@ -928,10 +930,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose, forceMobile
                     {t(`settings.view.nav.group.${group}`)}
                   </div>
                   {pages.map((page) => {
-                    // On the mobile nav STAGE nothing is "current" — the user is
-                    // choosing, and settingsSlug only remembers the last visited
-                    // page. Keeping it highlighted read as a stuck selection.
-                    const selected = settingsSlug === page.slug && !(isMobile && mobileStage === 'nav');
+                    const selected = settingsSlug === page.slug;
                     const iconName = getSettingsNavIcon(page.slug);
                     if (!iconName && page.slug !== 'mcp') return null;
 
@@ -1022,13 +1021,13 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose, forceMobile
         // No sidebar available; fall back to direct content.
         const fallback = renderPageContent(settingsSlug);
         return (
-          <div className="flex-1 min-h-0 overflow-y-scroll overflow-x-hidden bg-background">
+          <div className="flex-1 min-h-0 overflow-hidden bg-background">
             <ErrorBoundary>{fallback}</ErrorBoundary>
           </div>
         );
       }
       return (
-        <div className="flex-1 min-h-0 overflow-y-scroll overflow-x-hidden bg-background">
+        <div className="flex-1 min-h-0 overflow-hidden bg-background">
           <ErrorBoundary>
             {renderPageSidebar(settingsSlug, { onItemSelect: handleMobilePageSidebarItemSelect })}
           </ErrorBoundary>
@@ -1040,7 +1039,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose, forceMobile
     const content = renderPageContent(settingsSlug);
 
     return (
-      <div className="flex-1 min-h-0 overflow-y-scroll overflow-x-hidden bg-background">
+      <div className="flex-1 min-h-0 overflow-hidden bg-background">
         <ErrorBoundary>{content}</ErrorBoundary>
       </div>
     );
@@ -1057,7 +1056,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose, forceMobile
           <div className={cn('border-r', runtimeCtx.isVSCode ? 'bg-background' : 'bg-sidebar')} style={{ width: SETTINGS_SPLIT_SIDEBAR_WIDTH, minWidth: SETTINGS_SPLIT_SIDEBAR_WIDTH, borderColor: 'var(--interactive-border)' }}>
             <ErrorBoundary>{renderPageSidebar(settingsSlug, {})}</ErrorBoundary>
           </div>
-          <div className="flex-1 min-h-0 overflow-y-scroll overflow-x-hidden bg-background">
+          <div className="flex-1 min-h-0 overflow-hidden bg-background">
             <ErrorBoundary>{renderPageContent(settingsSlug)}</ErrorBoundary>
           </div>
         </div>
@@ -1065,7 +1064,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose, forceMobile
     }
 
     return (
-      <div className="h-full min-h-0 overflow-y-scroll overflow-x-hidden bg-background">
+      <div className="h-full min-h-0 overflow-hidden bg-background">
         <ErrorBoundary>{renderPageContent(settingsSlug)}</ErrorBoundary>
       </div>
     );
@@ -1076,19 +1075,15 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose, forceMobile
       {isMobile ? (
         <div
           className={cn(
-            'flex h-[var(--oc-header-height,56px)] shrink-0 items-center gap-2 px-3',
-            // The root nav list reads as a single quiet page — no divider and
-            // no back arrow (the X on the right is the only way out); subpages
-            // keep both.
-            mobileStage !== 'nav' && 'border-b',
+            'flex h-[var(--oc-header-height,56px)] shrink-0 items-center gap-2 border-b px-3',
             'bg-background'
           )}
-          style={mobileStage !== 'nav' ? { borderColor: 'var(--interactive-border)' } : undefined}
+          style={{ borderColor: 'var(--interactive-border)' }}
         >
-          {showBackButton ? (
+          {(showBackButton || onClose) ? (
             <button
               type="button"
-              onClick={handleBack}
+              onClick={showBackButton ? handleBack : onClose}
               aria-label={mobileBackButtonLabel}
               className="inline-flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg p-2 text-muted-foreground hover:text-foreground hover:bg-interactive-hover/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
             >

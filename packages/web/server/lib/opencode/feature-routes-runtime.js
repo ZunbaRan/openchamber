@@ -46,6 +46,58 @@ import { scanSkillsRepository } from '../skills-catalog/scan.js';
 import { installSkillsFromRepository } from '../skills-catalog/install.js';
 import { scanClawdHubPage } from '../skills-catalog/clawdhub/scan.js';
 import { installSkillsFromClawdHub } from '../skills-catalog/clawdhub/install.js';
+import { createInteractiveUIRuntime, normalizeExtensionManifest } from '../interactive-ui/runtime.js';
+import { registerInteractiveUIRoutes } from '../interactive-ui/routes.js';
+import { createInteractiveUIExtensionManager } from '../interactive-ui/manager.js';
+import { createInteractiveUIConnectionStore } from '../interactive-ui/connection-store.js';
+import { createHTMLArtifactStore } from '../interactive-ui/artifact-store.js';
+import { createBuiltInInteractiveUIRuntime } from '../interactive-ui/builtin-runtime.js';
+import { createInteractiveUIWorkbenchStore } from '../interactive-ui/workbench-store.js';
+import { reconcileOpenCodeAgentRuntime } from '../interactive-ui/agent-runtime.js';
+
+// Production wiring seam for Interactive UI / OCIX (module-private; the public
+// surface is createFeatureRoutesRuntime(...).registerRoutes).
+// Binds Manager adapters:
+// - validateRemoteMetadata → runtime single-source manifest normalizer
+// - reconcileActivation → durable previousAssets + Agent Runtime materializer
+// Registers explicit Interactive UI routes before generic OpenCode proxy work.
+const createInteractiveUIRuntimeForRoutes = ({
+  fsPromises,
+  path,
+  crypto,
+  fetchImpl,
+  environment,
+  connectionStore,
+  logger,
+  manager,
+  builtInRootDirectory,
+  configuredRoots,
+}) => createInteractiveUIRuntime({
+  fsPromises,
+  path,
+  crypto,
+  fetchImpl,
+  extensionRoots: async () => [
+    builtInRootDirectory,
+    ...await manager.getEnabledExtensionRoots(),
+    ...configuredRoots,
+  ],
+  environment,
+  connectionStore,
+  logger,
+  resolveExtensionResource: (extensionId, relativePath, authority) => (
+    manager.resolveExtensionResource(extensionId, relativePath, authority)
+  ),
+  authorizeExtensionAuthority: (extensionId, authority) => (
+    manager.authorizeExtensionAuthority(extensionId, authority)
+  ),
+  prepareExtensionUse: (extensionId, options) => (
+    manager.prepareRemoteUse(extensionId, options)
+  ),
+  getExtensionLifecycle: (extensionId) => manager.getRemoteLifecycle(extensionId),
+  listEnabledRemoteExtensions: () => manager.getEnabledRemoteExtensionIds(),
+  getBlockedCatalogEntries: () => manager.getBlockedRemoteCatalogEntries(),
+});
 
 export const createFeatureRoutesRuntime = (dependencies) => {
   const {
@@ -121,7 +173,144 @@ export const createFeatureRoutesRuntime = (dependencies) => {
       writeSseEvent,
       emitSessionCreatedEvent,
       permissionAutoAcceptRuntime,
+      express,
+      processLike,
+      uiAuthController,
+      openchamberVersion,
     } = routeDependencies;
+
+    const processRef = processLike ?? globalThis.process;
+    const configuredInteractiveUIRoots = typeof processRef?.env?.OPENCHAMBER_INTERACTIVE_UI_EXTENSIONS_DIR === 'string'
+      ? processRef.env.OPENCHAMBER_INTERACTIVE_UI_EXTENSIONS_DIR
+        .split(path.delimiter)
+        .map((entry) => entry.trim())
+        .filter(Boolean)
+      : [];
+    const testOpenCodeConfigDirectory = typeof processRef?.env?.OPENCHAMBER_TEST_OPENCODE_CONFIG_DIR === 'string'
+      && processRef.env.OPENCHAMBER_TEST_OPENCODE_CONFIG_DIR.trim()
+      ? path.resolve(processRef.env.OPENCHAMBER_TEST_OPENCODE_CONFIG_DIR.trim())
+      : null;
+    if (testOpenCodeConfigDirectory && processRef?.env) {
+      processRef.env.OPENCODE_CONFIG_DIR = testOpenCodeConfigDirectory;
+    }
+    const opencodeConfigDirectory = testOpenCodeConfigDirectory
+      ?? (typeof processRef?.env?.OPENCODE_CONFIG_DIR === 'string' && processRef.env.OPENCODE_CONFIG_DIR.trim()
+        ? path.resolve(processRef.env.OPENCODE_CONFIG_DIR.trim())
+        : path.join(os.homedir(), '.config', 'opencode'));
+    const builtInInteractiveUIRuntime = createBuiltInInteractiveUIRuntime({ pathImpl: path });
+    const interactiveUIExtensionManager = createInteractiveUIExtensionManager({
+      dataDirectory: openchamberDataDir,
+      fsImpl: fsPromises,
+      pathImpl: path,
+      cryptoImpl: crypto,
+      logger: console,
+      validateRemoteMetadata: async ({ extension }) => {
+        // Single-source normalizer: Remote shells only accept metadata that the
+        // runtime would accept for Local/built-in manifests. Adapter failures
+        // become controlled Manager errors before any credential or shell write.
+        const normalized = normalizeExtensionManifest(extension, processRef?.env);
+        return {
+          connectors: normalized.connectors ?? extension?.connectors ?? [],
+        };
+      },
+      reconcileActivation: async ({ previousState, nextState, versionsDirectory }) => {
+        const deployment = await reconcileOpenCodeAgentRuntime({
+          state: nextState,
+          previousAssets: previousState.agentRuntime?.assets ?? {},
+          configDirectory: opencodeConfigDirectory,
+          versionsDirectory,
+          builtInRuntime: builtInInteractiveUIRuntime,
+          fsImpl: fsPromises,
+          pathImpl: path,
+          cryptoImpl: crypto,
+        });
+        let openCode = {
+          changed: deployment.changed === true,
+          reloaded: false,
+          external: false,
+        };
+        if (deployment.changed === true && typeof refreshOpenCodeAfterConfigChange === 'function') {
+          try {
+            const refreshed = await refreshOpenCodeAfterConfigChange('Interactive UI extension Agent Runtime changed');
+            openCode = {
+              changed: true,
+              reloaded: refreshed?.reloaded === true,
+              external: refreshed?.external === true,
+            };
+          } catch (error) {
+            console.error('[InteractiveUI] Agent Runtime files changed, but OpenCode refresh failed', error);
+            openCode = {
+              changed: true,
+              reloaded: false,
+              external: false,
+            };
+          }
+        }
+        return {
+          openCode,
+          assets: deployment.assets,
+          rollback: deployment.rollback,
+        };
+      },
+    });
+    try {
+      await interactiveUIExtensionManager.initialize();
+    } catch (error) {
+      if (error?.status !== 409) throw error;
+      console.error(`[InteractiveUI] Built-in Agent Runtime was not installed (${error.code || 'agent_runtime_conflict'}); existing OpenCode files were preserved`);
+    }
+    const interactiveUIConnectionStore = createInteractiveUIConnectionStore({
+      dataDirectory: openchamberDataDir,
+      fsImpl: fsPromises,
+      pathImpl: path,
+      cryptoImpl: crypto,
+    });
+    const htmlArtifactStore = createHTMLArtifactStore({
+      dataDirectory: openchamberDataDir,
+      fsImpl: fsPromises,
+      pathImpl: path,
+      cryptoImpl: crypto,
+      environment: processRef?.env,
+    });
+    const interactiveUIWorkbenchStore = createInteractiveUIWorkbenchStore({
+      dataDirectory: openchamberDataDir,
+      fsImpl: fsPromises,
+      pathImpl: path,
+      cryptoImpl: crypto,
+    });
+    const interactiveUIRuntime = createInteractiveUIRuntimeForRoutes({
+      fsPromises,
+      path,
+      crypto,
+      environment: processRef?.env,
+      connectionStore: interactiveUIConnectionStore,
+      logger: console,
+      manager: interactiveUIExtensionManager,
+      builtInRootDirectory: builtInInteractiveUIRuntime.rootDirectory,
+      configuredRoots: configuredInteractiveUIRoots,
+    });
+    // Explicit OpenChamber Interactive UI routes must win before the generic
+    // OpenCode proxy. The target global `/api` gate remains the sole local /
+    // tunnel auth authority (routes intentionally do not add a second gate).
+    registerInteractiveUIRoutes(app, {
+      express,
+      manager: interactiveUIExtensionManager,
+      artifactStore: htmlArtifactStore,
+      workbenchStore: interactiveUIWorkbenchStore,
+      runtime: interactiveUIRuntime,
+    });
+    void interactiveUIRuntime.warmRemoteLifecycle({ concurrency: 4 }).catch((error) => {
+      console.error('[InteractiveUI] Remote lifecycle warm-up failed', {
+        code: typeof error?.code === 'string' && /^[a-z0-9_]+$/.test(error.code)
+          ? error.code
+          : 'warm_remote_lifecycle_failed',
+      });
+    });
+    // uiAuthController remains the global /api gate owner (issue-008); routes
+    // deliberately do not install a second UI-only gate. openchamberVersion is
+    // reserved for future capability/provenance documents.
+    void uiAuthController;
+    void openchamberVersion;
 
     registerSettingsUtilityRoutes(app, {
       readCustomThemesFromDisk,

@@ -34,12 +34,13 @@ import { copyTextToClipboard } from '@/lib/clipboard';
 import { useChatSurfaceMode } from '@/components/chat/useChatSurfaceMode';
 import { isVSCodeRuntime } from '@/lib/desktop';
 import { useRuntimeAPIs } from '@/hooks/useRuntimeAPIs';
+import { toPng } from 'html-to-image';
 import { toast } from '@/components/ui';
 import { Icon } from "@/components/icon/Icon";
 import { formatTimestampForDisplay } from './timeFormat';
 import { ToolRevealOnMount } from './parts/ToolRevealOnMount';
 import { StaticToolRow } from './parts/ProgressiveGroup';
-import { isExpandableTool, isStandaloneTool } from './parts/toolRenderUtils';
+import { hasRichToolResult, isExpandableTool, isStandaloneTool, shouldCollapsePostRichResultText } from './parts/toolRenderUtils';
 import TurnActivity from '../components/TurnActivity';
 import { createProjectPlanFile } from '@/lib/openchamberConfig';
 import { resolveProjectForSessionDirectory } from '@/lib/projectResolution';
@@ -71,10 +72,9 @@ const getDisplayFileName = (file: string): string => {
 const TurnChangedFileChipContent = React.memo(({ file, interactive = false }: { file: TurnChangedFile; interactive?: boolean }) => (
     <span
         className={cn(
-            'inline-flex max-w-full items-center gap-1.5 rounded-lg border border-border/30 bg-muted/30 px-2 py-1 text-xs text-muted-foreground',
+            'inline-flex max-w-full items-center gap-1.5 rounded-lg border border-border/30 bg-muted/30 px-2 py-1 text-xs leading-[1.35] text-muted-foreground',
             interactive && 'transition-colors hover:border-border/60 hover:bg-interactive-hover'
         )}
-        style={{ lineHeight: 'round(1.35em, 1px)' }}
     >
         <FileTypeIcon filePath={file.file} className="h-3.5 w-3.5 flex-shrink-0" />
         <span className="max-w-52 truncate text-foreground/80" title={file.file}>{getDisplayFileName(file.file)}</span>
@@ -401,6 +401,7 @@ const formatTurnDuration = (durationMs: number): string => {
 interface MessageBodyProps {
     sessionId?: string;
     messageId: string;
+    projectDirectory?: string;
     parts: Part[];
     isUser: boolean;
     isMessageCompleted: boolean;
@@ -1070,6 +1071,7 @@ const AssistantMessageActionButtons = React.memo(({
 const AssistantMessageBody = React.memo(({
     sessionId,
     messageId,
+    projectDirectory,
     parts,
     isMessageCompleted,
     messageFinish,
@@ -1301,6 +1303,16 @@ const AssistantMessageBody = React.memo(({
     const isSortedRenderMode = chatRenderMode === 'sorted';
     const collapsedPreviewCount = 7;
     const isLastAssistantInTurn = turnGroupingContext?.isLastAssistantInTurn ?? false;
+    const hasEarlierRichResultInTurn = React.useMemo(() => {
+        if (!isLastAssistantInTurn) {
+            return false;
+        }
+        return turnGroupingContext?.activityParts?.some((activity) => (
+            activity.kind === 'tool'
+            && activity.messageId !== messageId
+            && hasRichToolResult(activity.part)
+        )) ?? false;
+    }, [isLastAssistantInTurn, messageId, turnGroupingContext?.activityParts]);
     const hasStopFinish = messageFinish === 'stop';
     const effectiveStreamPhase: StreamPhase = hasStopFinish ? 'completed' : streamPhase;
 
@@ -1531,9 +1543,6 @@ const AssistantMessageBody = React.memo(({
 
             let wrapper: HTMLDivElement | null = null;
             try {
-                // Load the exporter before attaching its temporary clone so a slow
-                // chunk request cannot leave export-only content in the page layout.
-                const { toPng } = await import('html-to-image');
                 const originalElement = sourceElement;
                 const computedStyle = window.getComputedStyle(originalElement);
                 const rootStyle = window.getComputedStyle(document.documentElement);
@@ -1777,6 +1786,8 @@ const AssistantMessageBody = React.memo(({
             return (
                 <div key={`progressive-group-${segment.id}`} className="mb-3">
                     <TurnActivity
+                        sessionId={sessionId}
+                        projectDirectory={projectDirectory}
                         parts={visibleSegmentParts}
                         isExpanded={turnGroupingContext?.isGroupExpanded === true}
                         collapsedPreviewCount={collapsedPreviewCount}
@@ -1854,19 +1865,45 @@ const AssistantMessageBody = React.memo(({
                     i += 1;
                     continue;
                 }
-                rendered.push(
-                    <div key={`assistant-text-${messageId}-${i}`} ref={messageTextContentRef} data-message-text-export-source="true">
-                        <AssistantTextPart
-                            part={part}
-                            sessionId={sessionId}
-                            messageId={messageId}
-                            streamPhase={effectiveStreamPhase}
-                            chatRenderMode={chatRenderMode}
-                            onContentChange={onContentChange}
-                            onShowPopup={onShowPopup}
-                        />
-                    </div>
+                const textContent = (
+                    <AssistantTextPart
+                        part={part}
+                        sessionId={sessionId}
+                        messageId={messageId}
+                        streamPhase={effectiveStreamPhase}
+                        chatRenderMode={chatRenderMode}
+                        onContentChange={onContentChange}
+                        onShowPopup={onShowPopup}
+                    />
                 );
+                const shouldCollapse = shouldCollapsePostRichResultText(
+                    visibleParts,
+                    i,
+                    isMessageCompleted,
+                    hasEarlierRichResultInTurn,
+                );
+                rendered.push(shouldCollapse ? (
+                    <div
+                        key={`assistant-text-${messageId}-${i}`}
+                        ref={messageTextContentRef}
+                        data-message-text-export-source="true"
+                        data-post-rich-result-notes="collapsed"
+                        className="mt-2 border-t border-border/40 pt-2"
+                    >
+                        <details className="group/post-rich-notes">
+                            <summary className="w-fit cursor-pointer select-none typography-meta font-medium text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--interactive-focus-ring)]">
+                                {t('chat.messageBody.richResult.showAgentNotes')}
+                            </summary>
+                            <div className="mt-2 text-foreground/85">
+                                {textContent}
+                            </div>
+                        </details>
+                    </div>
+                ) : (
+                    <div key={`assistant-text-${messageId}-${i}`} ref={messageTextContentRef} data-message-text-export-source="true">
+                        {textContent}
+                    </div>
+                ));
                 if (shouldShowStandaloneMessageActions && i === lastRenderableTextPartIndex) {
                     rendered.push(
                         <div key={`message-actions-${messageId}`} className={INLINE_MESSAGE_ACTIONS_CLASS_NAME} data-message-actions="true">
@@ -1930,7 +1967,7 @@ const AssistantMessageBody = React.memo(({
                 }
 
                 const activity = activityByPart.get(part);
-                if (activity?.kind === 'tool' && !isStandaloneTool(toolName)) {
+                if (activity?.kind === 'tool' && !isStandaloneTool(toolName, toolPart)) {
                     flushSegmentsAfterTool(toolPartId);
                     i += 1;
                     continue;
@@ -1949,6 +1986,8 @@ const AssistantMessageBody = React.memo(({
                             <ToolRevealOnMount animate={animatedToolIdsLookup.has(toolPart.id)} wipe>
                                 <ToolPart
                                     part={toolPart}
+                                    sessionId={sessionId}
+                                    projectDirectory={projectDirectory}
                                     isExpanded={expandedTools.has(toolPart.id)}
                                     onToggle={onToggleTool}
                                     isMobile={isMobile}
@@ -2017,11 +2056,14 @@ const AssistantMessageBody = React.memo(({
         collapsibleThinkingBlocks,
         collapsedPreviewCount,
         expandedTools,
+        hasEarlierRichResultInTurn,
         isMobile,
         isActivityOwnerMessage,
         isSortedRenderMode,
+        isMessageCompleted,
         lastRenderableTextPartIndex,
         messageId,
+        projectDirectory,
         messageActionButtons,
         renderJustificationActions,
         sessionId,
@@ -2036,6 +2078,7 @@ const AssistantMessageBody = React.memo(({
         shouldDeferSortedInlineText,
         toggleActivityGroup,
         turnGroupingContext,
+        t,
         visibleParts,
     ]);
 

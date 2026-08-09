@@ -1,15 +1,73 @@
-import React from 'react';
+import React from "react";
 
-import { ProjectNotesTodoPanel } from '@/components/session/ProjectNotesTodoPanel';
-import { useGitStore } from '@/stores/useGitStore';
-import { useProjectsStore } from '@/stores/useProjectsStore';
-import { useDirectoryStore } from '@/stores/useDirectoryStore';
-import { formatDirectoryName } from '@/lib/utils';
+import { ProjectNotesTodoPanel } from "@/components/session/ProjectNotesTodoPanel";
+import { GitView } from "@/components/views/GitView";
+import { useGitStore } from "@/stores/useGitStore";
+import { useProjectsStore } from "@/stores/useProjectsStore";
+import { useDirectoryStore } from "@/stores/useDirectoryStore";
+import { useUIStore } from "@/stores/useUIStore";
+import { useRuntimeAPIs } from "@/hooks/useRuntimeAPIs";
+import { useEffectiveDirectory } from "@/hooks/useEffectiveDirectory";
+import { formatDirectoryName, cn } from "@/lib/utils";
+import { SidebarFilesTree } from "./SidebarFilesTree";
+import { ExtensionWorkbench } from "@/components/interactive-ui/workbench/ExtensionWorkbench";
 
-export const ProjectContextPanel: React.FC<{
-  onActionComplete?: () => void;
-  onOpenPlan?: (plan: { path: string; title: string }) => void;
-}> = ({ onActionComplete, onOpenPlan }) => {
+type RightTab = "git" | "files" | "context" | "extensions";
+
+const RIGHT_TAB_FALLBACK: RightTab = "files";
+
+const isBrowserActive = (): boolean => {
+  if (typeof document !== "undefined" && document.hidden) return false;
+  if (typeof navigator !== "undefined" && !navigator.onLine) return false;
+  return true;
+};
+
+/**
+ * Keeps git status fresh while the right sidebar's Git tab is the visible
+ * consumer. Replaces the GitPollingProvider removed in commit b2d5ccb4.
+ *
+ * Gating rules (mirror the right-sidebar render policy):
+ *   - sidebar must be open
+ *   - right tab must be 'git' (otherwise GitView is not the visible consumer)
+ *   - main tab must not be 'git' (otherwise secondaryView's GitView handles
+ *     refresh and this poll would duplicate work)
+ *   - browser must be visible + online
+ *
+ * Any condition flip resets the interval so the next tick starts fresh.
+ */
+function useRightSidebarGitSync(
+  directory: string | undefined,
+  isSidebarOpen: boolean,
+  rightTab: RightTab | undefined,
+  mainTab: string | undefined,
+) {
+  const { git } = useRuntimeAPIs();
+  const ensureStatus = useGitStore((state) => state.ensureStatus);
+
+  const shouldPoll = Boolean(
+    directory &&
+    git &&
+    isSidebarOpen &&
+    rightTab === "git" &&
+    mainTab !== "git",
+  );
+
+  React.useEffect(() => {
+    if (!shouldPoll || !directory || !git) return;
+
+    void ensureStatus(directory, git);
+
+    const POLL_INTERVAL = 10_000;
+    const id = window.setInterval(() => {
+      if (!isBrowserActive()) return;
+      void ensureStatus(directory, git);
+    }, POLL_INTERVAL);
+
+    return () => window.clearInterval(id);
+  }, [shouldPoll, directory, git, ensureStatus]);
+}
+
+export const ProjectContextPanel: React.FC = () => {
   const activeProjectId = useProjectsStore((state) => state.activeProjectId);
   const projects = useProjectsStore((state) => state.projects);
   const homeDirectory = useDirectoryStore((state) => state.homeDirectory);
@@ -17,7 +75,11 @@ export const ProjectContextPanel: React.FC<{
 
   const activeProject = React.useMemo(() => {
     if (activeProjectId) {
-      return projects.find((project) => project.id === activeProjectId) ?? projects[0] ?? null;
+      return (
+        projects.find((project) => project.id === activeProjectId) ??
+        projects[0] ??
+        null
+      );
     }
     return projects[0] ?? null;
   }, [activeProjectId, projects]);
@@ -36,9 +98,11 @@ export const ProjectContextPanel: React.FC<{
     if (!activeProject) {
       return null;
     }
-    return activeProject.label?.trim()
-      || formatDirectoryName(activeProject.path, homeDirectory)
-      || activeProject.path;
+    return (
+      activeProject.label?.trim() ||
+      formatDirectoryName(activeProject.path, homeDirectory) ||
+      activeProject.path
+    );
   }, [activeProject, homeDirectory]);
 
   const canCreateWorktree = React.useMemo(() => {
@@ -54,9 +118,68 @@ export const ProjectContextPanel: React.FC<{
         projectRef={projectRef}
         projectLabel={projectLabel}
         canCreateWorktree={canCreateWorktree}
-        onActionComplete={onActionComplete}
-        onOpenPlan={onOpenPlan}
       />
+    </div>
+  );
+};
+export const RightSidebarTabs: React.FC = () => {
+  const rightSidebarTab = useUIStore((state) => state.rightSidebarTab);
+  const setRightSidebarTab = useUIStore((state) => state.setRightSidebarTab);
+  const isRightSidebarOpen = useUIStore((state) => state.isRightSidebarOpen);
+  const activeMainTab = useUIStore((state) => state.activeMainTab);
+  const directory = useEffectiveDirectory();
+
+  useRightSidebarGitSync(
+    directory,
+    isRightSidebarOpen,
+    rightSidebarTab,
+    activeMainTab,
+  );
+
+  // When the main view already hosts a right-tab equivalent (e.g. main tab
+  // 'git' renders GitView in the secondary slot), the right sidebar's
+  // matching tab is hidden to avoid two live GitView instances running
+  // effects. The map is small and stable; expand it if more shared
+  // secondary/right views are added.
+  const hiddenRightTab: RightTab | null =
+    activeMainTab === "git"
+      ? "git"
+      : activeMainTab === "context"
+        ? "context"
+        : null;
+
+  // Persisted right sidebar tab can be stale across main-tab switches (e.g.
+  // user opened main 'git' while right tab was 'git'). Snap to the fallback
+  // so the visible tab never equals the hidden one.
+  React.useEffect(() => {
+    if (hiddenRightTab && rightSidebarTab === hiddenRightTab) {
+      setRightSidebarTab(RIGHT_TAB_FALLBACK);
+    }
+  }, [hiddenRightTab, rightSidebarTab, setRightSidebarTab]);
+
+  const isRightGitTabActive =
+    isRightSidebarOpen && rightSidebarTab === "git" && hiddenRightTab !== "git";
+
+  return (
+    <div className="flex h-full min-h-0 flex-col overflow-hidden bg-background">
+      <div className="min-h-0 flex-1 overflow-hidden">
+        <div className={cn("h-full", rightSidebarTab !== "git" && "hidden")}>
+          <GitView isActive={isRightGitTabActive} />
+        </div>
+        <div className={cn("h-full", rightSidebarTab !== "files" && "hidden")}>
+          <SidebarFilesTree />
+        </div>
+        <div
+          className={cn("h-full", rightSidebarTab !== "context" && "hidden")}
+        >
+          <ProjectContextPanel />
+        </div>
+        <div
+          className={cn("h-full", rightSidebarTab !== "extensions" && "hidden")}
+        >
+          <ExtensionWorkbench />
+        </div>
+      </div>
     </div>
   );
 };

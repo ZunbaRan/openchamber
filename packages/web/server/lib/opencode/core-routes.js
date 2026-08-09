@@ -123,6 +123,7 @@ export const registerServerStatusRoutes = (app, dependencies) => {
       'realtime.sse.v1',
       'realtime.websocket.global-events.v1',
       'terminal.websocket.v1',
+      'interactive-ui.ocix.v1',
     ],
   };
 

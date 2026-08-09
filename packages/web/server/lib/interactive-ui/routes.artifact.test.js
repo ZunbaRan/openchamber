@@ -7,6 +7,7 @@ import path from 'node:path';
 import request from 'supertest';
 import { createHTMLArtifactStore } from './artifact-store.js';
 import { registerInteractiveUIRoutes } from './routes.js';
+import { InteractiveUIWorkbenchStoreError } from './workbench-store.js';
 
 const temporaryDirectories = [];
 const envelope = (scripts = false) => ({
@@ -367,11 +368,12 @@ describe('HTML Artifact routes', () => {
           envelope: nextEnvelope,
         });
         if (expectedRevision === 3) {
-          throw Object.assign(new Error('Workbench board changed since it was loaded'), {
-            status: 409,
-            code: 'workbench_revision_conflict',
-            details: { expectedRevision: 3, actualRevision: 4 },
-          });
+          throw new InteractiveUIWorkbenchStoreError(
+            'Workbench board changed since it was loaded',
+            'workbench_revision_conflict',
+            409,
+            { expectedRevision: 3, actualRevision: 4 },
+          );
         }
         const tile = {
           tileId,
@@ -524,6 +526,55 @@ describe('HTML Artifact routes', () => {
       { kind: 'tiles', extensionId: 'com.acme.crm' },
       { kind: 'extension', extensionId: 'com.acme.crm' },
     ]);
+  });
+
+  test('adds uninstall recovery state without reading or mutating hostile error details', async () => {
+    let detailsGetterReads = 0;
+    const cleanupError = new InteractiveUIWorkbenchStoreError(
+      'Workbench cleanup failed',
+      'workbench_write_failed',
+      500,
+    );
+    Object.defineProperty(cleanupError, 'details', {
+      configurable: true,
+      get() {
+        detailsGetterReads += 1;
+        return { path: '/private/workbench.json', accessKey: 'sk-uninstall-secret' };
+      },
+    });
+    Object.freeze(cleanupError);
+    const app = await createApp(
+      {},
+      {
+        async removeExtensionConnections() {
+          throw cleanupError;
+        },
+      },
+      null,
+      {
+        async removeExtensionTiles() {
+          throw new Error('must not be called');
+        },
+      },
+      {
+        async uninstall() {
+          throw new Error('must not be called');
+        },
+      },
+    );
+
+    const response = await request(app)
+      .delete('/api/interactive-ui/manager/extensions/com.acme.crm')
+      .expect(500);
+
+    expect(response.body).toEqual({
+      error: 'Workbench cleanup failed',
+      code: 'workbench_write_failed',
+      extensionRemoved: false,
+    });
+    expect(detailsGetterReads).toBe(0);
+    expect(JSON.stringify(response.body)).not.toContain('/private/workbench.json');
+    expect(JSON.stringify(response.body)).not.toContain('sk-uninstall-secret');
   });
 
   test('fails closed before impact or uninstall cleanup when Workbench storage is unavailable', async () => {

@@ -13,6 +13,7 @@ import {
 import { createInteractiveUIExtensionManager } from './manager.js';
 import { generatePublisherKeyPair } from './package-format.js';
 import { registerInteractiveUIRoutes } from './routes.js';
+import { InteractiveUIRuntimeError } from './runtime.js';
 
 const temporaryDirectories = [];
 
@@ -24,7 +25,12 @@ afterEach(async () => {
 
 const manifestUrl = 'https://apps.example.com/manifest.json';
 
-const createRemoteManifest = ({ keys = generatePublisherKeyPair(), version = '1.0.0' } = {}) => {
+const createRemoteManifest = ({
+  keys = generatePublisherKeyPair(),
+  version = '1.0.0',
+  extraAction = false,
+  update = undefined,
+} = {}) => {
   const view = Buffer.from(JSON.stringify({
     $schema: 'openchamber://declarative-view/v1',
     id: 'com.acme.remote.overview',
@@ -37,6 +43,7 @@ const createRemoteManifest = ({ keys = generatePublisherKeyPair(), version = '1.
       version,
       publishedAt: '2026-08-05T00:00:00.000Z',
     },
+    ...(update !== undefined ? { update } : {}),
     publisher: {
       id: 'com.acme.publisher',
       name: 'Acme',
@@ -48,7 +55,9 @@ const createRemoteManifest = ({ keys = generatePublisherKeyPair(), version = '1.
       networkOrigins: ['https://api.example.com'],
       externalLinkOrigins: [],
       credentialScopes: ['crm.read'],
-      actionIds: ['com.acme.remote.read'],
+      actionIds: extraAction
+        ? ['com.acme.remote.read', 'com.acme.remote.export']
+        : ['com.acme.remote.read'],
       agentToolNames: [],
       clipboard: false,
       popups: false,
@@ -66,12 +75,24 @@ const createRemoteManifest = ({ keys = generatePublisherKeyPair(), version = '1.
         baseUrl: 'https://api.example.com',
         auth: { type: 'api-key' },
       }],
-      actions: [{
-        id: 'com.acme.remote.read',
-        connector: 'crm',
-        risk: 'read',
-        request: { method: 'GET', path: '/crm' },
-      }],
+      actions: extraAction
+        ? [{
+          id: 'com.acme.remote.read',
+          connector: 'crm',
+          risk: 'read',
+          request: { method: 'GET', path: '/crm' },
+        }, {
+          id: 'com.acme.remote.export',
+          connector: 'crm',
+          risk: 'write',
+          request: { method: 'POST', path: '/crm/export' },
+        }]
+        : [{
+          id: 'com.acme.remote.read',
+          connector: 'crm',
+          risk: 'read',
+          request: { method: 'GET', path: '/crm' },
+        }],
       views: [{
         id: 'com.acme.remote.overview',
         runtime: 'declarative',
@@ -349,12 +370,18 @@ describe('Direct Remote OCIX routes', () => {
   });
 
   test('credential configure failure rolls back only the new shell and leaves global trust untouched', async () => {
+    let credentialStatusReads = 0;
     const { app, dataDirectory } = await createApp({
       runtimeOverrides: {
         configureRemoteConnection: async () => {
           const error = new Error('credential configuration failed');
           error.code = 'credential_configure_failed';
-          error.status = 502;
+          Object.defineProperty(error, 'status', {
+            get() {
+              credentialStatusReads += 1;
+              return 599;
+            },
+          });
           throw error;
         },
         removeRemoteConnection: async () => ({ removed: false }),
@@ -378,6 +405,7 @@ describe('Direct Remote OCIX routes', () => {
     expect(JSON.stringify(response.body)).not.toContain('sk-failing-secret');
     expect(JSON.stringify(response.body)).not.toContain('installationId');
     expect(JSON.stringify(response.body)).not.toContain(dataDirectory);
+    expect(credentialStatusReads).toBe(0);
     const snapshot = await request(app).get('/api/interactive-ui/manager').expect(200);
     expect(snapshot.body.extensions).toEqual([]);
     expect(snapshot.body.publishers).toEqual([]);
@@ -490,18 +518,28 @@ describe('Direct Remote OCIX routes', () => {
   });
 
   test('allowlists successful credential summaries before returning them', async () => {
+    let credentialGetterReads = 0;
+    const credential = {
+      configured: true,
+      source: 'manual',
+      name: 'CRM',
+      endpoint: 'https://api.example.com/crm?accessKey=sk-endpoint-secret#install-success',
+      accessKey: 'sk-success-secret',
+      installationId: 'install-success',
+      path: '/private/secret',
+      arbitrary: { secret: 'nested-leak' },
+    };
+    Object.defineProperty(credential, 'displayName', {
+      enumerable: true,
+      get() {
+        credentialGetterReads += 1;
+        return 'sk-summary-getter-secret';
+      },
+    });
     const { app } = await createApp({
       runtimeOverrides: {
         configureRemoteConnection: async () => ({
-          credential: {
-            configured: true,
-            source: 'manual',
-            displayName: 'CRM',
-            accessKey: 'sk-success-secret',
-            installationId: 'install-success',
-            path: '/private/secret',
-            arbitrary: { secret: 'nested-leak' },
-          },
+          credential,
           runtimeSecret: 'runtime-secret',
         }),
       },
@@ -518,14 +556,17 @@ describe('Direct Remote OCIX routes', () => {
     expect(response.body.credential).toEqual({
       configured: true,
       source: 'manual',
-      displayName: 'CRM',
+      name: 'CRM',
     });
+    expect(credentialGetterReads).toBe(0);
     const serialized = JSON.stringify(response.body);
     expect(serialized).not.toContain('sk-success-secret');
     expect(serialized).not.toContain('install-success');
     expect(serialized).not.toContain('/private/secret');
     expect(serialized).not.toContain('nested-leak');
     expect(serialized).not.toContain('runtime-secret');
+    expect(serialized).not.toContain('sk-endpoint-secret');
+    expect(serialized).not.toContain('sk-summary-getter-secret');
   });
 
   test('a failed reconnect preserves an existing valid shell and credential', async () => {
@@ -552,5 +593,335 @@ describe('Direct Remote OCIX routes', () => {
     expect(snapshot.body.extensions).toHaveLength(1);
     expect(snapshot.body.extensions[0]).toMatchObject({ id: 'com.acme.remote', activeVersion: '1.0.0' });
     expect(snapshot.body.publishers).toEqual([]);
+  });
+
+  test('pins the canonical Remote trust error and strips hostile nested diagnostics', async () => {
+    const accessKey = 'sk-inner-route-secret';
+    const privatePath = '/private/interactive-ui/connection-secrets.json';
+    const installationId = 'install-inner-route';
+    const inheritedSecret = 'sk-inherited-route-secret';
+    const extension = Object.create({ name: inheritedSecret });
+    extension.id = 'com.acme.safe';
+    extension.version = '1.0.0';
+    let nestedGetterReads = 0;
+    const hostilePermissions = {};
+    Object.defineProperty(hostilePermissions, 'networkOrigins', {
+      enumerable: true,
+      get() {
+        nestedGetterReads += 1;
+        return [`https://user:${accessKey}@example.test/${installationId}`];
+      },
+    });
+    const unsafePermissions = {
+      networkOrigins: [`https://user:${accessKey}@example.test/private/${installationId}`],
+      credentialScopes: [privatePath],
+      actionIds: [`/private/${installationId}`],
+      agentToolNames: [`sk_${installationId}`],
+    };
+    const { app } = await createApp({
+      runtimeOverrides: {
+        getRoutingCapabilities: async () => {
+          throw new InteractiveUIRuntimeError(
+            'Remote trust failed',
+            403,
+            'remote_trust_invalid',
+            {
+            // This is the shape produced when Manager wraps a lifecycle
+            // health reason.  It must not replace the outer stable code.
+            code: 'remote_trust_conflict',
+            error: 'spoofed outer error',
+            message: 'spoofed outer message',
+            status: 200,
+            accessKey,
+            path: privatePath,
+            installationId,
+              authority: '/private/authority',
+              extension,
+              permissions: hostilePermissions,
+              addedPermissions: unsafePermissions,
+            },
+          );
+        },
+      },
+    });
+
+    const response = await request(app)
+      .get('/api/interactive-ui/capabilities')
+      .expect(403);
+
+    expect(response.body).toMatchObject({
+      error: 'Remote trust failed',
+      code: 'remote_trust_invalid',
+      reason: 'remote_trust_conflict',
+      extension: { id: 'com.acme.safe', version: '1.0.0' },
+    });
+    expect(response.body.extension.name).toBeUndefined();
+    expect(response.body.authority).toBeUndefined();
+    expect(response.body.permissions).toBeUndefined();
+    expect(response.body.addedPermissions).toBeUndefined();
+    expect(response.body.status).toBeUndefined();
+    const serialized = JSON.stringify(response.body);
+    expect(serialized).not.toContain(accessKey);
+    expect(serialized).not.toContain(privatePath);
+    expect(serialized).not.toContain(installationId);
+    expect(serialized).not.toContain(inheritedSecret);
+    expect(serialized).not.toContain('spoofed outer');
+    expect(nestedGetterReads).toBe(0);
+  });
+
+  test('maps untrusted adapter errors to a fixed envelope without reading hostile details', async () => {
+    const outerSecret = 'sk-outer-route-secret';
+    const privatePath = '/private/manager-state.json';
+    let getterReads = 0;
+    const hostileDetails = {};
+    Object.defineProperty(hostileDetails, 'extension', {
+      enumerable: true,
+      get() {
+        getterReads += 1;
+        return { id: 'com.acme.safe', name: outerSecret };
+      },
+    });
+    const { app } = await createApp({
+      runtimeOverrides: {
+        getRoutingCapabilities: async () => {
+          const error = new Error(`accessKey=${outerSecret} path=${privatePath}`);
+          error.status = 403;
+          error.code = 'remote_trust_invalid';
+          error.details = hostileDetails;
+          throw error;
+        },
+      },
+    });
+
+    const response = await request(app)
+      .get('/api/interactive-ui/capabilities')
+      .expect(500);
+
+    expect(response.body).toEqual({
+      error: 'Interactive UI request failed',
+      code: 'internal_error',
+    });
+    expect(getterReads).toBe(0);
+    expect(JSON.stringify(response.body)).not.toContain(outerSecret);
+    expect(JSON.stringify(response.body)).not.toContain(privatePath);
+  });
+
+  test('does not invoke accessors on a trusted error envelope', async () => {
+    const secret = 'sk-trusted-accessor-secret';
+    let getterReads = 0;
+    const { app } = await createApp({
+      runtimeOverrides: {
+        getRoutingCapabilities: async () => {
+          const error = new InteractiveUIRuntimeError(
+            'initial safe message',
+            403,
+            'remote_trust_invalid',
+          );
+          Object.defineProperty(error, 'message', {
+            configurable: true,
+            get() {
+              getterReads += 1;
+              return secret;
+            },
+          });
+          Object.defineProperty(error, 'details', {
+            configurable: true,
+            get() {
+              getterReads += 1;
+              return { extension: { id: 'com.acme.safe', name: secret } };
+            },
+          });
+          throw error;
+        },
+      },
+    });
+
+    const response = await request(app)
+      .get('/api/interactive-ui/capabilities')
+      .expect(403);
+
+    expect(response.body).toEqual({
+      error: 'Interactive UI request failed',
+      code: 'remote_trust_invalid',
+    });
+    expect(getterReads).toBe(0);
+    expect(JSON.stringify(response.body)).not.toContain(secret);
+  });
+
+  test('keeps route-owned validation failures on their stable 400 contracts', async () => {
+    const { app } = await createApp();
+
+    const invalidPackage = await request(app)
+      .post('/api/interactive-ui/manager/packages/inspect')
+      .send({ packageBase64: 'not-base64' })
+      .expect(400);
+    expect(invalidPackage.body).toEqual({
+      error: 'Extension package must be valid base64',
+      code: 'invalid_package_encoding',
+    });
+
+    const invalidConnect = await request(app)
+      .post('/api/interactive-ui/manager/remote/connect')
+      .send([])
+      .expect(400);
+    expect(invalidConnect.body).toEqual({
+      error: 'Remote connect body is invalid',
+      code: 'remote_connect_body_invalid',
+    });
+  });
+});
+
+describe('Direct Remote update routes (issue-013)', () => {
+  const connect = async (app) => {
+    const inspection = await request(app)
+      .post('/api/interactive-ui/manager/remote/inspect')
+      .send({ appEntryUrl: manifestUrl })
+      .expect(200);
+    await request(app)
+      .post('/api/interactive-ui/manager/remote/connect')
+      .send(connectBody(inspection))
+      .expect(201);
+    return inspection;
+  };
+
+  test('update-check classifies an expansion without applying; update-apply requires exact confirmation', async () => {
+    const initialManifest = createRemoteManifest();
+    const { app, holder } = await createApp({ initialManifest });
+    await connect(app);
+
+    holder.document = createRemoteManifest({
+      keys: initialManifest.keys,
+      version: '2.0.0',
+      extraAction: true,
+      update: { changeSummary: 'Adds export action' },
+    }).document;
+    const check = await request(app)
+      .post('/api/interactive-ui/manager/extensions/com.acme.remote/remote/update-check')
+      .send({ force: true })
+      .expect(200);
+    expect(check.body).toMatchObject({
+      status: 'available',
+      currentVersion: '1.0.0',
+      remoteVersion: '2.0.0',
+      permissionDelta: 'expanded',
+      requiresUserConfirmation: true,
+      health: { status: 'reachable' },
+      changeSummary: 'Adds export action',
+    });
+    expect(check.body.addedPermissions).toMatchObject({
+      actionIds: ['com.acme.remote.export'],
+    });
+    expect(JSON.stringify(check.body)).not.toContain('BEGIN PUBLIC KEY');
+    expect(JSON.stringify(check.body)).not.toContain('installationId');
+
+    const rejected = await request(app)
+      .post('/api/interactive-ui/manager/extensions/com.acme.remote/remote/update-apply')
+      .send({})
+      .expect(403);
+    expect(rejected.body.code).toBe('remote_confirmation_required');
+
+    const applied = await request(app)
+      .post('/api/interactive-ui/manager/extensions/com.acme.remote/remote/update-apply')
+      .send({
+        confirmedManifestHash: check.body.remoteManifestHash,
+        confirmedPublisherFingerprint: check.body.publisherFingerprint,
+      })
+      .expect(200);
+    expect(applied.body).toMatchObject({ applied: true, previousVersion: '1.0.0' });
+
+    const snapshot = await request(app)
+      .get('/api/interactive-ui/manager')
+      .expect(200);
+    expect(snapshot.body.extensions[0]).toMatchObject({
+      activeVersion: '2.0.0',
+      versions: {
+        '2.0.0': {
+          delivery: 'remote',
+          remote: { acceptedManifest: { version: '2.0.0' } },
+        },
+      },
+    });
+    expect(JSON.stringify(snapshot.body)).not.toContain('BEGIN PUBLIC KEY');
+    expect(JSON.stringify(snapshot.body)).not.toContain('installationId');
+  });
+
+  test('manual connection test can include a safe Remote update summary', async () => {
+    const initialManifest = createRemoteManifest();
+    const { app, holder } = await createApp({
+      initialManifest,
+      runtimeOverrides: {
+        testConnection: async () => ({ ok: true }),
+      },
+    });
+    await connect(app);
+
+    holder.document = createRemoteManifest({
+      keys: initialManifest.keys,
+      version: '2.0.0',
+      extraAction: true,
+    }).document;
+    const response = await request(app)
+      .post('/api/interactive-ui/connections/com.acme.remote/crm/test')
+      .send({ checkForUpdates: true })
+      .expect(200);
+    expect(response.body).toMatchObject({
+      ok: true,
+      update: {
+        status: 'available',
+        remoteVersion: '2.0.0',
+        permissionDelta: 'expanded',
+        requiresUserConfirmation: true,
+      },
+    });
+    expect(JSON.stringify(response.body)).not.toContain('BEGIN PUBLIC KEY');
+    expect(JSON.stringify(response.body)).not.toContain('installationId');
+  });
+
+  test('required Remote update persists a blocked state before the route reports success', async () => {
+    const initialManifest = createRemoteManifest();
+    const { app, holder } = await createApp({ initialManifest });
+    await connect(app);
+
+    holder.document = createRemoteManifest({
+      keys: initialManifest.keys,
+      version: '2.0.0',
+      extraAction: true,
+      update: { required: true, changeSummary: 'Mandatory export fix' },
+    }).document;
+    const check = await request(app)
+      .post('/api/interactive-ui/manager/extensions/com.acme.remote/remote/update-check')
+      .send({ force: true })
+      .expect(200);
+    expect(check.body).toMatchObject({
+      status: 'required',
+      remoteVersion: '2.0.0',
+      requiresUserConfirmation: true,
+      blocked: {
+        code: 'remote_update_required_blocked',
+        required: true,
+        version: '2.0.0',
+        reason: 'confirmation-required',
+      },
+    });
+    const snapshot = await request(app)
+      .get('/api/interactive-ui/manager')
+      .expect(200);
+    expect(snapshot.body.extensions[0]).toMatchObject({
+      activeVersion: '1.0.0',
+      versions: {
+        '1.0.0': {
+          remote: {
+            blocked: {
+              required: true,
+              version: '2.0.0',
+              reason: 'confirmation-required',
+            },
+          },
+        },
+      },
+    });
+    expect(JSON.stringify(check.body)).not.toContain('BEGIN PUBLIC KEY');
+    expect(JSON.stringify(snapshot.body)).not.toContain('BEGIN PUBLIC KEY');
+    expect(JSON.stringify(snapshot.body)).not.toContain('installationId');
   });
 });

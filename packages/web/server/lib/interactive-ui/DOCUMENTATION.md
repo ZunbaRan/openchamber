@@ -1,13 +1,15 @@
 # Interactive UI package and lifecycle seams
 
 This directory contains the accepted server-side foundations for Interactive UI
-extensions. The current target owns five deliberately bounded seams:
+extensions. The current target owns six deliberately bounded seams:
 
 - package-format.js parses, signs, and verifies OCIX packages and signed Marketplace
   catalogs.
 - manager.js owns direct publisher trust, the Local package lifecycle, the
   signed Marketplace install transaction, and the bounded Direct Remote
-  signed-manifest inspect/connect shell transaction.
+  signed-manifest inspect/connect/health/update shell transaction.
+- runtime.js owns the request-bound Remote health/resource adapter and keeps
+  stale lifecycle responses from overwriting newer observations.
 - agent-runtime.js materializes declared Agent Tools and Skills into an OpenCode
   configuration directory. It is a standalone loader/transaction helper, not a
   Manager lifecycle hook yet.
@@ -17,10 +19,11 @@ extensions. The current target owns five deliberately bounded seams:
   seams above.
 
 This document records only behavior present in the target source and tests. It
-does **not** make the larger donor implementation true: Remote resource
-serving, health and updates, Hosted execution, runtime/HTTP route registration,
-UI, capability endpoints, Business Gateway wiring, and automatic Agent Runtime
-reconciliation are not wired by this documentation or by the current Manager.
+does **not** make the larger donor implementation true: Hosted execution,
+production runtime/HTTP registration, UI, capability endpoints, Business
+Gateway wiring, and automatic Agent Runtime reconciliation are not wired by
+this documentation or by the current Manager/runtime pair. Issue-014 still owns
+that production registration boundary.
 
 ## Package format and parser boundary
 
@@ -204,22 +207,48 @@ publisher trust.
   response.
 - Activation and state publication reuse the accepted Manager transaction.
   Adapter or durable-write failure restores the activation result. Remote
-  failure, rollback, and uninstall cleanup never renames, removes, or
-  recursively deletes a shell path after asynchronous verification: the exact
-  shell remains inactive in the versions store and cleanupPending is true.
-  A later connect may reuse it only after a fresh confirmation and an exact
-  deterministic whole-shell hash check; no existing byte is adopted loosely
-  or overwritten.
+  publication uses no-replace hard links from inert staging files keyed by
+  both lexical target and payload hash. Repeated failure for the same pair
+  reuses one entry, while different targets never share a mutable inode merely
+  because their bytes match.
+- Remote failure, rollback, and uninstall cleanup never unlinks, renames,
+  removes, or recursively deletes a shell, staging file, pending journal,
+  reservation marker, or newly created directory through a mutable path after
+  asynchronous verification. Exact inert residue is retained instead. A
+  candidate journal and marker are strictly transaction-bound and remain
+  non-authoritative even after a completed update becomes active; only exact
+  installation state, installation-scoped consent, and the credential
+  transaction grant runtime authority. Initial connected versions created
+  without an update marker remain valid under their deterministic shell
+  integrity contract.
+- A later operation may resume or reuse retained bytes only after a fresh
+  confirmation and an exact deterministic whole-shell hash check; no existing
+  byte is adopted loosely or overwritten. A partial or modified residue fails
+  closed while the prior active Remote version remains available.
   An already-installed reconnect performs no shell, state,
   trust, activation, or credential mutation, preserving the valid connection.
 
+Remote health and update behavior is request- and generation-bound. Stale
+health responses cannot overwrite newer observations. Update application
+rejects version reuse with different content, preserves the prior runnable
+version on failure, and requires exact re-consent when signed publisher
+identity or approved permissions change. Required-update blocking is durable
+until the exact accepted update commits; successful application clears only
+the superseded block and retains rollback integrity for the previous version.
+
 The Manager deliberately requires a validateRemoteMetadata adapter and the
 existing reconcileActivation adapter. Missing metadata validation returns a
-controlled 503 before any manifest fetch; it is never skipped. Issue-014 owns
-the production binding to the runtime's single-source manifest normalizer and
-activation/durable Agent Runtime seam. Remote health, resource resolution,
-updates, blocked-update state, and re-consent are issue-013/runtime work and
-are not claimed here.
+controlled 503 before any manifest fetch; it is never skipped. Production
+binding (issue-014) lives in
+`packages/web/server/lib/opencode/feature-routes-runtime.js`: it wires
+`normalizeExtensionManifest` as validateRemoteMetadata, binds
+`reconcileOpenCodeAgentRuntime` as reconcileActivation with durable
+`state.agentRuntime.assets` as the authoritative previousAssets map, calls
+`initialize()` at server start, and registers explicit Interactive UI routes
+before the generic OpenCode proxy. The focused Manager/runtime/routes and
+feature-routes-runtime tests are the executable contract for health, resource
+resolution, update ordering, blocked-update state, re-consent, and production
+registration.
 
 ## Agent Runtime loader boundary
 
@@ -257,9 +286,10 @@ caller-supplied previousAssets must exactly match the durable records. A
 forged/edited record, a missing record, or a mismatch fails with
 agent_runtime_state_invalid; a missing or externally edited managed file fails
 with agent_runtime_modified. The loader never infers permission to delete a
-file solely from a record. The authoritative previousAssets store and the
-Manager/activation wiring are future issue-014 work; this target does not
-persist or supply that seam.
+file solely from a record. The authoritative previousAssets map is persisted on
+Manager state as `agentRuntime.assets` after each successful activation; the
+production reconcileActivation adapter (feature-routes-runtime) supplies that
+map on the next reconcile and on `initialize()`.
 
 Before mutation the loader writes a transaction marker. Atomic writes use
 temporary files and reject ancestor symlinks. A failure restores changed bytes
@@ -284,12 +314,12 @@ manifests. It is not invoked by the current Manager automatically.
 | Package format | Canonical schemas, bounds, signatures, hashes, and descriptor parsing | Selecting a trusted key and deciding when a package is allowed to install |
 | Local Manager | Trust/state stores, staging, integrity, queueing, and recoverable file/state ordering | validateStagedPackage and reconcileActivation implementations |
 | Marketplace | Catalog confirmation, bounded transport, request-scoped publisher verification, and provenance | User confirmation of the catalog fingerprint and any business/API policy |
-| Direct Remote | Signed-manifest review, installation-scoped consent, metadata-only shell, strict durable state, opaque credential capability, and exact rollback | Pure validateRemoteMetadata, reconcileActivation, credential runtime, and later health/resource/update lifecycle |
+| Direct Remote | Signed-manifest review, installation-scoped consent, metadata-only shell, strict durable state, request-bound health/resource/update lifecycle, retained inert transaction evidence, opaque credential capability, and exact rollback | Pure validateRemoteMetadata, reconcileActivation, credential runtime, and production lifecycle registration |
 | Agent Runtime | Source containment, conflict checks, deterministic materialization, ownership records, and rollback | Authoritative previousAssets, lifecycle timing, and OpenCode config ownership (issue-014 seam) |
 
-Remote resource/health/update lifecycle, Hosted loaders, runtime route
-registration, UI screens, capability exposure, and Business Gateway/action
-execution require separate accepted integrations. A
+Hosted loaders, production runtime route registration, UI screens, capability
+exposure, and Business Gateway/action execution require separate accepted
+integrations. A
 caller must not treat the standalone Agent Runtime records or sanitized
 Manager snapshots as proof that those surfaces are available.
 
