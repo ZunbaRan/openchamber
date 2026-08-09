@@ -148,7 +148,7 @@
 
 ## issue-008: Restore Artifact and Business Gateway server routes
 
-- Status: READY
+- Status: RESOLVED
 - Classification: NORMAL
 - Goal / user outcome: Explicit OCIX routes expose artifact materialization and approved business requests before the generic OpenCode proxy.
 - First-principles root cause: The clean target has no OCIX route contract; dashboard schema validation is restored independently by issue-057.
@@ -157,14 +157,14 @@
 - Dispatch order: Serial after both authoritative stores.
 - Ownership: `packages/web/server/lib/interactive-ui/routes.js`; `packages/web/server/lib/interactive-ui/routes.artifact.test.js`.
 - Focused verification: Run focused route/artifact tests and inspect route registration order against the accepted dashboard contract.
-- Pi binding: unassigned
-- Pi attempts: none
-- Primary attempts: not eligible while Pi retries remain
-- Current evidence: All files are donor-only.
+- Pi binding: not dispatched; the user suspended all Sol/Pi execution on 2026-08-09, and no issue-008 Pi worktree, session, run, or log was created.
+- Pi attempts: none; direct primary/Luna execution is explicitly authorized.
+- Primary attempts: Luna worker round 1 ported the frozen route surface. Primary acceptance then removed the donor's UI-only second auth gate in favor of the target's scope-aware global `/api` gate, narrowed session cleanup to exact session DELETE, and made missing Workbench storage fail closed before impact/credential/tile/uninstall mutation.
+- Current evidence: Focused route acceptance passes 13/13 with tunnel/local global-auth composition, Workbench-unavailable zero-mutation, authoritative action binding, CSP/materialization, and failed/nested session-delete regressions. The complete Interactive UI server gate passed 195/195 before the final Agent Runtime hardening wave; syntax and diff checks pass, and a fresh read-only final reviewer returned SHIP. Packaged CORS session-header and URL-token resource allowlisting are explicitly carried into issue-014 integration ownership rather than hidden here.
 - Suspension decision: n/a
 - Resume condition: n/a
 - Continuation decision: Enables issue-014 and Artifact UI work.
-- Next action: Queue after issues 006-007.
+- Next action: Resolved; issue-011 may consume the route contract, while issue-014 owns real core-order/CORS/URL-token integration.
 
 ## issue-009: Restore Workbench persistence and versioning
 
@@ -188,7 +188,7 @@
 
 ## issue-010: Restore the built-in Agent Runtime package
 
-- Status: READY
+- Status: RESOLVED
 - Classification: NORMAL
 - Goal / user outcome: The managed server installs and reloads the built-in OCIX Agent Runtime tools/skills without conflicts or external package requirements.
 - First-principles root cause: The target has no built-in OCIX runtime package or loader.
@@ -197,14 +197,14 @@
 - Dispatch order: Serial after package/manager contracts. This cohesive packaged fixture may own more than five asset files, but any change outside the built-in runtime asset/loader boundary requires replan before dispatch.
 - Ownership: `packages/web/server/lib/interactive-ui/agent-runtime.js`; `packages/web/server/lib/interactive-ui/builtin-runtime.js`; `packages/web/server/lib/interactive-ui/builtin-runtime.test.js`; `packages/web/server/lib/interactive-ui/builtin/**`.
 - Focused verification: Run built-in runtime tests and inspect installed manifest/tool/skill hashes plus conflict/cleanup behavior.
-- Pi binding: unassigned
-- Pi attempts: none
-- Primary attempts: not eligible while Pi retries remain
-- Current evidence: Runtime loader and self-contained assets exist only in donor.
+- Pi binding: not dispatched; the user suspended all Sol/Pi execution on 2026-08-09, and no issue-010 Pi worktree, session, run, or log was created.
+- Pi attempts: none; direct primary/Luna execution is explicitly authorized.
+- Primary attempts: Luna worker round 1 restored the built-in package and loader. The first fresh adversarial review rejected record-only restart authority, unsafe transaction ordering, swallowed atomic cleanup/rollback failures, cross-extension namespace collisions, source/target traversal, and incorrect Hosted version attribution. Primary repair made caller-supplied `previousAssets` the independent deletion authority, added strict records/transaction markers and asset-before-record commit ordering, bounded/contained all paths and inventories, surfaced rollback residue, and recorded the actual selected Local/Hosted version. A second fresh review then reproduced stale rollback deleting an externally replaced Tool; Luna correction round 2 added expected-post-deployment snapshots plus all-target rollback preflight, so conflicts preserve both user bytes and the recovery marker.
+- Current evidence: Focused built-in Agent Runtime acceptance passes 17/17 with 70 assertions, covering exact built-in hashes, reload/idempotence, deterministic output, unmanaged Tool/Skill protection, missing/corrupt state, forged-record non-authority, restart cleanup, namespace conflicts, Local/Hosted source containment, Hosted `lastGood.version`, asset/record transaction ordering, temp residue, ancestor symlinks, visible rollback failure, and both newly-created and overwritten targets externally changed before rollback. The complete 12-file Interactive UI server gate passes 202/202; Web lint, node syntax, and `git diff --check` pass. A third fresh read-only final reviewer returned SHIP after independently rerunning 17/17 and auditing every prior blocker. No Sol/Pi session, run, worktree, or log was created.
 - Suspension decision: n/a
 - Resume condition: n/a
 - Continuation decision: Enables issue-014.
-- Next action: Queue behind issues 004-005; split assets if first-candidate scope exceeds the frozen package boundary.
+- Next action: Resolved; issue-014 must persist and supply the exact authoritative `previousAssets` map across restart. Ownership records remain commit diagnostics and never independently authorize deletion.
 
 ## issue-011: Restore Direct Remote manifest connection and consent
 
@@ -272,19 +272,19 @@
 - Classification: NORMAL
 - Goal / user outcome: Web/Electron managed runtimes initialize OCIX services once, expose `interactive-ui.ocix.v1`, and route explicit endpoints before the generic OpenCode proxy.
 - First-principles root cause: The target lifecycle has no fork runtime factory, explicit route registration, or capability publication.
-- Core acceptance invariant: Initialization is deterministic/fail-closed, route order is explicit, cleanup is complete, and unsupported runtimes report a reduced capability instead of silent emptiness.
+- Core acceptance invariant: Initialization is deterministic/fail-closed, route order is explicit, cleanup is complete, Agent Runtime deployment assets survive restart through one authoritative durable state seam, packaged/native artifact requests pass the same scope-aware auth contract (including CORS and exact URL-token resource allowlisting), and unsupported runtimes report a reduced capability instead of silent emptiness.
 - Dependencies: issues 005-013, issue-061, issue-062
 - Dispatch order: Final server integration seam after authoritative modules are accepted.
-- Ownership: `packages/web/server/lib/opencode/feature-routes-runtime.js`; `packages/web/server/lib/opencode/feature-routes-runtime.test.js`; `packages/web/server/lib/opencode/core-routes.js`; `packages/web/server/lib/interactive-ui/runtime.js`; `packages/web/server/lib/interactive-ui/runtime.test.js`.
-- Focused verification: Run focused feature-route/runtime tests; inspect explicit route-before-proxy ordering and cleanup/capability behavior.
-- Pi binding: unassigned
+- Ownership: `packages/web/server/lib/opencode/feature-routes-runtime.js`; `packages/web/server/lib/opencode/feature-routes-runtime.test.js`; `packages/web/server/lib/opencode/core-routes.js`; `packages/web/server/lib/interactive-ui/runtime.js`; `packages/web/server/lib/interactive-ui/runtime.test.js`; the narrow Agent Runtime durable-assets adapter/state seam in `packages/web/server/lib/interactive-ui/manager.js` and `packages/web/server/lib/interactive-ui/manager.test.js`; the exact `X-OpenChamber-Session-ID` CORS allow-header entry in `packages/web/server/index.js`; the exact native, installed-artifact, and materialized-artifact document GET allowlist entries and tests in `packages/web/server/lib/ui-auth/ui-auth.js` and its owning test file.
+- Focused verification: Run focused feature-route/runtime/Manager/auth tests; inspect explicit route-before-proxy ordering, local-versus-tunnel auth composition, packaged CORS preflight, URL-token resource access, restart/reconcile/cleanup, capability, and shutdown behavior. Records written beside Agent Runtime assets are diagnostics/commit records only and must never independently authorize deletion; the authoritative durable Manager/runtime state must supply the exact previous deployment asset set.
+- Pi binding: not dispatched; the user suspended all Sol/Pi execution on 2026-08-09.
 - Pi attempts: none
-- Primary attempts: not eligible while Pi retries remain
-- Current evidence: Target has active upstream lifecycle files; donor adapters cannot replace them wholesale.
+- Primary attempts: not started; direct primary/subagent execution is explicitly authorized, but this final integration seam remains dependency-gated.
+- Current evidence: Target has active upstream lifecycle files; donor adapters cannot replace them wholesale. Accepted issue-008 review proved that the target global `/api` gate is scope-aware and must remain the sole local/tunnel auth authority, while also identifying the packaged CORS session header and exact URL-token artifact-resource allowlists required here. Accepted issue-010 requires this seam to persist and pass the exact previous deployment asset map across restart; ownership records alone are intentionally insufficient deletion authority.
 - Suspension decision: n/a
 - Resume condition: n/a
 - Continuation decision: Enables all OpenChamber UI client/runtime work.
-- Next action: Queue after server DAG acceptance.
+- Next action: Queue after issues 010, 011, and 013 are accepted; implement the narrow durable deployment-state/auth/CORS adapters together with the runtime factory and prove restart plus real core-order integration.
 
 ## issue-015: Restore Interactive UI result and type schemas
 
@@ -948,23 +948,23 @@
 
 ## issue-048: Restore scoped OCIX Style v2 tokens and presets
 
-- Status: READY
+- Status: RESOLVED
 - Classification: NORMAL
 - Goal / user outcome: Fork-rendered surfaces use a coherent Style v2 token/preset contract while all ordinary upstream UI styling remains unchanged.
 - First-principles root cause: Target lacks OCIX theme/preset modules and scoped token definitions.
 - Core acceptance invariant: Every selector is rooted under the explicit OCIX/Artifact/Workbench host scope, presets validate deterministically, no global element/reset/body/theme rule is added, and unsupported tokens fall back safely.
 - Dependencies: issue-015
 - Dispatch order: Style contract before visible feature sections/renderers finalize.
-- Ownership: `packages/ui/src/lib/interactive-ui/stylePresets.ts`; `packages/ui/src/styles/ocix-theme.css`; `packages/ui/src/styles/ocix-presets.css`; one narrow import in the target style entry after discovery.
+- Ownership: `packages/ui/src/lib/interactive-ui/stylePresets.ts`; `packages/ui/src/lib/interactive-ui/stylePresets.test.ts`; `packages/ui/src/styles/ocix-theme.css`; `packages/ui/src/styles/ocix-presets.css`; two narrow ordered imports in `packages/ui/src/index.css`.
 - Focused verification: UI typecheck/build, preset unit checks, selector-scope audit, and target visual smoke proving ordinary UI parity.
-- Pi binding: unassigned
-- Pi attempts: none
-- Primary attempts: not eligible while Pi retries remain
-- Current evidence: Donor owns scoped files but also broad `design-system.css`/`mobile.css` drift that is explicitly excluded.
+- Pi binding: not dispatched; the user suspended all Sol/Pi execution on 2026-08-09, and no issue-048 Pi worktree, session, run, or log was created.
+- Pi attempts: none; direct primary/Luna execution is explicitly authorized.
+- Primary attempts: Luna worker round 1 restored the scoped Style v2 contract and a focused preset test; primary acceptance audited every selector/token/import and retained only the two minimum theme/preset imports. The undefined donor panel-hero slot was completed in default, dark, and every non-linear preset without adding a global rule.
+- Current evidence: 31/31 selectors are rooted under `.ocix-scope` or `.ocix-artifact-dialog`; 47 default tokens and every effective light/dark preset set are complete with no unknown internal references. Focused tests pass 3/3, focused ESLint and isolated production builds pass, and a fresh read-only final reviewer returned SHIP. Full workspace typecheck remains blocked only by the separately ledgered issue-054 missing SDK dependency; unrelated `runtime-url.ts` and untracked UI directories were not touched.
 - Suspension decision: n/a
 - Resume condition: n/a
 - Continuation decision: Enables issues 022/035 and final visual acceptance.
-- Next action: Discover the smallest target style entry import; do not replay donor global CSS.
+- Next action: Resolved; visible renderer/visual issues may consume this scoped contract without importing donor global CSS.
 
 ## issue-049: Restore extension and demo lifecycle acceptance fixtures
 
@@ -1228,27 +1228,27 @@
 
 ## issue-062: Restore signed Marketplace manager flow
 
-- Status: READY
+- Status: RESOLVED
 - Classification: NORMAL
 - Goal / user outcome: Users can inspect and explicitly trust a signed static Marketplace, then install an exactly catalog-bound OCIX package without widening publisher trust or accepting substituted bytes.
 - First-principles root cause: The target lacks Marketplace trust/catalog persistence and bounded catalog/package transport; this is a separate trust chain from direct publisher confirmation and Local lifecycle transactions.
-- Core acceptance invariant: Marketplace URLs are credential-free HTTPS (loopback HTTP only); catalog/package fetches are time- and size-bounded; catalog signatures and exact fingerprints gate persistence; selected id/version/package hash/publisher tuple must match; delegated publisher trust is scoped to the Marketplace and rolls back if installation fails; public snapshots omit keys and filesystem paths.
+- Core acceptance invariant: Marketplace URLs are credential-free HTTPS (loopback HTTP only); catalog/package fetches are time- and size-bounded; catalog signatures and exact fingerprints gate persistence; selected id/version/package hash/publisher tuple must match; a catalog-delegated publisher key is request-bound to that verified install and is never persisted into global publisher trust; public snapshots omit keys and filesystem paths.
 - Dependencies: issue-005, issue-061
 - Dispatch order: Serial Manager extension after direct trust and Local lifecycle freeze; same-file ownership forbids parallel dispatch.
 - Ownership: `packages/web/server/lib/interactive-ui/manager.js`; `packages/web/server/lib/interactive-ui/manager.test.js`.
-- Focused verification: `bun run --cwd packages/web test -- server/lib/interactive-ui/manager.test.js`; Marketplace cases cover confirmation, key conflict, bounded transport, catalog substitution, package hash mismatch, delegated trust rollback, removal, and sanitized listing.
-- Pi binding: unassigned
-- Pi attempts: none
-- Primary attempts: not eligible while Pi retries remain
-- Current evidence: The earliest donor includes the static Marketplace flow, but combining it with issue-005 would mix two independent trust domains and exceed the Pi lane-fit contract.
+- Focused verification: `bun run --cwd packages/web test -- server/lib/interactive-ui/manager.test.js`; Marketplace cases cover confirmation, compatible/conflicting global slots, request-scoped delegated verification, redirect/deadline/size bounds, catalog/package substitution, removal, and sanitized public/error shapes.
+- Pi binding: not dispatched; the user suspended all Sol/Pi execution on 2026-08-09, and no issue-062 Pi worktree, session, run, or log was created.
+- Pi attempts: none; direct primary implementation and acceptance are explicitly authorized.
+- Primary attempts: Direct implementation round 1 restored the signed Marketplace seam. A fresh adversarial audit rejected the first candidate for global delegated-key authority, crash-window trust rollback, redirect bypass, injected-transport hangs, and public/error leakage; primary repair removed durable delegated trust entirely, added a Manager-owned shared deadline and redirect denial, preserved exact global-slot conflicts, and sanitized transport/error data.
+- Current evidence: Manager focused acceptance passes 52/52; Manager + package + hardened built-in runtime passes 80/80. Marketplace installs bind catalog signature, id/name/version/hash, and publisher id/name/keyId/fingerprint while never writing delegated keys to global trust; legacy `marketplace:*` slots cannot authorize Local packages. Catalog/package fetches are redirect-free, deadline- and 2/20 MiB-bounded with non-blocking cleanup; public catalog omits PEM, package URL, and managed paths. The accepted Local staging/activation/state transaction remains reused. A fresh read-only final reviewer returned SHIP; syntax, Web lint, and diff checks pass.
 - Suspension decision: n/a
 - Resume condition: n/a
 - Continuation decision: Enables issues 011 and 014.
-- Next action: Queue after issue-061 acceptance.
+- Next action: Resolved; issue-063 may document the frozen Manager seam and issue-011 may add the serial Remote lifecycle.
 
 ## issue-063: Document the restored Manager seam and security invariants
 
-- Status: READY
+- Status: RESOLVED
 - Classification: NORMAL
 - Goal / user outcome: Maintainers have an accurate owning document for the restored trust, lifecycle, Marketplace, runtime-validation, and activation seams without inheriting claims about unimplemented Remote/Hosted/UI behavior.
 - First-principles root cause: The target has no Interactive UI server documentation, while the donor document describes a much larger descendant implementation.
@@ -1257,14 +1257,14 @@
 - Dispatch order: Docs-only serial closure after the Manager interface freezes; it is split from the security/transaction lanes by policy.
 - Ownership: `packages/web/server/lib/interactive-ui/DOCUMENTATION.md`.
 - Focused verification: Inspect every statement against accepted source/tests and run the narrow Markdown formatting/link check available in the package, or record that no such script exists.
-- Pi binding: unassigned
+- Pi binding: not dispatched; the user suspended all Sol/Pi execution on 2026-08-09, and no issue-063 Pi worktree, session, run, or log was created.
 - Pi attempts: none
-- Primary attempts: not eligible while Pi retries remain
-- Current evidence: The 2026-07-20 donor document is the closest bounded reference but still claims routes/runtime/Agent Runtime behaviors that are not owned by issue-005.
+- Primary attempts: One bounded Luna docs pass read the accepted package, Manager, Marketplace, and Agent Runtime source/tests plus the donor document, then wrote a target-owned document from verified behavior only. Primary review rejected all donor-only availability claims and checked the final statements against the accepted implementations.
+- Current evidence: `packages/web/server/lib/interactive-ui/DOCUMENTATION.md` now records package signature/hash/path/secret bounds, prototype-safe trust, Local transaction/rollback ordering, request-bound Marketplace verification with no global trust write, and the standalone Agent Runtime ownership/transaction boundary. It explicitly states that Remote/Hosted lifecycle, route/runtime/capability/UI/Business Gateway wiring, automatic Agent Runtime reconciliation, and the authoritative durable `previousAssets` seam are not yet implemented. Package Format + Manager + built-in runtime tests pass 80/80; `git diff --check` and a static final-newline/link audit pass. The package defines no Markdown-specific checker.
 - Suspension decision: n/a
 - Resume condition: n/a
-- Continuation decision: Enables final parity issue-055 documentation audit.
-- Next action: Queue after issue-062 acceptance.
+- Continuation decision: Enables final parity issue-055 documentation audit; issue-014 must update this owning document when it lands the durable Agent Runtime/runtime wiring seam.
+- Next action: Resolved; keep the document synchronized as Remote/Hosted/runtime capabilities become accepted.
 
 ## issue-064: Restore a prototype-safe publisher trust manager
 

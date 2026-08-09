@@ -1,0 +1,153 @@
+/*
+ * Interactive UI semantic design layer.
+ *
+ * The host owns every value. Declarative JSON and Native extensions can consume
+ * these variables through the renderer/Host UI Kit, but cannot override them.
+ * OCIX intentionally has one reviewed light palette and one reviewed dark
+ * palette, independent from user-selected OpenChamber accent themes.
+ */
+.ocix-scope {
+  --ocix-surface: oklch(1 0 0);
+  --ocix-surface-muted: oklch(0.965 0.003 285);
+  --ocix-surface-subtle: oklch(0.985 0.002 285);
+  --ocix-border: oklch(0.895 0.008 285);
+  --ocix-foreground: oklch(0.21 0.006 285);
+  --ocix-muted-foreground: oklch(0.46 0.014 285);
+  --ocix-selection: oklch(0.94 0.035 260);
+  --ocix-selection-foreground: oklch(0.34 0.12 260);
+  --ocix-focus-ring: oklch(0.58 0.19 260);
+  --ocix-primary: oklch(0.57 0.2 260);
+  --ocix-primary-foreground: oklch(0.985 0 0);
+
+  --ocix-success: oklch(0.46 0.15 150);
+  --ocix-success-background: oklch(0.96 0.03 150);
+  --ocix-success-border: oklch(0.83 0.07 150);
+  --ocix-warning: oklch(0.48 0.13 65);
+  --ocix-warning-background: oklch(0.965 0.035 85);
+  --ocix-warning-border: oklch(0.84 0.08 80);
+  --ocix-error: oklch(0.52 0.2 27);
+  --ocix-error-background: oklch(0.96 0.025 25);
+  --ocix-error-border: oklch(0.84 0.075 25);
+  --ocix-info: oklch(0.49 0.15 240);
+  --ocix-info-background: oklch(0.96 0.025 240);
+  --ocix-info-border: oklch(0.84 0.07 240);
+
+  --ocix-chart-1: oklch(0.58 0.19 260);
+  --ocix-chart-2: oklch(0.57 0.16 162);
+  --ocix-chart-3: oklch(0.64 0.17 70);
+  --ocix-chart-4: oklch(0.57 0.21 25);
+  --ocix-chart-5: oklch(0.57 0.22 303);
+  --ocix-chart-6: oklch(0.6 0.15 210);
+  --ocix-chart-7: oklch(0.65 0.18 330);
+  --ocix-chart-8: oklch(0.75 0.15 95);
+
+  --ocix-chart-seq-1: oklch(0.94 0.04 260);
+  --ocix-chart-seq-2: oklch(0.84 0.08 260);
+  --ocix-chart-seq-3: oklch(0.73 0.13 260);
+  --ocix-chart-seq-4: oklch(0.62 0.17 260);
+  --ocix-chart-seq-5: oklch(0.51 0.2 260);
+
+  --ocix-delta-up: var(--ocix-success);
+  --ocix-delta-down: var(--ocix-error);
+  --ocix-delta-flat: var(--ocix-muted-foreground);
+
+  --ocix-primary-tint: oklch(0.68 0.16 260);
+  --ocix-primary-shade: oklch(0.5 0.19 260);
+  --ocix-panel-hero-bg: color-mix(in srgb, var(--ocix-primary) 5%, var(--ocix-surface));
+
+  --ocix-radius-sm: 8px;
+  --ocix-radius-md: 12px;
+  --ocix-radius-lg: 16px;
+
+  --ocix-shadow-1: none;
+  --ocix-shadow-2: none;
+
+  min-width: 0;
+  color-scheme: light;
+  color: var(--ocix-foreground);
+}
+
+.dark .ocix-scope,
+[data-theme='dark'] .ocix-scope {
+  --ocix-surface: oklch(0.205 0.006 285);
+  --ocix-surface-muted: oklch(0.265 0.008 285);
+  --ocix-surface-subtle: oklch(0.235 0.007 285);
+  --ocix-border: oklch(0.36 0.012 285);
+  --ocix-foreground: oklch(0.95 0.005 285);
+  --ocix-muted-foreground: oklch(0.72 0.015 286);
+  --ocix-selection: oklch(0.3 0.07 260);
+  --ocix-selection-foreground: oklch(0.9 0.05 260);
+  --ocix-focus-ring: oklch(0.72 0.16 260);
+  --ocix-primary: oklch(0.7 0.17 260);
+  --ocix-primary-foreground: oklch(0.18 0.01 260);
+
+  --ocix-success: oklch(0.74 0.15 150);
+  --ocix-success-background: oklch(0.27 0.045 150);
+  --ocix-success-border: oklch(0.43 0.08 150);
+  --ocix-warning: oklch(0.8 0.14 75);
+  --ocix-warning-background: oklch(0.28 0.045 85);
+  --ocix-warning-border: oklch(0.45 0.075 85);
+  --ocix-error: oklch(0.72 0.18 25);
+  --ocix-error-background: oklch(0.27 0.045 25);
+  --ocix-error-border: oklch(0.45 0.085 25);
+  --ocix-info: oklch(0.74 0.13 240);
+  --ocix-info-background: oklch(0.27 0.04 240);
+  --ocix-info-border: oklch(0.45 0.075 240);
+
+  --ocix-chart-1: oklch(0.72 0.15 260);
+  --ocix-chart-2: oklch(0.76 0.14 162);
+  --ocix-chart-3: oklch(0.82 0.15 75);
+  --ocix-chart-4: oklch(0.74 0.18 25);
+  --ocix-chart-5: oklch(0.75 0.18 303);
+  --ocix-chart-6: oklch(0.72 0.13 210);
+  --ocix-chart-7: oklch(0.75 0.16 330);
+  --ocix-chart-8: oklch(0.84 0.14 95);
+
+  --ocix-chart-seq-1: oklch(0.32 0.05 260);
+  --ocix-chart-seq-2: oklch(0.44 0.09 260);
+  --ocix-chart-seq-3: oklch(0.56 0.13 260);
+  --ocix-chart-seq-4: oklch(0.68 0.15 260);
+  --ocix-chart-seq-5: oklch(0.8 0.13 260);
+
+  --ocix-primary-tint: oklch(0.78 0.13 260);
+  --ocix-primary-shade: oklch(0.62 0.17 260);
+  --ocix-panel-hero-bg: color-mix(in srgb, var(--ocix-primary) 12%, var(--ocix-surface));
+
+  color-scheme: dark;
+}
+
+/*
+ * Typography roles (Style v2). Display is for KPI hero numbers and always
+ * uses tabular numerals; other roles keep using the shared typography-*
+ * utility classes. Roles are global and never vary by style preset.
+ */
+.ocix-scope .ocix-type-display {
+  font-size: 1.5rem;
+  line-height: 2rem;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+}
+
+.ocix-scope .ocix-type-value {
+  font-variant-numeric: tabular-nums;
+}
+
+.ocix-artifact-dialog::backdrop {
+  background: color-mix(in srgb, black 24%, transparent);
+}
+
+.ocix-scope [data-slot="skeleton"] {
+  background: var(--ocix-surface-muted);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ocix-scope *,
+  .ocix-scope *::before,
+  .ocix-scope *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

@@ -6,10 +6,16 @@ import {
   normalizeEd25519PublicKey,
   publicKeyFingerprint,
   verifyExtensionPackage,
+  verifySignedExtensionCatalog,
 } from './package-format.js';
 
 const TRUST_SCHEMA = 'openchamber://extension-trust-store/v1';
 const STATE_SCHEMA = 'openchamber://extension-manager-state/v1';
+const MARKETPLACES_SCHEMA = 'openchamber://extension-marketplaces/v1';
+const MAX_CATALOG_BYTES = 2 * 1024 * 1024;
+const MAX_PACKAGE_BYTES = 20 * 1024 * 1024;
+const FETCH_TIMEOUT_MS = 15_000;
+const MAX_REMOTE_URL_LENGTH = 4_096;
 const MAX_ID_CODE_UNITS = 128;
 const MAX_DISPLAY_NAME_LENGTH = 200;
 const ID_PATTERN = /^[a-z0-9]+(?:[._-][a-z0-9]+)+$/i;
@@ -36,11 +42,15 @@ const clone = (value) => JSON.parse(JSON.stringify(value));
 
 const emptyTrust = () => ({ $schema: TRUST_SCHEMA, publishers: Object.create(null) });
 const emptyState = () => ({ $schema: STATE_SCHEMA, extensions: Object.create(null) });
+const emptyMarketplaces = () => ({ $schema: MARKETPLACES_SCHEMA, marketplaces: Object.create(null) });
 
 const corruptStore = (message = 'Extension trust store is invalid') =>
   new InteractiveUIExtensionManagerError(message, 'manager_data_corrupt', 500);
 
 const corruptState = (message = 'Extension manager state is invalid') =>
+  new InteractiveUIExtensionManagerError(message, 'manager_data_corrupt', 500);
+
+const corruptMarketplaces = (message = 'Extension marketplace store is invalid') =>
   new InteractiveUIExtensionManagerError(message, 'manager_data_corrupt', 500);
 
 // Deterministic code-point ordering. localeCompare is locale-dependent and
@@ -73,6 +83,29 @@ const assertDisplayName = (value, label) => {
   return value.trim();
 };
 
+const normalizeRemoteUrl = (value, label) => {
+  if (typeof value !== 'string' || !value || value.length > MAX_REMOTE_URL_LENGTH || value !== value.trim()) {
+    throw new InteractiveUIExtensionManagerError(`${label} must be an absolute URL`, 'invalid_url');
+  }
+  let parsed;
+  try {
+    parsed = new URL(value);
+  } catch {
+    throw new InteractiveUIExtensionManagerError(`${label} must be an absolute URL`, 'invalid_url');
+  }
+  const loopback = parsed.hostname === '127.0.0.1' || parsed.hostname === 'localhost' || parsed.hostname === '[::1]';
+  if ((parsed.protocol !== 'https:' && !(parsed.protocol === 'http:' && loopback))
+    || parsed.username
+    || parsed.password
+    || parsed.hash) {
+    throw new InteractiveUIExtensionManagerError(
+      `${label} must use credential-free HTTPS (HTTP is allowed only for loopback) and cannot contain a fragment`,
+      'unsafe_url',
+    );
+  }
+  return parsed.toString();
+};
+
 // Source values are exactly manual, package-confirmation, or
 // marketplace:<namespaced-id>; nothing else is accepted or persisted. The
 // prefix is exact lowercase; the namespaced suffix keeps the frozen
@@ -84,6 +117,19 @@ const assertSource = (value) => {
     if (suffix && suffix.length <= MAX_ID_CODE_UNITS && ID_PATTERN.test(suffix)) return value;
   }
   throw new InteractiveUIExtensionManagerError('Publisher key source is invalid', 'invalid_source');
+};
+
+const assertInstallSource = (value) => {
+  if (isRecord(value) && value.type === 'file' && Object.keys(value).length === 1) {
+    return { type: 'file' };
+  }
+  if (isRecord(value) && value.type === 'marketplace' && Object.keys(value).length === 2) {
+    return {
+      type: 'marketplace',
+      marketplaceId: assertNamespacedId(value.marketplaceId, 'Marketplace id'),
+    };
+  }
+  throw new InteractiveUIExtensionManagerError('Extension install source is invalid', 'invalid_install_source');
 };
 
 const assertStoredNamespacedId = (value) => {
@@ -199,6 +245,241 @@ const validateTrustStore = (parsed, cryptoImpl) => {
   return { $schema: TRUST_SCHEMA, publishers };
 };
 
+const validateMarketplaceStore = (parsed, cryptoImpl) => {
+  if (!isRecord(parsed) || parsed.$schema !== MARKETPLACES_SCHEMA || !isRecord(parsed.marketplaces)) {
+    throw corruptMarketplaces();
+  }
+  for (const field of Object.keys(parsed)) {
+    if (field !== '$schema' && field !== 'marketplaces') {
+      throw corruptMarketplaces(`Extension marketplace store has an unknown field: ${field}`);
+    }
+  }
+  const marketplaces = Object.create(null);
+  for (const [marketplaceId, record] of Object.entries(parsed.marketplaces)) {
+    if (!isRecord(record)) throw corruptMarketplaces(`Marketplace ${marketplaceId} is invalid`);
+    for (const field of Object.keys(record)) {
+      if (!['id', 'name', 'keyId', 'catalogUrl', 'publicKey', 'fingerprint', 'addedAt'].includes(field)) {
+        throw corruptMarketplaces(`Marketplace ${marketplaceId} has an unknown field: ${field}`);
+      }
+    }
+    let id;
+    let name;
+    let keyId;
+    let catalogUrl;
+    let publicKey;
+    try {
+      id = assertNamespacedId(marketplaceId, 'Marketplace id');
+      name = assertDisplayName(record.name, 'Marketplace name');
+      keyId = assertKeyId(record.keyId);
+      catalogUrl = normalizeRemoteUrl(record.catalogUrl, 'Marketplace catalog URL');
+      publicKey = normalizeEd25519PublicKey(record.publicKey, cryptoImpl);
+    } catch {
+      throw corruptMarketplaces(`Marketplace ${marketplaceId} contains invalid identity or key data`);
+    }
+    if (record.id !== id
+      || record.name !== name
+      || record.catalogUrl !== catalogUrl
+      || record.publicKey !== publicKey) {
+      throw corruptMarketplaces(`Marketplace ${marketplaceId} contains non-canonical data`);
+    }
+    const fingerprint = publicKeyFingerprint(publicKey, cryptoImpl);
+    if (record.fingerprint !== fingerprint) {
+      throw corruptMarketplaces(`Marketplace ${marketplaceId} fingerprint does not match its stored public key`);
+    }
+    if (typeof record.addedAt !== 'string' || !Number.isFinite(Date.parse(record.addedAt))) {
+      throw corruptMarketplaces(`Marketplace ${marketplaceId} addedAt timestamp is invalid`);
+    }
+    marketplaces[id] = { id, name, keyId, catalogUrl, publicKey, fingerprint, addedAt: record.addedAt };
+  }
+  return { $schema: MARKETPLACES_SCHEMA, marketplaces };
+};
+
+const discardResponseBody = (response) => {
+  try {
+    const pending = response?.body?.cancel?.();
+    Promise.resolve(pending).catch(() => {});
+  } catch {
+    // Remote cleanup is best-effort and must never delay the authoritative error.
+  }
+};
+
+const cancelReader = (reader) => {
+  try {
+    const pending = reader?.cancel?.();
+    Promise.resolve(pending).catch(() => {});
+  } catch {
+    // Remote cleanup is best-effort and must never delay the authoritative error.
+  }
+};
+
+const createRemoteDeadline = (timeoutMs, label) => {
+  const controller = new AbortController();
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => {
+      controller.abort();
+      reject(new InteractiveUIExtensionManagerError(`${label} timed out`, 'remote_timeout', 504));
+    }, timeoutMs);
+    timer.unref?.();
+  });
+  return {
+    signal: controller.signal,
+    run: (operation) => Promise.race([Promise.resolve(operation), timeout]),
+    close: () => clearTimeout(timer),
+  };
+};
+
+const assertUnredirectedResponse = (response, requestedUrl, label) => {
+  let mismatched = response?.redirected === true;
+  if (!mismatched && typeof response?.url === 'string' && response.url) {
+    try {
+      mismatched = normalizeRemoteUrl(response.url, `${label} response URL`) !== requestedUrl;
+    } catch {
+      mismatched = true;
+    }
+  }
+  if (mismatched) {
+    discardResponseBody(response);
+    throw new InteractiveUIExtensionManagerError(
+      `${label} redirects are not allowed`,
+      'remote_redirect_not_allowed',
+      502,
+    );
+  }
+};
+
+const responseBytes = async (response, maxBytes, label, deadline) => {
+  const contentLength = response?.headers?.get?.('content-length');
+  if (contentLength !== null && contentLength !== undefined) {
+    if (!/^\d+$/.test(contentLength)) {
+      discardResponseBody(response);
+      throw new InteractiveUIExtensionManagerError(`${label} response length is invalid`, 'remote_response_invalid', 502);
+    }
+    const declaredLength = Number(contentLength);
+    if (!Number.isSafeInteger(declaredLength) || declaredLength > maxBytes) {
+      discardResponseBody(response);
+      throw new InteractiveUIExtensionManagerError(`${label} exceeds the size limit`, 'remote_content_too_large', 413);
+    }
+  }
+  if (!response?.body?.getReader) {
+    discardResponseBody(response);
+    throw new InteractiveUIExtensionManagerError(`${label} response is not a readable stream`, 'remote_response_invalid', 502);
+  }
+  const reader = response.body.getReader();
+  const chunks = [];
+  let total = 0;
+  try {
+    while (true) {
+      const { done, value } = await deadline.run(reader.read());
+      if (done) break;
+      if (!value || !Number.isSafeInteger(value.byteLength) || value.byteLength < 0) {
+        throw new InteractiveUIExtensionManagerError(`${label} response stream is invalid`, 'remote_response_invalid', 502);
+      }
+      total += value.byteLength;
+      if (!Number.isSafeInteger(total) || total > maxBytes) {
+        throw new InteractiveUIExtensionManagerError(`${label} exceeds the size limit`, 'remote_content_too_large', 413);
+      }
+      chunks.push(Buffer.from(value));
+    }
+  } catch (error) {
+    cancelReader(reader);
+    throw error;
+  } finally {
+    try {
+      reader.releaseLock();
+    } catch {
+      // A hostile releaseLock implementation must not mask the authoritative result.
+    }
+  }
+  return Buffer.concat(chunks, total);
+};
+
+const invalidCatalog = (message) =>
+  new InteractiveUIExtensionManagerError(message, 'invalid_catalog', 400);
+
+const assertCatalogFields = (record, expected, label) => {
+  if (!isRecord(record)) throw invalidCatalog(`${label} is invalid`);
+  for (const field of Object.keys(record)) {
+    if (!expected.has(field)) throw invalidCatalog(`${label} has an unknown field: ${field}`);
+  }
+  for (const field of expected) {
+    if (!Object.prototype.hasOwnProperty.call(record, field)) {
+      throw invalidCatalog(`${label} is missing ${field}`);
+    }
+  }
+};
+
+const normalizeVerifiedCatalog = (catalog, verified, cryptoImpl) => {
+  assertCatalogFields(
+    catalog,
+    new Set(['$schema', 'marketplace', 'generatedAt', 'entries', 'signature']),
+    'Marketplace catalog',
+  );
+  assertCatalogFields(
+    catalog.marketplace,
+    new Set(['id', 'name', 'keyId', 'publicKey']),
+    'Marketplace catalog identity',
+  );
+  assertCatalogFields(
+    catalog.signature,
+    new Set(['algorithm', 'value']),
+    'Marketplace catalog signature',
+  );
+  if (typeof catalog.generatedAt !== 'string' || !Number.isFinite(Date.parse(catalog.generatedAt))) {
+    throw invalidCatalog('Marketplace catalog generatedAt timestamp is invalid');
+  }
+  const marketplace = {
+    id: assertNamespacedId(catalog.marketplace.id, 'Marketplace id'),
+    name: assertDisplayName(catalog.marketplace.name, 'Marketplace name'),
+    keyId: assertKeyId(catalog.marketplace.keyId),
+    publicKey: normalizeEd25519PublicKey(catalog.marketplace.publicKey, cryptoImpl),
+    fingerprint: verified.fingerprint,
+  };
+  if (publicKeyFingerprint(marketplace.publicKey, cryptoImpl) !== marketplace.fingerprint) {
+    throw invalidCatalog('Marketplace catalog fingerprint is invalid');
+  }
+  const entries = catalog.entries.map((entry, index) => {
+    assertCatalogFields(
+      entry,
+      new Set(['id', 'name', 'version', 'packageUrl', 'packageHash', 'publisher']),
+      `Marketplace catalog entry ${index}`,
+    );
+    assertCatalogFields(
+      entry.publisher,
+      new Set(['id', 'name', 'keyId', 'publicKey']),
+      `Marketplace catalog entry ${index} publisher`,
+    );
+    const version = entry.version;
+    if (typeof version !== 'string' || !SEMVER_PATTERN.test(version)) {
+      throw invalidCatalog(`Marketplace catalog entry ${index} version is invalid`);
+    }
+    if (typeof entry.packageHash !== 'string' || !SHA256_PATTERN.test(entry.packageHash)) {
+      throw invalidCatalog(`Marketplace catalog entry ${index} package hash is invalid`);
+    }
+    const publisherPublicKey = normalizeEd25519PublicKey(entry.publisher.publicKey, cryptoImpl);
+    return {
+      id: assertNamespacedId(entry.id, 'Extension id'),
+      name: assertDisplayName(entry.name, 'Extension name'),
+      version,
+      packageUrl: normalizeRemoteUrl(entry.packageUrl, 'Extension package URL'),
+      packageHash: entry.packageHash,
+      publisher: {
+        id: assertNamespacedId(entry.publisher.id, 'Publisher id'),
+        name: assertDisplayName(entry.publisher.name, 'Publisher name'),
+        keyId: assertKeyId(entry.publisher.keyId),
+        publicKey: publisherPublicKey,
+        fingerprint: publicKeyFingerprint(publisherPublicKey, cryptoImpl),
+      },
+    };
+  });
+  return {
+    $schema: catalog.$schema,
+    marketplace,
+    generatedAt: catalog.generatedAt,
+    entries,
+  };
+};
+
 const assertExactStateFields = (record, allowed, label) => {
   for (const field of Object.keys(record)) {
     if (!allowed.has(field)) throw corruptState(`${label} has an unknown field: ${field}`);
@@ -284,7 +565,22 @@ const validateState = (parsed) => {
       if (typeof metadata.generationId !== 'string' || !metadata.generationId) {
         throw corruptState(`Extension ${extensionId}@${version} generation is invalid`);
       }
-      if (!isRecord(metadata.source) || metadata.source.type !== 'file' || Object.keys(metadata.source).length !== 1) {
+      let source;
+      if (isRecord(metadata.source)
+        && metadata.source.type === 'file'
+        && Object.keys(metadata.source).length === 1) {
+        source = { type: 'file' };
+      } else if (isRecord(metadata.source)
+        && metadata.source.type === 'marketplace'
+        && Object.keys(metadata.source).length === 2) {
+        let marketplaceId;
+        try {
+          marketplaceId = assertNamespacedId(metadata.source.marketplaceId, 'Marketplace id');
+        } catch {
+          throw corruptState(`Extension ${extensionId}@${version} Marketplace source is invalid`);
+        }
+        source = { type: 'marketplace', marketplaceId };
+      } else {
         throw corruptState(`Extension ${extensionId}@${version} source is invalid`);
       }
       if (!isRecord(metadata.publisher)) throw corruptState(`Extension ${extensionId}@${version} publisher is invalid`);
@@ -321,7 +617,7 @@ const validateState = (parsed) => {
         packageHash: metadata.packageHash,
         installedAt: assertStoredInstalledAt(metadata.installedAt),
         generationId: metadata.generationId,
-        source: { type: 'file' },
+        source,
         publisher: {
           id: publisherId,
           name: publisherName,
@@ -372,11 +668,20 @@ export const createInteractiveUIExtensionManager = ({
   fsImpl = fsPromises,
   pathImpl = nodePath,
   cryptoImpl = crypto,
+  fetchImpl = globalThis.fetch,
+  fetchTimeoutMs = FETCH_TIMEOUT_MS,
   validateStagedPackage = null,
   reconcileActivation = null,
   logger = console,
 } = {}) => {
-  if (typeof dataDirectory !== 'string' || !dataDirectory.trim() || !fsImpl || !pathImpl || !cryptoImpl) {
+  if (typeof dataDirectory !== 'string'
+    || !dataDirectory.trim()
+    || !fsImpl
+    || !pathImpl
+    || !cryptoImpl
+    || typeof fetchImpl !== 'function'
+    || !Number.isSafeInteger(fetchTimeoutMs)
+    || fetchTimeoutMs <= 0) {
     throw new Error('Interactive UI extension manager dependencies are incomplete');
   }
   if (validateStagedPackage !== null && typeof validateStagedPackage !== 'function') {
@@ -388,6 +693,7 @@ export const createInteractiveUIExtensionManager = ({
   const directory = pathImpl.join(pathImpl.resolve(dataDirectory), 'interactive-ui');
   const trustPath = pathImpl.join(directory, 'trust.json');
   const statePath = pathImpl.join(directory, 'installations.json');
+  const marketplacesPath = pathImpl.join(directory, 'marketplaces.json');
   const versionsDirectory = pathImpl.join(pathImpl.resolve(dataDirectory), 'extensions');
   const stagingDirectory = pathImpl.join(directory, 'staging');
   const trashDirectory = pathImpl.join(directory, 'trash');
@@ -432,6 +738,36 @@ export const createInteractiveUIExtensionManager = ({
     } catch (error) {
       if (temporaryPath) await fsImpl.rm(temporaryPath, { force: true }).catch(() => {});
       throw new InteractiveUIExtensionManagerError('Extension trust store could not be written', 'manager_write_failed', 500);
+    }
+  };
+
+  const readMarketplaceStore = async () => {
+    let content;
+    try {
+      content = await fsImpl.readFile(marketplacesPath, 'utf8');
+    } catch (error) {
+      if (error?.code === 'ENOENT') return emptyMarketplaces();
+      throw corruptMarketplaces('Extension marketplace store is unreadable');
+    }
+    let parsed;
+    try {
+      parsed = JSON.parse(content);
+    } catch {
+      throw corruptMarketplaces('Extension marketplace store is not valid JSON');
+    }
+    return validateMarketplaceStore(parsed, cryptoImpl);
+  };
+
+  const writeMarketplaceStore = async (store) => {
+    let temporaryPath;
+    try {
+      await fsImpl.mkdir(directory, { recursive: true, mode: 0o700 });
+      temporaryPath = `${marketplacesPath}.${cryptoImpl.randomUUID()}.tmp`;
+      await fsImpl.writeFile(temporaryPath, `${JSON.stringify(store, null, 2)}\n`, { mode: 0o600, flag: 'wx' });
+      await fsImpl.rename(temporaryPath, marketplacesPath);
+    } catch {
+      if (temporaryPath) await fsImpl.rm(temporaryPath, { force: true }).catch(() => {});
+      throw new InteractiveUIExtensionManagerError('Extension marketplace store could not be written', 'manager_write_failed', 500);
     }
   };
 
@@ -640,7 +976,12 @@ export const createInteractiveUIExtensionManager = ({
     const store = await readTrustStore();
     const publisher = store.publishers[publisherId];
     if (!publisher) return null;
-    return publisher.keys[keyId] ?? null;
+    const trustedSlot = publisher.keys[keyId] ?? null;
+    // Marketplace-delegated keys, if present in an older durable store, are
+    // never global Local-package authority. Marketplace installs verify the
+    // exact signed catalog entry in their own request-bound transaction.
+    if (trustedSlot?.source?.startsWith(MARKETPLACE_SOURCE_PREFIX)) return null;
+    return trustedSlot;
   };
 
   const verifyTrustedPackage = async (buffer) => {
@@ -719,8 +1060,8 @@ export const createInteractiveUIExtensionManager = ({
     return { removed: true };
   });
 
-  const installPackage = (buffer) => mutate(async () => {
-    const verified = await verifyTrustedPackage(buffer);
+  const installVerifiedPackage = async (verified, { source: sourceValue = { type: 'file' } } = {}) => {
+    const source = assertInstallSource(sourceValue);
     if (verified.manifest.delivery !== undefined) {
       throw new InteractiveUIExtensionManagerError(
         'Only Local OCIX packages are supported by this lifecycle',
@@ -773,7 +1114,7 @@ export const createInteractiveUIExtensionManager = ({
       } catch (error) {
         if (error instanceof InteractiveUIExtensionManagerError) throw error;
         throw new InteractiveUIExtensionManagerError(
-          error instanceof Error ? error.message : 'Staged extension validation failed',
+          'Staged extension validation failed',
           'extension_validation_failed',
           400,
         );
@@ -815,7 +1156,7 @@ export const createInteractiveUIExtensionManager = ({
         packageHash: verified.packageHash,
         installedAt: new Date().toISOString(),
         generationId: cryptoImpl.randomUUID(),
-        source: { type: 'file' },
+        source,
         publisher: {
           id: publisherId,
           name: publisherName,
@@ -840,7 +1181,14 @@ export const createInteractiveUIExtensionManager = ({
       await fsImpl.rm(stagingPath, { recursive: true, force: true }).catch(() => {});
       throw error;
     }
-  });
+  };
+
+  const installPackageInternal = async (buffer) => {
+    const verified = await verifyTrustedPackage(buffer);
+    return installVerifiedPackage(verified);
+  };
+
+  const installPackage = (buffer) => mutate(() => installPackageInternal(buffer));
 
   const setEnabled = (extensionId, enabled) => mutate(async () => {
     const id = assertNamespacedId(extensionId, 'Extension id');
@@ -966,8 +1314,304 @@ export const createInteractiveUIExtensionManager = ({
     return roots;
   });
 
-  const list = async () => {
-    const [store, state] = await Promise.all([readTrustStore(), readState()]);
+  const downloadAndVerifyCatalog = async (catalogUrl, publicKey) => {
+    const deadline = createRemoteDeadline(fetchTimeoutMs, 'Marketplace catalog request');
+    let bytes;
+    try {
+      let response;
+      try {
+        response = await deadline.run(fetchImpl(catalogUrl, {
+          headers: { Accept: 'application/json' },
+          redirect: 'error',
+          signal: deadline.signal,
+        }));
+      } catch (error) {
+        if (error instanceof InteractiveUIExtensionManagerError) throw error;
+        throw new InteractiveUIExtensionManagerError('Marketplace catalog request failed', 'marketplace_unavailable', 502);
+      }
+      assertUnredirectedResponse(response, catalogUrl, 'Marketplace catalog');
+      if (!response?.ok) {
+        discardResponseBody(response);
+        throw new InteractiveUIExtensionManagerError(
+          `Marketplace catalog request failed (${Number.isInteger(response?.status) ? response.status : 'invalid response'})`,
+          'marketplace_unavailable',
+          502,
+        );
+      }
+      bytes = await responseBytes(response, MAX_CATALOG_BYTES, 'Marketplace catalog', deadline);
+    } catch (error) {
+      if (error instanceof InteractiveUIExtensionManagerError) throw error;
+      throw new InteractiveUIExtensionManagerError('Marketplace catalog request failed', 'marketplace_unavailable', 502);
+    } finally {
+      deadline.close();
+    }
+    let catalog;
+    try {
+      catalog = JSON.parse(bytes.toString('utf8'));
+    } catch {
+      throw new InteractiveUIExtensionManagerError('Marketplace catalog is not valid JSON', 'invalid_catalog', 502);
+    }
+    try {
+      const verified = verifySignedExtensionCatalog({ catalog, publicKey, cryptoImpl });
+      return { catalog: normalizeVerifiedCatalog(catalog, verified, cryptoImpl), verified };
+    } catch (error) {
+      if (error instanceof InteractiveUIPackageError) {
+        throw new InteractiveUIExtensionManagerError(error.message, error.code, error.status, error.details);
+      }
+      throw error;
+    }
+  };
+
+  const inspectMarketplaceInternal = async (catalogUrlValue) => {
+    const catalogUrl = normalizeRemoteUrl(catalogUrlValue, 'Marketplace catalog URL');
+    const { catalog } = await downloadAndVerifyCatalog(catalogUrl);
+    return {
+      id: catalog.marketplace.id,
+      name: catalog.marketplace.name,
+      keyId: catalog.marketplace.keyId,
+      catalogUrl,
+      publicKey: catalog.marketplace.publicKey,
+      fingerprint: catalog.marketplace.fingerprint,
+      extensionCount: catalog.entries.length,
+    };
+  };
+
+  const inspectMarketplace = async (catalogUrl) => {
+    const { publicKey: _publicKey, ...inspection } = await inspectMarketplaceInternal(catalogUrl);
+    return inspection;
+  };
+
+  const addMarketplace = (input) => mutate(async () => {
+    if (!isRecord(input)) {
+      throw new InteractiveUIExtensionManagerError('Marketplace input is invalid', 'invalid_marketplace_input');
+    }
+    for (const field of Object.keys(input)) {
+      if (field !== 'catalogUrl' && field !== 'confirmedFingerprint') {
+        throw new InteractiveUIExtensionManagerError(`Marketplace input has an unknown field: ${field}`, 'invalid_marketplace_input');
+      }
+    }
+    const inspected = await inspectMarketplaceInternal(input.catalogUrl);
+    if (input.confirmedFingerprint !== inspected.fingerprint) {
+      const { publicKey: _publicKey, ...details } = inspected;
+      throw new InteractiveUIExtensionManagerError(
+        'Marketplace trust confirmation is required before adding this catalog',
+        'marketplace_confirmation_required',
+        403,
+        details,
+      );
+    }
+    const store = await readMarketplaceStore();
+    const existing = store.marketplaces[inspected.id];
+    if (existing
+      && (existing.fingerprint !== inspected.fingerprint || existing.keyId !== inspected.keyId)) {
+      throw new InteractiveUIExtensionManagerError(
+        'Marketplace already exists with a different signing identity',
+        'marketplace_key_conflict',
+        409,
+      );
+    }
+    store.marketplaces[inspected.id] = {
+      id: inspected.id,
+      name: inspected.name,
+      keyId: inspected.keyId,
+      catalogUrl: inspected.catalogUrl,
+      publicKey: inspected.publicKey,
+      fingerprint: inspected.fingerprint,
+      addedAt: existing?.addedAt ?? new Date().toISOString(),
+    };
+    await writeMarketplaceStore(store);
+    const { publicKey: _publicKey, addedAt: _addedAt, extensionCount: _extensionCount, ...result } = {
+      ...store.marketplaces[inspected.id],
+      extensionCount: inspected.extensionCount,
+    };
+    return result;
+  });
+
+  const removeMarketplace = (marketplaceId) => mutate(async () => {
+    const id = assertNamespacedId(marketplaceId, 'Marketplace id');
+    const store = await readMarketplaceStore();
+    if (!store.marketplaces[id]) {
+      throw new InteractiveUIExtensionManagerError('Marketplace was not found', 'marketplace_not_found', 404);
+    }
+    delete store.marketplaces[id];
+    await writeMarketplaceStore(store);
+    return { removed: true };
+  });
+
+  const fetchMarketplaceCatalogInternal = async (marketplaceId) => {
+    const id = assertNamespacedId(marketplaceId, 'Marketplace id');
+    const store = await readMarketplaceStore();
+    const marketplace = store.marketplaces[id];
+    if (!marketplace) {
+      throw new InteractiveUIExtensionManagerError('Marketplace was not found', 'marketplace_not_found', 404);
+    }
+    const { catalog } = await downloadAndVerifyCatalog(marketplace.catalogUrl, marketplace.publicKey);
+    if (catalog.marketplace.id !== marketplace.id
+      || catalog.marketplace.name !== marketplace.name
+      || catalog.marketplace.keyId !== marketplace.keyId
+      || catalog.marketplace.fingerprint !== marketplace.fingerprint) {
+      throw new InteractiveUIExtensionManagerError(
+        'Marketplace catalog identity does not match its trusted configuration',
+        'catalog_identity_mismatch',
+        403,
+      );
+    }
+    return { marketplace, catalog };
+  };
+
+  const sanitizeMarketplaceCatalog = ({ marketplace, catalog }) => ({
+    marketplace: {
+      id: marketplace.id,
+      name: marketplace.name,
+      keyId: marketplace.keyId,
+      catalogUrl: marketplace.catalogUrl,
+      fingerprint: marketplace.fingerprint,
+      addedAt: marketplace.addedAt,
+    },
+    catalog: {
+      $schema: catalog.$schema,
+      marketplace: {
+        id: catalog.marketplace.id,
+        name: catalog.marketplace.name,
+        keyId: catalog.marketplace.keyId,
+        fingerprint: catalog.marketplace.fingerprint,
+      },
+      generatedAt: catalog.generatedAt,
+      entries: catalog.entries.map((entry) => ({
+        id: entry.id,
+        name: entry.name,
+        version: entry.version,
+        packageHash: entry.packageHash,
+        publisher: {
+          id: entry.publisher.id,
+          name: entry.publisher.name,
+          keyId: entry.publisher.keyId,
+          fingerprint: entry.publisher.fingerprint,
+        },
+      })),
+    },
+  });
+
+  const fetchMarketplaceCatalog = (marketplaceId) =>
+    mutate(async () => sanitizeMarketplaceCatalog(await fetchMarketplaceCatalogInternal(marketplaceId)));
+
+  const verifyMarketplacePackage = async (buffer, entry) => {
+    let verified;
+    try {
+      verified = await verifyExtensionPackage({
+        buffer,
+        cryptoImpl,
+        resolveTrustedPublisherKey: async (publisherId, keyId) =>
+          publisherId === entry.publisher.id && keyId === entry.publisher.keyId
+            ? entry.publisher.publicKey
+            : null,
+      });
+    } catch (error) {
+      if (error instanceof InteractiveUIPackageError) {
+        throw new InteractiveUIExtensionManagerError(
+          'Downloaded extension package failed signed catalog verification',
+          'catalog_package_identity_mismatch',
+          403,
+        );
+      }
+      throw error;
+    }
+    if (verified.packageHash !== entry.packageHash
+      || verified.packageIndex.extension?.id !== entry.id
+      || verified.packageIndex.extension?.name !== entry.name
+      || verified.packageIndex.extension?.version !== entry.version
+      || verified.packageIndex.publisher?.id !== entry.publisher.id
+      || verified.packageIndex.publisher?.name !== entry.publisher.name
+      || verified.packageIndex.publisher?.keyId !== entry.publisher.keyId
+      || verified.publisherFingerprint !== entry.publisher.fingerprint) {
+      throw new InteractiveUIExtensionManagerError(
+        'Downloaded extension package identity does not match the signed catalog entry',
+        'catalog_package_identity_mismatch',
+        403,
+      );
+    }
+    return verified;
+  };
+
+  const assertMarketplacePublisherTrustCompatible = async (entry) => {
+    const store = await readTrustStore();
+    const existing = store.publishers[entry.publisher.id]?.keys?.[entry.publisher.keyId];
+    if (existing && existing.fingerprint !== entry.publisher.fingerprint) {
+      throw new InteractiveUIExtensionManagerError(
+        `Publisher key ${entry.publisher.id}/${entry.publisher.keyId} already exists with a different fingerprint`,
+        'publisher_key_conflict',
+        409,
+      );
+    }
+  };
+
+  const installFromMarketplace = (marketplaceIdValue, extensionIdValue, versionValue) => mutate(async () => {
+    const marketplaceId = assertNamespacedId(marketplaceIdValue, 'Marketplace id');
+    const extensionId = assertNamespacedId(extensionIdValue, 'Extension id');
+    if (typeof versionValue !== 'string' || !SEMVER_PATTERN.test(versionValue)) {
+      throw new InteractiveUIExtensionManagerError('Extension version is invalid', 'invalid_version');
+    }
+    const { catalog } = await fetchMarketplaceCatalogInternal(marketplaceId);
+    const entry = catalog.entries.find(
+      (candidate) => candidate.id === extensionId && candidate.version === versionValue,
+    );
+    if (!entry) {
+      throw new InteractiveUIExtensionManagerError(
+        'Marketplace extension version was not found',
+        'marketplace_entry_not_found',
+        404,
+      );
+    }
+    await assertMarketplacePublisherTrustCompatible(entry);
+    const deadline = createRemoteDeadline(fetchTimeoutMs, 'Extension package download');
+    let buffer;
+    try {
+      let response;
+      try {
+        response = await deadline.run(fetchImpl(entry.packageUrl, {
+          headers: { Accept: 'application/vnd.openchamber.ocix+zip' },
+          redirect: 'error',
+          signal: deadline.signal,
+        }));
+      } catch (error) {
+        if (error instanceof InteractiveUIExtensionManagerError) throw error;
+        throw new InteractiveUIExtensionManagerError('Extension package download failed', 'package_download_failed', 502);
+      }
+      assertUnredirectedResponse(response, entry.packageUrl, 'Extension package');
+      if (!response?.ok) {
+        discardResponseBody(response);
+        throw new InteractiveUIExtensionManagerError(
+          `Extension package download failed (${Number.isInteger(response?.status) ? response.status : 'invalid response'})`,
+          'package_download_failed',
+          502,
+        );
+      }
+      buffer = await responseBytes(response, MAX_PACKAGE_BYTES, 'Extension package', deadline);
+    } catch (error) {
+      if (error instanceof InteractiveUIExtensionManagerError) throw error;
+      throw new InteractiveUIExtensionManagerError('Extension package download failed', 'package_download_failed', 502);
+    } finally {
+      deadline.close();
+    }
+    if (packageHash(cryptoImpl, buffer) !== entry.packageHash) {
+      throw new InteractiveUIExtensionManagerError(
+        'Downloaded extension package hash does not match the signed catalog',
+        'catalog_package_hash_mismatch',
+        403,
+      );
+    }
+    const verified = await verifyMarketplacePackage(buffer, entry);
+    return installVerifiedPackage(verified, {
+      source: { type: 'marketplace', marketplaceId },
+    });
+  });
+
+  const list = () => mutate(async () => {
+    const [store, state, marketplaceStore] = await Promise.all([
+      readTrustStore(),
+      readState(),
+      readMarketplaceStore(),
+    ]);
     const publishers = Object.keys(store.publishers).sort(compareCodePoints).map((publisherId) => {
       const publisher = store.publishers[publisherId];
       return {
@@ -982,10 +1626,16 @@ export const createInteractiveUIExtensionManager = ({
     const extensions = Object.keys(state.extensions)
       .sort(compareCodePoints)
       .map((extensionId) => sanitizeExtension(state.extensions[extensionId]));
-    return { apiVersion: 1, extensions, publishers, marketplaces: [] };
-  };
+    const marketplaces = Object.keys(marketplaceStore.marketplaces)
+      .sort(compareCodePoints)
+      .map((marketplaceId) => {
+        const { publicKey: _publicKey, ...marketplace } = marketplaceStore.marketplaces[marketplaceId];
+        return marketplace;
+      });
+    return { apiVersion: 1, extensions, publishers, marketplaces };
+  });
 
-  const inspectPackage = async (buffer) => {
+  const inspectPackageInternal = async (buffer) => {
     // Embedded keys verify only package self-consistency. Host trust comes
     // exclusively from the resolver, which returns the stored public key of an
     // OWN exact durable publisher/key slot (or null).
@@ -1034,11 +1684,21 @@ export const createInteractiveUIExtensionManager = ({
     };
   };
 
+  // Inspection reads the same trust authority as installation. Queue it with
+  // mutations so a Marketplace delegation that later rolls back is never
+  // exposed as a transient trusted snapshot.
+  const inspectPackage = (buffer) => mutate(() => inspectPackageInternal(buffer));
+
   return {
     inspectPackage,
     trustPublisher,
     removeTrustedPublisherKey,
     installPackage,
+    inspectMarketplace,
+    addMarketplace,
+    removeMarketplace,
+    fetchMarketplaceCatalog,
+    installFromMarketplace,
     setEnabled,
     rollback,
     uninstall,

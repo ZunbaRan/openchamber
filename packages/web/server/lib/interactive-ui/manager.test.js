@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import AdmZip from 'adm-zip';
 import {
+  createSignedExtensionCatalog,
   createExtensionPackage,
   generatePublisherKeyPair,
   publicKeyFingerprint,
@@ -36,6 +37,7 @@ const createManager = async (options = {}) => {
 
 const trustPathFor = (dataDirectory) => path.join(dataDirectory, 'interactive-ui', 'trust.json');
 const statePathFor = (dataDirectory) => path.join(dataDirectory, 'interactive-ui', 'installations.json');
+const marketplacesPathFor = (dataDirectory) => path.join(dataDirectory, 'interactive-ui', 'marketplaces.json');
 const versionsPathFor = (dataDirectory) => path.join(dataDirectory, 'extensions');
 const stagingPathFor = (dataDirectory) => path.join(dataDirectory, 'interactive-ui', 'staging');
 const trashPathFor = (dataDirectory) => path.join(dataDirectory, 'interactive-ui', 'trash');
@@ -92,6 +94,52 @@ const signPackage = async ({
     createdAt: '2026-07-18T00:00:00.000Z',
   });
   return { ...packed, keys };
+};
+
+const createMarketplaceFixture = async ({
+  marketplaceKeys = generatePublisherKeyPair(),
+  publisherKeys = generatePublisherKeyPair(),
+  marketplaceId = 'com.acme.marketplace',
+  marketplaceName = 'Acme Marketplace',
+  marketplaceKeyId = 'catalog-2026',
+  extensionId = 'com.acme.operations',
+  extensionName = 'Acme Operations',
+  version = '1.0.0',
+  publisherId = 'com.acme.publisher',
+  publisherName = 'Acme',
+  publisherKeyId = 'release-2026',
+  packageUrl = 'https://extensions.example.com/operations.ocix',
+} = {}) => {
+  const packed = await signPackage({
+    keys: publisherKeys,
+    keyId: publisherKeyId,
+    publisherId,
+    publisherName,
+    extensionId,
+    version,
+  });
+  const entry = {
+    id: extensionId,
+    name: extensionName,
+    version,
+    packageUrl,
+    packageHash: packed.packageHash,
+    publisher: {
+      id: publisherId,
+      name: publisherName,
+      keyId: publisherKeyId,
+      publicKey: publisherKeys.publicKey,
+    },
+  };
+  const catalog = createSignedExtensionCatalog({
+    marketplaceId,
+    marketplaceName,
+    keyId: marketplaceKeyId,
+    privateKey: marketplaceKeys.privateKey,
+    entries: [entry],
+    generatedAt: '2026-08-09T00:00:00.000Z',
+  });
+  return { marketplaceKeys, publisherKeys, packed, entry, catalog };
 };
 
 describe('Interactive UI extension trust manager', () => {
@@ -274,6 +322,24 @@ describe('Interactive UI extension trust manager', () => {
       await expect(manager.trustPublisher({ ...base, keyId: 'k-bad', source }))
         .rejects.toMatchObject({ code: 'invalid_source', status: 400 });
     }
+  });
+
+  it('never lets a legacy Marketplace-scoped trust slot authorize a Local package', async () => {
+    const { dataDirectory, manager } = await createManager();
+    const packed = await signPackage();
+    await manager.trustPublisher({
+      id: 'com.acme.publisher',
+      name: 'Acme',
+      keyId: 'release-2026',
+      publicKey: packed.keys.publicKey,
+      source: 'marketplace:com.acme.market',
+    });
+    const trustBefore = await fs.readFile(trustPathFor(dataDirectory));
+
+    await expect(manager.installPackage(packed.buffer))
+      .rejects.toMatchObject({ code: 'publisher_untrusted', status: 403 });
+    expect(await fs.readFile(trustPathFor(dataDirectory))).toEqual(trustBefore);
+    expect((await manager.list()).extensions).toEqual([]);
   });
 
   it('rejects invalid publisher ids, key ids, names, and public keys', async () => {
@@ -1114,6 +1180,574 @@ describe('Interactive UI extension trust manager', () => {
 
       await expect(manager.list()).rejects.toMatchObject({ code: 'manager_data_corrupt', status: 500 });
       await expect(manager.getEnabledExtensionRoots()).rejects.toMatchObject({ code: 'manager_data_corrupt', status: 500 });
+    });
+  });
+
+  describe('signed Marketplace manager flow', () => {
+    it('requires fingerprint confirmation and persists only a sanitized reloadable Marketplace record', async () => {
+      const { dataDirectory } = await createManager();
+      const fixture = await createMarketplaceFixture();
+      const catalogUrl = 'https://extensions.example.com/catalog.json';
+      const fetchImpl = async (url) => String(url) === catalogUrl
+        ? new Response(JSON.stringify(fixture.catalog), { status: 200 })
+        : new Response('not found', { status: 404 });
+      const manager = managerAt(dataDirectory, { fetchImpl });
+
+      const inspection = await manager.inspectMarketplace(catalogUrl);
+      expect(inspection).toEqual({
+        id: 'com.acme.marketplace',
+        name: 'Acme Marketplace',
+        keyId: 'catalog-2026',
+        catalogUrl,
+        fingerprint: publicKeyFingerprint(fixture.marketplaceKeys.publicKey),
+        extensionCount: 1,
+      });
+      expect(JSON.stringify(inspection)).not.toContain('BEGIN PUBLIC KEY');
+      await expect(manager.addMarketplace({ catalogUrl }))
+        .rejects.toMatchObject({ code: 'marketplace_confirmation_required', details: inspection });
+      await expect(manager.addMarketplace({
+        catalogUrl,
+        confirmedFingerprint: inspection.fingerprint,
+        publicKey: fixture.marketplaceKeys.publicKey,
+      })).rejects.toMatchObject({ code: 'invalid_marketplace_input' });
+
+      expect(await manager.addMarketplace({
+        catalogUrl,
+        confirmedFingerprint: inspection.fingerprint,
+      })).toEqual({
+        id: 'com.acme.marketplace',
+        name: 'Acme Marketplace',
+        keyId: 'catalog-2026',
+        catalogUrl,
+        fingerprint: inspection.fingerprint,
+      });
+      expect((await fs.stat(marketplacesPathFor(dataDirectory))).mode & 0o777).toBe(0o600);
+      expect((await fs.stat(path.dirname(marketplacesPathFor(dataDirectory)))).mode & 0o777).toBe(0o700);
+
+      const snapshot = await managerAt(dataDirectory, { fetchImpl }).list();
+      expect(snapshot.marketplaces).toEqual([expect.objectContaining({
+        id: 'com.acme.marketplace',
+        keyId: 'catalog-2026',
+        catalogUrl,
+        fingerprint: inspection.fingerprint,
+      })]);
+      const fetched = await manager.fetchMarketplaceCatalog('com.acme.marketplace');
+      expect(fetched.catalog.entries[0]).toMatchObject({
+        id: 'com.acme.operations',
+        version: '1.0.0',
+        publisher: {
+          id: 'com.acme.publisher',
+          name: 'Acme',
+          keyId: 'release-2026',
+          fingerprint: publicKeyFingerprint(fixture.publisherKeys.publicKey),
+        },
+      });
+      const serialized = JSON.stringify({ snapshot, fetched });
+      expect(serialized).not.toContain('BEGIN PUBLIC KEY');
+      expect(serialized).not.toContain(dataDirectory);
+      expect(serialized).not.toContain(fixture.entry.packageUrl);
+
+      expect(await manager.removeMarketplace('com.acme.marketplace')).toEqual({ removed: true });
+      expect((await manager.list()).marketplaces).toEqual([]);
+      await expect(manager.removeMarketplace('com.acme.marketplace'))
+        .rejects.toMatchObject({ code: 'marketplace_not_found', status: 404 });
+    });
+
+    it('installs an exactly catalog-bound package with scoped trust and Marketplace provenance', async () => {
+      const { dataDirectory } = await createManager();
+      const fixture = await createMarketplaceFixture();
+      const catalogUrl = 'https://extensions.example.com/catalog.json';
+      const fetchImpl = async (url) => {
+        if (String(url) === catalogUrl) return new Response(JSON.stringify(fixture.catalog), { status: 200 });
+        if (String(url) === fixture.entry.packageUrl) return new Response(fixture.packed.buffer, { status: 200 });
+        return new Response('not found', { status: 404 });
+      };
+      const manager = managerAt(dataDirectory, {
+        fetchImpl,
+        validateStagedPackage: async () => {},
+        reconcileActivation: async () => ({
+          openCode: { changed: true, reloaded: true, external: false },
+          rollback: async () => {},
+        }),
+      });
+      const inspection = await manager.inspectMarketplace(catalogUrl);
+      await manager.addMarketplace({ catalogUrl, confirmedFingerprint: inspection.fingerprint });
+
+      const installed = await manager.installFromMarketplace(
+        'com.acme.marketplace',
+        'com.acme.operations',
+        '1.0.0',
+      );
+      expect(installed.installed).toBe(true);
+      expect(installed.extension.versions['1.0.0'].source).toEqual({
+        type: 'marketplace',
+        marketplaceId: 'com.acme.marketplace',
+      });
+      const snapshot = await manager.list();
+      expect(snapshot.publishers).toEqual([]);
+      expect(snapshot.extensions[0].versions['1.0.0'].source).toEqual({
+        type: 'marketplace',
+        marketplaceId: 'com.acme.marketplace',
+      });
+      const durable = JSON.parse(await fs.readFile(statePathFor(dataDirectory), 'utf8'));
+      expect(durable.extensions['com.acme.operations'].versions['1.0.0'].source).toEqual({
+        type: 'marketplace',
+        marketplaceId: 'com.acme.marketplace',
+      });
+      expect(JSON.stringify({ installed, snapshot })).not.toContain('BEGIN PUBLIC KEY');
+      expect(JSON.stringify({ installed, snapshot })).not.toContain(dataDirectory);
+      expect(JSON.stringify({ installed, snapshot })).not.toContain(fixture.entry.packageUrl);
+
+      const uncatalogued = await signPackage({
+        keys: fixture.publisherKeys,
+        extensionId: 'com.acme.uncatalogued',
+      });
+      await expect(manager.installPackage(uncatalogued.buffer))
+        .rejects.toMatchObject({ code: 'publisher_untrusted', status: 403 });
+      await manager.removeMarketplace('com.acme.marketplace');
+      await expect(manager.installPackage(uncatalogued.buffer))
+        .rejects.toMatchObject({ code: 'publisher_untrusted', status: 403 });
+      expect((await manager.list()).publishers).toEqual([]);
+    });
+
+    it('rejects unsafe catalog and package URLs before trusting or downloading package bytes', async () => {
+      const { dataDirectory } = await createManager();
+      let fetchCalls = 0;
+      const manager = managerAt(dataDirectory, { fetchImpl: async () => { fetchCalls += 1; throw new Error('unexpected'); } });
+      for (const value of [
+        'http://extensions.example.com/catalog.json',
+        'https://user:secret@extensions.example.com/catalog.json',
+        'https://extensions.example.com/catalog.json#signed-but-not-sent',
+      ]) {
+        await expect(manager.inspectMarketplace(value)).rejects.toMatchObject({ code: 'unsafe_url' });
+      }
+      expect(fetchCalls).toBe(0);
+
+      const unsafeFixture = await createMarketplaceFixture({
+        packageUrl: 'http://extensions.example.com/operations.ocix',
+      });
+      const unsafeManager = managerAt(dataDirectory, {
+        fetchImpl: async () => new Response(JSON.stringify(unsafeFixture.catalog), { status: 200 }),
+      });
+      await expect(unsafeManager.inspectMarketplace('https://extensions.example.com/catalog.json'))
+        .rejects.toMatchObject({ code: 'unsafe_url' });
+    });
+
+    it('forbids redirects for both catalog and package transport', async () => {
+      const { dataDirectory } = await createManager();
+      const fixture = await createMarketplaceFixture();
+      const catalogUrl = 'https://extensions.example.com/catalog.json';
+      const redirects = [];
+      let redirectCatalog = true;
+      let redirectPackage = false;
+      const redirected = (url) => ({
+        ok: true,
+        status: 200,
+        redirected: true,
+        url,
+        body: { cancel: async () => {} },
+      });
+      const fetchImpl = async (url, options) => {
+        redirects.push(options.redirect);
+        if (String(url) === catalogUrl) {
+          if (redirectCatalog) return redirected('http://remote.example.com/catalog.json');
+          return new Response(JSON.stringify(fixture.catalog), { status: 200 });
+        }
+        if (redirectPackage) return redirected('http://remote.example.com/operations.ocix');
+        return new Response(fixture.packed.buffer, { status: 200 });
+      };
+      const manager = managerAt(dataDirectory, {
+        fetchImpl,
+        validateStagedPackage: async () => {},
+        reconcileActivation: async () => ({ openCode: {}, rollback: async () => {} }),
+      });
+
+      await expect(manager.inspectMarketplace(catalogUrl))
+        .rejects.toMatchObject({ code: 'remote_redirect_not_allowed', status: 502 });
+      redirectCatalog = false;
+      const inspection = await manager.inspectMarketplace(catalogUrl);
+      await manager.addMarketplace({ catalogUrl, confirmedFingerprint: inspection.fingerprint });
+      redirectPackage = true;
+      await expect(manager.installFromMarketplace('com.acme.marketplace', 'com.acme.operations', '1.0.0'))
+        .rejects.toMatchObject({ code: 'remote_redirect_not_allowed', status: 502 });
+      expect(redirects.every((value) => value === 'error')).toBe(true);
+    });
+
+    it('enforces its own shared deadline even when injected transport ignores abort', async () => {
+      const { dataDirectory } = await createManager();
+      const fixture = await createMarketplaceFixture();
+      const catalogUrl = 'https://extensions.example.com/catalog.json';
+      let mode = 'fetch-hang';
+      let bodyCancelled = false;
+      const never = () => new Promise(() => {});
+      const fetchImpl = async (url) => {
+        if (mode === 'fetch-hang') return never();
+        if (String(url) === catalogUrl) {
+          if (mode === 'body-hang') {
+            return {
+              ok: true,
+              status: 200,
+              headers: { get: () => null },
+              body: {
+                getReader: () => ({
+                  read: never,
+                  cancel: async () => { bodyCancelled = true; },
+                  releaseLock: () => {},
+                }),
+              },
+            };
+          }
+          return new Response(JSON.stringify(fixture.catalog), { status: 200 });
+        }
+        if (mode === 'package-hang') return never();
+        return new Response(fixture.packed.buffer, { status: 200 });
+      };
+      const manager = managerAt(dataDirectory, {
+        fetchImpl,
+        fetchTimeoutMs: 20,
+        validateStagedPackage: async () => {},
+        reconcileActivation: async () => ({ openCode: {}, rollback: async () => {} }),
+      });
+
+      await expect(manager.inspectMarketplace(catalogUrl))
+        .rejects.toMatchObject({ code: 'remote_timeout', status: 504 });
+      mode = 'ok';
+      const inspection = await manager.inspectMarketplace(catalogUrl);
+      await manager.addMarketplace({ catalogUrl, confirmedFingerprint: inspection.fingerprint });
+      mode = 'body-hang';
+      await expect(manager.fetchMarketplaceCatalog('com.acme.marketplace'))
+        .rejects.toMatchObject({ code: 'remote_timeout', status: 504 });
+      expect(bodyCancelled).toBe(true);
+      mode = 'package-hang';
+      await expect(manager.installFromMarketplace('com.acme.marketplace', 'com.acme.operations', '1.0.0'))
+        .rejects.toMatchObject({ code: 'remote_timeout', status: 504 });
+      mode = 'ok';
+      await expect(manager.fetchMarketplaceCatalog('com.acme.marketplace')).resolves.toBeDefined();
+    });
+
+    it('cancels non-OK and oversized Marketplace bodies without consuming or masking them', async () => {
+      const { dataDirectory } = await createManager();
+      const fixture = await createMarketplaceFixture();
+      const catalogUrl = 'https://extensions.example.com/catalog.json';
+      const discarded = { catalog: false, declared: false, package: false, packageDeclared: false };
+      const consumed = { catalog: false, declared: false, package: false, packageDeclared: false };
+      const discardBody = (slot) => ({
+        cancel: async () => { discarded[slot] = true; },
+        getReader: () => { consumed[slot] = true; throw new Error('must not consume'); },
+      });
+      let streamCancelled = false;
+      let packageStreamCancelled = false;
+      let releaseCalled = false;
+      const reader = {
+        read: async () => ({ done: false, value: Buffer.alloc(2 * 1024 * 1024 + 1) }),
+        cancel: async () => { streamCancelled = true; },
+        releaseLock: () => { releaseCalled = true; throw new Error('release failure'); },
+      };
+      let mode = 'ok';
+      const fetchImpl = async (url) => {
+        if (String(url) === catalogUrl) {
+          if (mode === 'catalog-non-ok') return { ok: false, status: 500, body: discardBody('catalog') };
+          if (mode === 'catalog-declared') {
+            return {
+              ok: true,
+              status: 200,
+              headers: { get: () => String(2 * 1024 * 1024 + 1) },
+              body: discardBody('declared'),
+            };
+          }
+          if (mode === 'catalog-stream') {
+            return { ok: true, status: 200, headers: { get: () => null }, body: { getReader: () => reader } };
+          }
+          return new Response(JSON.stringify(fixture.catalog), { status: 200 });
+        }
+        if (mode === 'package-non-ok') return { ok: false, status: 503, body: discardBody('package') };
+        if (mode === 'package-declared') {
+          return {
+            ok: true,
+            status: 200,
+            headers: { get: () => String(20 * 1024 * 1024 + 1) },
+            body: discardBody('packageDeclared'),
+          };
+        }
+        if (mode === 'package-stream') {
+          return {
+            ok: true,
+            status: 200,
+            headers: { get: () => null },
+            body: {
+              getReader: () => ({
+                read: async () => ({ done: false, value: { byteLength: 20 * 1024 * 1024 + 1 } }),
+                cancel: async () => { packageStreamCancelled = true; },
+                releaseLock: () => {},
+              }),
+            },
+          };
+        }
+        return new Response(fixture.packed.buffer, { status: 200 });
+      };
+      const manager = managerAt(dataDirectory, {
+        fetchImpl,
+        validateStagedPackage: async () => {},
+        reconcileActivation: async () => ({ openCode: {}, rollback: async () => {} }),
+      });
+      const inspection = await manager.inspectMarketplace(catalogUrl);
+      await manager.addMarketplace({ catalogUrl, confirmedFingerprint: inspection.fingerprint });
+
+      mode = 'catalog-non-ok';
+      await expect(manager.inspectMarketplace(catalogUrl)).rejects.toMatchObject({ code: 'marketplace_unavailable' });
+      expect(discarded.catalog).toBe(true);
+      expect(consumed.catalog).toBe(false);
+      mode = 'catalog-declared';
+      await expect(manager.inspectMarketplace(catalogUrl)).rejects.toMatchObject({ code: 'remote_content_too_large' });
+      expect(discarded.declared).toBe(true);
+      expect(consumed.declared).toBe(false);
+      mode = 'catalog-stream';
+      const overflow = await manager.inspectMarketplace(catalogUrl).catch((error) => error);
+      expect(overflow).toMatchObject({ code: 'remote_content_too_large', status: 413 });
+      expect(overflow.message).toBe('Marketplace catalog exceeds the size limit');
+      expect(streamCancelled).toBe(true);
+      expect(releaseCalled).toBe(true);
+      mode = 'package-non-ok';
+      await expect(manager.installFromMarketplace('com.acme.marketplace', 'com.acme.operations', '1.0.0'))
+        .rejects.toMatchObject({ code: 'package_download_failed', status: 502 });
+      expect(discarded.package).toBe(true);
+      expect(consumed.package).toBe(false);
+      mode = 'package-declared';
+      await expect(manager.installFromMarketplace('com.acme.marketplace', 'com.acme.operations', '1.0.0'))
+        .rejects.toMatchObject({ code: 'remote_content_too_large', status: 413 });
+      expect(discarded.packageDeclared).toBe(true);
+      expect(consumed.packageDeclared).toBe(false);
+      mode = 'package-stream';
+      await expect(manager.installFromMarketplace('com.acme.marketplace', 'com.acme.operations', '1.0.0'))
+        .rejects.toMatchObject({ code: 'remote_content_too_large', status: 413 });
+      expect(packageStreamCancelled).toBe(true);
+    });
+
+    it('rejects catalog key substitution, package hash substitution, and exact tuple mismatch', async () => {
+      const { dataDirectory } = await createManager();
+      const fixture = await createMarketplaceFixture();
+      const substitutedCatalog = (await createMarketplaceFixture({
+        publisherKeys: fixture.publisherKeys,
+      })).catalog;
+      const catalogUrl = 'https://extensions.example.com/catalog.json';
+      let catalog = fixture.catalog;
+      let packageBytes = fixture.packed.buffer;
+      const fetchImpl = async (url) => String(url) === catalogUrl
+        ? new Response(JSON.stringify(catalog), { status: 200 })
+        : new Response(packageBytes, { status: 200 });
+      const manager = managerAt(dataDirectory, {
+        fetchImpl,
+        validateStagedPackage: async () => {},
+        reconcileActivation: async () => ({ openCode: {}, rollback: async () => {} }),
+      });
+      const inspection = await manager.inspectMarketplace(catalogUrl);
+      await manager.addMarketplace({ catalogUrl, confirmedFingerprint: inspection.fingerprint });
+
+      catalog = substitutedCatalog;
+      await expect(manager.fetchMarketplaceCatalog('com.acme.marketplace'))
+        .rejects.toMatchObject({ code: 'marketplace_key_conflict', status: 409 });
+      catalog = fixture.catalog;
+      packageBytes = Buffer.concat([fixture.packed.buffer, Buffer.from('substitution')]);
+      await expect(manager.installFromMarketplace('com.acme.marketplace', 'com.acme.operations', '1.0.0'))
+        .rejects.toMatchObject({ code: 'catalog_package_hash_mismatch', status: 403 });
+
+      const tupleFixture = await createMarketplaceFixture({
+        marketplaceKeys: fixture.marketplaceKeys,
+        publisherKeys: fixture.publisherKeys,
+        extensionName: 'Catalog Alias',
+      });
+      catalog = tupleFixture.catalog;
+      packageBytes = tupleFixture.packed.buffer;
+      await expect(manager.installFromMarketplace('com.acme.marketplace', 'com.acme.operations', '1.0.0'))
+        .rejects.toMatchObject({ code: 'catalog_package_identity_mismatch', status: 403 });
+      expect((await manager.list()).extensions).toEqual([]);
+    });
+
+    it('does not leak publisher keys on signed tuple mismatch', async () => {
+      const { dataDirectory } = await createManager();
+      const fixture = await createMarketplaceFixture();
+      const catalogUrl = 'https://extensions.example.com/catalog.json';
+      let catalog = fixture.catalog;
+      const fetchImpl = async (url) => String(url) === catalogUrl
+        ? new Response(JSON.stringify(catalog), { status: 200 })
+        : new Response(fixture.packed.buffer, { status: 200 });
+      const manager = managerAt(dataDirectory, {
+        fetchImpl,
+        validateStagedPackage: async () => {},
+        reconcileActivation: async () => ({ openCode: {}, rollback: async () => {} }),
+      });
+      const inspection = await manager.inspectMarketplace(catalogUrl);
+      await manager.addMarketplace({ catalogUrl, confirmedFingerprint: inspection.fingerprint });
+      catalog = createSignedExtensionCatalog({
+        marketplaceId: 'com.acme.marketplace',
+        marketplaceName: 'Acme Marketplace',
+        keyId: 'catalog-2026',
+        privateKey: fixture.marketplaceKeys.privateKey,
+        generatedAt: '2026-08-09T00:00:00.000Z',
+        entries: [{
+          ...fixture.entry,
+          publisher: {
+            ...fixture.entry.publisher,
+            id: 'com.acme.substituted-publisher',
+          },
+        }],
+      });
+
+      const error = await manager.installFromMarketplace(
+        'com.acme.marketplace',
+        'com.acme.operations',
+        '1.0.0',
+      ).catch((caught) => caught);
+      expect(error).toMatchObject({ code: 'catalog_package_identity_mismatch', status: 403 });
+      const publicError = JSON.stringify({ message: error.message, code: error.code, details: error.details });
+      expect(publicError).not.toContain('BEGIN PUBLIC KEY');
+      expect(publicError).not.toContain(dataDirectory);
+    });
+
+    it('preserves compatible global trust and rejects a conflicting global slot before package download', async () => {
+      const { dataDirectory } = await createManager();
+      const fixture = await createMarketplaceFixture();
+      const catalogUrl = 'https://extensions.example.com/catalog.json';
+      let packageFetches = 0;
+      const fetchImpl = async (url) => {
+        if (String(url) === catalogUrl) return new Response(JSON.stringify(fixture.catalog), { status: 200 });
+        packageFetches += 1;
+        return new Response(fixture.packed.buffer, { status: 200 });
+      };
+      const manager = managerAt(dataDirectory, {
+        fetchImpl,
+        validateStagedPackage: async () => {},
+        reconcileActivation: async () => ({ openCode: {}, rollback: async () => {} }),
+      });
+      const inspection = await manager.inspectMarketplace(catalogUrl);
+      await manager.addMarketplace({ catalogUrl, confirmedFingerprint: inspection.fingerprint });
+      await manager.trustPublisher({
+        id: 'com.acme.publisher',
+        name: 'Acme',
+        keyId: 'release-2026',
+        publicKey: fixture.publisherKeys.publicKey,
+      });
+      await manager.installFromMarketplace('com.acme.marketplace', 'com.acme.operations', '1.0.0');
+      expect((await manager.list()).publishers[0].keys[0].source).toBe('manual');
+
+      const conflictingDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'ocix-manager-'));
+      temporaryDirectories.push(conflictingDirectory);
+      let conflictingPackageFetches = 0;
+      const conflicting = managerAt(conflictingDirectory, {
+        fetchImpl: async (url) => {
+          if (String(url) === catalogUrl) return new Response(JSON.stringify(fixture.catalog), { status: 200 });
+          conflictingPackageFetches += 1;
+          return new Response(fixture.packed.buffer, { status: 200 });
+        },
+        validateStagedPackage: async () => {},
+        reconcileActivation: async () => ({ openCode: {}, rollback: async () => {} }),
+      });
+      const conflictingInspection = await conflicting.inspectMarketplace(catalogUrl);
+      await conflicting.addMarketplace({ catalogUrl, confirmedFingerprint: conflictingInspection.fingerprint });
+      await conflicting.trustPublisher({
+        id: 'com.acme.publisher',
+        name: 'Acme',
+        keyId: 'release-2026',
+        publicKey: generatePublisherKeyPair().publicKey,
+      });
+      await expect(conflicting.installFromMarketplace(
+        'com.acme.marketplace',
+        'com.acme.operations',
+        '1.0.0',
+      )).rejects.toMatchObject({ code: 'publisher_key_conflict', status: 409 });
+      expect(conflictingPackageFetches).toBe(0);
+      expect(packageFetches).toBe(1);
+    });
+
+    it('keeps Marketplace verification request-scoped when installation fails and serializes public snapshots', async () => {
+      const { dataDirectory } = await createManager();
+      const fixture = await createMarketplaceFixture();
+      const catalogUrl = 'https://extensions.example.com/catalog.json';
+      const fetchImpl = async (url) => String(url) === catalogUrl
+        ? new Response(JSON.stringify(fixture.catalog), { status: 200 })
+        : new Response(fixture.packed.buffer, { status: 200 });
+      let releaseValidation;
+      let validationStarted;
+      const started = new Promise((resolve) => { validationStarted = resolve; });
+      const validationGate = new Promise((resolve) => { releaseValidation = resolve; });
+      let failValidation = false;
+      const manager = managerAt(dataDirectory, {
+        fetchImpl,
+        validateStagedPackage: async () => {
+          validationStarted();
+          await validationGate;
+          if (failValidation) throw new Error('invalid staged runtime');
+        },
+        reconcileActivation: async () => ({ openCode: {}, rollback: async () => {} }),
+      });
+      const inspection = await manager.inspectMarketplace(catalogUrl);
+      await manager.addMarketplace({ catalogUrl, confirmedFingerprint: inspection.fingerprint });
+      const installing = manager.installFromMarketplace('com.acme.marketplace', 'com.acme.operations', '1.0.0');
+      await started;
+      let listSettled = false;
+      const listing = manager.list().then((value) => { listSettled = true; return value; });
+      await Promise.resolve();
+      expect(listSettled).toBe(false);
+      releaseValidation();
+      await installing;
+      expect((await listing).extensions).toHaveLength(1);
+      expect((await manager.list()).publishers).toEqual([]);
+
+      await manager.uninstall('com.acme.operations');
+      failValidation = true;
+      releaseValidation = () => {};
+      await expect(manager.installFromMarketplace('com.acme.marketplace', 'com.acme.operations', '1.0.0'))
+        .rejects.toMatchObject({ code: 'extension_validation_failed' });
+      expect((await manager.list()).publishers).toEqual([]);
+      await expect(fs.stat(path.join(versionsPathFor(dataDirectory), 'com.acme.operations')))
+        .rejects.toMatchObject({ code: 'ENOENT' });
+    });
+
+    it('fails visibly on corrupt Marketplace state without mutating global trust', async () => {
+      const { dataDirectory } = await createManager();
+      const fixture = await createMarketplaceFixture();
+      const catalogUrl = 'https://extensions.example.com/catalog.json';
+      const fetchImpl = async (url) => String(url) === catalogUrl
+        ? new Response(JSON.stringify(fixture.catalog), { status: 200 })
+        : new Response(fixture.packed.buffer, { status: 200 });
+      const healthy = managerAt(dataDirectory, { fetchImpl });
+      const inspection = await healthy.inspectMarketplace(catalogUrl);
+      await healthy.addMarketplace({ catalogUrl, confirmedFingerprint: inspection.fingerprint });
+      const stored = JSON.parse(await fs.readFile(marketplacesPathFor(dataDirectory), 'utf8'));
+      stored.marketplaces['com.acme.marketplace'].publicKey = 'not-a-key';
+      await fs.writeFile(marketplacesPathFor(dataDirectory), JSON.stringify(stored));
+      await expect(healthy.list()).rejects.toMatchObject({ code: 'manager_data_corrupt', status: 500 });
+
+      stored.marketplaces['com.acme.marketplace'].publicKey = fixture.marketplaceKeys.publicKey;
+      await fs.writeFile(marketplacesPathFor(dataDirectory), JSON.stringify(stored));
+      let trustWrites = 0;
+      const failingFs = {
+        ...fs,
+        writeFile: async (filePath, ...rest) => {
+          if (String(filePath).includes('trust.json.') && String(filePath).endsWith('.tmp')) {
+            trustWrites += 1;
+            if (trustWrites === 2) throw new Error('rollback disk failure');
+          }
+          return fs.writeFile(filePath, ...rest);
+        },
+      };
+      const failing = managerAt(dataDirectory, {
+        fsImpl: failingFs,
+        fetchImpl,
+        validateStagedPackage: async ({ directory }) => { throw new Error(directory); },
+        reconcileActivation: async () => ({ openCode: {}, rollback: async () => {} }),
+        logger: { error: () => {} },
+      });
+      const validationError = await failing.installFromMarketplace(
+        'com.acme.marketplace',
+        'com.acme.operations',
+        '1.0.0',
+      ).catch((error) => error);
+      expect(validationError).toMatchObject({ code: 'extension_validation_failed', status: 400 });
+      expect(validationError.message).toBe('Staged extension validation failed');
+      expect(validationError.message).not.toContain(dataDirectory);
+      expect(trustWrites).toBe(0);
+      expect((await failing.list()).publishers).toEqual([]);
     });
   });
 

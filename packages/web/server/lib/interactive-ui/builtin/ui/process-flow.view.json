@@ -1,0 +1,23 @@
+{
+  "$schema": "openchamber://declarative-view/v1",
+  "id": "com.openchamber.builtin.interactive-ui.process-flow",
+  "layout": {
+    "type": "stack",
+    "children": [
+      {
+        "type": "section",
+        "title": "流程概览",
+        "children": [
+          {
+            "type": "text",
+            "value": { "$path": "data.summary", "fallback": "由 Agent 生成的交互式流程" }
+          }
+        ]
+      },
+      {
+        "type": "flow",
+        "data": { "$path": "data.steps", "fallback": [] }
+      }
+    ]
+  }
+}
