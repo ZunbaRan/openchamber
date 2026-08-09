@@ -86,25 +86,25 @@
 - Continuation decision: Enables issue-005; aggregate Phase 3 verification will rerun this test from the integration tree once its three authoritative peer modules land.
 - Next action: Commit the accepted package-format boundary, clean the exact Pi artifacts immediately, then dispatch issue-005 from the new immutable base.
 
-## issue-005: Restore extension trust, install, update, rollback, and uninstall
+## issue-005: Restore publisher trust review and persistence
 
-- Status: READY
-- Classification: NORMAL
-- Goal / user outcome: Signed extensions move through trust/install/update/rollback/uninstall atomically without deleting valid prior state on failure.
-- First-principles root cause: The target has no authoritative Extension Manager or trust store.
-- Core acceptance invariant: Publisher slot/fingerprint and package identity are enforced; conflicts fail closed; failed writes preserve the prior installed version and unmanaged OpenCode files.
+- Status: OPEN
+- Classification: P0
+- Goal / user outcome: A signed OCIX package can be inspected and its publisher key can be explicitly trusted without exposing key material or confusing self-consistent signatures with host trust.
+- First-principles root cause: The target has no persistent publisher trust review module, while the donor Manager combines this trust domain with unrelated installation, Marketplace, runtime-validation, and Agent Runtime transactions.
+- Core acceptance invariant: Embedded-key signature verification proves only package self-consistency; trust requires an exact fingerprint confirmation or explicit trust mutation; publisher/key-id conflicts fail closed; corrupt persisted trust fails visibly; public snapshots never expose public-key material or managed paths.
 - Dependencies: issue-004
-- Dispatch order: Serial after package validation.
+- Dispatch order: First serial Manager slice after package validation. issue-061 extends the same files only after this trust interface is accepted and committed.
 - Ownership: `packages/web/server/lib/interactive-ui/manager.js`; `packages/web/server/lib/interactive-ui/manager.test.js`.
-- Focused verification: Run focused manager tests covering trust, conflict, update, rollback, uninstall, failure atomicity, and unmanaged-file preservation.
-- Pi binding: unassigned
-- Pi attempts: none
-- Primary attempts: not eligible while Pi retries remain
-- Current evidence: Donor manager/test are large feature-owned files; target has neither.
+- Focused verification: `bun run --cwd packages/web test -- server/lib/interactive-ui/manager.test.js`; tests cover untrusted/trusted inspection, exact fingerprint trust, key-slot conflict, corrupt trust, serialized persistence, and sanitized snapshots.
+- Pi binding: exhausted run/session `8a212230-2777-4819-bb87-c6ee1c5fef81`, base `236d172edb9c959915461ef1b4e28c5c85abe159`, final revision 2, host/Pi PIDs null, supervised-local without sandbox. Revision 2 settled `needs-attention` without a handoff after two corrections; host Git evidence was policy-clean with exactly the two owned files and digest `0dcbec91a676ccddb2c51533f52fa19d6904e1f0a5637f2eee68c8819276cc9b`. The exact Pi worktree and run directory were removed after the OPEN/P0 report; absence and worktree deregistration were verified without touching other sessions.
+- Pi attempts: correction 1 requested after the paused revision-0 turn synthesized forbidden scratch dependency/test-runner substitutes and primary verification proved the test helper returned the Manager directly while fourteen tests expected `{ manager, dataDirectory }`; 14/15 Manager tests failed before exercising production behavior. The same review also found the newly invented source regex rejected the already-frozen future `marketplace:<namespaced-id>` provenance format. Correction 2 (final Pi attempt) requested after correction 1 reached 25/27 combined tests: the two failures were test-spec errors (`not-namespaced` is valid under the frozen ID grammar, and lexically sorted IDs were compared with numeric order). The final packet also closes the same trust-validation root cause by bounding publisher IDs, rejecting unknown persisted fields, and using locale-independent ordering.
+- Primary attempts: attempt 1 repaired the first fresh Sol finding by applying the existing 128-code-unit namespaced-ID assertion to verified extension and publisher IDs before constructing the public snapshot, with independently over-bound signed-package regressions. Attempt 2 (final permitted primary repair) closes the second fresh Sol finding: the trusted-key resolver now validates publisher/key IDs before object lookup, and the public result returns only the validated string key ID; a signed single-element-array key ID can no longer coerce into a trusted string slot. Both primary repair attempts are exhausted.
+- Current evidence: Every donor revision imports unresolved `runtime.js` and `agent-runtime.js` and grows from 718/350 lines to 4726/6925 lines, proving whole-file restoration is neither dependency-ready nor lane-fit. Pi revision 0 was paused for a forbidden scratch dependency workaround; corrections 1-2 produced a policy-clean candidate that passed 29/29. Fresh Sol review found unbounded signed-package public IDs; primary repair 1 closed it. A second fresh Sol review found signed array `keyId` coercion before trusted-slot lookup; primary repair 2 closed it. The repaired candidate passed 31/31 focused tests, 140/140 combined server regressions, `lint:web`, syntax, and diff checks; `type-check:web` still reported only pre-existing issue-054. Final fresh Sol review nevertheless reproduced an uncovered prototype-slot failure: `KEY_ID_PATTERN` accepts valid names such as `toString`, but each publisher's `keys` map is a plain `{}`. For a new publisher, `keys.toString` resolves to the inherited function, so `??=` skips the own assignment while the method reports `added: true` and writes no trusted key. For an existing publisher it can instead compare the inherited function's missing fingerprint and falsely raise `publisher_key_conflict`. Removal treats the inherited member as present, `delete` is a no-op, and may report `{ removed: true }` for a key that never existed. The same family includes `hasOwnProperty`, `valueOf`, and other regex-valid Object prototype names. This violates durable trust truthfulness even though the current tests are green. Candidate hashes before withdrawal were `manager.js` `5aab1e74...` and `manager.test.js` `6501af29...`.
 - Suspension decision: n/a
-- Resume condition: n/a
-- Continuation decision: Enables route/runtime and client-manager issues.
-- Next action: Queue behind issue-004.
+- Resume condition: Explicitly authorize a new repair budget after accepting a frozen repair design: use own-property slot checks plus direct own assignment (or null-prototype internal maps), cover first trust, existing-publisher conflict, list, remove, and persistence reload for `toString`-style valid key IDs, then restart fresh Sol review from a clean candidate.
+- Continuation decision: Blocks issue-061 and, transitively, issues 010, 011, 014, 049, 055, 062, and 063. Independent accepted work remains schedulable, but this Manager lane must not be integrated.
+- Next action: No further issue-005 implementation work under the exhausted budget. Keep the Manager files absent from the integration tree and await explicit authorization matching the resume condition.
 
 ## issue-006: Restore the Connector Secret Store authority boundary
 
@@ -193,7 +193,7 @@
 - Goal / user outcome: The managed server installs and reloads the built-in OCIX Agent Runtime tools/skills without conflicts or external package requirements.
 - First-principles root cause: The target has no built-in OCIX runtime package or loader.
 - Core acceptance invariant: Tool/Skill assets are deterministic, conflict-safe, reloadable, and never overwrite unmanaged OpenCode files; missing/corrupt assets fail explicitly.
-- Dependencies: issue-004, issue-005
+- Dependencies: issue-004, issue-061
 - Dispatch order: Serial after package/manager contracts. This cohesive packaged fixture may own more than five asset files, but any change outside the built-in runtime asset/loader boundary requires replan before dispatch.
 - Ownership: `packages/web/server/lib/interactive-ui/agent-runtime.js`; `packages/web/server/lib/interactive-ui/builtin-runtime.js`; `packages/web/server/lib/interactive-ui/builtin-runtime.test.js`; `packages/web/server/lib/interactive-ui/builtin/**`.
 - Focused verification: Run built-in runtime tests and inspect installed manifest/tool/skill hashes plus conflict/cleanup behavior.
@@ -213,7 +213,7 @@
 - Goal / user outcome: A signed Remote Manifest URL plus Access Key can be inspected/connected with publisher identity, permission review, and consent preserved.
 - First-principles root cause: The target lacks Remote OCIX manifest lifecycle and hosted adapter.
 - Core acceptance invariant: Inspect does not fetch signed resources; manifest identity/signature/slot/key requests are request-bound; credentials remain server-side; failed reconnect does not clear a valid shell.
-- Dependencies: issue-004, issue-005, issue-006, issue-008, issue-012, issue-058, issue-060
+- Dependencies: issue-004, issue-005, issue-006, issue-008, issue-012, issue-058, issue-060, issue-062
 - Dispatch order: Serial remote trust-domain lane before cache/update behavior.
 - Ownership: `packages/web/server/lib/interactive-ui/routes.remote.test.js`.
 - Focused verification: Run focused Remote route tests against the accepted Manager/routes/Remote verifier/cache contracts; prove inspect/connect separation, signature/slot/key errors, non-retention, and valid-shell preservation.
@@ -273,7 +273,7 @@
 - Goal / user outcome: Web/Electron managed runtimes initialize OCIX services once, expose `interactive-ui.ocix.v1`, and route explicit endpoints before the generic OpenCode proxy.
 - First-principles root cause: The target lifecycle has no fork runtime factory, explicit route registration, or capability publication.
 - Core acceptance invariant: Initialization is deterministic/fail-closed, route order is explicit, cleanup is complete, and unsupported runtimes report a reduced capability instead of silent emptiness.
-- Dependencies: issues 005-013
+- Dependencies: issues 005-013, issue-061, issue-062
 - Dispatch order: Final server integration seam after authoritative modules are accepted.
 - Ownership: `packages/web/server/lib/opencode/feature-routes-runtime.js`; `packages/web/server/lib/opencode/feature-routes-runtime.test.js`; `packages/web/server/lib/opencode/core-routes.js`; `packages/web/server/lib/interactive-ui/runtime.js`; `packages/web/server/lib/interactive-ui/runtime.test.js`.
 - Focused verification: Run focused feature-route/runtime tests; inspect explicit route-before-proxy ordering and cleanup/capability behavior.
@@ -383,7 +383,7 @@
 - Current evidence: Files are donor-only and must use target RuntimeAPIs primitives.
 - Suspension decision: n/a
 - Resume condition: n/a
-- Continuation decision: Enables issues 035-042.
+- Continuation decision: Enables issue-024 and issues 035-042.
 - Next action: Queue behind issue-014.
 
 ## issue-020: Restore routing and remote-review client state
@@ -473,18 +473,18 @@
 - Goal / user outcome: Agent Generated HTML renders in the intended sandbox with explicit loading/error/stale state and stable execution surface.
 - First-principles root cause: The target has no Artifact view/state host.
 - Core acceptance invariant: Sanitized content stays sandboxed, failure is visible, frame lifecycle is deterministic, and no business/native privilege is available.
-- Dependencies: issue-017, issue-023
+- Dependencies: issue-017, issue-019, issue-023
 - Dispatch order: Host after schema/bridge.
 - Ownership: `packages/ui/src/components/interactive-ui/HTMLArtifactView.tsx`; `packages/ui/src/components/interactive-ui/HTMLArtifactStateNotice.tsx`; `packages/ui/src/components/interactive-ui/HTMLArtifactStateNotice.test.tsx`; `packages/ui/src/components/interactive-ui/DOCUMENTATION.md`.
 - Focused verification: Run state/Artifact focused tests and UI typecheck; inspect sandbox flags, error/fallback, remount, and privilege boundary.
 - Pi binding: unassigned
 - Pi attempts: none
 - Primary attempts: not eligible while Pi retries remain
-- Current evidence: Donor files include later uncommitted confirmation changes; whole-file donor copying is not accepted without source reconciliation.
+- Current evidence: Source reconciliation proves every safe donor generation of the host depends on `materializeHTMLArtifact` and the typed `artifactState` classifier owned by issue-019. Rendering `envelope.html` directly would bypass the server materialization/sanitization boundary, while importing the donor modules before issue-019 would leave the package uncompilable. Later donor revisions also mix Installed Artifact, Business Gateway, Workbench, routing-observer, and Electron Runner responsibilities, so whole-file donor copying remains excluded.
 - Suspension decision: n/a
 - Resume condition: n/a
 - Continuation decision: Enables issue-025 and issue-026.
-- Next action: Queue after issues 017/023.
+- Next action: Queue after issue-019 resolves; restore only the agent-generated browser iframe host, keep business/native execution excluded, and leave the shared execution-surface integration to issue-047.
 
 ## issue-025: Restore Installed Artifact host confirmation write safety
 
@@ -973,7 +973,7 @@
 - Goal / user outcome: Signed OCIX install/demo/start/stop/system flows run deterministically against the real product and clean every created process/state artifact.
 - First-principles root cause: Target has no fork acceptance fixture/orchestration scripts.
 - Core acceptance invariant: Fixtures are self-contained, port/process/state ownership is exact, cleanup is truthful on success/failure, and no user OpenCode data is touched.
-- Dependencies: issues 004-014
+- Dependencies: issues 004-014, issue-061, issue-062
 - Dispatch order: Acceptance infrastructure after server product path passes focused tests. Cohesive script suite may exceed five files; freeze exact script-only paths before dispatch.
 - Ownership: `scripts/interactive-ui-demo*.mjs`; `scripts/interactive-ui-extension*.mjs`; `scripts/interactive-ui-system-test.mjs`; `scripts/lib/interactive-ui-demo-lifecycle.mjs`.
 - Focused verification: Run lifecycle/extension tests and one isolated system smoke; verify zero leftover process/temp state.
@@ -1093,7 +1093,7 @@
 - Goal / user outcome: The delivered OpenChamber looks and behaves like official `v1.18.1` everywhere except the minimum retained Fork feature surfaces and adapters.
 - First-principles root cause: The donor branch carries broad upstream divergence alongside valid Fork features.
 - Core acceptance invariant: Every changed path is classified F/A; upstream-owned U paths are identical unless a reviewed narrow adapter is allowlisted; global CSS/theme/brand drift is zero; duplicate D paths are absent.
-- Dependencies: issues 004-054
+- Dependencies: issues 004-054, issue-061, issue-062, issue-063
 - Dispatch order: Final cleanup/diff gate after all feature lanes, before fresh reviewer.
 - Ownership: `docs/P0_FORK_FEATURE_ALLOWLIST.md`; only paths proven by the final target diff to violate its F/A/U/D rules. Primary owns ledger/roadmap/evidence wording.
 - Focused verification: Exact `v1.18.1..HEAD` name/status/stat/diff audit, scoped-selector audit, typecheck/lint/build, visual golden comparison, and all P0 product gates.
@@ -1205,3 +1205,63 @@
 - Resume condition: n/a
 - Continuation decision: Enables issue-011 Remote connect/consent and Manager preflight.
 - Next action: Commit dependency wave D and clean the exact Pi worktree/run immediately; issue-011 and Manager preflight may consume the accepted verifier.
+
+## issue-061: Restore transactional Local extension lifecycle
+
+- Status: READY
+- Classification: NORMAL
+- Goal / user outcome: Trusted Local OCIX packages install, update, enable/disable, roll back, and uninstall without leaving files, durable state, or activation state partially applied.
+- First-principles root cause: The target has no persistent installation lifecycle, and the donor hard-wires not-yet-restored runtime validation and Agent Runtime reconciliation into the same implementation.
+- Core acceptance invariant: Verification precedes extraction; all extracted paths remain under a unique staging root; mutations serialize; staged validation occurs before activation; durable state, version roots, and injected activation changes either commit together or roll back; same-version/different-content conflicts fail; uninstall is recoverable; externally owned activation files are never touched by this module.
+- Dependencies: issue-005
+- Dispatch order: Serial extension of the accepted Manager trust interface; same-file ownership forbids parallel dispatch.
+- Ownership: `packages/web/server/lib/interactive-ui/manager.js`; `packages/web/server/lib/interactive-ui/manager.test.js`.
+- Focused verification: `bun run --cwd packages/web test -- server/lib/interactive-ui/manager.test.js`; lifecycle cases cover install/update/idempotence/version conflict, enable/disable, rollback history, failed validation, failed state commit, activation rollback, and recoverable uninstall.
+- Pi binding: unassigned
+- Pi attempts: none
+- Primary attempts: not eligible while Pi retries remain
+- Current evidence: The 2026-07-20 donor contains the causal transaction shape but directly imports unresolved modules. The settled seam keeps one deep Manager interface and accepts two internal adapters at construction: a staged-package validator and an activation reconciler; production adapters arrive from issues 014 and 010, while lifecycle tests use local stand-ins.
+- Suspension decision: n/a
+- Resume condition: n/a
+- Continuation decision: Enables issues 010 and 062; issue-014 waits for both.
+- Next action: Queue immediately after issue-005 is accepted and committed.
+
+## issue-062: Restore signed Marketplace manager flow
+
+- Status: READY
+- Classification: NORMAL
+- Goal / user outcome: Users can inspect and explicitly trust a signed static Marketplace, then install an exactly catalog-bound OCIX package without widening publisher trust or accepting substituted bytes.
+- First-principles root cause: The target lacks Marketplace trust/catalog persistence and bounded catalog/package transport; this is a separate trust chain from direct publisher confirmation and Local lifecycle transactions.
+- Core acceptance invariant: Marketplace URLs are credential-free HTTPS (loopback HTTP only); catalog/package fetches are time- and size-bounded; catalog signatures and exact fingerprints gate persistence; selected id/version/package hash/publisher tuple must match; delegated publisher trust is scoped to the Marketplace and rolls back if installation fails; public snapshots omit keys and filesystem paths.
+- Dependencies: issue-005, issue-061
+- Dispatch order: Serial Manager extension after direct trust and Local lifecycle freeze; same-file ownership forbids parallel dispatch.
+- Ownership: `packages/web/server/lib/interactive-ui/manager.js`; `packages/web/server/lib/interactive-ui/manager.test.js`.
+- Focused verification: `bun run --cwd packages/web test -- server/lib/interactive-ui/manager.test.js`; Marketplace cases cover confirmation, key conflict, bounded transport, catalog substitution, package hash mismatch, delegated trust rollback, removal, and sanitized listing.
+- Pi binding: unassigned
+- Pi attempts: none
+- Primary attempts: not eligible while Pi retries remain
+- Current evidence: The earliest donor includes the static Marketplace flow, but combining it with issue-005 would mix two independent trust domains and exceed the Pi lane-fit contract.
+- Suspension decision: n/a
+- Resume condition: n/a
+- Continuation decision: Enables issues 011 and 014.
+- Next action: Queue after issue-061 acceptance.
+
+## issue-063: Document the restored Manager seam and security invariants
+
+- Status: READY
+- Classification: NORMAL
+- Goal / user outcome: Maintainers have an accurate owning document for the restored trust, lifecycle, Marketplace, runtime-validation, and activation seams without inheriting claims about unimplemented Remote/Hosted/UI behavior.
+- First-principles root cause: The target has no Interactive UI server documentation, while the donor document describes a much larger descendant implementation.
+- Core acceptance invariant: Documentation states only accepted behavior, exact ownership and adapter responsibilities, failure/rollback semantics, and focused commands; it must not claim unresolved routes, Remote/Hosted lifecycle, Agent Runtime integration, or UI availability.
+- Dependencies: issue-005, issue-061, issue-062
+- Dispatch order: Docs-only serial closure after the Manager interface freezes; it is split from the security/transaction lanes by policy.
+- Ownership: `packages/web/server/lib/interactive-ui/DOCUMENTATION.md`.
+- Focused verification: Inspect every statement against accepted source/tests and run the narrow Markdown formatting/link check available in the package, or record that no such script exists.
+- Pi binding: unassigned
+- Pi attempts: none
+- Primary attempts: not eligible while Pi retries remain
+- Current evidence: The 2026-07-20 donor document is the closest bounded reference but still claims routes/runtime/Agent Runtime behaviors that are not owned by issue-005.
+- Suspension decision: n/a
+- Resume condition: n/a
+- Continuation decision: Enables final parity issue-055 documentation audit.
+- Next action: Queue after issue-062 acceptance.
