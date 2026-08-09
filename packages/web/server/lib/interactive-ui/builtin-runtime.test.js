@@ -432,6 +432,28 @@ describe('production built-in Interactive UI Agent Runtime package', () => {
       versionsDirectory,
     })).rejects.toMatchObject({ code: 'agent_runtime_source_invalid', status: 500 });
 
+    const remoteSymlinkId = 'com.example.remote-escape';
+    await fs.symlink(outside, path.join(versionsDirectory, remoteSymlinkId));
+    const remoteEscaped = {
+      ...escaped,
+      id: remoteSymlinkId,
+      versions: {
+        '1.0.0': {
+          ...escaped.versions['1.0.0'],
+          delivery: 'remote',
+          source: {
+            type: 'remote',
+            appEntryUrl: 'https://apps.example.com/manifest.json',
+          },
+        },
+      },
+    };
+    await expect(reconcileOpenCodeAgentRuntime({
+      state: { extensions: { [remoteEscaped.id]: remoteEscaped } },
+      configDirectory,
+      versionsDirectory,
+    })).rejects.toMatchObject({ code: 'agent_runtime_source_invalid', status: 500 });
+
     const hosted = {
       ...escaped,
       id: 'com.example.hosted',
@@ -483,6 +505,73 @@ describe('production built-in Interactive UI Agent Runtime package', () => {
     expect(result.assets['tools/hosted_tool.ts'].version).toBe('2.0.0');
     expect(await fs.readFile(path.join(configDirectory, 'tools', 'hosted_tool.ts'), 'utf8'))
       .toContain('2.0.0');
+  });
+
+  it('materializes a Manager-owned Direct Remote shell from the versions store', async () => {
+    const versionsDirectory = await createConfig('ocix-remote-versions-');
+    const hostedCacheDirectory = await createConfig('ocix-remote-hosted-cache-');
+    const configDirectory = await createConfig('ocix-remote-config-');
+    const remoteToolContent = 'export default { source: "remote" };\n';
+    const remote = await createExtensionRuntime({
+      versionsDirectory,
+      id: 'com.example.remote-runtime',
+      version: '1.0.0',
+      tool: { name: 'remote_tool', content: remoteToolContent },
+    });
+    await createExtensionRuntime({
+      versionsDirectory: hostedCacheDirectory,
+      id: remote.id,
+      version: '1.0.0',
+      tool: { name: 'remote_tool', content: 'export default { source: "poisoned-hosted-cache" };\n' },
+    });
+    remote.versions['1.0.0'].delivery = 'remote';
+    remote.versions['1.0.0'].source = {
+      type: 'remote',
+      appEntryUrl: 'https://apps.example.com/manifest.json',
+    };
+    remote.versions['1.0.0'].remote = {
+      status: 'active',
+      connectorRefs: [{ id: 'crm', origin: 'https://api.example.com', authType: 'api-key' }],
+    };
+
+    const first = await reconcileOpenCodeAgentRuntime({
+      state: { extensions: { [remote.id]: remote } },
+      previousAssets: {},
+      configDirectory,
+      versionsDirectory,
+      hostedCacheDirectory,
+    });
+    expect(first.assets['tools/remote_tool.ts']).toMatchObject({
+      extensionId: remote.id,
+      version: '1.0.0',
+      kind: 'tool',
+      name: 'remote_tool',
+    });
+    await expect(fs.readFile(path.join(configDirectory, 'tools', 'remote_tool.ts'), 'utf8'))
+      .resolves.toBe(remoteToolContent);
+    expect(first.assets['tools/remote_tool.ts'].sha256).toBe(digest(remoteToolContent));
+
+    const reloaded = await reconcileOpenCodeAgentRuntime({
+      state: { extensions: { [remote.id]: remote } },
+      previousAssets: first.assets,
+      configDirectory,
+      versionsDirectory,
+      hostedCacheDirectory,
+    });
+    expect(reloaded.changed).toBe(false);
+
+    remote.enabled = false;
+    const cleaned = await reconcileOpenCodeAgentRuntime({
+      state: { extensions: { [remote.id]: remote } },
+      previousAssets: reloaded.assets,
+      configDirectory,
+      versionsDirectory,
+      hostedCacheDirectory,
+    });
+    expect(cleaned.changed).toBe(true);
+    expect(cleaned.assets).toEqual({});
+    await expect(fs.stat(path.join(configDirectory, 'tools', 'remote_tool.ts')))
+      .rejects.toMatchObject({ code: 'ENOENT' });
   });
 
   it('publishes ownership only after assets and removes ownership only after assets', async () => {

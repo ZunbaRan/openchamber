@@ -208,23 +208,23 @@
 
 ## issue-011: Restore Direct Remote manifest connection and consent
 
-- Status: READY
+- Status: RESOLVED
 - Classification: NORMAL
 - Goal / user outcome: A signed Remote Manifest URL plus Access Key can be inspected/connected with publisher identity, permission review, and consent preserved.
-- First-principles root cause: The target lacks Remote OCIX manifest lifecycle and hosted adapter.
-- Core acceptance invariant: Inspect does not fetch signed resources; manifest identity/signature/slot/key requests are request-bound; credentials remain server-side; failed reconnect does not clear a valid shell.
+- First-principles root cause: The accepted target routes, signed Remote verifier, connection store, resource cache, and Hosted kernel exist, but the accepted Manager exposes neither `inspectRemote`/`connectRemote` nor a strict Remote shell/durable-state transaction. The original test-only ownership could never make those routes executable.
+- Core acceptance invariant: Inspect does not fetch signed resources; manifest identity/signature/slot/key requests are request-bound; credentials remain server-side; installation-scoped consent is independently anchored without widening Local trust; stale capabilities, failed reconnects, and failure cleanup cannot overwrite/delete another owner's credential or filesystem path.
 - Dependencies: issue-004, issue-005, issue-006, issue-008, issue-012, issue-058, issue-060, issue-062
 - Dispatch order: Serial remote trust-domain lane before cache/update behavior.
-- Ownership: `packages/web/server/lib/interactive-ui/routes.remote.test.js`.
-- Focused verification: Run focused Remote route tests against the accepted Manager/routes/Remote verifier/cache contracts; prove inspect/connect separation, signature/slot/key errors, non-retention, and valid-shell preservation.
-- Pi binding: unassigned
+- Ownership: the narrow Direct Remote lifecycle additions in `packages/web/server/lib/interactive-ui/manager.js` and `packages/web/server/lib/interactive-ui/manager.test.js`; the demonstrated credential-transaction defects in `packages/web/server/lib/interactive-ui/routes.js` plus `routes.remote.test.js`; Direct Remote source support in `agent-runtime.js` plus `builtin-runtime.test.js`; and the corresponding accepted-behavior update in `DOCUMENTATION.md`. `remote-ocix.js`, `hosted-ocix.js`, `connection-store.js`, and `remote-resource-cache.js` remained frozen.
+- Focused verification: Run focused Manager and Remote route tests against the accepted routes/verifier/store/cache contracts; prove inspect performs zero writes/resource fetches, connect always refetches and binds exact signature/publisher slot/fingerprint/manifest hash/connector/installation identity, credentials remain only in the server-side store, wrong confirmation and credential failure are zero-residue, stale rollback cannot delete a replacement, state/trust failure preserves the prior valid shell, and public/error output leaks no key, access key, path, or installation id.
+- Pi binding: not dispatched; the user suspended all Sol/Pi execution on 2026-08-09.
 - Pi attempts: none
-- Primary attempts: not eligible while Pi retries remain
-- Current evidence: Donor owns these files; target has none.
+- Primary attempts: Primary replan expanded the impossible test-only ownership after proving the production Manager methods and strict Remote durable schema were absent. The narrow implementation then passed repeated adversarial review/fix waves: stale capability and credential-cleanup ownership, error/output sanitization, deterministic shell derivation, Agent Runtime Remote-source compatibility, cleanup path races, state+shell identity substitution, and Local/Remote mixed-lifecycle rollback. The final design never copied the donor Manager wholesale and never used Pi.
+- Current evidence: Manager now implements write-free `inspectRemote` and request-bound `connectRemote`, exact confirmation/refetch, a strict per-version Remote state schema, private installation-scoped public key plus independent digest-only `remote-consents.json` anchor, deterministic metadata/Tool shell derivation, and a non-enumerable installation-bound credential capability. Global `trust.json` is never widened. Remote failure/rollback/uninstall does not rename, remove, or recursively delete shell paths; it removes active state/consent and retains an exact inactive reusable shell with truthful `cleanupPending`, and reuse requires a fresh confirmation plus a complete deterministic hash check. Local packages are rejected before write when an extension owns a Remote lifecycle, and rollback dispatches the target delivery's strict verifier. Route recovery rolls back a shell only after credential cleanup is explicitly safe, and fixed/allowlisted responses cannot expose Access Keys, installation IDs, paths, PEMs, or arbitrary runtime details. Agent Runtime resolves `delivery: remote` only from canonical `versionsDirectory`, even with a poisoned Hosted cache, and preserves existing containment/ownership/rollback invariants. Focused acceptance passes Manager 73/73 (433 assertions), Remote routes 9/9, and built-in Agent Runtime 18/18; the complete 13-file Interactive UI server gate passes 233/233. Focused ESLint, `lint:web`, node syntax, documentation static checks, and `git diff --check` pass. `type-check:web` remains blocked only by the separately recorded issue-054 missing `@modelcontextprotocol/ext-apps`. Fresh independent final reviews returned SHIP for Manager consent/data consistency, Remote filesystem cleanup, Remote routes, and Agent Runtime source isolation.
 - Suspension decision: n/a
 - Resume condition: n/a
-- Continuation decision: Enables issue-012.
-- Next action: Queue after security dependencies.
+- Continuation decision: Enables issue-013 and removes the Direct Remote prerequisite from issue-014.
+- Next action: Resolved and checkpointed; per user instruction, stop before issue-013 until the model is adjusted.
 
 ## issue-012: Restore Remote resource cache, TTL, and hash validation
 
@@ -251,20 +251,20 @@
 - Status: READY
 - Classification: NORMAL
 - Goal / user outcome: Connected Remote apps expose truthful health/update state and require re-consent when signed identity/permissions change.
-- First-principles root cause: The target has no OCIX runtime health/update state machine; pure routing normalization is restored independently by issue-056.
+- First-principles root cause: The target has no OCIX runtime health/update state machine and the accepted Manager lacks `checkRemoteUpdate`/`applyRemoteUpdate`; pure routing normalization is restored independently by issue-056.
 - Core acceptance invariant: Health is request-bound; stale responses cannot overwrite newer state; changed publisher/permissions fail closed into re-consent; failed update preserves the prior runnable version.
 - Dependencies: issue-011, issue-012, issue-056
 - Dispatch order: Serial after cache semantics.
-- Ownership: `packages/web/server/lib/interactive-ui/runtime.js`; `packages/web/server/lib/interactive-ui/runtime.test.js`.
-- Focused verification: Focused runtime tests prove stale response ordering, update rollback, health, and re-consent transitions against the accepted routing contract.
-- Pi binding: unassigned
+- Ownership: `packages/web/server/lib/interactive-ui/runtime.js`; `packages/web/server/lib/interactive-ui/runtime.test.js`; the narrow Remote health/update/re-consent state additions in `packages/web/server/lib/interactive-ui/manager.js` and `packages/web/server/lib/interactive-ui/manager.test.js`; the issue-013 section of `packages/web/server/lib/interactive-ui/routes.remote.test.js`; the corresponding accepted-behavior update in `packages/web/server/lib/interactive-ui/DOCUMENTATION.md`.
+- Focused verification: Focused Manager/runtime/route tests prove stale response ordering, request-bound health, update confirmation, publisher/key/permission re-consent, version reuse rejection, durable blocked state, and failure rollback preserving the prior runnable version.
+- Pi binding: not dispatched; the user suspended all Sol/Pi execution on 2026-08-09.
 - Pi attempts: none
-- Primary attempts: not eligible while Pi retries remain
-- Current evidence: Donor files are feature-owned and target lacks them.
+- Primary attempts: not started; direct primary/subagent execution is authorized after issue-011 acceptance.
+- Current evidence: Donor files are feature-owned and target runtime is absent. Accepted issue-011 now provides the installation-scoped consent anchor, exact reusable shell, strict Remote state, and Remote Agent Runtime source contract that this update lifecycle must preserve. Accepted `routes.js` already calls `manager.checkRemoteUpdate` and `manager.applyRemoteUpdate`, so runtime-only ownership would leave production methods missing; the Manager seam is explicitly included without authorizing wholesale donor replacement.
 - Suspension decision: n/a
 - Resume condition: n/a
 - Continuation decision: Enables issue-014.
-- Next action: Queue behind issues 011-012.
+- Next action: First task after the user resumes with the adjusted model; consume the frozen issue-011 checkpoint and do not reopen its trust/cleanup model casually.
 
 ## issue-014: Register the OCIX runtime and capability before generic proxying
 
@@ -275,12 +275,12 @@
 - Core acceptance invariant: Initialization is deterministic/fail-closed, route order is explicit, cleanup is complete, Agent Runtime deployment assets survive restart through one authoritative durable state seam, packaged/native artifact requests pass the same scope-aware auth contract (including CORS and exact URL-token resource allowlisting), and unsupported runtimes report a reduced capability instead of silent emptiness.
 - Dependencies: issues 005-013, issue-061, issue-062
 - Dispatch order: Final server integration seam after authoritative modules are accepted.
-- Ownership: `packages/web/server/lib/opencode/feature-routes-runtime.js`; `packages/web/server/lib/opencode/feature-routes-runtime.test.js`; `packages/web/server/lib/opencode/core-routes.js`; `packages/web/server/lib/interactive-ui/runtime.js`; `packages/web/server/lib/interactive-ui/runtime.test.js`; the narrow Agent Runtime durable-assets adapter/state seam in `packages/web/server/lib/interactive-ui/manager.js` and `packages/web/server/lib/interactive-ui/manager.test.js`; the exact `X-OpenChamber-Session-ID` CORS allow-header entry in `packages/web/server/index.js`; the exact native, installed-artifact, and materialized-artifact document GET allowlist entries and tests in `packages/web/server/lib/ui-auth/ui-auth.js` and its owning test file.
-- Focused verification: Run focused feature-route/runtime/Manager/auth tests; inspect explicit route-before-proxy ordering, local-versus-tunnel auth composition, packaged CORS preflight, URL-token resource access, restart/reconcile/cleanup, capability, and shutdown behavior. Records written beside Agent Runtime assets are diagnostics/commit records only and must never independently authorize deletion; the authoritative durable Manager/runtime state must supply the exact previous deployment asset set.
+- Ownership: `packages/web/server/lib/opencode/feature-routes-runtime.js`; `packages/web/server/lib/opencode/feature-routes-runtime.test.js`; `packages/web/server/lib/opencode/core-routes.js`; `packages/web/server/lib/opencode/routes.js`; `packages/web/server/lib/opencode/routes.capabilities.test.js`; `packages/web/server/lib/interactive-ui/runtime.js`; `packages/web/server/lib/interactive-ui/runtime.test.js`; the narrow Agent Runtime durable-assets adapter/state seam in `packages/web/server/lib/interactive-ui/manager.js` and `packages/web/server/lib/interactive-ui/manager.test.js`; the exact `X-OpenChamber-Session-ID` CORS allow-header entry in `packages/web/server/index.js`; the exact native, installed-artifact, and materialized-artifact document GET allowlist entries and tests in `packages/web/server/lib/ui-auth/ui-auth.js` and its owning test file.
+- Focused verification: Run focused feature-route/runtime/Manager/auth/capability-route tests; inspect explicit route-before-proxy ordering, managed Fork versus explicit external/reduced capability documents, local-versus-tunnel auth composition, packaged CORS preflight, URL-token resource access, restart/reconcile/cleanup, capability, and shutdown behavior. Records written beside Agent Runtime assets are diagnostics/commit records only and must never independently authorize deletion; the authoritative durable Manager/runtime state must supply the exact previous deployment asset set.
 - Pi binding: not dispatched; the user suspended all Sol/Pi execution on 2026-08-09.
 - Pi attempts: none
 - Primary attempts: not started; direct primary/subagent execution is explicitly authorized, but this final integration seam remains dependency-gated.
-- Current evidence: Target has active upstream lifecycle files; donor adapters cannot replace them wholesale. Accepted issue-008 review proved that the target global `/api` gate is scope-aware and must remain the sole local/tunnel auth authority, while also identifying the packaged CORS session header and exact URL-token artifact-resource allowlists required here. Accepted issue-010 requires this seam to persist and pass the exact previous deployment asset map across restart; ownership records alone are intentionally insufficient deletion authority.
+- Current evidence: Target has active upstream lifecycle files; donor adapters cannot replace them wholesale. Accepted issue-008 review proved that the target global `/api` gate is scope-aware and must remain the sole local/tunnel auth authority, while also identifying the packaged CORS session header and exact URL-token artifact-resource allowlists required here. Accepted issue-010 requires this seam to persist and pass the exact previous deployment asset map across restart; ownership records alone are intentionally insufficient deletion authority. Accepted issue-011 now supplies strict Direct Remote Manager state/consent plus `delivery: remote` Agent Runtime source resolution, so issue-014 must bind those accepted seams rather than translating Remote into Local/Hosted compatibility metadata.
 - Suspension decision: n/a
 - Resume condition: n/a
 - Continuation decision: Enables all OpenChamber UI client/runtime work.
@@ -573,18 +573,18 @@
 - Goal / user outcome: Shared UI reads the fork capability document and performs exact MCP App resource/tool-call requests across supported runtimes.
 - First-principles root cause: Target `opencode/client.ts` lacks fork API gaps and runtime capability diagnostics.
 - Core acceptance invariant: Request parameters preserve session/message/part/tool/server/resource identity; managed fork vs external legacy capability is explicit; failure is diagnostic, never silent empty.
-- Dependencies: OpenCode issues 005-006, issue-018
+- Dependencies: OpenCode issues 005-006 and the accepted OpenCode issue-011 SDK regeneration, issue-014, issue-018
 - Dispatch order: Serial client seam before renderer/ToolPart acceptance.
 - Ownership: `packages/ui/src/lib/opencode/client.ts`; matching focused client tests discovered in the target package before dispatch.
-- Focused verification: Run focused client tests and UI typecheck; inspect request fidelity and reduced-capability behavior.
+- Focused verification: Run focused client tests and UI typecheck; inspect exact session/message/part/tool/server/resource fidelity through scoped Fork SDK methods, managed-versus-explicit-reduced capability behavior, runtime-base reconnection, AbortSignal forwarding, and bounded diagnostic errors.
 - Pi binding: unassigned
 - Pi attempts: none
 - Primary attempts: not eligible while Pi retries remain
-- Current evidence: Donor and target both have active client files; manual narrow replay is required.
+- Current evidence: Target `client.ts`/tests are byte-identical to upstream v1.18.1. Donor's direct HTTP MCP App calls work around an obsolete generated-SDK bug that dropped `partID`/`toolKey`; the accepted OpenCode v1.18.15 SDK now carries every required field, so issue-029 must use the runtime-scoped SDK and must not restore the hard-coded compatibility layer. The target capability endpoint is still absent and is now explicitly owned by issue-014.
 - Suspension decision: n/a
 - Resume condition: n/a
 - Continuation decision: Enables issues 028 and 026.
-- Next action: Discover exact target test owner before dispatch; do not broaden the lane.
+- Next action: Queue after issue-014 publishes the managed/reduced capability document and issue-054 binds the accepted Fork SDK; then add only the narrow scoped-SDK wrappers and focused client tests without touching the user's dirty `runtime-url.ts`.
 
 ## issue-030: Restore Generative Widget parsing and sanitization
 
@@ -1252,7 +1252,7 @@
 - Classification: NORMAL
 - Goal / user outcome: Maintainers have an accurate owning document for the restored trust, lifecycle, Marketplace, runtime-validation, and activation seams without inheriting claims about unimplemented Remote/Hosted/UI behavior.
 - First-principles root cause: The target has no Interactive UI server documentation, while the donor document describes a much larger descendant implementation.
-- Core acceptance invariant: Documentation states only accepted behavior, exact ownership and adapter responsibilities, failure/rollback semantics, and focused commands; it must not claim unresolved routes, Remote/Hosted lifecycle, Agent Runtime integration, or UI availability.
+- Core acceptance invariant: Documentation states only accepted behavior, exact ownership and adapter responsibilities, failure/rollback semantics, and focused commands; it must not claim unresolved Remote resource/health/update behavior, Hosted execution, route registration, automatic Agent Runtime integration, or UI availability.
 - Dependencies: issue-005, issue-061, issue-062
 - Dispatch order: Docs-only serial closure after the Manager interface freezes; it is split from the security/transaction lanes by policy.
 - Ownership: `packages/web/server/lib/interactive-ui/DOCUMENTATION.md`.
@@ -1260,7 +1260,7 @@
 - Pi binding: not dispatched; the user suspended all Sol/Pi execution on 2026-08-09, and no issue-063 Pi worktree, session, run, or log was created.
 - Pi attempts: none
 - Primary attempts: One bounded Luna docs pass read the accepted package, Manager, Marketplace, and Agent Runtime source/tests plus the donor document, then wrote a target-owned document from verified behavior only. Primary review rejected all donor-only availability claims and checked the final statements against the accepted implementations.
-- Current evidence: `packages/web/server/lib/interactive-ui/DOCUMENTATION.md` now records package signature/hash/path/secret bounds, prototype-safe trust, Local transaction/rollback ordering, request-bound Marketplace verification with no global trust write, and the standalone Agent Runtime ownership/transaction boundary. It explicitly states that Remote/Hosted lifecycle, route/runtime/capability/UI/Business Gateway wiring, automatic Agent Runtime reconciliation, and the authoritative durable `previousAssets` seam are not yet implemented. Package Format + Manager + built-in runtime tests pass 80/80; `git diff --check` and a static final-newline/link audit pass. The package defines no Markdown-specific checker.
+- Current evidence: `DOCUMENTATION.md` records package signature/hash/path/secret bounds, prototype-safe trust, Local transaction/rollback ordering, request-bound Marketplace verification with no global trust write, Direct Remote installation-scoped consent/anchor/reusable-shell semantics, and the standalone Agent Runtime ownership/transaction boundary including canonical Remote sources. It explicitly leaves Remote resource/health/update behavior, Hosted execution, production route/runtime/capability/UI/Business Gateway wiring, automatic Agent Runtime reconciliation, and the authoritative durable `previousAssets` seam to their owning issues. The complete Interactive UI server gate passes 233/233; `git diff --check` and the static final-newline/link audit pass. The package defines no Markdown-specific checker.
 - Suspension decision: n/a
 - Resume condition: n/a
 - Continuation decision: Enables final parity issue-055 documentation audit; issue-014 must update this owning document when it lands the durable Agent Runtime/runtime wiring seam.

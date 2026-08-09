@@ -13,6 +13,52 @@ class InteractiveUIRouteError extends Error {
 
 const isRecord = (value) => typeof value === 'object' && value !== null && !Array.isArray(value);
 const WORKBENCH_SNAPSHOT_REF_PATTERN = /^snapshot_[a-f0-9]{64}$/;
+const SAFE_REMOTE_CREDENTIAL_STATUS_RANGE = { min: 400, max: 599 };
+
+// The connection store's summary is deliberately small. Keep this route
+// boundary strict as well because a runtime adapter may return a richer
+// object (or accidentally include credential material) than the store does.
+const sanitizeCredentialSummary = (value) => {
+  const source = isRecord(value) && isRecord(value.credential) ? value.credential : value;
+  if (!isRecord(source)) return {};
+  const summary = {};
+  if (typeof source.configured === 'boolean') summary.configured = source.configured;
+  if (typeof source.expired === 'boolean') summary.expired = source.expired;
+  if (source.source === 'manual' || source.source === 'provisioned') summary.source = source.source;
+  for (const field of ['configuredAt', 'expiresAt']) {
+    if (typeof source[field] === 'string' && source[field].length <= 128 && !/[\r\n\0]/.test(source[field])) {
+      summary[field] = source[field];
+    }
+  }
+  for (const field of ['displayName', 'name']) {
+    if (typeof source[field] === 'string' && source[field].length <= 200 && !/[\r\n\0]/.test(source[field])) {
+      summary[field] = source[field];
+    }
+  }
+  if (typeof source.endpoint === 'string' && source.endpoint.length <= 4096 && !/[\r\n\0]/.test(source.endpoint)) {
+    summary.endpoint = source.endpoint;
+  }
+  if (Array.isArray(source.headerNames) && source.headerNames.length <= 32
+    && source.headerNames.every((name) => typeof name === 'string' && name.length <= 64 && !/[\r\n\0]/.test(name))) {
+    summary.headerNames = [...source.headerNames];
+  }
+  return summary;
+};
+
+const safeRemoteCredentialErrorStatus = (value) => (
+  Number.isInteger(value)
+    && value >= SAFE_REMOTE_CREDENTIAL_STATUS_RANGE.min
+    && value <= SAFE_REMOTE_CREDENTIAL_STATUS_RANGE.max
+    ? value
+    : 502
+);
+
+const safeRemoteCredentialError = (error, recovery) => new InteractiveUIRouteError(
+  'Remote credential configuration failed',
+  safeRemoteCredentialErrorStatus(error?.status),
+  'remote_credential_configure_failed',
+  recovery,
+);
 
 // Serializes cross-subsystem Interactive UI connection mutations: the ENTIRE
 // Remote connect transaction (Manager install, Secret Store configuration,
@@ -393,7 +439,7 @@ export const registerInteractiveUIRoutes = (app, {
             body: {
               extension: connected.extension,
               connector: connected.connector,
-              credential: credential.credential,
+              credential: sanitizeCredentialSummary(credential),
             },
           };
         } catch (error) {
@@ -405,26 +451,36 @@ export const registerInteractiveUIRoutes = (app, {
           // sanitized recovery details are added; the installation id and the
           // access key never appear in the response or logs.
           const recovery = { credentialRemoved: false, extensionRemoved: false, trustRolledBack: false };
+          let credentialCleanupSafe = false;
           try {
             const removed = await connected.capability.removeCredential();
-            recovery.credentialRemoved = removed?.removed === true;
-            if (removed?.mismatch === true) recovery.credentialMismatch = true;
-          } catch (rollbackError) {
-            recovery.credentialRollbackError = typeof rollbackError?.code === 'string'
-              ? rollbackError.code
-              : 'remote_credential_rollback_failed';
+            if (removed?.removed === true) {
+              recovery.credentialRemoved = true;
+              credentialCleanupSafe = true;
+            } else if (removed?.removed === false && removed?.mismatch !== true) {
+              // An explicit clean absence is safe: this connect did not leave
+              // a credential behind, so deleting only its new shell is safe.
+              credentialCleanupSafe = true;
+            } else if (removed?.mismatch === true) {
+              recovery.credentialMismatch = true;
+            } else {
+              recovery.credentialRollbackBlocked = true;
+            }
+          } catch {
+            recovery.credentialRollbackError = 'remote_credential_rollback_failed';
           }
-          try {
-            const rollback = await connected.capability.rollback();
-            recovery.extensionRemoved = rollback?.removed === true;
-            recovery.trustRolledBack = rollback?.trustRolledBack === true;
-          } catch (rollbackError) {
-            recovery.rollbackError = typeof rollbackError?.code === 'string'
-              ? rollbackError.code
-              : 'remote_rollback_failed';
+          if (credentialCleanupSafe) {
+            try {
+              const rollback = await connected.capability.rollback();
+              recovery.extensionRemoved = rollback?.removed === true;
+              recovery.trustRolledBack = rollback?.trustRolledBack === true;
+            } catch {
+              recovery.rollbackError = 'remote_rollback_failed';
+            }
+          } else {
+            recovery.rollbackSkipped = true;
           }
-          error.details = { ...(error.details ?? {}), ...recovery };
-          throw error;
+          throw safeRemoteCredentialError(error, recovery);
         }
       });
       res.setHeader('Cache-Control', 'no-store');

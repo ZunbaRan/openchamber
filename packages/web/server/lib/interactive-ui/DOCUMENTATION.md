@@ -5,8 +5,9 @@ extensions. The current target owns five deliberately bounded seams:
 
 - package-format.js parses, signs, and verifies OCIX packages and signed Marketplace
   catalogs.
-- manager.js owns direct publisher trust, the Local package lifecycle, and the
-  signed Marketplace install transaction.
+- manager.js owns direct publisher trust, the Local package lifecycle, the
+  signed Marketplace install transaction, and the bounded Direct Remote
+  signed-manifest inspect/connect shell transaction.
 - agent-runtime.js materializes declared Agent Tools and Skills into an OpenCode
   configuration directory. It is a standalone loader/transaction helper, not a
   Manager lifecycle hook yet.
@@ -16,10 +17,10 @@ extensions. The current target owns five deliberately bounded seams:
   seams above.
 
 This document records only behavior present in the target source and tests. It
-does **not** make the larger donor implementation true: Remote discovery and
-updates, Hosted execution, HTTP route registration, UI, capability endpoints,
-Business Gateway wiring, and automatic Agent Runtime reconciliation are not
-wired by this documentation or by the current Manager.
+does **not** make the larger donor implementation true: Remote resource
+serving, health and updates, Hosted execution, runtime/HTTP route registration,
+UI, capability endpoints, Business Gateway wiring, and automatic Agent Runtime
+reconciliation are not wired by this documentation or by the current Manager.
 
 ## Package format and parser boundary
 
@@ -161,19 +162,82 @@ paths while retaining the ids, versions, hashes, fingerprints, and Marketplace
 identity needed by the caller. Stable Manager errors carry a code/status and
 only safe details such as a confirmation fingerprint.
 
+## Direct Remote inspect and connect boundary
+
+Direct Remote uses the accepted signed Hosted-manifest kernel, but its consent
+is intentionally scoped to one installation instead of widening global Local
+publisher trust.
+
+- inspectRemote() normalizes a credential-free HTTPS manifest URL (loopback
+  HTTP only), fetches and verifies exactly one signed manifest, runs the
+  injected pure metadata validator, validates declared surface resources and
+  the one api-key connector, and returns a sanitized publisher/permission/hash
+  review. It fetches no signed resource bytes and writes no shell, state,
+  trust, cache, or credential data.
+- connectRemote() always refetches and reverifies the current manifest. The
+  caller must confirm both its locally derived publisher fingerprint and exact
+  manifest hash. An existing global own publisher/key slot with another
+  fingerprint conflicts; an absent slot is **not** populated. The confirmed
+  canonical public key is stored only in private Remote installation metadata,
+  where it can reverify that shell after restart without authorizing an
+  unrelated Local package. A separate private remote-consents.json record
+  stores only an installation-bound digest and timestamp. It is not a global
+  publisher key slot; it prevents a rewritten installations.json plus a
+  self-signed replacement shell from silently redefining prior consent.
+- The installed shell contains the canonical signed manifest, normalized
+  extension metadata, and deterministic host-generated Tool shims, not Remote
+  resource bodies. Its complete file index, one-version root, signed identity,
+  scoped public key, connector binding, accepted hash, and approved permissions
+  are revalidated before the root is exposed or re-enabled. Unknown durable
+  fields, symlinks, unmanaged sibling versions, deterministic Tool/state
+  co-tampering, signed-identity substitution, or consent mismatch fail closed.
+  Public snapshots remove file hashes, generation id,
+  installation id, scoped public key, and managed paths.
+- connectRemote() returns only enumerable extension and connector summaries.
+  Its non-enumerable capability closes over the exact credential runtime and a
+  fresh private installation id; it can configure/remove only that
+  installation's server-side credential and roll back only that shell. A stale
+  capability cannot configure or remove credentials for a replacement.
+  Credential configuration failure is
+  coordinated by the route so conditional credential cleanup runs before the
+  exact shell rollback; the Access Key never enters Manager state or a public
+  response.
+- Activation and state publication reuse the accepted Manager transaction.
+  Adapter or durable-write failure restores the activation result. Remote
+  failure, rollback, and uninstall cleanup never renames, removes, or
+  recursively deletes a shell path after asynchronous verification: the exact
+  shell remains inactive in the versions store and cleanupPending is true.
+  A later connect may reuse it only after a fresh confirmation and an exact
+  deterministic whole-shell hash check; no existing byte is adopted loosely
+  or overwritten.
+  An already-installed reconnect performs no shell, state,
+  trust, activation, or credential mutation, preserving the valid connection.
+
+The Manager deliberately requires a validateRemoteMetadata adapter and the
+existing reconcileActivation adapter. Missing metadata validation returns a
+controlled 503 before any manifest fetch; it is never skipped. Issue-014 owns
+the production binding to the runtime's single-source manifest normalizer and
+activation/durable Agent Runtime seam. Remote health, resource resolution,
+updates, blocked-update state, and re-consent are issue-013/runtime work and
+are not claimed here.
+
 ## Agent Runtime loader boundary
 
 reconcileOpenCodeAgentRuntime() is a standalone materializer. Its caller
 supplies:
 
 - the extension state and an authoritative previousAssets inventory;
-- an OpenCode configDirectory plus Local versionsDirectory (and, only when the
+- an OpenCode configDirectory plus the canonical Manager-owned
+  versionsDirectory used by Local and Direct Remote shells (and, only when the
   caller already has validated Hosted metadata, a hosted cache directory);
 - optional built-in runtime metadata; and
 - filesystem/path/crypto adapters for deterministic tests.
 
-The loader reads enabled Local descriptors, resolves Tool/Skill source files
-without following symlinks, and writes their bytes to tools/ and skills/.
+The loader reads enabled Local and Direct Remote descriptors from the
+Manager-owned versionsDirectory. Direct Remote never falls through to the
+Hosted cache, even when one is configured. Only an explicitly Hosted delivery
+uses hostedCacheDirectory. The loader resolves Tool/Skill source files without
+following symlinks and writes their bytes to tools/ and skills/.
 Tool names, file extensions, Skill paths, source containment, ancestor types,
 and cross-extension names are bounded. Existing user-owned files conflict
 even when their bytes happen to equal the requested bytes, except for the
@@ -220,10 +284,12 @@ manifests. It is not invoked by the current Manager automatically.
 | Package format | Canonical schemas, bounds, signatures, hashes, and descriptor parsing | Selecting a trusted key and deciding when a package is allowed to install |
 | Local Manager | Trust/state stores, staging, integrity, queueing, and recoverable file/state ordering | validateStagedPackage and reconcileActivation implementations |
 | Marketplace | Catalog confirmation, bounded transport, request-scoped publisher verification, and provenance | User confirmation of the catalog fingerprint and any business/API policy |
+| Direct Remote | Signed-manifest review, installation-scoped consent, metadata-only shell, strict durable state, opaque credential capability, and exact rollback | Pure validateRemoteMetadata, reconcileActivation, credential runtime, and later health/resource/update lifecycle |
 | Agent Runtime | Source containment, conflict checks, deterministic materialization, ownership records, and rollback | Authoritative previousAssets, lifecycle timing, and OpenCode config ownership (issue-014 seam) |
 
-Remote/Hosted loaders, HTTP routes, UI screens, capability exposure, and
-Business Gateway/action execution require separate accepted integrations. A
+Remote resource/health/update lifecycle, Hosted loaders, runtime route
+registration, UI screens, capability exposure, and Business Gateway/action
+execution require separate accepted integrations. A
 caller must not treat the standalone Agent Runtime records or sanitized
 Manager snapshots as proof that those surfaces are available.
 
@@ -235,7 +301,8 @@ Run these from the integration worktree root:
 bun run --cwd packages/web test -- \
   server/lib/interactive-ui/package-format.test.js \
   server/lib/interactive-ui/manager.test.js \
-  server/lib/interactive-ui/builtin-runtime.test.js
+  server/lib/interactive-ui/builtin-runtime.test.js \
+  server/lib/interactive-ui/routes.remote.test.js
 ~~~
 
 The package-format tests cover signed file round trips, embedded-key
@@ -243,7 +310,10 @@ self-consistency, parser bounds, secrets, Hosted thin-package grammar, native
 trust metadata, and catalog signatures. Manager tests cover prototype-safe
 trust, Local lifecycle/rollback, integrity quarantine, Marketplace confirmation,
 request-scoped delegated verification, redirect/deadline/size handling, exact
-catalog binding, and sanitized snapshots. Built-in runtime tests cover the
+catalog binding, Direct Remote consent/shell/rollback, and sanitized snapshots.
+Remote route tests cover scope-aware auth, write-free inspection, server-side
+opaque credentials, exact confirmation, failure cleanup, and reconnect
+preservation. Built-in runtime tests cover the
 v1.3.0 assets, idempotence, unmanaged-file protection, source/path safety,
 ownership ordering, stale transaction recovery, and rollback failure reporting.
 

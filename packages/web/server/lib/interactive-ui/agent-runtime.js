@@ -777,7 +777,7 @@ const buildDesiredAssets = async ({
         500,
       );
     }
-    if (!['local', 'hosted'].includes(metadata.delivery)) {
+    if (!['local', 'hosted', 'remote'].includes(metadata.delivery)) {
       throw new InteractiveUIAgentRuntimeError(
         'Managed Agent Runtime delivery metadata is invalid',
         'agent_runtime_state_invalid',
@@ -799,6 +799,11 @@ const buildDesiredAssets = async ({
         pathImpl,
       });
     } else {
+      // Local and Direct Remote shells are both Manager-owned trees under the
+      // canonical versions directory.  Remote deliberately does not use the
+      // Hosted cache: its signed shell and generated Tool shims are installed
+      // at versionsDirectory/<extensionId>/<version> and are verified by the
+      // Manager before this loader is invoked.
       extensionDirectory = await resolveManagedRuntimeDirectory({
         baseDirectory: versionsDirectory,
         segments: [extensionId, version],

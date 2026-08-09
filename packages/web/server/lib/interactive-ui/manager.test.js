@@ -14,6 +14,10 @@ import {
   InteractiveUIExtensionManagerError,
   createInteractiveUIExtensionManager,
 } from './manager.js';
+import {
+  HOSTED_OCIX_MANIFEST_SCHEMA,
+  HOSTED_OCIX_SIGNED_MANIFEST_FILE,
+} from './hosted-ocix.js';
 
 const temporaryDirectories = [];
 
@@ -38,6 +42,7 @@ const createManager = async (options = {}) => {
 const trustPathFor = (dataDirectory) => path.join(dataDirectory, 'interactive-ui', 'trust.json');
 const statePathFor = (dataDirectory) => path.join(dataDirectory, 'interactive-ui', 'installations.json');
 const marketplacesPathFor = (dataDirectory) => path.join(dataDirectory, 'interactive-ui', 'marketplaces.json');
+const remoteConsentsPathFor = (dataDirectory) => path.join(dataDirectory, 'interactive-ui', 'remote-consents.json');
 const versionsPathFor = (dataDirectory) => path.join(dataDirectory, 'extensions');
 const stagingPathFor = (dataDirectory) => path.join(dataDirectory, 'interactive-ui', 'staging');
 const trashPathFor = (dataDirectory) => path.join(dataDirectory, 'interactive-ui', 'trash');
@@ -141,6 +146,172 @@ const createMarketplaceFixture = async ({
   });
   return { marketplaceKeys, publisherKeys, packed, entry, catalog };
 };
+
+// Targeted Remote fixtures. Remote consent is installation-scoped in the
+// current Manager: the metadata adapter is deliberately injected by each
+// test rather than relying on the production runtime validator.
+const canonicalize = (value) => {
+  if (Array.isArray(value)) return value.map(canonicalize);
+  if (!value || typeof value !== 'object') return value;
+  return Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonicalize(value[key])]));
+};
+
+const hostedSha256 = (value) => `sha256-${crypto.createHash('sha256').update(value).digest('base64')}`;
+
+const createRemoteManifest = ({
+  keys,
+  version = '1.0.0',
+  native = false,
+  connectors,
+  publisherKeyId = 'release-2026',
+  publisherId = 'com.acme.publisher',
+  publisherName = 'Acme',
+  extensionId = 'com.acme.remote',
+  extensionName = 'Acme Remote',
+  toolName = 'remote_open',
+  extensionNetwork = ['https://api.example.com'],
+  viewEntry,
+  resourcePath,
+  viewText,
+  extensionExtra = {},
+  topLevelExtra = {},
+} = {}) => {
+  const view = Buffer.from(JSON.stringify({
+    $schema: 'openchamber://declarative-view/v1',
+    id: `${extensionId}.overview`,
+    layout: { type: 'text', value: viewText ?? `Remote ${version}` },
+  }));
+  const entryPath = viewEntry ?? (native ? 'ui/overview.view.mjs' : 'ui/overview.view.json');
+  const entryMimeType = native ? 'text/javascript' : 'application/json';
+  const declaredResourcePath = resourcePath ?? entryPath;
+  const resolvedConnectors = connectors ?? [{
+    id: 'crm',
+    type: 'http',
+    baseUrl: 'https://api.example.com',
+    auth: { type: 'api-key' },
+  }];
+  const unsigned = {
+    $schema: HOSTED_OCIX_MANIFEST_SCHEMA,
+    app: {
+      id: extensionId,
+      version,
+      publishedAt: `2026-08-0${version === '1.0.0' ? '5' : '6'}T00:00:00.000Z`,
+    },
+    publisher: {
+      id: publisherId,
+      name: publisherName,
+      keyId: publisherKeyId,
+      publicKey: keys.publicKey,
+    },
+    permissions: {
+      resourceOrigins: ['https://apps.example.com'],
+      networkOrigins: [...extensionNetwork],
+      externalLinkOrigins: [],
+      credentialScopes: ['crm.read'],
+      actionIds: ['com.acme.remote.read'],
+      agentToolNames: [toolName],
+      clipboard: false,
+      popups: false,
+      nativeCode: native,
+    },
+    extension: {
+      $schema: 'openchamber://extension/v1',
+      id: extensionId,
+      name: extensionName,
+      version,
+      agentRouting: {
+        domain: 'remote',
+        intents: ['remote.overview'],
+        examples: { en: ['Open Acme Remote'] },
+        dataAuthority: 'user-provided',
+      },
+      connectors: resolvedConnectors,
+      views: [{
+        id: `${extensionId}.overview`,
+        runtime: native ? 'native' : 'declarative',
+        entry: entryPath,
+        tools: [toolName],
+        routing: { intents: ['remote.overview'], priority: 80, operation: 'read' },
+        displayModes: ['inline', 'workspace'],
+      }],
+      actions: [{
+        id: 'com.acme.remote.read',
+        connector: 'crm',
+        risk: 'read',
+        request: { method: 'GET', path: '/crm' },
+      }],
+      permissions: { network: extensionNetwork },
+      trust: { mode: native ? 'native-code' : 'declarative', signature: 'production' },
+      ...extensionExtra,
+    },
+    resources: [{
+      path: declaredResourcePath,
+      url: `https://apps.example.com/${declaredResourcePath}`,
+      mimeType: entryMimeType,
+      sha256: hostedSha256(view),
+    }],
+    ...topLevelExtra,
+  };
+  const signature = crypto.sign(
+    null,
+    Buffer.from(JSON.stringify(canonicalize(unsigned))),
+    crypto.createPrivateKey(keys.privateKey),
+  ).toString('base64');
+  return {
+    document: {
+      ...unsigned,
+      signature: { algorithm: 'ed25519', keyId: publisherKeyId, value: signature },
+    },
+    view,
+  };
+};
+
+const remoteFetch = (manifest, requested = []) => async (url) => {
+  const value = String(url);
+  requested.push(value);
+  if (value === 'https://apps.example.com/manifest.json') {
+    return new Response(JSON.stringify(manifest), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+  if (value.startsWith('https://apps.example.com/ui/')) {
+    return new Response('resource fetch is not allowed before connect', { status: 500 });
+  }
+  return new Response('not found', { status: 404 });
+};
+
+const validateRemoteTestMetadata = async ({ extension }) => {
+  const allowed = new Set([
+    '$schema',
+    'id',
+    'name',
+    'version',
+    'agentRouting',
+    'connectors',
+    'views',
+    'artifacts',
+    'actions',
+    'permissions',
+    'trust',
+    'icon',
+  ]);
+  if (!extension || typeof extension !== 'object' || Array.isArray(extension)
+    || Object.keys(extension).some((field) => !allowed.has(field))) {
+    throw new InteractiveUIExtensionManagerError(
+      'Remote extension metadata is invalid',
+      'invalid_manifest',
+      400,
+    );
+  }
+  return { connectors: extension.connectors };
+};
+
+const remoteManagerAt = (dataDirectory, options = {}) => managerAt(dataDirectory, {
+  validateRemoteMetadata: validateRemoteTestMetadata,
+  reconcileActivation: async () => ({ openCode: {}, rollback: async () => {} }),
+  ...options,
+});
 
 describe('Interactive UI extension trust manager', () => {
   it('rejects incomplete construction dependencies and supports default construction', async () => {
@@ -1703,7 +1874,7 @@ describe('Interactive UI extension trust manager', () => {
         .rejects.toMatchObject({ code: 'ENOENT' });
     });
 
-    it('fails visibly on corrupt Marketplace state without mutating global trust', async () => {
+  it('fails visibly on corrupt Marketplace state without mutating global trust', async () => {
       const { dataDirectory } = await createManager();
       const fixture = await createMarketplaceFixture();
       const catalogUrl = 'https://extensions.example.com/catalog.json';
@@ -1748,6 +1919,712 @@ describe('Interactive UI extension trust manager', () => {
       expect(validationError.message).not.toContain(dataDirectory);
       expect(trustWrites).toBe(0);
       expect((await failing.list()).publishers).toEqual([]);
+    });
+  });
+
+  describe('Remote OCIX manager regression contract', () => {
+    const appEntryUrl = 'https://apps.example.com/manifest.json';
+
+    it('inspects one signed manifest without writes or resource fetches', async () => {
+      const dataDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'ocix-manager-remote-inspect-'));
+      temporaryDirectories.push(dataDirectory);
+      const keys = generatePublisherKeyPair();
+      const remote = createRemoteManifest({ keys });
+      const requested = [];
+      const manager = remoteManagerAt(dataDirectory, { fetchImpl: remoteFetch(remote.document, requested) });
+
+      const inspection = await manager.inspectRemote(appEntryUrl);
+      expect(inspection).toMatchObject({
+        extension: { id: 'com.acme.remote', version: '1.0.0' },
+        publisher: {
+          id: 'com.acme.publisher',
+          keyId: 'release-2026',
+          fingerprint: expect.stringMatching(/^sha256-/),
+          trusted: false,
+        },
+        manifest: { appEntryUrl, manifestHash: expect.stringMatching(/^sha256-/) },
+        connector: { id: 'crm', origin: 'https://api.example.com', authType: 'api-key' },
+      });
+      expect(requested).toEqual([appEntryUrl]);
+      expect((await manager.list()).extensions).toEqual([]);
+      expect((await manager.list()).publishers).toEqual([]);
+      await expect(fs.stat(path.join(dataDirectory, 'interactive-ui'))).rejects.toMatchObject({ code: 'ENOENT' });
+      expect(requested.some((url) => url.includes('/ui/'))).toBe(false);
+    });
+
+    it('refetches before connect and requires exact current fingerprint plus manifest hash', async () => {
+      const dataDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'ocix-manager-remote-refetch-'));
+      temporaryDirectories.push(dataDirectory);
+      const keys = generatePublisherKeyPair();
+      const first = createRemoteManifest({ keys, viewText: 'first' });
+      const second = createRemoteManifest({ keys, viewText: 'second' });
+      const requested = [];
+      let calls = 0;
+      const manager = remoteManagerAt(dataDirectory, {
+        fetchImpl: async (url) => {
+          calls += 1;
+          requested.push(String(url));
+          return new Response(JSON.stringify(calls === 1 ? first.document : second.document), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        },
+      });
+      const inspection = await manager.inspectRemote(appEntryUrl);
+
+      await expect(manager.connectRemote({
+        appEntryUrl,
+        confirmedPublisherFingerprint: inspection.publisher.fingerprint,
+        confirmedManifestHash: inspection.manifest.manifestHash,
+      })).rejects.toMatchObject({ code: 'remote_confirmation_required', status: 403 });
+      expect(calls).toBe(2);
+      expect(requested).toEqual([appEntryUrl, appEntryUrl]);
+      expect((await manager.list()).extensions).toEqual([]);
+      expect((await manager.list()).publishers).toEqual([]);
+      await expect(fs.stat(path.join(dataDirectory, 'extensions'))).rejects.toMatchObject({ code: 'ENOENT' });
+    });
+
+    it('connects a Remote with strict metadata-only shell and no global trust mutation', async () => {
+      const dataDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'ocix-manager-remote-connect-'));
+      temporaryDirectories.push(dataDirectory);
+      const keys = generatePublisherKeyPair();
+      const remote = createRemoteManifest({ keys, native: true });
+      const requested = [];
+      const manager = remoteManagerAt(dataDirectory, { fetchImpl: remoteFetch(remote.document, requested) });
+      const inspection = await manager.inspectRemote(appEntryUrl);
+      const connected = await manager.connectRemote({
+        appEntryUrl,
+        confirmedPublisherFingerprint: inspection.publisher.fingerprint,
+        confirmedManifestHash: inspection.manifest.manifestHash,
+      });
+
+      expect(Object.keys(connected).sort()).toEqual(['connector', 'extension']);
+      expect(JSON.stringify(connected)).not.toContain('installationId');
+      expect(connected).toMatchObject({
+        extension: { id: 'com.acme.remote', name: 'Acme Remote', version: '1.0.0' },
+        connector: { id: 'crm', origin: 'https://api.example.com', authType: 'api-key' },
+      });
+      expect(requested).toEqual([appEntryUrl, appEntryUrl]);
+
+      const state = JSON.parse(await fs.readFile(statePathFor(dataDirectory), 'utf8'));
+      const metadata = state.extensions['com.acme.remote'].versions['1.0.0'];
+      expect(metadata).toMatchObject({
+        delivery: 'remote',
+        source: { type: 'remote', appEntryUrl },
+        publisher: { id: 'com.acme.publisher', keyId: 'release-2026', fingerprint: inspection.publisher.fingerprint },
+        remote: {
+          appEntryUrl,
+          connectorRefs: [{ id: 'crm', origin: 'https://api.example.com', authType: 'api-key' }],
+          acceptedManifest: { version: '1.0.0', manifestHash: inspection.manifest.manifestHash, keyId: 'release-2026' },
+          approvedPermissions: { nativeCode: true },
+          status: 'active',
+        },
+      });
+      expect(metadata.remote.publisherPublicKey).toBe(keys.publicKey);
+      expect((await manager.list()).publishers).toEqual([]);
+      const consentStore = JSON.parse(await fs.readFile(remoteConsentsPathFor(dataDirectory), 'utf8'));
+      expect(Object.values(consentStore.consents)).toHaveLength(1);
+      expect(Object.values(consentStore.consents)[0]).toMatchObject({
+        extensionId: 'com.acme.remote',
+        consentDigest: expect.stringMatching(/^sha256-/),
+      });
+      expect(JSON.stringify(consentStore)).not.toContain('BEGIN PUBLIC KEY');
+      expect(JSON.stringify(consentStore)).not.toContain(appEntryUrl);
+
+      const shell = path.join(versionsPathFor(dataDirectory), 'com.acme.remote', '1.0.0');
+      expect(JSON.parse(await fs.readFile(path.join(shell, HOSTED_OCIX_SIGNED_MANIFEST_FILE), 'utf8')).app.id)
+        .toBe('com.acme.remote');
+      expect(JSON.parse(await fs.readFile(path.join(shell, 'openchamber.extension.json'), 'utf8')).id)
+        .toBe('com.acme.remote');
+      expect(await fs.readFile(path.join(shell, 'agent-runtime', 'tools', 'remote_open.ts'), 'utf8'))
+        .toContain('openchamber://interactive-result/v1');
+      await expect(fs.stat(path.join(shell, 'ui'))).rejects.toMatchObject({ code: 'ENOENT' });
+      expect((await manager.getEnabledExtensionRoots())[0].directory).toBe(shell);
+    });
+
+    it('reloads a connected Remote and sanitizes private state from public list snapshots', async () => {
+      const dataDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'ocix-manager-remote-restart-'));
+      temporaryDirectories.push(dataDirectory);
+      const keys = generatePublisherKeyPair();
+      const remote = createRemoteManifest({ keys });
+      const manager = remoteManagerAt(dataDirectory, { fetchImpl: remoteFetch(remote.document) });
+      const inspection = await manager.inspectRemote(appEntryUrl);
+      await manager.connectRemote({
+        appEntryUrl,
+        confirmedPublisherFingerprint: inspection.publisher.fingerprint,
+        confirmedManifestHash: inspection.manifest.manifestHash,
+      });
+
+      const restarted = remoteManagerAt(dataDirectory, { fetchImpl: remoteFetch(remote.document) });
+      const snapshot = await restarted.list();
+      const serialized = JSON.stringify(snapshot);
+      expect(snapshot.publishers).toEqual([]);
+      expect(snapshot.extensions[0].versions['1.0.0']).not.toHaveProperty('generationId');
+      expect(snapshot.extensions[0].versions['1.0.0'].remote).not.toHaveProperty('installationId');
+      expect(snapshot.extensions[0].versions['1.0.0'].remote).not.toHaveProperty('publisherPublicKey');
+      expect(serialized).not.toContain('BEGIN PUBLIC KEY');
+      expect(serialized).not.toContain(dataDirectory);
+      expect((await restarted.getEnabledExtensionRoots())).toHaveLength(1);
+    });
+
+    it('rejects signed Remote documents with unknown or corrupt fields before any write', async () => {
+      const cases = [
+        { extensionExtra: { id: 'com.acme.other' } },
+        { topLevelExtra: { resources: { corrupt: true } } },
+      ];
+      for (const [index, options] of cases.entries()) {
+        const dataDirectory = await fs.mkdtemp(path.join(os.tmpdir(), `ocix-manager-remote-schema-${index}-`));
+        temporaryDirectories.push(dataDirectory);
+        const keys = generatePublisherKeyPair();
+        const remote = createRemoteManifest({ keys, ...options });
+        const manager = remoteManagerAt(dataDirectory, { fetchImpl: remoteFetch(remote.document) });
+        await expect(manager.inspectRemote(appEntryUrl)).rejects.toMatchObject({
+          code: expect.stringMatching(/^(invalid_|hosted_)/),
+        });
+        expect((await manager.list()).extensions).toEqual([]);
+        expect((await manager.list()).publishers).toEqual([]);
+        await expect(fs.stat(path.join(dataDirectory, 'interactive-ui'))).rejects.toMatchObject({ code: 'ENOENT' });
+      }
+    });
+
+    it('fails closed and quarantines roots after signed shell, file, or private-key tampering', async () => {
+      const dataDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'ocix-manager-remote-tamper-'));
+      temporaryDirectories.push(dataDirectory);
+      const keys = generatePublisherKeyPair();
+      const remote = createRemoteManifest({ keys });
+      const manager = remoteManagerAt(dataDirectory, { fetchImpl: remoteFetch(remote.document) });
+      const inspection = await manager.inspectRemote(appEntryUrl);
+      await manager.connectRemote({
+        appEntryUrl,
+        confirmedPublisherFingerprint: inspection.publisher.fingerprint,
+        confirmedManifestHash: inspection.manifest.manifestHash,
+      });
+      const shell = path.join(versionsPathFor(dataDirectory), 'com.acme.remote', '1.0.0');
+      await fs.writeFile(path.join(shell, HOSTED_OCIX_SIGNED_MANIFEST_FILE), '{"tampered":true}');
+      expect(await manager.getEnabledExtensionRoots()).toEqual([]);
+
+      const cleanDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'ocix-manager-remote-file-tamper-'));
+      temporaryDirectories.push(cleanDirectory);
+      const cleanManager = remoteManagerAt(cleanDirectory, { fetchImpl: remoteFetch(remote.document) });
+      const cleanInspection = await cleanManager.inspectRemote(appEntryUrl);
+      await cleanManager.connectRemote({
+        appEntryUrl,
+        confirmedPublisherFingerprint: cleanInspection.publisher.fingerprint,
+        confirmedManifestHash: cleanInspection.manifest.manifestHash,
+      });
+      await fs.writeFile(path.join(versionsPathFor(cleanDirectory), 'com.acme.remote', '1.0.0', 'openchamber.extension.json'), '{}');
+      expect(await cleanManager.getEnabledExtensionRoots()).toEqual([]);
+
+      const state = JSON.parse(await fs.readFile(statePathFor(dataDirectory), 'utf8'));
+      state.extensions['com.acme.remote'].versions['1.0.0'].remote.publisherPublicKey = generatePublisherKeyPair().publicKey;
+      await fs.writeFile(statePathFor(dataDirectory), JSON.stringify(state));
+      await expect(manager.list()).rejects.toMatchObject({ code: 'manager_data_corrupt', status: 500 });
+    });
+
+    it('rejects missing, invalid, and preflight Remote adapters without writes', async () => {
+      const keys = generatePublisherKeyPair();
+      const remote = createRemoteManifest({ keys });
+      const cases = [
+        { options: { validateRemoteMetadata: null }, code: 'remote_metadata_validation_unavailable' },
+        { options: { validateRemoteMetadata: async () => null }, code: 'remote_metadata_validation_invalid' },
+        { options: { validateRemoteMetadata: async () => { throw new InteractiveUIExtensionManagerError('bad preflight', 'preflight_failed', 422); } }, code: 'preflight_failed' },
+      ];
+      for (const [index, testCase] of cases.entries()) {
+        const dataDirectory = await fs.mkdtemp(path.join(os.tmpdir(), `ocix-manager-remote-adapter-${index}-`));
+        temporaryDirectories.push(dataDirectory);
+        const manager = managerAt(dataDirectory, {
+          fetchImpl: remoteFetch(remote.document),
+          reconcileActivation: async () => ({ openCode: {}, rollback: async () => {} }),
+          ...testCase.options,
+        });
+        await expect(manager.inspectRemote(appEntryUrl)).rejects.toMatchObject({ code: testCase.code });
+        expect((await manager.list()).extensions).toEqual([]);
+        expect((await manager.list()).publishers).toEqual([]);
+        await expect(fs.stat(path.join(dataDirectory, 'interactive-ui'))).rejects.toMatchObject({ code: 'ENOENT' });
+      }
+    });
+
+    it('handles global same-slot, conflicting-slot, and toString key ids without prototype coercion', async () => {
+      const keys = generatePublisherKeyPair();
+      const remote = createRemoteManifest({ keys, publisherKeyId: 'toString', extensionId: 'com.acme.remote.tostring' });
+      const sameDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'ocix-manager-remote-own-slot-'));
+      temporaryDirectories.push(sameDirectory);
+      const same = remoteManagerAt(sameDirectory, { fetchImpl: remoteFetch(remote.document) });
+      await same.trustPublisher({ id: 'com.acme.publisher', name: 'Acme', keyId: 'toString', publicKey: keys.publicKey });
+      const sameInspection = await same.inspectRemote(appEntryUrl);
+      await expect(same.connectRemote({
+        appEntryUrl,
+        confirmedPublisherFingerprint: sameInspection.publisher.fingerprint,
+        confirmedManifestHash: sameInspection.manifest.manifestHash,
+      })).resolves.toMatchObject({ extension: { id: 'com.acme.remote.tostring' } });
+      expect((await same.list()).publishers[0].keys).toEqual([expect.objectContaining({ keyId: 'toString' })]);
+
+      const conflictDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'ocix-manager-remote-slot-conflict-'));
+      temporaryDirectories.push(conflictDirectory);
+      const conflict = remoteManagerAt(conflictDirectory, { fetchImpl: remoteFetch(remote.document) });
+      await conflict.trustPublisher({
+        id: 'com.acme.publisher',
+        name: 'Acme',
+        keyId: 'toString',
+        publicKey: generatePublisherKeyPair().publicKey,
+      });
+      const conflictInspection = await conflict.inspectRemote(appEntryUrl);
+      await expect(conflict.connectRemote({
+        appEntryUrl,
+        confirmedPublisherFingerprint: conflictInspection.publisher.fingerprint,
+        confirmedManifestHash: conflictInspection.manifest.manifestHash,
+      })).rejects.toMatchObject({ code: 'publisher_key_conflict', status: 409 });
+      expect((await conflict.list()).extensions).toEqual([]);
+    });
+
+    it('leaves no active state, consent, or trust after failure and retains the exact reusable shell', async () => {
+      const keys = generatePublisherKeyPair();
+      const remote = createRemoteManifest({ keys });
+      const activationDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'ocix-manager-remote-activation-fail-'));
+      temporaryDirectories.push(activationDirectory);
+      const activationManager = remoteManagerAt(activationDirectory, {
+        fetchImpl: remoteFetch(remote.document),
+        reconcileActivation: async () => { throw new InteractiveUIExtensionManagerError('activation failed', 'activation_failed', 500); },
+      });
+      const activationInspection = await activationManager.inspectRemote(appEntryUrl);
+      await expect(activationManager.connectRemote({
+        appEntryUrl,
+        confirmedPublisherFingerprint: activationInspection.publisher.fingerprint,
+        confirmedManifestHash: activationInspection.manifest.manifestHash,
+      })).rejects.toMatchObject({ code: 'activation_failed' });
+      await expect(fs.stat(path.join(
+        versionsPathFor(activationDirectory),
+        'com.acme.remote',
+        '1.0.0',
+        HOSTED_OCIX_SIGNED_MANIFEST_FILE,
+      ))).resolves.toBeTruthy();
+      await expect(fs.stat(statePathFor(activationDirectory))).rejects.toMatchObject({ code: 'ENOENT' });
+      expect(JSON.parse(await fs.readFile(remoteConsentsPathFor(activationDirectory), 'utf8')).consents).toEqual({});
+      expect((await activationManager.list()).publishers).toEqual([]);
+
+      const stateDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'ocix-manager-remote-state-fail-'));
+      temporaryDirectories.push(stateDirectory);
+      const failingFs = {
+        ...fs,
+        writeFile: async (filePath, ...rest) => {
+          if (String(filePath).includes('installations.json.') && String(filePath).endsWith('.tmp')) throw new Error('disk full');
+          return fs.writeFile(filePath, ...rest);
+        },
+      };
+      let rollbacks = 0;
+      const stateManager = remoteManagerAt(stateDirectory, {
+        fsImpl: failingFs,
+        fetchImpl: remoteFetch(remote.document),
+        reconcileActivation: async () => ({ openCode: {}, rollback: async () => { rollbacks += 1; } }),
+      });
+      const stateInspection = await stateManager.inspectRemote(appEntryUrl);
+      await expect(stateManager.connectRemote({
+        appEntryUrl,
+        confirmedPublisherFingerprint: stateInspection.publisher.fingerprint,
+        confirmedManifestHash: stateInspection.manifest.manifestHash,
+      })).rejects.toMatchObject({ code: 'manager_write_failed', status: 500 });
+      expect(rollbacks).toBe(1);
+      await expect(fs.stat(path.join(
+        versionsPathFor(stateDirectory),
+        'com.acme.remote',
+        '1.0.0',
+        HOSTED_OCIX_SIGNED_MANIFEST_FILE,
+      ))).resolves.toBeTruthy();
+      await expect(fs.stat(statePathFor(stateDirectory))).rejects.toMatchObject({ code: 'ENOENT' });
+      expect(JSON.parse(await fs.readFile(remoteConsentsPathFor(stateDirectory), 'utf8')).consents).toEqual({});
+      expect((await stateManager.list()).publishers).toEqual([]);
+    });
+
+    it('rejects an already-installed reconnect without changing the durable snapshot', async () => {
+      const dataDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'ocix-manager-remote-reconnect-'));
+      temporaryDirectories.push(dataDirectory);
+      const keys = generatePublisherKeyPair();
+      const remote = createRemoteManifest({ keys });
+      const manager = remoteManagerAt(dataDirectory, { fetchImpl: remoteFetch(remote.document) });
+      const inspection = await manager.inspectRemote(appEntryUrl);
+      const options = {
+        appEntryUrl,
+        confirmedPublisherFingerprint: inspection.publisher.fingerprint,
+        confirmedManifestHash: inspection.manifest.manifestHash,
+      };
+      await manager.connectRemote(options);
+      const before = await fs.readFile(statePathFor(dataDirectory), 'utf8');
+      await expect(manager.connectRemote(options)).rejects.toMatchObject({ code: 'remote_extension_installed', status: 409 });
+      expect(await fs.readFile(statePathFor(dataDirectory), 'utf8')).toBe(before);
+      expect((await manager.list()).extensions).toHaveLength(1);
+    });
+
+    it('rejects a Local package from joining a Direct Remote extension lifecycle', async () => {
+      const dataDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'ocix-manager-remote-local-conflict-'));
+      temporaryDirectories.push(dataDirectory);
+      const remoteKeys = generatePublisherKeyPair();
+      const remote = createRemoteManifest({ keys: remoteKeys });
+      const manager = remoteManagerAt(dataDirectory, { fetchImpl: remoteFetch(remote.document) });
+      const inspection = await manager.inspectRemote(appEntryUrl);
+      await manager.connectRemote({
+        appEntryUrl,
+        confirmedPublisherFingerprint: inspection.publisher.fingerprint,
+        confirmedManifestHash: inspection.manifest.manifestHash,
+      });
+      const before = await fs.readFile(statePathFor(dataDirectory), 'utf8');
+
+      const localKeys = generatePublisherKeyPair();
+      await manager.trustPublisher({
+        id: 'com.local.publisher',
+        name: 'Local Publisher',
+        keyId: 'release-2026',
+        publicKey: localKeys.publicKey,
+      });
+      const local = await signPackage({
+        keys: localKeys,
+        publisherId: 'com.local.publisher',
+        publisherName: 'Local Publisher',
+        extensionId: 'com.acme.remote',
+        version: '2.0.0',
+      });
+      await expect(manager.installPackage(local.buffer)).rejects.toMatchObject({
+        code: 'extension_delivery_conflict',
+        status: 409,
+      });
+      expect(await fs.readFile(statePathFor(dataDirectory), 'utf8')).toBe(before);
+      expect((await manager.getEnabledExtensionRoots())).toHaveLength(1);
+    });
+
+    it('never adopts an aliased versions root for a Remote installation', async () => {
+      const dataDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'ocix-manager-remote-alias-'));
+      const outside = await fs.mkdtemp(path.join(os.tmpdir(), 'ocix-manager-remote-outside-'));
+      temporaryDirectories.push(dataDirectory, outside);
+      await fs.symlink(outside, versionsPathFor(dataDirectory));
+      const keys = generatePublisherKeyPair();
+      const remote = createRemoteManifest({ keys });
+      const manager = remoteManagerAt(dataDirectory, { fetchImpl: remoteFetch(remote.document) });
+      const inspection = await manager.inspectRemote(appEntryUrl);
+
+      await expect(manager.connectRemote({
+        appEntryUrl,
+        confirmedPublisherFingerprint: inspection.publisher.fingerprint,
+        confirmedManifestHash: inspection.manifest.manifestHash,
+      })).rejects.toMatchObject({ code: 'manager_path_conflict', status: 409 });
+      expect(await fs.readdir(outside)).toEqual([]);
+      expect((await manager.list()).extensions).toEqual([]);
+      expect((await manager.list()).publishers).toEqual([]);
+    });
+
+    it('refuses rollback when an unmanaged sibling appears and preserves every byte', async () => {
+      const dataDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'ocix-manager-remote-sibling-'));
+      temporaryDirectories.push(dataDirectory);
+      const keys = generatePublisherKeyPair();
+      const remote = createRemoteManifest({ keys });
+      const manager = remoteManagerAt(dataDirectory, { fetchImpl: remoteFetch(remote.document) });
+      const inspection = await manager.inspectRemote(appEntryUrl);
+      const connected = await manager.connectRemote({
+        appEntryUrl,
+        confirmedPublisherFingerprint: inspection.publisher.fingerprint,
+        confirmedManifestHash: inspection.manifest.manifestHash,
+      });
+      const sibling = path.join(versionsPathFor(dataDirectory), 'com.acme.remote', '2.0.0');
+      await fs.mkdir(sibling);
+      const externalFile = path.join(sibling, 'external.txt');
+      await fs.writeFile(externalFile, 'external owner\n');
+      const before = await fs.readFile(statePathFor(dataDirectory), 'utf8');
+
+      await expect(connected.capability.rollback()).rejects.toMatchObject({
+        code: 'remote_shell_integrity_failed',
+        status: 409,
+      });
+      await expect(fs.readFile(externalFile, 'utf8')).resolves.toBe('external owner\n');
+      expect(await fs.readFile(statePathFor(dataDirectory), 'utf8')).toBe(before);
+    });
+
+    it('derives Remote shell and Agent Runtime hashes independently of co-tampered state', async () => {
+      const dataDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'ocix-manager-remote-cotamper-'));
+      temporaryDirectories.push(dataDirectory);
+      const keys = generatePublisherKeyPair();
+      const remote = createRemoteManifest({ keys });
+      const manager = remoteManagerAt(dataDirectory, { fetchImpl: remoteFetch(remote.document) });
+      const inspection = await manager.inspectRemote(appEntryUrl);
+      await manager.connectRemote({
+        appEntryUrl,
+        confirmedPublisherFingerprint: inspection.publisher.fingerprint,
+        confirmedManifestHash: inspection.manifest.manifestHash,
+      });
+      const toolPath = path.join(
+        versionsPathFor(dataDirectory),
+        'com.acme.remote',
+        '1.0.0',
+        'agent-runtime',
+        'tools',
+        'remote_open.ts',
+      );
+      const tamperedTool = Buffer.from('export default { execute: () => "external code" };\n');
+      await fs.writeFile(toolPath, tamperedTool);
+      const state = JSON.parse(await fs.readFile(statePathFor(dataDirectory), 'utf8'));
+      state.extensions['com.acme.remote'].versions['1.0.0']
+        .fileHashes['agent-runtime/tools/remote_open.ts'] = hostedSha256(tamperedTool);
+      await fs.writeFile(statePathFor(dataDirectory), JSON.stringify(state));
+
+      const restarted = remoteManagerAt(dataDirectory, { fetchImpl: remoteFetch(remote.document) });
+      expect(await restarted.getEnabledExtensionRoots()).toEqual([]);
+      await expect(fs.readFile(toolPath, 'utf8')).resolves.toContain('external code');
+    });
+
+    it('rejects a state and shell identity substitution against the independent consent anchor', async () => {
+      const dataDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'ocix-manager-remote-identity-substitution-'));
+      temporaryDirectories.push(dataDirectory);
+      const originalKeys = generatePublisherKeyPair();
+      const original = createRemoteManifest({ keys: originalKeys });
+      const manager = remoteManagerAt(dataDirectory, { fetchImpl: remoteFetch(original.document) });
+      const inspection = await manager.inspectRemote(appEntryUrl);
+      await manager.connectRemote({
+        appEntryUrl,
+        confirmedPublisherFingerprint: inspection.publisher.fingerprint,
+        confirmedManifestHash: inspection.manifest.manifestHash,
+      });
+
+      const attackerKeys = generatePublisherKeyPair();
+      const attacker = createRemoteManifest({
+        keys: attackerKeys,
+        publisherName: 'Attacker Publisher',
+        extensionName: 'Attacker Remote',
+      });
+      const shell = path.join(versionsPathFor(dataDirectory), 'com.acme.remote', '1.0.0');
+      const signedBytes = Buffer.from(JSON.stringify(canonicalize(attacker.document)));
+      const extensionBytes = Buffer.from(`${JSON.stringify(attacker.document.extension, null, 2)}\n`);
+      await fs.writeFile(path.join(shell, HOSTED_OCIX_SIGNED_MANIFEST_FILE), signedBytes);
+      await fs.writeFile(path.join(shell, 'openchamber.extension.json'), extensionBytes);
+
+      const state = JSON.parse(await fs.readFile(statePathFor(dataDirectory), 'utf8'));
+      const extension = state.extensions['com.acme.remote'];
+      const metadata = extension.versions['1.0.0'];
+      const attackerManifestHash = hostedSha256(signedBytes);
+      extension.name = 'Attacker Remote';
+      metadata.packageHash = attackerManifestHash;
+      metadata.publisher.name = 'Attacker Publisher';
+      metadata.publisher.fingerprint = publicKeyFingerprint(attackerKeys.publicKey);
+      metadata.remote.publisherPublicKey = attackerKeys.publicKey;
+      metadata.remote.acceptedManifest.manifestHash = attackerManifestHash;
+      metadata.fileHashes[HOSTED_OCIX_SIGNED_MANIFEST_FILE] = hostedSha256(signedBytes);
+      metadata.fileHashes['openchamber.extension.json'] = hostedSha256(extensionBytes);
+      await fs.writeFile(statePathFor(dataDirectory), JSON.stringify(state));
+
+      const restarted = remoteManagerAt(dataDirectory, { fetchImpl: remoteFetch(attacker.document) });
+      await expect(restarted.list()).rejects.toMatchObject({
+        code: 'remote_consent_integrity_failed',
+        status: 409,
+      });
+      await expect(restarted.getEnabledExtensionRoots()).rejects.toMatchObject({
+        code: 'remote_consent_integrity_failed',
+        status: 409,
+      });
+      await expect(fs.readFile(path.join(shell, 'openchamber.extension.json'), 'utf8'))
+        .resolves.toContain('Attacker Remote');
+    });
+
+    it('preserves an external replacement when activation fails during Remote install cleanup', async () => {
+      const dataDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'ocix-manager-remote-install-race-'));
+      temporaryDirectories.push(dataDirectory);
+      const keys = generatePublisherKeyPair();
+      const remote = createRemoteManifest({ keys });
+      const extensionRoot = path.join(versionsPathFor(dataDirectory), 'com.acme.remote');
+      const preservedOriginal = path.join(dataDirectory, 'preserved-original-shell');
+      const externalFile = path.join(extensionRoot, '1.0.0', 'external.txt');
+      const manager = remoteManagerAt(dataDirectory, {
+        fetchImpl: remoteFetch(remote.document),
+        reconcileActivation: async () => {
+          await fs.rename(extensionRoot, preservedOriginal);
+          await fs.mkdir(path.dirname(externalFile), { recursive: true });
+          await fs.writeFile(externalFile, 'external owner\n');
+          throw new InteractiveUIExtensionManagerError('activation failed', 'activation_failed', 500);
+        },
+      });
+      const inspection = await manager.inspectRemote(appEntryUrl);
+
+      await expect(manager.connectRemote({
+        appEntryUrl,
+        confirmedPublisherFingerprint: inspection.publisher.fingerprint,
+        confirmedManifestHash: inspection.manifest.manifestHash,
+      })).rejects.toMatchObject({ code: 'activation_failed', status: 500 });
+      await expect(fs.readFile(externalFile, 'utf8')).resolves.toBe('external owner\n');
+      await expect(fs.stat(path.join(preservedOriginal, '1.0.0', HOSTED_OCIX_SIGNED_MANIFEST_FILE)))
+        .resolves.toBeTruthy();
+      await expect(fs.stat(statePathFor(dataDirectory))).rejects.toMatchObject({ code: 'ENOENT' });
+    });
+
+    it('never moves a Remote shell when external content appears while rollback activation awaits', async () => {
+      const dataDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'ocix-manager-remote-retained-shell-race-'));
+      temporaryDirectories.push(dataDirectory);
+      const keys = generatePublisherKeyPair();
+      const remote = createRemoteManifest({ keys });
+      let activationCalls = 0;
+      const shellRoot = path.join(versionsPathFor(dataDirectory), 'com.acme.remote');
+      const externalFile = path.join(shellRoot, '2.0.0', 'external.txt');
+      const manager = remoteManagerAt(dataDirectory, {
+        fetchImpl: remoteFetch(remote.document),
+        reconcileActivation: async () => {
+          activationCalls += 1;
+          if (activationCalls === 2) {
+            await fs.mkdir(path.dirname(externalFile), { recursive: true });
+            await fs.writeFile(externalFile, 'external owner\n');
+          }
+          return { openCode: {}, rollback: async () => {} };
+        },
+      });
+      const inspection = await manager.inspectRemote(appEntryUrl);
+      const connected = await manager.connectRemote({
+        appEntryUrl,
+        confirmedPublisherFingerprint: inspection.publisher.fingerprint,
+        confirmedManifestHash: inspection.manifest.manifestHash,
+      });
+
+      await expect(connected.capability.rollback()).resolves.toMatchObject({
+        removed: true,
+        cleanupPending: true,
+      });
+      await expect(fs.readFile(externalFile, 'utf8')).resolves.toBe('external owner\n');
+      await expect(fs.stat(path.join(shellRoot, '1.0.0', HOSTED_OCIX_SIGNED_MANIFEST_FILE)))
+        .resolves.toBeTruthy();
+      expect((await manager.list()).extensions).toEqual([]);
+    });
+
+    it('never uses recursive deletion for a Remote rollback tombstone', async () => {
+      const dataDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'ocix-manager-remote-no-recursive-delete-'));
+      temporaryDirectories.push(dataDirectory);
+      let recursiveRemovals = 0;
+      const guardedFs = {
+        ...fs,
+        rm: async (target, options) => {
+          if (options?.recursive) {
+            recursiveRemovals += 1;
+            throw new Error(`unexpected recursive removal: ${target}`);
+          }
+          return fs.rm(target, options);
+        },
+      };
+      const keys = generatePublisherKeyPair();
+      const remote = createRemoteManifest({ keys });
+      const manager = remoteManagerAt(dataDirectory, {
+        fsImpl: guardedFs,
+        fetchImpl: remoteFetch(remote.document),
+      });
+      const inspection = await manager.inspectRemote(appEntryUrl);
+      const connected = await manager.connectRemote({
+        appEntryUrl,
+        confirmedPublisherFingerprint: inspection.publisher.fingerprint,
+        confirmedManifestHash: inspection.manifest.manifestHash,
+      });
+
+      await expect(connected.capability.rollback()).resolves.toMatchObject({
+        removed: true,
+        cleanupPending: true,
+      });
+      expect(recursiveRemovals).toBe(0);
+      expect((await manager.list()).extensions).toEqual([]);
+      await expect(fs.stat(path.join(
+        versionsPathFor(dataDirectory),
+        'com.acme.remote',
+        '1.0.0',
+        HOSTED_OCIX_SIGNED_MANIFEST_FILE,
+      ))).resolves.toBeTruthy();
+      await expect(fs.stat(trashPathFor(dataDirectory))).rejects.toMatchObject({ code: 'ENOENT' });
+      expect(JSON.parse(await fs.readFile(remoteConsentsPathFor(dataDirectory), 'utf8')).consents).toEqual({});
+    });
+
+    it('keeps capability non-enumerable, reports unbound runtime failure, and rolls back exactly', async () => {
+      const dataDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'ocix-manager-remote-capability-'));
+      temporaryDirectories.push(dataDirectory);
+      const keys = generatePublisherKeyPair();
+      const remote = createRemoteManifest({ keys });
+      const manager = remoteManagerAt(dataDirectory, { fetchImpl: remoteFetch(remote.document) });
+      const inspection = await manager.inspectRemote(appEntryUrl);
+      const connected = await manager.connectRemote({
+        appEntryUrl,
+        confirmedPublisherFingerprint: inspection.publisher.fingerprint,
+        confirmedManifestHash: inspection.manifest.manifestHash,
+      });
+      expect(Object.keys(connected)).not.toContain('capability');
+      expect(JSON.stringify(connected)).not.toContain('capability');
+      await expect(connected.capability.configureCredential('sk-secret')).rejects.toMatchObject({
+        code: 'remote_credential_runtime_unavailable',
+        status: 409,
+      });
+      await expect(connected.capability.rollback()).resolves.toMatchObject({ removed: true });
+      expect((await manager.list()).extensions).toEqual([]);
+      expect((await manager.list()).publishers).toEqual([]);
+      await expect(fs.stat(path.join(
+        versionsPathFor(dataDirectory),
+        'com.acme.remote',
+        '1.0.0',
+        HOSTED_OCIX_SIGNED_MANIFEST_FILE,
+      ))).resolves.toBeTruthy();
+    });
+
+    it('refuses a stale Remote rollback from deleting a replacement installation', async () => {
+      const dataDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'ocix-manager-remote-stale-rollback-'));
+      temporaryDirectories.push(dataDirectory);
+      const keys = generatePublisherKeyPair();
+      const remote = createRemoteManifest({ keys });
+      const manager = remoteManagerAt(dataDirectory, { fetchImpl: remoteFetch(remote.document) });
+      const inspection = await manager.inspectRemote(appEntryUrl);
+      const options = {
+        appEntryUrl,
+        confirmedPublisherFingerprint: inspection.publisher.fingerprint,
+        confirmedManifestHash: inspection.manifest.manifestHash,
+      };
+      const first = await manager.connectRemote(options);
+      await first.capability.rollback();
+      const replacement = await manager.connectRemote(options);
+      const before = await fs.readFile(statePathFor(dataDirectory), 'utf8');
+      await expect(first.capability.rollback()).rejects.toMatchObject({
+        code: 'remote_rollback_installation_changed',
+        status: 409,
+      });
+      expect(await fs.readFile(statePathFor(dataDirectory), 'utf8')).toBe(before);
+      expect((await manager.list()).extensions[0].activeVersion).toBe(replacement.extension.version);
+      expect((await manager.getEnabledExtensionRoots())).toHaveLength(1);
+    });
+
+    it('refuses stale credential capabilities after a replacement installation', async () => {
+      const dataDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'ocix-manager-remote-stale-capability-'));
+      temporaryDirectories.push(dataDirectory);
+      const keys = generatePublisherKeyPair();
+      const remote = createRemoteManifest({ keys });
+      const calls = [];
+      const credentialRuntime = {
+        configureRemoteConnection: async (...args) => {
+          calls.push(['configure', ...args]);
+          return { credential: { configured: true } };
+        },
+        removeRemoteConnection: async (...args) => {
+          calls.push(['remove', ...args]);
+          return { removed: true };
+        },
+      };
+      const manager = remoteManagerAt(dataDirectory, { fetchImpl: remoteFetch(remote.document) });
+      const inspection = await manager.inspectRemote(appEntryUrl);
+      const options = {
+        appEntryUrl,
+        confirmedPublisherFingerprint: inspection.publisher.fingerprint,
+        confirmedManifestHash: inspection.manifest.manifestHash,
+      };
+      const first = await manager.connectRemote(options, credentialRuntime);
+      await first.capability.rollback();
+      const replacement = await manager.connectRemote(options, credentialRuntime);
+
+      await expect(first.capability.configureCredential('stale-secret')).rejects.toMatchObject({
+        code: 'remote_installation_changed',
+        status: 409,
+      });
+      await expect(first.capability.removeCredential()).rejects.toMatchObject({
+        code: 'remote_installation_changed',
+        status: 409,
+      });
+      expect(calls).toEqual([]);
+      await expect(replacement.capability.configureCredential('current-secret')).resolves.toMatchObject({
+        credential: { configured: true },
+      });
+      expect(calls).toHaveLength(1);
+      expect(calls[0][0]).toBe('configure');
+      expect(calls[0]).not.toContain('stale-secret');
     });
   });
 
