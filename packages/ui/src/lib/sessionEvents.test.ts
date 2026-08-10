@@ -191,7 +191,13 @@ describe('sessionEvents composer prefill contract', () => {
         return getterReads === 1 ? 'ok' : 'x'.repeat(MAX_COMPOSER_PREFILL_TEXT_LENGTH + 1);
       },
     });
-    expect(() => sessionEvents.requestComposerPrefill(accessor as unknown as PrefillRequest)).not.toThrow();
+    let accessorThrew = false;
+    try {
+      sessionEvents.requestComposerPrefill(accessor as unknown as PrefillRequest);
+    } catch {
+      accessorThrew = true;
+    }
+    expect(accessorThrew).toBe(false);
     expect(getterReads).toBe(0);
 
     const throwingTraps = new Proxy({}, {
@@ -205,7 +211,13 @@ describe('sessionEvents composer prefill contract', () => {
         throw new Error('hostile get trap');
       },
     });
-    expect(() => sessionEvents.requestComposerPrefill(throwingTraps as unknown as PrefillRequest)).not.toThrow();
+    let proxyThrew = false;
+    try {
+      sessionEvents.requestComposerPrefill(throwingTraps as unknown as PrefillRequest);
+    } catch {
+      proxyThrew = true;
+    }
+    expect(proxyThrew).toBe(false);
 
     expect(calls).toBe(0);
   });
