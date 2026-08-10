@@ -1334,21 +1334,21 @@
 
 ## issue-068: Regenerate the target icon contract for retained fork surfaces
 
-- Status: READY
+- Status: OPEN
 - Classification: P0
 - Goal / user outcome: Retained Applications/Workbench UI uses valid generated icon names without weakening icon typing or importing donor-wide generated drift.
 - First-principles root cause: Fork consumers reference `apps-2-ai` and `sort-desc`, but the v1.18.1 generated icon union/sprite in the integration does not contain them.
 - Core acceptance invariant: Use the repository icon generator/source-of-truth; generated type and sprite remain synchronized; only icons required by retained fork surfaces are added; no `as IconName` escape hatch.
-- Dependencies: none
+- Dependencies: issue-072
 - Dispatch order: Independent foundation wave.
 - Ownership: `packages/ui/src/components/icon/icons.ts`; `packages/ui/src/components/icon/sprite.ts`; the existing generator source/test only if generation proves it is the authoritative missing input.
 - Focused verification: Run `bun run icons:generate`, require a clean second generation, UI typecheck error delta, and focused icon lint/tests.
-- Pi binding: unassigned
-- Pi attempts: none
+- Pi binding: run/session `2dc69087-5926-43a9-a644-3ae8f100229d`, batch `dca705e2-05ca-45ac-8890-bf7059cc1a45`, final revision 1, supervised-local without sandbox; final worktree clean because the incomplete generated output was correctly reverted.
+- Pi attempts: correction 1 formalized the generator false-negative and reverted the incomplete `apps-2-ai`-only output after revision 0 ended on provider TPM errors without a handoff.
 - Primary attempts: not eligible while Pi retries remain
-- Current evidence: UI typecheck reports invalid icon-name literals for both retained fork surfaces; generated declarations and sprite are target-owned and currently omit those names.
+- Current evidence: Pi ran the documented generator repeatedly and proved it deterministically emits real Remix path data for `apps-2-ai` but omits `sort-desc`; a clean second run is byte-identical. The generator recognizes direct literal props and typed `*IconName` variables but not the retained `DeclarativeInteractiveView.tsx` JSX ternary containing `sort-desc`. `RiSortDesc` exists in the pinned Remix bundle; the missing path is solely a scanner false-negative. Pi restored a clean worktree rather than leave output that the next generation would delete.
 - Continuation decision: Removes generated-contract noise before host-seam repairs.
-- Next action: Dispatch a supervised-local Pi lane; primary reruns the generator and rejects hand-edited generated drift.
+- Next action: Resolve issue-072, then rerun generation twice and close this derived-output issue.
 
 ## issue-069: Restore a narrow authoritative composer-prefill event contract
 
@@ -1403,3 +1403,21 @@
 - Current evidence: Pi replayed exactly four manifest aliases, the two-line secret-free `.npmrc` placeholder, and five SDK-only lock hunks from maintained donor commit `870cc00cb471743795d2a8c9746247951e78f931`; no unrelated lock byte changed. Primary independently proved Bun accepts the lock: online frozen install reached only the expected GitHub Packages **403** because `GITHUB_PACKAGES_TOKEN` is absent, then the exact cached `@zunbaran/opencode-sdk@1.18.10-oc.1` package was restored and `bun install --frozen-lockfile --offline` completed with **no changes**. All four symlinks resolve the fork package and UI typecheck remains at the expected 266 separately-owned errors.
 - Continuation decision: Resolves issue-054 and enables fork client wrappers/typechecking without mixed SDK types.
 - Next action: Resolved; issue-054 is closed and fork client/Electron distribution work may proceed.
+
+## issue-072: Teach the icon generator to retain JSX expression icon literals
+
+- Status: READY
+- Classification: P0
+- Goal / user outcome: Generated icon typing and sprite data remain complete when an `<Icon name={...}>` expression selects literal names through nested conditionals, so retained fork UI cannot compile against an icon that generation later deletes.
+- First-principles root cause: `scripts/generate-icon-sprite.mjs` scans direct literal `name` props and a few typed-variable shapes, but it does not parse or conservatively inspect the expression body of an Icon `name={...}` prop. The retained `DeclarativeInteractiveView` selects `sort-desc` in a nested ternary, producing a deterministic false-negative even though `RiSortDesc` exists.
+- Core acceptance invariant: Extend only the documented generator scanner and a focused generator test/fixture so literal kebab icon names inside balanced JSX `name={...}` expressions are retained, while arbitrary prose/string literals outside Icon name expressions are ignored. Existing direct, typed-variable, and custom-icon behavior remains unchanged; generated outputs add exactly `apps-2-ai` and `sort-desc`; a second generation is clean.
+- Dependencies: none
+- Dispatch order: Bounded generator repair before derived-output issue-068.
+- Ownership: `scripts/generate-icon-sprite.mjs`; one focused adjacent generator test/fixture if the repository has a viable convention. Generated `packages/ui/src/components/icon/sprite.ts` remains issue-068-owned and must not be edited in this lane.
+- Focused verification: Focused scanner test covering nested ternary, direct literal, malformed/unbalanced expression, and unrelated string false positives; generator dry evidence or primary-owned full generation; syntax check and `git diff --check`.
+- Pi binding: unassigned
+- Pi attempts: none
+- Primary attempts: not eligible while Pi retries remain
+- Current evidence: issue-068 revision 1 applied all current scanner regexes to the real consumer and found no match for `sort-desc`; the same generator retains the donor's icon only when another donor component contains a direct `<Icon name="sort-desc">`. This is distinct from output regeneration and bounded to scanner recognition.
+- Continuation decision: Enables issue-068 to generate stable synchronized icon output.
+- Next action: Dispatch one supervised-local Pi lane restricted to the generator and focused test/fixture; do not edit consumers or generated output.
