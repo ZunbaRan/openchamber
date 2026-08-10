@@ -487,6 +487,19 @@ try {
     network: [crmApi.url],
     nativeCode: true,
   });
+  const trustedPublisher = await requestJson(port, '/api/interactive-ui/manager/publishers', {
+    method: 'POST',
+    body: {
+      id: HYBRID_CRM_FIXTURE.publisherId,
+      name: HYBRID_CRM_FIXTURE.publisherName,
+      keyId: HYBRID_CRM_FIXTURE.keyId,
+      publicKey: hybridCrmPackage.publisherKeys.publicKey,
+    },
+  });
+  assert.equal(trustedPublisher.publisherId, HYBRID_CRM_FIXTURE.publisherId);
+  assert.equal(trustedPublisher.keyId, HYBRID_CRM_FIXTURE.keyId);
+  assert.equal(trustedPublisher.fingerprint, inspection.publisher.fingerprint);
+  assert.equal(trustedPublisher.added, true);
   const installedPackage = await requestJson(port, '/api/interactive-ui/manager/packages', {
     method: 'POST',
     body: {
