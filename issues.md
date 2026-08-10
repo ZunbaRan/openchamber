@@ -1522,7 +1522,7 @@
 
 ## issue-078: Restore packaged Interactive UI demo and popout entry points
 
-- Status: READY
+- Status: RESOLVED
 - Classification: P0
 - Goal / user outcome: The packaged app contains the Interactive UI acceptance page plus Workbench and Artifact popout entry points already referenced by Electron/UI production code.
 - First-principles root cause: The integration restored callers and the packaged acceptance command but omitted five maintained web entry files and their three Vite multi-page inputs. Consequently `interactive-ui-demo.html`, `workbench-popout.html`, and `artifact-popout-host.html` are absent from the canonical package; the acceptance harness cannot continue and production popouts resolve to missing assets.
@@ -1531,16 +1531,16 @@
 - Dispatch order: Before rebuilding the canonical app and rerunning issue-077.
 - Ownership: `packages/web/artifact-popout-host.html`; `packages/web/interactive-ui-demo.html`; `packages/web/workbench-popout.html`; `packages/web/src/interactive-ui-demo.tsx`; `packages/web/src/workbench-popout.tsx`; `packages/web/vite.config.ts`. Six files are one indivisible multi-page build contract: the five entry documents/modules and the existing Vite input map that makes them distributable.
 - Focused verification: Donor byte comparison for the five restored files; exact three-key Vite diff; Web typecheck/lint; production Web build; assert all three HTML files and their referenced assets exist in `packages/web/dist`; `git diff --check`.
-- Pi binding: run `172ab3ab-f37d-44a9-b346-7c4725fe578e`, base `0a9f2139`, revision 1 partial; policy-clean with exactly the six owned paths.
-- Pi attempts: Revision 0 was recoverably paused after producing no candidate; correction 1 restored the five donor files and three exact Vite keys, then isolated two missing out-of-scope fixture dependencies and one owned lint error. Correction 2 is narrowing the owned lint fix only.
+- Pi binding: run `172ab3ab-f37d-44a9-b346-7c4725fe578e`, base `0a9f2139`, final revision 2; policy-clean with exactly the six owned paths.
+- Pi attempts: Revision 0 was recoverably paused after producing no candidate; correction 1 restored the five donor files and three exact Vite keys, then isolated two missing out-of-scope fixture dependencies and one owned lint error. Correction 2 added only the repository-conventional entry-module lint suppression.
 - Primary attempts: none while Pi retries remain.
-- Current evidence: The policy-clean candidate restores all five files at exact donor blob hashes and changes Vite by exactly three input lines. A disposable alias build proves all six pages emit and every hashed asset resolves. The real build now fails only because the donor demo entry imports two additional omitted fixture files tracked by issue-079; owned lint has one entry-module-only React Refresh error under correction.
-- Continuation decision: Accept the six-file slice after its owned lint is clean; issue-079 completes the dependency graph before the production rebuild.
-- Next action: Finish correction 2, then run issue-079 from the integrated base.
+- Current evidence: The accepted candidate restores four files byte-identically, changes `workbench-popout.tsx` only by two explanatory lint-suppression comment lines, and changes Vite by exactly three input lines. Web lint is clean. After issue-079 restored the two missing fixture dependencies, primary independently passed Web typecheck, Web lint, and the real production build; all three HTML outputs and their hashed entry assets are present.
+- Continuation decision: Resolves the packaged multi-page entry contract and enables the canonical Electron rebuild.
+- Next action: Resolved; keep the three pages in every packaged-output inspection.
 
 ## issue-079: Restore the demo entry fixture dependency graph
 
-- Status: READY
+- Status: RESOLVED
 - Classification: P0
 - Goal / user outcome: The restored packaged Interactive UI demo entry typechecks and builds from checked-in sources without aliases or undeclared modules.
 - First-principles root cause: The omitted multi-page entry also statically imports `packages/web/src/interactive-ui-visual-fixtures.ts` and the JavaScript fixture `examples/interactive-ui/artifact-fixtures.mjs` requires its maintained adjacent declaration file. Both were omitted from the integration branch.
@@ -1549,9 +1549,9 @@
 - Dispatch order: Immediately after the six-file entry-point slice.
 - Ownership: `packages/web/src/interactive-ui-visual-fixtures.ts`; `examples/interactive-ui/artifact-fixtures.d.mts`.
 - Focused verification: Exact donor blob hashes, Web typecheck and lint, real production Web build, all three restored HTML outputs and referenced assets, `git diff --check`.
-- Pi binding: pending
-- Pi attempts: none
+- Pi binding: run `37f34772-c466-4ea0-bebf-bf917375e1fd`, base `5e427588`, revision 0; policy-clean with exactly the two owned paths.
+- Pi attempts: Revision 0 restored both exact donor blobs and completed every focused gate; no correction was required.
 - Primary attempts: none while Pi retries remain.
-- Current evidence: Real build fails resolving `./interactive-ui-visual-fixtures`; Web typecheck additionally reports no declaration for `examples/interactive-ui/artifact-fixtures.mjs`. The maintained donor contains both files, and a scratch-only alias of the exact visual fixture makes the full build emit all expected pages.
-- Continuation decision: Restore this exact two-file dependency graph; no config workaround is acceptable.
-- Next action: Dispatch the two-file READY issue through Sol Pi Advisor.
+- Current evidence: Both files are byte-identical to donor blobs `e52e1695…` and `ad2f0540…`. Pi and primary independently pass Web typecheck, Web lint, and the real checked-in-config production build without aliases. The build emits `interactive-ui-demo.html`, `workbench-popout.html`, and `artifact-popout-host.html`; all local hashed references resolve.
+- Continuation decision: Resolves the demo dependency graph and removes the last known Web build blocker.
+- Next action: Resolved; rebuild the Electron package so staged Web assets include these pages.
