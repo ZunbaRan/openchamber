@@ -1484,7 +1484,7 @@
 
 ## issue-076: Verify explicit local fork CLI overrides at runtime
 
-- Status: READY
+- Status: RESOLVED
 - Classification: P0
 - Goal / user outcome: A locally built, self-checking fork CLI can pass the same managed-runtime capability gate used for a locked Release while retaining honest version, commit, and checksum provenance.
 - First-principles root cause: `prepare-opencode-cli` and staged/packaged verification explicitly support `OPENCHAMBER_OPENCODE_CLI_PATH`, but `verify-opencode-cli-runtime.mjs` always asserts the immutable Release lock identity and does not read the staged local-override distribution metadata. Its temporary runtime also omits an isolated XDG state directory.
@@ -1493,11 +1493,11 @@
 - Dispatch order: Before packaging with the exact local fork binary.
 - Ownership: `packages/electron/scripts/verify-opencode-cli-runtime.mjs`; one adjacent focused test if a pure helper can be extracted without widening the change.
 - Focused verification: Node syntax check, focused metadata cases, staged binary self-check, managed runtime capability/tool/upgrade probe, and `git diff --check`.
-- Pi binding: unassigned
-- Pi attempts: none
-- Primary attempts: not eligible while Pi retries remain
-- Current evidence: The staged local build passes Generative Widget self-check and embeds fork commit `f263f908`; the current runtime verifier starts from Release-lock expectations and failed its first sandboxed launch before identity assertions, exposing the missing isolated state/override contract.
+- Pi binding: run `3c96c893-1afc-427e-b14c-d29bf1382ada`, base `061b2410`, final revision 1; policy-clean with exactly two owned paths.
+- Pi attempts: Revision 0 added explicit override identity resolution and isolated XDG state. Correction 1 made schema/repository equality and staged executable SHA-256 fail closed, with expanded negative tests.
+- Primary attempts: No implementation attempt; primary replayed the final policy-clean candidate, rebuilt the genuine local fork CLI from clean commit `f263f908`, and independently exercised the real managed runtime.
+- Current evidence: Resolved 2026-08-10. Pure identity/lock/self-check tests pass **12/12**. The newly built arm64 CLI reports `1.18.10-oc.1+f263f908`, embeds distribution `ZunbaRan/opencode`, upstream commit `e024e2ef`, exact fork commit `f263f908…31f2`, and SHA-256 `04358ae41212c5c54d57bea5fa387c18fc89e7a3b06268c710243065d54422be`. Its real loopback runtime probe passes all four MCP feature flags, built-in `html_artifact`/`interactive_ui` discovery, independent-upgrade rejection, and channel-database absence.
 - Suspension decision: n/a
 - Resume condition: n/a
 - Continuation decision: Unblocks honest local package verification without weakening issue-066's still-open immutable Release requirement.
-- Next action: Dispatch a bounded Pi lane after issue-074 handoff.
+- Next action: Resolved; use this exact local override and provenance for the canonical arm64 package.
