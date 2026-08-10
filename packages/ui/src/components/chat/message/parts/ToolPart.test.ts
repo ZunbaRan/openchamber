@@ -161,4 +161,28 @@ describe('getToolDescriptionFallback', () => {
         expect(getToolDescriptionFallback('glob', 'Electron docs', { pattern: 'packages/electron/README.md' }))
             .toBe('Electron docs');
     });
+
+    test('never leaks a pattern for non-glob tools', () => {
+        expect(getToolDescriptionFallback('grep', '', { pattern: 'packages/electron/README.md' })).toBe('');
+    });
+
+    test('treats whitespace-only descriptions as empty', () => {
+        expect(getToolDescriptionFallback('glob', '   ', { pattern: 'packages/electron/README.md' }))
+            .toBe('packages/electron/README.md');
+    });
+
+    test('returns the original non-empty description untrimmed', () => {
+        expect(getToolDescriptionFallback('glob', '  Electron docs  ', { pattern: 'packages/electron/README.md' }))
+            .toBe('  Electron docs  ');
+    });
+
+    test('normalizes dotted and indexed glob names', () => {
+        expect(getToolDescriptionFallback('runtime.glob:2', '', { pattern: 'packages/electron/README.md' }))
+            .toBe('packages/electron/README.md');
+    });
+
+    test('ignores non-string patterns and missing input', () => {
+        expect(getToolDescriptionFallback('glob', '', { pattern: 42 })).toBe('');
+        expect(getToolDescriptionFallback('glob', '', undefined)).toBe('');
+    });
 });

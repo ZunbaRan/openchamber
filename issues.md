@@ -502,7 +502,7 @@
 
 ## issue-026: Add narrow rich-result dispatch to the target ToolPart
 
-- Status: READY
+- Status: RESOLVED
 - Classification: NORMAL
 - Goal / user outcome: Target-release ordinary Tool UI remains intact while completed OCIX, Artifact, Installed Artifact, and MCP App results select the correct lazy renderer and preserve raw fallback.
 - First-principles root cause: The upstream ToolPart knows none of the fork envelopes/metadata, while the donor ToolPart contains large unrelated UI drift.
@@ -511,14 +511,14 @@
 - Dispatch order: Late serial host seam after every renderer contract freezes.
 - Ownership: `packages/ui/src/components/chat/message/parts/ToolPart.tsx`; `packages/ui/src/components/chat/message/parts/toolRenderUtils.ts`; `packages/ui/src/components/chat/message/parts/toolRenderUtils.test.ts`.
 - Focused verification: Run helper/renderer dispatch tests, UI typecheck/lint, and inspect diff against `v1.18.1` to prove only adapter/state logic was added.
-- Pi binding: unassigned for reopened target-helper defect
-- Pi attempts: none for reopened defect
+- Pi binding: batch `253e064d-9f86-4be5-b110-cf74637a8c22`, run `8cbac29c-52b7-4ceb-a8b1-9071762a0042`, base `eb9ce926`, final revision 1; policy-clean formal handoff.
+- Pi attempts: Correction 1 only finalized the already complete revision-0 candidate after primary recoverably paused an overlong verification turn; no code changed in correction.
 - Primary attempts: not eligible while Pi retries remain
-- Current evidence: Reopened 2026-08-10. The target v1.18.1 regression suite still imports `getToolDescriptionFallback`, but donor-based `toolRenderUtils.ts` lost that target helper while gaining the required rich-result predicates. UI typecheck has one owned missing-export error. The exact immutable target helper is a four-branch additive restoration and must coexist with fork dispatch helpers.
+- Current evidence: Resolved 2026-08-10. The immutable v1.18.1 helper is restored byte-identically beside the fork rich-result predicates; five boundary tests cover non-glob isolation, whitespace, exact description preservation, normalized names, and invalid input. Primary independently ran ToolPart/helper tests **38/38** and `git diff --check`. Pi's controlled typecheck delta removed exactly the owned missing-export error with no new error.
 - Suspension decision: n/a; collapsed-focus issue-001 stays suspended
 - Resume condition: n/a
 - Continuation decision: Enables conversation/browser acceptance.
-- Next action: Dispatch one bounded Pi lane to restore the exact target helper and rerun ToolPart tests.
+- Next action: Resolved; include ToolPart in final retained UI gates.
 
 ## issue-027: Restore message-level default-open rich-result state
 
