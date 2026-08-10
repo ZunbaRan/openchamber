@@ -1298,7 +1298,7 @@
 
 ## issue-066: Add a deterministic fork OpenCode CLI distribution lock and self-check contract
 
-- Status: RESOLVED
+- Status: OPEN
 - Classification: P0
 - Goal / user outcome: The Electron package embeds the exact maintained OpenCode fork binary, with immutable URL, checksum, version, release tag, and commit provenance rather than silently downloading the official CLI.
 - First-principles root cause: The v1.18.1 integration worktree has no fork CLI lock or self-check scripts; `prepare-opencode-cli.mjs` derives an official anomalyco download from the SDK version.
@@ -1310,9 +1310,9 @@
 - Pi binding: run/session `b0cbc425-a501-4744-b7b5-46dd935178a0`, batch `7c48e442-3dbe-4be2-a421-8b5f59cc69ac`, base `9024883a1c77b5bc1e9133760dc1ef9b7083026d`, revision 0, supervised-local without sandbox; policy-clean with exactly the five owned paths and no dependency/staged/outside-path changes.
 - Pi attempts: none
 - Primary attempts: not eligible while Pi retries remain
-- Current evidence: Pi replayed all five files byte-identically from maintained donor commit `870cc00cb471743795d2a8c9746247951e78f931`; primary independently verified the recorded SHA-256 values, exact five-path ownership, and Node tests **4/4**. The lock pins fork `1.18.10-oc.1`, ZunbaRan release URLs/checksums, upstream/fork commits, and fork SDK provenance; validation rejects version drift and official-host fallback.
+- Current evidence: Reopened 2026-08-10 by the real prepare gate. The downloaded arm64 archive matches the lock SHA-256, but its CLI does **not** expose `debug generative-widget`, so `assertOpenCodeCliBinary` correctly rejects release `v1.18.10-oc.1`. The later clean local fork build at embedded commit `f263f908da3f71aa637ddb356328901b6ce231f2` passes the same asset self-check and is usable only through the explicit local-override path; it does not make the immutable GitHub Release lock true.
 - Continuation decision: Enables issue-067 Electron packaging wiring.
-- Next action: Resolved; issue-067 may consume this immutable lock/self-check API after issue-054 resolves.
+- Next action: Keep open until a new immutable ZunbaRan fork Release contains the verified post-`f263f908` CLI and the lock is updated to that release URL, version, commits, and checksums. Local installation may proceed through exact local-override provenance without claiming the Release gate is closed.
 
 ## issue-067: Wire Electron prepare, verify, and runtime gates to the fork CLI lock
 
@@ -1328,7 +1328,7 @@
 - Pi binding: run/session `51458b31-fe52-46d3-84cb-7718a76c75f6`, batch `dca705e2-05ca-45ac-8890-bf7059cc1a45`, base `74699f8ed24a856b454a27694f9c1c9702bea9fd`, revision 0, supervised-local without sandbox; policy-clean with four changed owned paths and no dependency/staged/outside-path changes.
 - Pi attempts: none
 - Primary attempts: not eligible while Pi retries remain
-- Current evidence: Pi replayed the three Electron CLI scripts byte-identically from maintained donor commit `870cc00cb471743795d2a8c9746247951e78f931` (primary independently matched blob IDs `6ea24e14`, `af1d7af5`, and `29a38fac`) and added only the two package-script verification gates. Prepare now accepts only the issue-066 lock or an explicit local override, verifies archive/binary SHA and Generative Widget manifest, and writes distribution provenance. Staged and packaged verification consume the same lock; the runtime probe validates fork capabilities and managed-tool discovery. Primary reran lock/self-check/architecture tests **10/10**, all three scripts pass Node syntax checks, and `git diff --check` is clean. Real binary download, canonical packaging, packaged runtime verification, and provenance inspection remain issue-070 gates.
+- Current evidence: Pi replayed the three Electron CLI scripts byte-identically from maintained donor commit `870cc00cb471743795d2a8c9746247951e78f931` (primary independently matched blob IDs `6ea24e14`, `af1d7af5`, and `29a38fac`) and added only the two package-script verification gates. Prepare now accepts only the issue-066 lock or an explicit local override, verifies archive/binary SHA and Generative Widget manifest, and writes distribution provenance. Staged and packaged binary verification support local override metadata. Architecture/lock/self-check tests pass **42/42** and Artifact Runner passes **7/7**. The real release download is correctly rejected by the asset gate; the exact local build embeds distribution `ZunbaRan/opencode`, upstream commit `e024e2ef`, fork commit `f263f908`, and passes the asset self-check. Runtime-probe behavior for this override remains issue-076.
 - Continuation decision: Enables issue-070 installable artifact gate.
 - Next action: Resolved; issue-070 must exercise the locked binary and packaged `.app` end to end before installation.
 
@@ -1481,3 +1481,23 @@
 - Resume condition: n/a
 - Continuation decision: Keep the Node-first PATH for the canonical validation and packaging commands.
 - Next action: Resolved; no code change.
+
+## issue-076: Verify explicit local fork CLI overrides at runtime
+
+- Status: READY
+- Classification: P0
+- Goal / user outcome: A locally built, self-checking fork CLI can pass the same managed-runtime capability gate used for a locked Release while retaining honest version, commit, and checksum provenance.
+- First-principles root cause: `prepare-opencode-cli` and staged/packaged verification explicitly support `OPENCHAMBER_OPENCODE_CLI_PATH`, but `verify-opencode-cli-runtime.mjs` always asserts the immutable Release lock identity and does not read the staged local-override distribution metadata. Its temporary runtime also omits an isolated XDG state directory.
+- Core acceptance invariant: For normal builds, runtime identity remains exactly lock-owned. Only when the explicit override environment is present may the verifier accept a valid local-override `distribution.json`; expected distribution/version/upstream/fork commits come from that staged metadata, and malformed or missing metadata fails closed. Runtime state is isolated under the verifier temp root.
+- Dependencies: issue-067
+- Dispatch order: Before packaging with the exact local fork binary.
+- Ownership: `packages/electron/scripts/verify-opencode-cli-runtime.mjs`; one adjacent focused test if a pure helper can be extracted without widening the change.
+- Focused verification: Node syntax check, focused metadata cases, staged binary self-check, managed runtime capability/tool/upgrade probe, and `git diff --check`.
+- Pi binding: unassigned
+- Pi attempts: none
+- Primary attempts: not eligible while Pi retries remain
+- Current evidence: The staged local build passes Generative Widget self-check and embeds fork commit `f263f908`; the current runtime verifier starts from Release-lock expectations and failed its first sandboxed launch before identity assertions, exposing the missing isolated state/override contract.
+- Suspension decision: n/a
+- Resume condition: n/a
+- Continuation decision: Unblocks honest local package verification without weakening issue-066's still-open immutable Release requirement.
+- Next action: Dispatch a bounded Pi lane after issue-074 handoff.
