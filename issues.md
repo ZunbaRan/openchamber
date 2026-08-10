@@ -1444,7 +1444,7 @@
 
 ## issue-074: Clear remaining target-host UI lint errors
 
-- Status: READY
+- Status: RESOLVED
 - Classification: NORMAL
 - Goal / user outcome: The integrated v1.18.1 UI passes the repository lint gate without altering retained feature behavior.
 - First-principles root cause: Narrow donor/target integration residues left unused parameters, sparse-array fixtures, one mutable declaration, and one intentional control-character matcher that violate the target ESLint contract.
@@ -1453,14 +1453,14 @@
 - Dispatch order: Final static-analysis cleanup before the canonical build.
 - Ownership: `packages/ui/src/apps/MobileWorkspaceDrawer.tsx`; `packages/ui/src/lib/generative-widget/parseShowWidget.ts`; `packages/ui/src/lib/generative-widget/parseShowWidget.test.ts`; `packages/ui/src/lib/generative-widget/sanitizer.ts`; `packages/ui/src/lib/generative-widget/sanitizer.test.ts`; `packages/ui/src/lib/interactive-ui/artifactBridge.test.ts`.
 - Focused verification: Run the owning parser/sanitizer/artifact tests, UI lint, UI typecheck, and `git diff --check`.
-- Pi binding: unassigned
-- Pi attempts: none
-- Primary attempts: not eligible while Pi retries remain
-- Current evidence: Workspace lint on 2026-08-10 reports exactly eight errors across the owned files plus two non-blocking pre-existing Hook dependency warnings in `McpAppRenderer.tsx`; Web, Mobile, and Electron lint packages pass.
+- Pi binding: run `490ae1c0-286d-4a65-8a4d-3ba13a79f9d6`, base `777ee56d`, revision 0; policy-clean formal handoff with exactly six owned paths.
+- Pi attempts: Revision 0 completed the bounded lint-only correction; no retry was required.
+- Primary attempts: No implementation attempt; primary replayed the policy-clean candidate and independently ran all owning gates.
+- Current evidence: Resolved 2026-08-10. UI lint now has **0 errors** and only the two explicitly out-of-scope existing Hook warnings. Parser/sanitizer/artifact focused tests pass **77/77** with 242 expectations, UI typecheck passes with **0 errors**, and the candidate preserves genuine sparse-hole semantics plus byte-equivalent ASCII control/whitespace stripping.
 - Suspension decision: n/a
 - Resume condition: n/a
 - Continuation decision: Unblocks issue-070 canonical build/package gate.
-- Next action: Dispatch one bounded Pi lane for lint-only corrections and focused regressions.
+- Next action: Resolved; include workspace lint in the final canonical gate.
 
 ## issue-075: Run Electron syntax checks with the required Node runtime
 

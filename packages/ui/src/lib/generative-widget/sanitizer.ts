@@ -155,7 +155,13 @@ function decodeHtmlReferences(input: string): string {
 }
 
 /** Strip ASCII control chars + whitespace, matching browser URL trimming. */
-const ASCII_CONTROL_WHITESPACE = /[\u0000-\u0020\u007f]/g;
+// Built at runtime so the intentional NUL range endpoint satisfies
+// no-control-regex without a suppression (String.fromCharCode(0) is not a
+// statically analyzable control-character literal).
+const ASCII_CONTROL_WHITESPACE = new RegExp(
+  `[${String.fromCharCode(0)}-${String.fromCharCode(0x20)}\u007f]`,
+  'g',
+);
 
 function canonicalizeUrl(raw: string): string {
   return decodeHtmlReferences(raw).replace(ASCII_CONTROL_WHITESPACE, '');

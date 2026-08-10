@@ -172,7 +172,7 @@ Outro`;
       get length(): number {
         return LIMIT + 1;
       },
-      charCodeAt(_i: number): number {
+      charCodeAt(): number {
         reads++;
         if (reads > LIMIT + 1) throw new Error('guard read too far');
         return 0x61; // 'a' (ASCII, 1 byte)
@@ -192,7 +192,7 @@ Outro`;
       get length(): number {
         return LIMIT + 1;
       },
-      charCodeAt(_i: number): number {
+      charCodeAt(): number {
         reads += 1;
         if (reads > LIMIT + 1) throw new Error('partial-key guard read too far');
         return 0x61;

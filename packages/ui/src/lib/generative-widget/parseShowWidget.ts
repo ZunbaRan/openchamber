@@ -359,7 +359,7 @@ function findJsonFieldValueStart(body: string, key: string): number {
     const keyIdx = body.indexOf(pattern, from);
     if (keyIdx === -1) return -1;
     // Require the key to look like a JSON property name (quote is already in pattern).
-    let i = skipWs(body, keyIdx + pattern.length);
+    const i = skipWs(body, keyIdx + pattern.length);
     if (body[i] !== ':') {
       from = keyIdx + 1;
       continue;

@@ -107,7 +107,7 @@ describe('generative-widget sanitizer', () => {
       get length(): number {
         return LIMIT + 1;
       },
-      charCodeAt(_i: number): number {
+      charCodeAt(): number {
         reads += 1;
         if (reads > LIMIT + 1) throw new Error('sanitizer guard read too far');
         return 0x61;

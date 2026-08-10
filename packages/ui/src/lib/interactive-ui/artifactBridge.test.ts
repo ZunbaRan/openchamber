@@ -469,7 +469,11 @@ describe('HTML Artifact bridge atomic snapshot (issue-023 regressions)', () => {
   test('accepts ordinary sparse arrays as bounded JSON null holes', () => {
     // A standard-prototype hole with no inherited indexed value serialises as
     // JSON null (donor-compatible), not as a rejection.
-    const sparse = parseWithInput([1, , 3]);
+    // Built by extending length rather than a sparse literal so the fixture
+    // stays a genuine hole (no-sparse-arrays-compliant).
+    const sparseInput: unknown[] = [1];
+    sparseInput[2] = 3;
+    const sparse = parseWithInput(sparseInput);
     expect(sparse).not.toBeNull();
     expect((sparse!.payload as { input: unknown[] }).input).toEqual([1, null, 3]);
     expect(parseWithInput(new Array(3))).not.toBeNull();
@@ -478,7 +482,9 @@ describe('HTML Artifact bridge atomic snapshot (issue-023 regressions)', () => {
   test('rejects sparse holes that resolve to inherited indexed values', () => {
     // A has trap reporting an inherited indexed value at the hole must fail
     // closed rather than undercount the hole as a 4-byte null.
-    const inheritedHole = new Proxy([1, , 3], {
+    const sparseInput: unknown[] = [1];
+    sparseInput[2] = 3;
+    const inheritedHole = new Proxy(sparseInput, {
       has(object, prop) {
         return prop === '1' || Reflect.has(object, prop);
       },
