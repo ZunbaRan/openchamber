@@ -482,7 +482,7 @@
 
 ## issue-025: Restore Installed Artifact host confirmation write safety
 
-- Status: RESOLVED
+- Status: READY
 - Classification: NORMAL
 - Goal / user outcome: Third-party Installed Artifacts can request business writes only through a host-top-layer confirmation with Cancel as safe focus and exactly one write after Confirm.
 - First-principles root cause: The clean target lacks the Installed Artifact confirmation host; the latest implementation exists only as an uncommitted descendant donor.
@@ -491,18 +491,18 @@
 - Dispatch order: Serial security/UI lane after gateway and Artifact host. It explicitly does not resume suspended issue-001.
 - Ownership: `packages/ui/src/components/interactive-ui/InstalledArtifactConfirmationHost.tsx`; `packages/ui/src/components/interactive-ui/InstalledArtifactConfirmationHost.test.tsx`; `packages/ui/src/components/interactive-ui/InteractiveConfirmationDialog.tsx`; `packages/ui/src/components/interactive-ui/HTMLArtifactView.tsx`; `packages/ui/src/components/interactive-ui/artifactBusinessRequest.ts`.
 - Focused verification: Run Installed Artifact host tests and conversation-browser Confirm/Escape/Cancel evidence; exactly 0/0/1 writes and host-top-layer focus are required.
-- Pi binding: unassigned
-- Pi attempts: none
+- Pi binding: unassigned for reopened target-dialog adapter
+- Pi attempts: none for reopened defect
 - Primary attempts: not eligible while Pi retries remain
-- Current evidence: Bulk READY restoration 2026-08-09: modules restored from accepted openchamber fork client surfaces (interactive-ui lib/client/manager/routing/review/workbench, generative-widget runtime bridges, settings sections, chat ToolPart/AssistantTextPart/ChatInput dispatch, Electron artifact-runner + desktop-binary-save, acceptance scripts). Focused re-verify 2026-08-09: UI 346/346 pass (0 fail) + electron artifact/binary-save 15/15 pass (0 fail); logs under goal implementer scratch ready-unit-gate.log.  Prior focused tests and real Chrome core write-safety passed in `.worktrees/host-confirmation-integration`; three suspended residual issues remain excluded.
+- Current evidence: Reopened 2026-08-10. The retained confirmation host requests `DialogContent.portalContainer`, but target v1.18.1 `DialogContent` wraps `BaseDialog.Portal` without exposing its `container` prop. UI typecheck reports three owned errors. The repair must add only an optional portal-container adapter to the target dialog primitive and preserve default body-portaled behavior plus Escape/Cancel/Confirm safety.
 - Suspension decision: n/a; only issue-001/002/003 remain suspended
 - Resume condition: n/a
 - Continuation decision: Enables issue-026/027 and final product acceptance.
-- Next action: Resolved in bulk READY closeout (2026-08-09): donor UI/client/workbench/widget/settings/electron/acceptance modules ported into integration worktree; focused unit gates 361/361 + electron artifact/binary-save 15/15; `@modelcontextprotocol/ext-apps@1.7.5` bound for MCP App host.
+- Next action: Dispatch one bounded Pi lane on the dialog primitive and confirmation host tests.
 
 ## issue-026: Add narrow rich-result dispatch to the target ToolPart
 
-- Status: RESOLVED
+- Status: READY
 - Classification: NORMAL
 - Goal / user outcome: Target-release ordinary Tool UI remains intact while completed OCIX, Artifact, Installed Artifact, and MCP App results select the correct lazy renderer and preserve raw fallback.
 - First-principles root cause: The upstream ToolPart knows none of the fork envelopes/metadata, while the donor ToolPart contains large unrelated UI drift.
@@ -511,14 +511,14 @@
 - Dispatch order: Late serial host seam after every renderer contract freezes.
 - Ownership: `packages/ui/src/components/chat/message/parts/ToolPart.tsx`; `packages/ui/src/components/chat/message/parts/toolRenderUtils.ts`; `packages/ui/src/components/chat/message/parts/toolRenderUtils.test.ts`.
 - Focused verification: Run helper/renderer dispatch tests, UI typecheck/lint, and inspect diff against `v1.18.1` to prove only adapter/state logic was added.
-- Pi binding: unassigned
-- Pi attempts: none
+- Pi binding: unassigned for reopened target-helper defect
+- Pi attempts: none for reopened defect
 - Primary attempts: not eligible while Pi retries remain
-- Current evidence: Bulk READY restoration 2026-08-09: modules restored from accepted openchamber fork client surfaces (interactive-ui lib/client/manager/routing/review/workbench, generative-widget runtime bridges, settings sections, chat ToolPart/AssistantTextPart/ChatInput dispatch, Electron artifact-runner + desktop-binary-save, acceptance scripts). Focused re-verify 2026-08-09: UI 346/346 pass (0 fail) + electron artifact/binary-save 15/15 pass (0 fail); logs under goal implementer scratch ready-unit-gate.log.  Target and donor ToolPart diverge heavily; whole-file replacement is forbidden. Current donor has no direct ToolPart component test.
+- Current evidence: Reopened 2026-08-10. The target v1.18.1 regression suite still imports `getToolDescriptionFallback`, but donor-based `toolRenderUtils.ts` lost that target helper while gaining the required rich-result predicates. UI typecheck has one owned missing-export error. The exact immutable target helper is a four-branch additive restoration and must coexist with fork dispatch helpers.
 - Suspension decision: n/a; collapsed-focus issue-001 stays suspended
 - Resume condition: n/a
 - Continuation decision: Enables conversation/browser acceptance.
-- Next action: Resolved in bulk READY closeout (2026-08-09): donor UI/client/workbench/widget/settings/electron/acceptance modules ported into integration worktree; focused unit gates 361/361 + electron artifact/binary-save 15/15; `@modelcontextprotocol/ext-apps@1.7.5` bound for MCP App host.
+- Next action: Dispatch one bounded Pi lane to restore the exact target helper and rerun ToolPart tests.
 
 ## issue-027: Restore message-level default-open rich-result state
 
@@ -700,7 +700,7 @@
 
 ## issue-036: Register Applications settings without replacing upstream settings UI
 
-- Status: RESOLVED
+- Status: READY
 - Classification: NORMAL
 - Goal / user outcome: Desktop and mobile users can reach the OCIX Applications surface through upstream settings navigation and search.
 - First-principles root cause: Target settings metadata/navigation knows no OCIX section; donor files also contain unrelated UI drift.
@@ -709,14 +709,14 @@
 - Dispatch order: Narrow host seam after feature sections.
 - Ownership: `packages/ui/src/components/views/SettingsView.tsx`; `packages/ui/src/lib/settings/metadata.ts`; `packages/ui/src/lib/settings/search.ts`; `packages/ui/src/apps/MobileApp.tsx`.
 - Focused verification: Focused settings/search tests, UI typecheck/lint, and line-level diff against `v1.18.1`.
-- Pi binding: unassigned
-- Pi attempts: none
+- Pi binding: unassigned for reopened target-settings adapter
+- Pi attempts: none for reopened defect
 - Primary attempts: not eligible while Pi retries remain
-- Current evidence: Bulk READY restoration 2026-08-09: modules restored from accepted openchamber fork client surfaces (interactive-ui lib/client/manager/routing/review/workbench, generative-widget runtime bridges, settings sections, chat ToolPart/AssistantTextPart/ChatInput dispatch, Electron artifact-runner + desktop-binary-save, acceptance scripts). Focused re-verify 2026-08-09: UI 346/346 pass (0 fail) + electron artifact/binary-save 15/15 pass (0 fail); logs under goal implementer scratch ready-unit-gate.log.  All four files are upstream-owned and diverge substantially in donor; whole-file replacement is forbidden.
+- Current evidence: Reopened 2026-08-10. SettingsView already contains the narrow Applications page branches, but target metadata does not register `interactive-ui.extensions`; its search runtime context also requires `isWindowsArm64`, which SettingsView omits. UI typecheck reports five slug errors plus the missing context field. The repair must add only the Applications metadata/search registration and pass the existing platform predicate without replaying donor deletions.
 - Suspension decision: n/a
 - Resume condition: n/a
 - Continuation decision: Enables user-facing OCIX configuration acceptance.
-- Next action: Resolved in bulk READY closeout (2026-08-09): donor UI/client/workbench/widget/settings/electron/acceptance modules ported into integration worktree; focused unit gates 361/361 + electron artifact/binary-save 15/15; `@modelcontextprotocol/ext-apps@1.7.5` bound for MCP App host.
+- Next action: Dispatch one bounded Pi lane on metadata/search/SettingsView plus focused settings tests.
 
 ## issue-037: Add only fork-required localization keys
 
@@ -860,7 +860,7 @@
 
 ## issue-044: Host Workbench mode in the upstream Context Panel
 
-- Status: OPEN
+- Status: READY
 - Classification: NORMAL
 - Goal / user outcome: Selecting Workbench renders the persistent board in the existing Context Panel with correct close/focus behavior.
 - First-principles root cause: Target Context Panel has no Workbench mode.
@@ -872,11 +872,11 @@
 - Pi binding: unassigned
 - Pi attempts: none
 - Primary attempts: not eligible while Pi retries remain
-- Current evidence: Bulk READY restoration 2026-08-09: modules restored from accepted openchamber fork client surfaces (interactive-ui lib/client/manager/routing/review/workbench, generative-widget runtime bridges, settings sections, chat ToolPart/AssistantTextPart/ChatInput dispatch, Electron artifact-runner + desktop-binary-save, acceptance scripts). Focused re-verify 2026-08-09: UI 346/346 pass (0 fail) + electron artifact/binary-save 15/15 pass (0 fail); logs under goal implementer scratch ready-unit-gate.log.  Target file is upstream-active; donor whole-file replay is forbidden.
+- Current evidence: Reopened 2026-08-10. Workbench/files/extensions mode errors are gone after issue-042, leaving one target integration mismatch: ContextPanel passes a retained `preferredTabId` to target TerminalView, whose props accept only `visible`. This must be resolved from target behavior and current terminal-store semantics without widening props blindly or replaying donor-wide ContextPanel/TerminalView drift.
 - Suspension decision: n/a
 - Resume condition: n/a
 - Continuation decision: Completes Workbench host registration.
-- Next action: Resolved in bulk READY closeout (2026-08-09): donor UI/client/workbench/widget/settings/electron/acceptance modules ported into integration worktree; focused unit gates 361/361 + electron artifact/binary-save 15/15; `@modelcontextprotocol/ext-apps@1.7.5` bound for MCP App host.
+- Next action: After the four-lane repair wave, inspect the terminal tab intent and implement the narrow verified adapter before final ContextPanel acceptance.
 
 ## issue-045: Restore the privileged Electron Artifact Runner boundary
 
@@ -1421,3 +1421,23 @@
 - Current evidence: The accepted scanner finds each `<Icon>` tag, ignores quoted/comment text, balances expression braces, and passes only `name={...}` expression bodies through the existing known-icon filter; malformed/unbalanced expressions fail closed and arbitrary source prose is not scanned. Primary Node syntax check and focused test **1/1** pass, full generation is clean on the second run, typecheck has no `apps-2-ai`/`sort-desc` errors, and `git diff --check` passes.
 - Continuation decision: Enables issue-068 to generate stable synchronized icon output.
 - Next action: Resolved; issue-068 generated output is now stable.
+
+## issue-073: Remove donor-only caller props from target host APIs
+
+- Status: READY
+- Classification: P0
+- Goal / user outcome: Mobile notes, grouped turn activity, and relay-host probing compile against the retained v1.18.1 component/runtime contracts without weakening types or changing authentication behavior.
+- First-principles root cause: Four donor call sites retained props that their target-owned callees intentionally do not accept: ProjectContextPanel owns its navigation, TurnActivity receives no runtime identity props, and relay tunnel probes authenticate through the encrypted tunnel rather than bearer/request-header options.
+- Core acceptance invariant: Remove only the four proven stale prop groups; do not widen target callee types, add casts, drop direct-host credentials, or change tunnel adoption/health semantics. Existing callbacks/auth values remain wherever their target API accepts them.
+- Dependencies: issues 065, 071
+- Dispatch order: Independent final type-repair wave; paths are disjoint from issues 025, 026, and 036.
+- Ownership: `packages/ui/src/apps/MobileWorkspaceDrawer.tsx`; `packages/ui/src/components/chat/message/MessageBody.tsx`; `packages/ui/src/components/desktop/DesktopHostSwitcher.tsx`; `packages/ui/src/components/sections/remote-instances/RemoteInstancesPage.tsx`; focused existing tests only if already adjacent and no other production file.
+- Focused verification: Relevant mobile/message/desktop-host tests, line-level diff against target APIs, full UI typecheck delta, and `git diff --check`.
+- Pi binding: unassigned
+- Pi attempts: none
+- Primary attempts: not eligible while Pi retries remain
+- Current evidence: Full UI typecheck after locale reconciliation reports one ProjectContextPanel prop error, one TurnActivity prop error, and three `probeRelayDesktopHost` option errors. Target declarations prove the rejected props are absent; direct probes still accept bearer/header options, while relay probes accept only `keepTunnel` and use E2EE tunnel fetch.
+- Suspension decision: n/a
+- Resume condition: n/a
+- Continuation decision: Removes five final target-caller errors before issue-070.
+- Next action: Dispatch one bounded Pi lane to delete only the rejected caller props and prove no target API widening.
