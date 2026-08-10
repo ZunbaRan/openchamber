@@ -469,11 +469,10 @@ try {
   });
   assert.equal(managerResponse.ok, true);
   const manager = await managerResponse.json();
-  assert.deepEqual(manager.builtInRuntime, {
-    id: 'com.openchamber.builtin.interactive-ui',
-    version: '1.2.1',
-    status: 'ready',
-  });
+  // The manager contract no longer reports builtInRuntime
+  // ({ apiVersion, extensions, publishers, marketplaces }); built-in presence
+  // and version are asserted from the runtime extension list below.
+  assert.equal(manager.apiVersion, 1);
   const packageBase64 = hybridCrmPackage.buffer.toString('base64');
   const inspection = await requestJson(port, '/api/interactive-ui/manager/packages/inspect', {
     method: 'POST',
@@ -481,7 +480,13 @@ try {
     timeoutMs: 60_000,
   });
   assert.equal(inspection.extension.id, HYBRID_CRM_FIXTURE.extensionId);
-  assert.equal(inspection.permissions.sandboxedArtifacts, true);
+  // The sanitized package permission contract is now exactly { network,
+  // nativeCode }; the fixture declares the loopback CRM origin and native-code
+  // trust mode, so the exact current shape is asserted.
+  assert.deepEqual(inspection.permissions, {
+    network: [crmApi.url],
+    nativeCode: true,
+  });
   const installedPackage = await requestJson(port, '/api/interactive-ui/manager/packages', {
     method: 'POST',
     body: {
@@ -509,7 +514,9 @@ try {
   assert.equal(extensionsResponse.ok, true);
   const extensions = await extensionsResponse.json();
   assert.equal(extensions.errors?.length, 0);
-  assert.equal(extensions.extensions?.some((extension) => extension.id === 'com.openchamber.builtin.interactive-ui'), true);
+  const builtInExtension = extensions.extensions?.find((extension) => extension.id === 'com.openchamber.builtin.interactive-ui');
+  assert.notEqual(builtInExtension, undefined, 'built-in Interactive UI runtime must be listed');
+  assert.equal(builtInExtension.version, '1.3.0', 'built-in Interactive UI runtime version');
   const agentRuntime = await waitForBuiltInAgentRuntime({ port, directory: temporaryRoot });
 
   browser = await connect(target);
@@ -772,7 +779,15 @@ try {
   });
   assert.equal(restartedManagerResponse.ok, true);
   const restartedManager = await restartedManagerResponse.json();
-  assert.equal(restartedManager.builtInRuntime?.status, 'ready');
+  const restartedExtensionsResponse = await fetch(`http://127.0.0.1:${restartPort}/api/interactive-ui/extensions`, {
+    headers: { Accept: 'application/json' },
+  });
+  assert.equal(restartedExtensionsResponse.ok, true);
+  const restartedExtensions = await restartedExtensionsResponse.json();
+  assert.equal(restartedExtensions.errors?.length, 0);
+  const restartedBuiltInExtension = restartedExtensions.extensions?.find((extension) => extension.id === 'com.openchamber.builtin.interactive-ui');
+  assert.notEqual(restartedBuiltInExtension, undefined, 'built-in Interactive UI runtime must be listed after app restart');
+  assert.equal(restartedBuiltInExtension.version, '1.3.0', 'built-in Interactive UI runtime version after app restart');
   assert.equal(restartedManager.extensions.some((extension) => extension.id === HYBRID_CRM_FIXTURE.extensionId
     && extension.enabled === true), true);
   await waitForBuiltInAgentRuntime({ port: restartPort, directory: temporaryRoot });
