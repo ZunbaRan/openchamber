@@ -48,7 +48,7 @@ import { scanClawdHubPage } from '../skills-catalog/clawdhub/scan.js';
 import { installSkillsFromClawdHub } from '../skills-catalog/clawdhub/install.js';
 import { createInteractiveUIRuntime, normalizeExtensionManifest } from '../interactive-ui/runtime.js';
 import { registerInteractiveUIRoutes } from '../interactive-ui/routes.js';
-import { createInteractiveUIExtensionManager } from '../interactive-ui/manager.js';
+import { createInteractiveUIExtensionManager, InteractiveUIExtensionManagerError } from '../interactive-ui/manager.js';
 import { createInteractiveUIConnectionStore } from '../interactive-ui/connection-store.js';
 import { createHTMLArtifactStore } from '../interactive-ui/artifact-store.js';
 import { createBuiltInInteractiveUIRuntime } from '../interactive-ui/builtin-runtime.js';
@@ -58,6 +58,8 @@ import { reconcileOpenCodeAgentRuntime } from '../interactive-ui/agent-runtime.j
 // Production wiring seam for Interactive UI / OCIX (module-private; the public
 // surface is createFeatureRoutesRuntime(...).registerRoutes).
 // Binds Manager adapters:
+// - validateStagedPackage → authoritative runtime parser against ONLY the
+//   staged tree, before any version destination or activation change
 // - validateRemoteMetadata → runtime single-source manifest normalizer
 // - reconcileActivation → durable previousAssets + Agent Runtime materializer
 // Registers explicit Interactive UI routes before generic OpenCode proxy work.
@@ -204,6 +206,47 @@ export const createFeatureRoutesRuntime = (dependencies) => {
       pathImpl: path,
       cryptoImpl: crypto,
       logger: console,
+      validateStagedPackage: async ({ directory, verified }) => {
+        // Production staged-tree validator: a fresh authoritative runtime
+        // parses ONLY the staged directory (never the manager version store or
+        // any configured root). Any load error, any result other than exactly
+        // one extension, or an id/version mismatch with the verified package
+        // fails closed with a controlled Manager error — no staged path or raw
+        // parser error is ever exposed.
+        const stagedRuntime = createInteractiveUIRuntime({
+          fsPromises,
+          path,
+          crypto,
+          environment: processRef?.env,
+          extensionRoots: [directory],
+          logger: console,
+        });
+        let listing;
+        try {
+          listing = await stagedRuntime.listExtensions();
+        } catch {
+          throw new InteractiveUIExtensionManagerError(
+            'Staged extension tree does not satisfy the Interactive UI runtime contract',
+            'staged_extension_invalid',
+            400,
+          );
+        }
+        if (listing.errors.length > 0 || listing.extensions.length !== 1) {
+          throw new InteractiveUIExtensionManagerError(
+            'Staged extension tree does not satisfy the Interactive UI runtime contract',
+            'staged_extension_invalid',
+            400,
+          );
+        }
+        const stagedExtension = listing.extensions[0];
+        if (stagedExtension.id !== verified.manifest.id || stagedExtension.version !== verified.manifest.version) {
+          throw new InteractiveUIExtensionManagerError(
+            'Staged extension identity does not match the verified package',
+            'staged_extension_identity_mismatch',
+            400,
+          );
+        }
+      },
       validateRemoteMetadata: async ({ extension }) => {
         // Single-source normalizer: Remote shells only accept metadata that the
         // runtime would accept for Local/built-in manifests. Adapter failures

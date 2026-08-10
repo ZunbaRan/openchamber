@@ -1504,7 +1504,7 @@
 
 ## issue-077: Restore the declared packaged desktop acceptance harness
 
-- Status: READY
+- Status: RESOLVED
 - Classification: P0
 - Goal / user outcome: The canonical arm64 `OpenChamber.app` is exercised through the repository-declared packaged desktop acceptance command before replacing the installed application.
 - First-principles root cause: `package.json` declares `test:interactive-ui-desktop-packaged`, but the referenced `packages/electron/scripts/verify-packaged-interactive-ui.mjs` was omitted from this integration branch even though the maintained donor contains the complete harness and the target retains all of its fixture/helper dependencies.
@@ -1567,9 +1567,9 @@
 - Dispatch order: Before the next packaged acceptance rerun.
 - Ownership: `packages/web/server/lib/opencode/feature-routes-runtime.js`; `packages/web/server/lib/opencode/feature-routes-runtime.test.js`.
 - Focused verification: New production-registration Local install test, existing feature-routes runtime suite, Interactive UI Manager/routes regressions, Web lint/typecheck, `git diff --check`.
-- Pi binding: pending
-- Pi attempts: none
-- Primary attempts: none while Pi retries remain.
-- Current evidence: The rebuilt app passes package inspection and explicit Publisher trust, then `POST /api/interactive-ui/manager/packages` fails closed with HTTP 503 `extension_validation_unavailable`. `feature-routes-runtime.js` constructs the Manager without `validateStagedPackage`; the Manager contract and documentation require that caller-owned adapter.
-- Continuation decision: Wire and test the missing production adapter; do not weaken the Manager fail-closed behavior.
-- Next action: Dispatch this two-file production seam through Sol Pi Advisor.
+- Pi binding: run `53a51249-1a2b-49d8-9796-d2c51515b84c`, base `64c0dd23`, revision 0; policy-clean with exactly the two owned paths.
+- Pi attempts: Revision 0 bound the authoritative staged-tree validator and added positive/negative public-route coverage; no correction was required.
+- Primary attempts: none while Pi retries remained. Primary integrated the exact candidate and performed the dependency-backed verification unavailable in the isolated Pi worktree.
+- Current evidence: The production registration suite passes 9/9 (108 assertions), including a real signed/trusted Local package appearing in both Manager and runtime registry plus a runtime-invalid package rejected before activation with controlled `staged_extension_invalid`. Manager/Remote/Artifact regressions pass 129/129 (730 assertions); Web typecheck, Web lint, and `git diff --check` pass. The initial sandbox run could not bind loopback port 0; the identical test passed in the approved host test environment.
+- Continuation decision: The Manager remains fail-closed without an adapter, while production now supplies the authoritative staged-only validator without exposing paths or raw parser errors.
+- Next action: Resolved; rebuild the Electron package and rerun packaged desktop acceptance end to end.

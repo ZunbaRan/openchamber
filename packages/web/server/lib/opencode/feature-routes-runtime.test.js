@@ -9,7 +9,7 @@ import path from 'node:path';
 import request from 'supertest';
 import { createFeatureRoutesRuntime } from './feature-routes-runtime.js';
 import { HOSTED_OCIX_MANIFEST_SCHEMA } from '../interactive-ui/hosted-ocix.js';
-import { generatePublisherKeyPair } from '../interactive-ui/package-format.js';
+import { createExtensionPackage, generatePublisherKeyPair } from '../interactive-ui/package-format.js';
 
 // Production wiring contract for the Interactive UI runtime, validated ONLY
 // through the public createFeatureRoutesRuntime(...).registerRoutes path (the
@@ -84,6 +84,59 @@ const canonicalize = (value) => {
 };
 
 const hostedSha256 = (value) => `sha256-${crypto.createHash('sha256').update(value).digest('base64')}`;
+
+// A REAL signed Local OCIX package built through the public package-format
+// seam. The manager inside registerRoutes re-verifies the archive against the
+// exact trusted publisher key before any staging or activation.
+const buildSignedLocalPackage = async ({
+  keys = generatePublisherKeyPair(),
+  extensionId = 'com.acme.local',
+  extensionName = 'Acme Local',
+  version = '1.0.0',
+  views,
+} = {}) => {
+  const extensionDirectory = await createTemporaryDirectory('feature-routes-local-extension-');
+  const viewId = `${extensionId}.overview`;
+  await fs.mkdir(path.join(extensionDirectory, 'ui'), { recursive: true });
+  await fs.writeFile(path.join(extensionDirectory, 'openchamber.extension.json'), JSON.stringify({
+    $schema: 'openchamber://extension/v1',
+    id: extensionId,
+    name: extensionName,
+    version,
+    connectors: [],
+    views: views ?? [{ id: viewId, runtime: 'declarative', entry: 'ui/view.json', tools: ['local_open'] }],
+    actions: [],
+    permissions: { network: [] },
+    trust: { mode: 'declarative', signature: 'production' },
+  }, null, 2));
+  await fs.writeFile(path.join(extensionDirectory, 'ui', 'view.json'), JSON.stringify({
+    $schema: 'openchamber://declarative-view/v1',
+    id: viewId,
+    layout: { type: 'text', value: extensionName },
+  }));
+  const packed = await createExtensionPackage({
+    extensionDirectory,
+    privateKey: keys.privateKey,
+    publisherId: 'com.acme.publisher',
+    publisherName: 'Acme',
+    keyId: 'release-2026',
+    createdAt: '2026-07-18T00:00:00.000Z',
+  });
+  return { ...packed, keys };
+};
+
+// Trusts the package publisher through the registered route, then installs
+// the signed Local package through the production POST /manager/packages path.
+const trustAndInstallLocalThroughRoutes = async (server, packed) => {
+  const trust = await request(server)
+    .post('/api/interactive-ui/manager/publishers')
+    .send({ id: 'com.acme.publisher', name: 'Acme', keyId: 'release-2026', publicKey: packed.keys.publicKey });
+  expect(trust.status).toBe(201);
+  const install = await request(server)
+    .post('/api/interactive-ui/manager/packages')
+    .send({ packageBase64: packed.buffer.toString('base64') });
+  return install;
+};
 
 // A REAL loopback HTTP Remote fixture: signed Hosted OCIX manifest plus the
 // declared lazy resources, all served over http://127.0.0.1 (loopback HTTP is
@@ -769,5 +822,81 @@ describe('Interactive UI runtime production wiring (public registerRoutes path)'
     expect(unblockedRegistry.body.extensions.some((entry) => entry.id === 'com.acme.remote')).toBe(true);
     // Zero declared resource bytes were fetched by the whole lifecycle path.
     expect(fixture.resourceRequests).toEqual([]);
+  });
+
+  it('installs a real signed Local package through the registered routes after production staged validation', async () => {
+    const { server, dependencies } = await createRegisteredServer();
+    const packed = await buildSignedLocalPackage({});
+
+    const install = await trustAndInstallLocalThroughRoutes(server, packed);
+    // The production manager bound validateStagedPackage (issue-080): the
+    // signed package passed the authoritative runtime parser on its staged
+    // tree and was activated.
+    expect(install.status).toBe(201);
+    expect(install.body.extension).toMatchObject({
+      id: 'com.acme.local',
+      enabled: true,
+      activeVersion: '1.0.0',
+    });
+    expect(JSON.stringify(install.body)).not.toContain('BEGIN PUBLIC KEY');
+
+    // The Manager reports the Local package as enabled with its active version.
+    const manager = await request(server).get('/api/interactive-ui/manager');
+    expect(manager.status).toBe(200);
+    const managerExtension = manager.body.extensions.find((entry) => entry.id === 'com.acme.local');
+    expect(managerExtension).toMatchObject({
+      id: 'com.acme.local',
+      name: 'Acme Local',
+      enabled: true,
+      activeVersion: '1.0.0',
+    });
+    expect(JSON.stringify(manager.body)).not.toContain('BEGIN PUBLIC KEY');
+
+    // The composed runtime registry serves the installed Local extension.
+    const registry = await request(server).get('/api/interactive-ui/extensions');
+    expect(registry.status).toBe(200);
+    const registryExtension = registry.body.extensions.find((entry) => entry.id === 'com.acme.local');
+    expect(registryExtension).toMatchObject({
+      id: 'com.acme.local',
+      name: 'Acme Local',
+      version: '1.0.0',
+      views: [{ id: 'com.acme.local.overview', runtime: 'declarative' }],
+    });
+    // No raw managed path leaks through either public surface.
+    const dataDirectory = dependencies.processLike.env.OPENCHAMBER_DATA_DIR;
+    expect(JSON.stringify(manager.body)).not.toContain(dataDirectory);
+    expect(JSON.stringify(registry.body)).not.toContain(dataDirectory);
+  });
+
+  it('fails a runtime-invalid staged Local package closed before activation through the registered routes', async () => {
+    const { server, dependencies } = await createRegisteredServer();
+    // Signed and structurally valid as a package, but its manifest declares no
+    // Interactive UI views or HTML Artifacts: the authoritative runtime parser
+    // rejects the staged tree even though package verification passed.
+    const packed = await buildSignedLocalPackage({ views: [] });
+
+    const install = await trustAndInstallLocalThroughRoutes(server, packed);
+    expect(install.status).toBe(400);
+    expect(install.body).toMatchObject({
+      error: 'Staged extension tree does not satisfy the Interactive UI runtime contract',
+      code: 'staged_extension_invalid',
+    });
+    // No staged path or raw parser error is exposed.
+    const dataDirectory = dependencies.processLike.env.OPENCHAMBER_DATA_DIR;
+    expect(JSON.stringify(install.body)).not.toContain(dataDirectory);
+    expect(JSON.stringify(install.body)).not.toContain('staging');
+    expect(JSON.stringify(install.body)).not.toContain('views');
+
+    // Failure happened BEFORE activation: no Manager state and no managed
+    // version root exists for the package.
+    const manager = await request(server).get('/api/interactive-ui/manager');
+    expect(manager.status).toBe(200);
+    expect(manager.body.extensions.some((entry) => entry.id === 'com.acme.local')).toBe(false);
+    await expect(fs.stat(path.join(dataDirectory, 'extensions', 'com.acme.local'))).rejects.toMatchObject({
+      code: 'ENOENT',
+    });
+    const registry = await request(server).get('/api/interactive-ui/extensions');
+    expect(registry.status).toBe(200);
+    expect(registry.body.extensions.some((entry) => entry.id === 'com.acme.local')).toBe(false);
   });
 });
