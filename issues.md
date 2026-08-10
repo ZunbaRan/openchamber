@@ -1513,9 +1513,27 @@
 - Dispatch order: Final packaged-app gate before fresh read-only review and local installation.
 - Ownership: `packages/electron/scripts/verify-packaged-interactive-ui.mjs` only.
 - Focused verification: Byte comparison with maintained donor when compatible, Node syntax check, repository script against the canonical arm64 app with the exact staged local-override provenance, generated report inspection, clean process/port shutdown, and `git diff --check`.
+- Pi binding: run `3934dd57-2f1e-4edf-97f0-ec789932541b`, base `fb2ebe1f`, revision 1; policy-clean with exactly the owned harness path.
+- Pi attempts: Revision 0 was recoverably paused after broad compatibility analysis produced no candidate; correction 1 restored the exact donor harness and passed syntax/hash/diff checks.
+- Primary attempts: none while Pi retries remain.
+- Current evidence: The exact donor harness is now committed at SHA-256 `c4e174f2eaed25b0bc90dfcd56657fc00f7be3be763de8e9636ee343babae084`. Its first real isolated packaged-app launch reaches a healthy bundled runtime, then fails at the stale assertion `manager.builtInRuntime`: the current Manager list intentionally exposes only managed extensions, while built-in runtime presence is exposed by `/api/interactive-ui/extensions` and readiness is independently proven by tool/skill discovery. The inspection permission shape likewise replaced obsolete `sandboxedArtifacts` with bounded `network` and `nativeCode` fields.
+- Continuation decision: Use the remaining same-root correction to bind assertions to current public routes without weakening built-in presence/readiness or package permission checks, then rerun after issue-078 restores the declared demo/popout entry points.
+- Next action: Correct the single owned harness file against current public contracts.
+
+## issue-078: Restore packaged Interactive UI demo and popout entry points
+
+- Status: READY
+- Classification: P0
+- Goal / user outcome: The packaged app contains the Interactive UI acceptance page plus Workbench and Artifact popout entry points already referenced by Electron/UI production code.
+- First-principles root cause: The integration restored callers and the packaged acceptance command but omitted five maintained web entry files and their three Vite multi-page inputs. Consequently `interactive-ui-demo.html`, `workbench-popout.html`, and `artifact-popout-host.html` are absent from the canonical package; the acceptance harness cannot continue and production popouts resolve to missing assets.
+- Core acceptance invariant: Restore the five maintained donor files and only the three corresponding Vite inputs, retaining all current upstream v1.18.1 build/chunk improvements. The production build must emit all three HTML pages with resolved hashed assets; no unrelated Vite option or dependency may change.
+- Dependencies: issues 036-044, 067
+- Dispatch order: Before rebuilding the canonical app and rerunning issue-077.
+- Ownership: `packages/web/artifact-popout-host.html`; `packages/web/interactive-ui-demo.html`; `packages/web/workbench-popout.html`; `packages/web/src/interactive-ui-demo.tsx`; `packages/web/src/workbench-popout.tsx`; `packages/web/vite.config.ts`. Six files are one indivisible multi-page build contract: the five entry documents/modules and the existing Vite input map that makes them distributable.
+- Focused verification: Donor byte comparison for the five restored files; exact three-key Vite diff; Web typecheck/lint; production Web build; assert all three HTML files and their referenced assets exist in `packages/web/dist`; `git diff --check`.
 - Pi binding: pending
 - Pi attempts: none
 - Primary attempts: none while Pi retries remain.
-- Current evidence: The package script is present at root, the target CRM fixture and helper are present, and the canonical signed arm64 app exists; invoking the command currently fails before launch because the referenced 860-line harness file is absent.
-- Continuation decision: Restore and execute this gate before issue-070 may authorize installation.
-- Next action: Dispatch the single-file READY issue through Sol Pi Advisor.
+- Current evidence: Production Electron code resolves `/artifact-popout-host.html`, UI resolves `/workbench-popout.html`, and the packaged acceptance harness resolves `/interactive-ui-demo.html`; none exists in the current source or built output. Maintained donor commit `870cc00c` contains the five files and the three Vite input keys.
+- Continuation decision: Restore this missing packaged surface before issue-070 review or installation.
+- Next action: Dispatch through Sol Pi Advisor with the six-file multi-page contract only.
