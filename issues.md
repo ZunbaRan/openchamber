@@ -1645,11 +1645,11 @@
 - Dispatch order: Immediate serial blocker for completing packaged desktop acceptance and local installation.
 - Ownership: `packages/web/src/interactive-ui-demo.tsx`; `packages/electron/scripts/verify-packaged-interactive-ui.mjs`; at most one focused test file if an existing adjacent test seam requires it.
 - Focused verification: Web typecheck/lint; Electron script syntax check or closest package test; a deterministic geometry regression that would fail with the old `h-44` fixture; `git diff --check`. Primary then rebuilds and reruns the full packaged desktop acceptance.
-- Pi binding: pending.
+- Pi binding: run/session `5b73d482-a3a8-498d-b8a9-ddcef1c2d10e`, base `f06c8964055c7bbe1e2a591ed0f4b7e8f1e5a596`, revision 0, supervised-local worktree `/Users/loloru/.codex/sol-pi-advisor/worktrees/5b73d482-a3a8-498d-b8a9-ddcef1c2d10e`.
 - Pi attempts: none.
 - Primary attempts: The first rebuilt package with issue083 fixed reached native Runner ready, then failed exactly at `runner.bottom > scroller.bottom`; diagnostics showed the Broker iframe at 974×120 and no renderer errors.
 - Current evidence: The demo uses a 520 px scroller, a 176 px (`h-44`) pre-Runner spacer, and an 80 px scroll. The packaged native Runner measured 120 px high, leaving its bottom above the scroller bottom; therefore no clipping edge is exercised. The guard remains below the scroller as intended.
 - Suspension decision: n/a
 - Resume condition: n/a
 - Continuation decision: Adjust only the deterministic acceptance fixture/test geometry, not native Runner layout or production clipping behavior.
-- Next action: Dispatch one supervised-local Pi lane from integration HEAD with the two fixture/harness paths allowed.
+- Next action: Monitor revision 0, inspect its complete diff, and independently rerun focused verification before integration.
