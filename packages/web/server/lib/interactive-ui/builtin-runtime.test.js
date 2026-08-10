@@ -178,6 +178,262 @@ describe('production built-in Interactive UI Agent Runtime package', () => {
     await expect(fs.stat(ownershipPath)).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
+  it('migrates exact 1.17.1 ownership records with one record version and no asset versions', async () => {
+    const builtIn = createBuiltInInteractiveUIRuntime();
+    const versionsDirectory = await createConfig('ocix-legacy-versions-');
+    const configDirectory = await createConfig('ocix-legacy-config-');
+    const remote = await createExtensionRuntime({
+      versionsDirectory,
+      id: 'com.example.legacy-remote',
+      version: '1.0.0',
+      tool: { name: 'legacy_remote_tool', content: 'export default { source: "legacy" };\n' },
+    });
+    remote.versions['1.0.0'].delivery = 'remote';
+
+    const first = await reconcileOpenCodeAgentRuntime({
+      state: { extensions: { [remote.id]: remote } },
+      configDirectory,
+      versionsDirectory,
+      builtInRuntime: builtIn,
+    });
+
+    for (const extensionId of [builtIn.extensionId, remote.id]) {
+      const ownershipPath = path.join(
+        configDirectory,
+        'openchamber',
+        `${extensionId}.agent-runtime.v1.json`,
+      );
+      const current = JSON.parse(await fs.readFile(ownershipPath, 'utf8'));
+      // This is the exact historical writer shape: record-level versions is
+      // canonical, while every asset omits the newer per-asset version.
+      current.assets = current.assets
+        .map(({ target, kind, name, sha256 }) => ({
+          target,
+          kind,
+          name,
+          sha256,
+        }))
+        .sort((left, right) => left.target.localeCompare(right.target));
+      if (extensionId === remote.id) {
+        expect(`${JSON.stringify(current, null, 2)}\n`).toBe(`{
+  "schemaVersion": 1,
+  "managedBy": "openchamber",
+  "extensionId": "${remote.id}",
+  "versions": [
+    "1.0.0"
+  ],
+  "assets": [
+    {
+      "target": "tools/legacy_remote_tool.ts",
+      "kind": "tool",
+      "name": "legacy_remote_tool",
+      "sha256": "${current.assets[0].sha256}"
+    }
+  ]
+}
+`);
+      }
+      await fs.writeFile(ownershipPath, `${JSON.stringify(current, null, 2)}\n`);
+    }
+
+    const migrated = await reconcileOpenCodeAgentRuntime({
+      state: { extensions: { [remote.id]: remote } },
+      previousAssets: first.assets,
+      configDirectory,
+      versionsDirectory,
+      builtInRuntime: builtIn,
+    });
+
+    expect(migrated.changed).toBe(true);
+    expect(migrated.assets).toEqual(first.assets);
+    for (const extensionId of [builtIn.extensionId, remote.id]) {
+      const ownershipPath = path.join(
+        configDirectory,
+        'openchamber',
+        `${extensionId}.agent-runtime.v1.json`,
+      );
+      const canonical = JSON.parse(await fs.readFile(ownershipPath, 'utf8'));
+      expect(canonical.versions).toHaveLength(1);
+      expect(canonical.assets.length).toBeGreaterThan(0);
+      expect(canonical.assets.every((asset) => asset.version === canonical.versions[0])).toBe(true);
+      expect(canonical.assets.every((asset) => Object.prototype.hasOwnProperty.call(asset, 'version'))).toBe(true);
+    }
+    const canonicalBeforeReload = await Promise.all(
+      [builtIn.extensionId, remote.id].map((extensionId) => fs.readFile(path.join(
+        configDirectory,
+        'openchamber',
+        `${extensionId}.agent-runtime.v1.json`,
+      ))),
+    );
+
+    const reloaded = await reconcileOpenCodeAgentRuntime({
+      state: { extensions: { [remote.id]: remote } },
+      previousAssets: migrated.assets,
+      configDirectory,
+      versionsDirectory,
+      builtInRuntime: builtIn,
+    });
+    expect(reloaded.changed).toBe(false);
+    const canonicalAfterReload = await Promise.all(
+      [builtIn.extensionId, remote.id].map((extensionId) => fs.readFile(path.join(
+        configDirectory,
+        'openchamber',
+        `${extensionId}.agent-runtime.v1.json`,
+      ))),
+    );
+    expect(canonicalAfterReload).toEqual(canonicalBeforeReload);
+  });
+
+  it('rejects ambiguous or tampered legacy ownership shapes before touching assets', async () => {
+    const mutations = [
+      {
+        name: 'mixed old and new assets',
+        apply: (record) => { record.assets[0].version = record.versions[0]; },
+      },
+      {
+        name: 'multiple record versions',
+        apply: (record) => { record.versions = [record.versions[0], '2.0.0']; },
+      },
+      {
+        name: 'unknown asset fields',
+        apply: (record) => { record.assets[0].unexpected = true; },
+      },
+      {
+        name: 'duplicate targets',
+        apply: (record) => { record.assets[1].target = record.assets[0].target; },
+      },
+      {
+        name: 'bad paths',
+        apply: (record) => { record.assets[0].target = '../outside.ts'; },
+        expected: { code: 'invalid_agent_runtime_target', status: 400 },
+      },
+      {
+        name: 'bad hashes',
+        apply: (record) => { record.assets[0].sha256 = 'sha256-invalid'; },
+      },
+      {
+        name: 'externally changed hash',
+        apply: (record) => { record.assets[0].sha256 = digest('external ownership edit'); },
+      },
+    ];
+
+    for (const mutation of mutations) {
+      const builtIn = createBuiltInInteractiveUIRuntime();
+      const versionsDirectory = await createConfig(`ocix-legacy-${mutation.name}-versions-`);
+      const configDirectory = await createConfig(`ocix-legacy-${mutation.name}-config-`);
+      const first = await reconcileOpenCodeAgentRuntime({
+        state: { extensions: {} },
+        configDirectory,
+        versionsDirectory,
+        builtInRuntime: builtIn,
+      });
+      const ownershipPath = path.join(
+        configDirectory,
+        'openchamber',
+        `${builtIn.extensionId}.agent-runtime.v1.json`,
+      );
+      const legacy = JSON.parse(await fs.readFile(ownershipPath, 'utf8'));
+      legacy.assets = legacy.assets
+        .map(({ target, kind, name, sha256 }) => ({
+          target,
+          kind,
+          name,
+          sha256,
+        }))
+        .sort((left, right) => left.target.localeCompare(right.target));
+      mutation.apply(legacy);
+      await fs.writeFile(ownershipPath, `${JSON.stringify(legacy, null, 2)}\n`);
+      const beforeAssets = await Promise.all(
+        Object.keys(first.assets).map(async (target) => [target, await fs.readFile(path.join(configDirectory, ...target.split('/')))]),
+      );
+
+      await expect(reconcileOpenCodeAgentRuntime({
+        state: { extensions: {} },
+        previousAssets: first.assets,
+        configDirectory,
+        versionsDirectory,
+        builtInRuntime: builtIn,
+      })).rejects.toMatchObject(mutation.expected ?? { code: 'agent_runtime_state_invalid', status: 500 });
+
+      for (const [target, content] of beforeAssets) {
+        await expect(fs.readFile(path.join(configDirectory, ...target.split('/')))).resolves.toEqual(content);
+      }
+    }
+  });
+
+  it('requires exact historical ownership bytes before rewriting a legacy record', async () => {
+    const variants = [
+      {
+        name: 'reformatted',
+        prepare: (record) => record,
+        serialize: (record) => JSON.stringify(record),
+      },
+      {
+        name: 'reordered',
+        prepare: (record) => ({
+          ...record,
+          assets: [...record.assets].reverse(),
+        }),
+        serialize: (record) => `${JSON.stringify(record, null, 2)}\n`,
+      },
+      {
+        name: 'canonical-delete-version-nonhistorical-format',
+        prepare: (record) => ({
+          ...record,
+          assets: record.assets.map(({ target, kind, name, sha256 }) => ({
+            target,
+            kind,
+            name,
+            sha256,
+          })),
+        }),
+        // Deleting version alone is indistinguishable from a genuine legacy
+        // record; this fixture is rejected because its compact bytes are not
+        // the historical writer output.
+        serialize: (record) => JSON.stringify(record),
+        fromCanonical: true,
+      },
+    ];
+
+    for (const variant of variants) {
+      const builtIn = createBuiltInInteractiveUIRuntime();
+      const versionsDirectory = await createConfig(`ocix-legacy-bytes-${variant.name}-versions-`);
+      const configDirectory = await createConfig(`ocix-legacy-bytes-${variant.name}-config-`);
+      const first = await reconcileOpenCodeAgentRuntime({
+        state: { extensions: {} },
+        configDirectory,
+        versionsDirectory,
+        builtInRuntime: builtIn,
+      });
+      const ownershipPath = path.join(
+        configDirectory,
+        'openchamber',
+        `${builtIn.extensionId}.agent-runtime.v1.json`,
+      );
+      const current = JSON.parse(await fs.readFile(ownershipPath, 'utf8'));
+      const legacy = variant.fromCanonical
+        ? current
+        : {
+          ...current,
+          assets: current.assets.map(({ target, kind, name, sha256 }) => ({
+            target,
+            kind,
+            name,
+            sha256,
+          })),
+        };
+      await fs.writeFile(ownershipPath, variant.serialize(variant.prepare(legacy)));
+
+      await expect(reconcileOpenCodeAgentRuntime({
+        state: { extensions: {} },
+        previousAssets: first.assets,
+        configDirectory,
+        versionsDirectory,
+        builtInRuntime: builtIn,
+      })).rejects.toMatchObject({ code: 'agent_runtime_conflict', status: 409 });
+    }
+  });
+
   it('refuses unmanaged Tool conflicts without overwriting user content', async () => {
     const builtIn = createBuiltInInteractiveUIRuntime();
     const configDirectory = await createConfig();

@@ -229,6 +229,7 @@ const parseOwnershipRecord = (pathImpl, value, expectedExtensionId) => {
     || value.managedBy !== 'openchamber'
     || value.extensionId !== expectedExtensionId
     || !Array.isArray(value.versions)
+    || value.versions.length === 0
     || !Array.isArray(value.assets)
     || value.assets.length === 0
     || value.assets.length > MAX_MANAGED_ASSETS) {
@@ -249,10 +250,34 @@ const parseOwnershipRecord = (pathImpl, value, expectedExtensionId) => {
       500,
     );
   }
+  // OpenChamber 1.17.1 wrote the record-level version once and omitted the
+  // per-asset version.  Recognize only that exact, unambiguous shape.  A
+  // record with mixed old/new assets is never repaired by guessing which
+  // descriptors are authoritative.
+  const assetHasVersion = value.assets.map((asset) => (
+    isRecord(asset) && Object.prototype.hasOwnProperty.call(asset, 'version')
+  ));
+  if (assetHasVersion.some((hasVersion) => hasVersion !== assetHasVersion[0])) {
+    throw new InteractiveUIAgentRuntimeError(
+      `OCIX ownership record for ${expectedExtensionId} mixes legacy and canonical assets`,
+      'agent_runtime_state_invalid',
+      500,
+    );
+  }
+  const legacy = assetHasVersion[0] === false;
+  if (legacy && versions.length !== 1) {
+    throw new InteractiveUIAgentRuntimeError(
+      `OCIX ownership record for ${expectedExtensionId} has ambiguous legacy versions`,
+      'agent_runtime_state_invalid',
+      500,
+    );
+  }
   const rawAssets = Object.create(null);
   for (const asset of value.assets) {
     if (!isRecord(asset)
-      || Object.keys(asset).some((field) => !['target', 'version', 'kind', 'name', 'sha256'].includes(field))
+      || Object.keys(asset).some((field) => !(legacy
+        ? ['target', 'kind', 'name', 'sha256'].includes(field)
+        : ['target', 'version', 'kind', 'name', 'sha256'].includes(field)))
       || typeof asset.target !== 'string'
       || Object.prototype.hasOwnProperty.call(rawAssets, asset.target)) {
       throw new InteractiveUIAgentRuntimeError(
@@ -263,13 +288,23 @@ const parseOwnershipRecord = (pathImpl, value, expectedExtensionId) => {
     }
     rawAssets[asset.target] = {
       extensionId: expectedExtensionId,
-      version: asset.version,
+      version: legacy ? versions[0] : asset.version,
       kind: asset.kind,
       name: asset.name,
       sha256: asset.sha256,
     };
   }
   const assets = normalizePreviousAssets(pathImpl, rawAssets);
+  if (Object.values(assets).some((asset) => (
+    !Object.prototype.hasOwnProperty.call(asset, 'version')
+      || !sortedVersions.includes(asset.version)
+  ))) {
+    throw new InteractiveUIAgentRuntimeError(
+      `OCIX ownership record for ${expectedExtensionId} has incomplete asset versions`,
+      'agent_runtime_state_invalid',
+      500,
+    );
+  }
   const assetVersions = Array.from(new Set(Object.values(assets).map((asset) => asset.version)))
     .sort(compareCodePoints);
   if (assetVersions.length !== sortedVersions.length
@@ -280,7 +315,7 @@ const parseOwnershipRecord = (pathImpl, value, expectedExtensionId) => {
       500,
     );
   }
-  return assets;
+  return { assets, legacy };
 };
 
 const readRecordedAssets = async ({ configDirectory, fsImpl, pathImpl }) => {
@@ -292,7 +327,7 @@ const readRecordedAssets = async ({ configDirectory, fsImpl, pathImpl }) => {
     ownershipRoot,
     { label: 'OpenChamber ownership directory' },
   );
-  if (!rootStat) return Object.create(null);
+  if (!rootStat) return { assets: Object.create(null), legacyExtensions: new Set() };
   if (!rootStat.isDirectory()) {
     throw new InteractiveUIAgentRuntimeError(
       'OpenChamber ownership directory is not a regular directory',
@@ -318,6 +353,7 @@ const readRecordedAssets = async ({ configDirectory, fsImpl, pathImpl }) => {
     );
   }
   const recorded = Object.create(null);
+  const legacyExtensions = new Set();
   let recordedCount = 0;
   for (const entry of recordEntries.sort((left, right) => compareCodePoints(left.name, right.name))) {
     if (!entry.isFile()) {
@@ -354,7 +390,9 @@ const readRecordedAssets = async ({ configDirectory, fsImpl, pathImpl }) => {
         500,
       );
     }
-    const assets = parseOwnershipRecord(pathImpl, parsed, extensionId);
+    const parsedRecord = parseOwnershipRecord(pathImpl, parsed, extensionId);
+    const assets = parsedRecord.assets;
+    if (parsedRecord.legacy) legacyExtensions.add(extensionId);
     for (const [relativeTarget, asset] of Object.entries(assets)) {
       if (recordedCount >= MAX_MANAGED_ASSETS) {
         throw new InteractiveUIAgentRuntimeError(
@@ -374,7 +412,7 @@ const readRecordedAssets = async ({ configDirectory, fsImpl, pathImpl }) => {
       recordedCount += 1;
     }
   }
-  return recorded;
+  return { assets: recorded, legacyExtensions };
 };
 
 const reconcilePreviousAssets = (supplied, recorded) => {
@@ -503,6 +541,31 @@ const ownershipRecordContent = (extensionId, assets) => {
         sha256: asset.sha256,
       }))
       .sort((left, right) => compareCodePoints(left.target, right.target)),
+  }, null, 2)}\n`);
+};
+
+// Exact bytes emitted by the 1.17.1 ownership writer. Legacy migration is
+// deliberately tied to this serialization rather than treating any
+// semantically equivalent JSON as historical evidence.
+const legacyOwnershipRecordContent = (extensionId, assets) => {
+  // Preserve the historical writer's default string ordering and
+  // localeCompare target ordering byte-for-byte.  The current writer above
+  // intentionally uses code-point ordering; migration must instead match the
+  // already-persisted 1.17.1 bytes exactly.
+  const versions = Array.from(new Set(assets.map((asset) => asset.version))).sort();
+  return Buffer.from(`${JSON.stringify({
+    schemaVersion: 1,
+    managedBy: 'openchamber',
+    extensionId,
+    versions,
+    assets: assets
+      .map((asset) => ({
+        target: asset.target,
+        kind: asset.kind,
+        name: asset.name,
+        sha256: asset.sha256,
+      }))
+      .sort((left, right) => left.target.localeCompare(right.target)),
   }, null, 2)}\n`);
 };
 
@@ -1017,11 +1080,13 @@ export const reconcileOpenCodeAgentRuntime = async ({
   }
   const resolvedConfigDirectory = pathImpl.resolve(configDirectory);
   const suppliedPreviousAssets = normalizePreviousAssets(pathImpl, previousAssets);
-  const recordedPreviousAssets = await readRecordedAssets({
+  const recordedState = await readRecordedAssets({
     configDirectory: resolvedConfigDirectory,
     fsImpl,
     pathImpl,
   });
+  const recordedPreviousAssets = recordedState.assets;
+  const legacyOwnershipExtensions = recordedState.legacyExtensions;
   const normalizedPreviousAssets = reconcilePreviousAssets(
     suppliedPreviousAssets,
     recordedPreviousAssets,
@@ -1263,8 +1328,13 @@ export const reconcileOpenCodeAgentRuntime = async ({
     const next = desiredOwnership.has(extensionId)
       ? ownershipRecordContent(extensionId, desiredOwnership.get(extensionId))
       : null;
+    const isLegacyRecord = legacyOwnershipExtensions.has(extensionId);
+    const expectedLegacy = isLegacyRecord && previousOwnership.has(extensionId)
+      ? legacyOwnershipRecordContent(extensionId, previousOwnership.get(extensionId))
+      : null;
     if ((previous === null && current !== null)
-      || (previous !== null && !current?.equals(previous))) {
+      || (previous !== null && isLegacyRecord && !current?.equals(expectedLegacy))
+      || (previous !== null && !isLegacyRecord && !current?.equals(previous))) {
       throw new InteractiveUIAgentRuntimeError(
         `OCIX ownership record for ${extensionId} was modified outside OpenChamber`,
         'agent_runtime_conflict',

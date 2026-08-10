@@ -312,6 +312,28 @@ Manager state as `agentRuntime.assets` after each successful activation; the
 production reconcileActivation adapter (feature-routes-runtime) supplies that
 map on the next reconcile and on `initialize()`.
 
+The loader performs one bounded, one-way migration for the persisted 1.17.1
+ownership writer. A schema-v1 record is legacy only when its exact top-level
+shape and identity are valid, nonempty `versions` contains exactly one valid
+version, and nonempty `assets` has exactly `target`, `kind`, `name`, and
+`sha256` with no `version` on every asset. That record-level version is added
+to every asset in memory, and
+the bytes must match the exact historical 1.17.1 writer output (including
+field order, its target ordering, indentation, and trailing newline) before
+reconciliation rewrites the record to the current canonical per-asset shape.
+Mixed old/new assets, multiple legacy versions, unknown fields, duplicate
+targets, invalid paths or hashes, and any ownership or managed-file mismatch
+remain fail-closed. A canonical record is never downgraded, and a second
+reconciliation is idempotent.
+
+Migration authority is conjunctive: the exact historical record bytes must
+match the normalized `previousAssets` inventory, and every managed target must
+still have the recorded hash and contents. Without an additional durable
+provenance marker, an exact replay of the historical bytes under those same
+checks is information-theoretically indistinguishable from the original
+record and is accepted; this is the remaining fail-closed boundary, not a
+general compatibility path.
+
 Before mutation the loader writes a transaction marker. Atomic writes use
 temporary files and reject ancestor symlinks. A failure restores changed bytes
 and records; temporary-file cleanup failure is surfaced as
