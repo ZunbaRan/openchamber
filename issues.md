@@ -1588,8 +1588,28 @@
 - Pi binding: run/session `f6dff310-ae57-4661-aa52-b7981bb17685`, base `f35b4ffdf220c3b21c94d25a95a54d0361005e33`, revision 0, supervised-local worktree `/Users/loloru/.codex/sol-pi-advisor/worktrees/f6dff310-ae57-4661-aa52-b7981bb17685`.
 - Pi attempts: Revision 0 changed only the two owned files, restored attach-before-load ordering, and added explicit success-order plus load-failure cleanup tests; policy state is clean with diff digest `d6adc16b…`. No correction has been required.
 - Primary attempts: none while Pi retries remain. Primary integrated the exact revision-0 candidate and independently reran its focused gates.
-- Current evidence: Before the fix, two rebuilt-package acceptance runs reached signed Local OCIX install, then timed out with host state `timed-out`, no iframe/backend, and repeated Chromium opaque-origin site-tuple failures. In both the Pi and integration worktrees, the candidate passes 9/9 Artifact Runner tests, Electron syntax/type check, exact candidate comparison, and `git diff --check`; the new negative test proves failed navigation detaches/closes the View, clears partition storage/state, and emits controlled `load-failed` termination.
+- Current evidence: Before the fix, two rebuilt-package acceptance runs reached signed Local OCIX install, then timed out with host state `timed-out`, no iframe/backend, and repeated Chromium opaque-origin site-tuple failures. In both the Pi and integration worktrees, the candidate passes 9/9 Artifact Runner tests, Electron syntax/type check, exact candidate comparison, and `git diff --check`; the new negative test proves failed navigation detaches/closes the View, clears partition storage/state, and emits controlled `load-failed` termination. The rebuilt packaged app still fails identically, proving attach ordering is necessary lifecycle hardening but not sufficient while the trusted top-level Broker itself remains opaque; that distinct response-policy root cause is issue082.
 - Suspension decision: n/a
 - Resume condition: n/a
 - Continuation decision: Restore the required lifecycle ordering with focused regression coverage; do not weaken CSP sandboxing or fall back to an iframe for scripts.
-- Next action: Rebuild the packaged app and rerun the full packaged desktop acceptance against revision 0.
+- Next action: Keep revision 0 under verification; resolve issue082, then rerun packaged acceptance to determine the combined end-to-end result.
+
+## issue-082: Give the trusted Artifact Broker a valid top-level origin
+
+- Status: VERIFYING
+- Classification: P0
+- Goal / user outcome: The packaged native Desktop Runner can host script-enabled Artifacts without Chromium opaque-origin site-tuple failures, while untrusted Artifact HTML remains isolated in an opaque sandboxed child.
+- First-principles root cause: The server applies `Content-Security-Policy: sandbox allow-scripts` to the host-authored top-level Broker document. That makes the Broker's own HTTP origin opaque; Electron `WebContentsView` cannot attach/navigate that top-level site inside the packaged `openchamber-ui://` window and never reaches layout acknowledgement. The actual untrusted Artifact already runs in a nested `iframe sandbox="allow-scripts"`, so making only the trusted Broker same-origin does not grant the Artifact same-origin access.
+- Core acceptance invariant: The top-level Broker CSP uses `sandbox allow-scripts allow-same-origin` so Chromium has a valid tuple, while the nested Artifact iframe remains exactly `sandbox="allow-scripts"` with no `allow-same-origin`. `default-src 'none'`, no eval/connect/forms/navigation/popups/storage, frame ancestry, response hardening, Broker message validation, and static Artifact policy remain unchanged. Focused route tests must distinguish outer Broker policy from inner untrusted sandbox; packaged acceptance must reach native Runner ready/stop without origin-tuple errors.
+- Dependencies: issues 077, 080, 081
+- Dispatch order: Serial after issue081 packaged falsification; blocks its end-to-end acceptance and local installation.
+- Ownership: `packages/web/server/lib/interactive-ui/routes.js`; `packages/web/server/lib/interactive-ui/routes.artifact.test.js`.
+- Focused verification: `bun test packages/web/server/lib/interactive-ui/routes.artifact.test.js --only-failures`, Web lint/typecheck, `git diff --check`, then primary rebuild plus full packaged desktop acceptance.
+- Pi binding: run/session `65c4f2d8-8a66-404a-89a2-37840b3184db`, base `1b2aff7bb2a709ca1dc99c8d913d0b0fb330c4dc`, revision 0, supervised-local worktree `/Users/loloru/.codex/sol-pi-advisor/worktrees/65c4f2d8-8a66-404a-89a2-37840b3184db`.
+- Pi attempts: Revision 0 changed exactly the two owned files: the trusted Broker CSP now has `allow-same-origin`, and route tests assert the outer directive exactly while proving the inner iframe remains `allow-scripts` only. Policy state is clean with diff digest `c45483d7…`; no correction has been required.
+- Primary attempts: none while Pi retries remain. Primary integrated the exact candidate and performed dependency-backed verification unavailable in the isolated Pi worktree.
+- Current evidence: The issue081 rebuild preserved attach-before-load but packaged acceptance still reported host `timed-out` plus repeated opaque-origin tuple failures. The revision-0 candidate is byte-identical to Pi, passes the real HTML Artifact route suite 14/14 (64 assertions) in the approved loopback environment, Web typecheck, Web lint, and `git diff --check`. The test contract distinguishes the trusted top-level Broker's exact `sandbox allow-scripts allow-same-origin` from the nested untrusted iframe's exact `allow-scripts` sandbox.
+- Suspension decision: n/a
+- Resume condition: n/a
+- Continuation decision: Change only the trusted Broker's CSP sandbox token set and lock the two-layer boundary in route tests; do not weaken the nested Artifact sandbox or Electron permissions.
+- Next action: Rebuild the Electron package and rerun the full packaged desktop acceptance.

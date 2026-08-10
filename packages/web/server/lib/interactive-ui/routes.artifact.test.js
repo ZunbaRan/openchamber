@@ -19,6 +19,14 @@ const envelope = (scripts = false) => ({
   display: { preferred: 'inline', allowExpand: true, inlineHeight: 360 },
 });
 
+// The top-level Broker is host-authored and must carry a valid same-origin
+// tuple for Chromium WebContentsView attachment, so its CSP sandbox directive
+// grants allow-same-origin. The nested untrusted Artifact iframe stays opaque.
+const sandboxDirectiveOf = (csp) => csp
+  .split(';')
+  .map((directive) => directive.trim())
+  .find((directive) => directive.startsWith('sandbox '));
+
 const createApp = async (
   environment = {},
   runtime = {},
@@ -126,10 +134,12 @@ describe('HTML Artifact routes', () => {
     expect(document.headers['content-security-policy']).toContain("script-src 'unsafe-inline'");
     expect(document.headers['content-security-policy']).not.toContain('unsafe-eval');
     expect(document.headers['content-security-policy']).toContain('frame-src data:');
-    expect(document.headers['content-security-policy']).toContain('sandbox allow-scripts');
+    expect(sandboxDirectiveOf(document.headers['content-security-policy'])).toBe('sandbox allow-scripts allow-same-origin');
     expect(document.headers['content-security-policy']).toContain("frame-ancestors 'self' openchamber-ui://app");
     expect(document.headers['content-security-policy']).not.toContain('navigate-to');
     expect(document.text).toContain('data-ocix-artifact-broker');
+    expect(document.text).toContain('frame.setAttribute("sandbox","allow-scripts")');
+    expect(document.text).not.toContain('allow-same-origin');
     expect(document.text).toContain('broker.navigationBlocked');
     const encodedArtifact = document.text.match(/data:text\/html;base64,([A-Za-z0-9+/=]+)/)?.[1];
     expect(encodedArtifact).toBeTruthy();
@@ -160,9 +170,11 @@ describe('HTML Artifact routes', () => {
     const document = await request(app)
       .get('/api/interactive-ui/extensions/com.acme.crm/artifacts/com.acme.crm.explorer')
       .expect(200);
-    expect(document.headers['content-security-policy']).toContain('sandbox allow-scripts');
+    expect(sandboxDirectiveOf(document.headers['content-security-policy'])).toBe('sandbox allow-scripts allow-same-origin');
     expect(document.headers.etag).toBe('"sha256-fixture"');
     expect(document.text).toContain('data-ocix-artifact-broker');
+    expect(document.text).toContain('frame.setAttribute("sandbox","allow-scripts")');
+    expect(document.text).not.toContain('allow-same-origin');
     expect(document.text).toContain('host.businessResult');
   });
 
