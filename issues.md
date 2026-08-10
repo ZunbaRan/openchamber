@@ -1060,23 +1060,23 @@
 
 ## issue-054: Bind the target UI to the rebuilt Fork SDK and acceptance commands
 
-- Status: READY
+- Status: OPEN
 - Classification: P0
 - Goal / user outcome: OpenChamber consumes the accepted `@zunbaran/opencode-sdk` build and exposes only the retained fork test/release commands.
 - First-principles root cause: Clean target package metadata points at upstream SDK and has no fork acceptance scripts.
 - Core acceptance invariant: SDK provenance matches the exact integrated OpenCode commit, lockfile is deterministic, no unrelated dependency/version/script drift enters, and every added command names an existing accepted script.
 - Dependencies: none for the already-published fork SDK `1.18.10-oc.1`; product acceptance in issues 049-053 remains downstream.
 - Dispatch order: First repair lane. The fork SDK dependency must be deterministic before client-wrapper and full typecheck repair.
-- Ownership: `package.json`; `bun.lock`; generated local SDK package metadata/evidence outside source as directed by the release script.
+- Ownership: Root `package.json` intent is part of this issue, but the actual workspace dependency fanout and deterministic lock regeneration are now delegated to issue-071 after first-principles discovery; generated local SDK package metadata/evidence remains primary-owned.
 - Focused verification: Frozen install, SDK provenance check, typecheck, Web/Electron builds, and command resolution audit.
-- Pi binding: unassigned
+- Pi binding: rejected run/session `c77292fc-24b5-46c5-916b-6ac3c3d32802`, batch `7c48e442-3dbe-4be2-a421-8b5f59cc69ac`, base `9024883a1c77b5bc1e9133760dc1ef9b7083026d`, revision 0, supervised-local without sandbox. Policy scope was clean, but the candidate was not integrated because primary frozen-install validation proved its hand-crafted versioned scoped key invalid.
 - Pi attempts: none
 - Primary attempts: not eligible while Pi retries remain
-- Current evidence: Reopened 2026-08-10 after the canonical packaging audit. Integration HEAD `a3ce959d016bcefd6cf20569d74a794c7564e899` still declares official `@opencode-ai/sdk@1.18.12`; its Electron preparation script therefore downloads the official anomalyco CLI. The maintained fork product already pins `npm:@zunbaran/opencode-sdk@1.18.10-oc.1`. Only the exact SDK alias and matching lock entries may be replayed; commands and unrelated dependency drift are excluded from this repair slice.
+- Current evidence: Reopened 2026-08-10 after the canonical packaging audit. Integration HEAD `a3ce959d016bcefd6cf20569d74a794c7564e899` still declares official `@opencode-ai/sdk@1.18.12`. Pi revision 0 changed only the root manifest and hand-crafted a second scoped SDK key; primary `bun install --frozen-lockfile` rejected it at `bun.lock:1009` with `InvalidPackageKey`. Independent manifest inspection then proved `packages/ui`, `packages/web`, and `packages/vscode` each directly declare official `1.18.12`, so a root-only alias cannot make product workspaces consume the fork. The failed candidate was fully removed from integration; package/lock are back to committed bytes.
 - Suspension decision: n/a
 - Resume condition: n/a
-- Continuation decision: Enables issue-029 client-wrapper repair and dependency-backed typechecking.
-- Next action: Dispatch one supervised-local Pi lane restricted to `package.json` and `bun.lock`; primary independently audits the minimal diff and runs a frozen install/provenance check before integration.
+- Continuation decision: issue-071 is a distinct dependency-graph root cause and must bind all direct workspace consumers atomically; resolving it closes issue-054 and enables issue-029.
+- Next action: Keep OPEN until issue-071 passes package-manager-generated lock validation and all four direct manifests resolve the fork SDK.
 
 ## issue-055: Enforce upstream UI parity outside the Fork allowlist
 
@@ -1385,3 +1385,21 @@
 - Current evidence: UI typecheck fails with 289 errors; `CSC_IDENTITY_AUTO_DISCOVERY=false bun run electron:build` fails after 2348 modules because donor-wide `ChatInput.tsx` imports absent `./MobileSessionStatusBar`; package metadata and Electron prepare scripts still resolve the official SDK/CLI. `/Applications/OpenChamber.app` remains untouched at version 1.17.1 arm64.
 - Continuation decision: Only a fully green and provenance-verified result permits P0 to return to done and P1 to resume.
 - Next action: Remain BLOCKED; primary coordinates the dependency DAG and performs installation only after a fresh Sol/High final review returns ship.
+
+## issue-071: Bind every direct workspace consumer to one fork SDK resolution
+
+- Status: READY
+- Classification: P0
+- Goal / user outcome: Root, UI, Web, and VS Code builds all resolve the exact maintained fork SDK `1.18.10-oc.1` from one deterministic lock instead of silently mixing fork and official SDKs.
+- First-principles root cause: The monorepo's `packages/ui`, `packages/web`, and `packages/vscode` manifests each declare `@opencode-ai/sdk` directly. A root-only alias does not override those direct workspace contracts and forces an invalid two-resolution scoped-key hand edit when the lock is not regenerated by Bun.
+- Core acceptance invariant: All four direct manifests declare exactly `npm:@zunbaran/opencode-sdk@1.18.10-oc.1`; `.npmrc` routes only the `@zunbaran` scope to GitHub Packages using the `GITHUB_PACKAGES_TOKEN` placeholder and contains no secret; Bun generates one valid fork SDK resolution with the accepted tarball/integrity; no official SDK resolution remains; unrelated dependencies/scripts/lock entries do not drift.
+- Dependencies: none; resolves issue-054 when accepted
+- Dispatch order: Serial dependency-state lane. No parallel lane may edit any manifest, `.npmrc`, or `bun.lock`.
+- Ownership: `package.json`; `packages/ui/package.json`; `packages/web/package.json`; `packages/vscode/package.json`; `.npmrc`; `bun.lock`. Six files exceed the default budget because they form one indivisible workspace-resolution contract: four identical direct declarations, their scoped registry metadata, and the single generated lock; splitting them creates a known invalid intermediate graph.
+- Focused verification: Primary-owned dependency resolution with `GITHUB_PACKAGES_TOKEN` when available; otherwise exact comparison to maintained donor plus package-manager parse validation, local cached fork-package provenance, zero-secret `.npmrc` audit, all-manifest assertion, and later full typecheck/build. Frozen install is the release gate and may remain an explicit environment blocker until credentials are provided.
+- Pi binding: unassigned
+- Pi attempts: none
+- Primary attempts: not eligible while Pi retries remain
+- Current evidence: Rejected issue-054 revision 0 proved a root-only alias is insufficient and produced `InvalidPackageKey` under `bun install --frozen-lockfile`. Maintained donor commit `870cc00cb471743795d2a8c9746247951e78f931` already binds all four manifests, `.npmrc`, and one fork lock resolution; its local node_modules identifies `@zunbaran/opencode-sdk@1.18.10-oc.1`. The current environment has no `GITHUB_PACKAGES_TOKEN`, so Pi must not run installs and primary must report credential-dependent frozen-install evidence separately.
+- Continuation decision: Resolves issue-054 and enables fork client wrappers/typechecking without mixed SDK types.
+- Next action: Dispatch one supervised-local Pi lane to replay only the six-file dependency graph from maintained donor evidence; primary rejects any manual multi-version lock and independently checks Bun parsing before integration.
