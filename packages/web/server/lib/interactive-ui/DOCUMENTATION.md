@@ -83,10 +83,12 @@ and kept under a 0700 directory with a 0600 file. Public Manager snapshots omit
 public-key PEM and managed filesystem paths.
 
 The accepted persisted source labels are manual, package-confirmation, and
-marketplace:<namespaced-id>. A legacy marketplace:* slot is intentionally not a
-Local-package authority: resolveTrustedKey() ignores it for Local verification.
-Marketplace installation uses a request-bound catalog publisher key instead
-(see below), so delegated trust is never promoted into global Local trust.
+marketplace:<namespaced-id>. Legacy `remote-confirmation` slots may be parsed
+only as bounded migration evidence and are never Local-package authority:
+resolveTrustedKey() ignores both `remote-confirmation` and legacy
+marketplace:* slots for Local verification. Marketplace installation uses a
+request-bound catalog publisher key instead (see below), so delegated trust is
+never promoted into global Local trust.
 
 ## Local package lifecycle
 
@@ -227,6 +229,25 @@ publisher trust.
   closed while the prior active Remote version remains available.
   An already-installed reconnect performs no shell, state,
   trust, activation, or credential mutation, preserving the valid connection.
+
+On startup, a narrowly recognized pre-consent Remote record from the older
+durable shape may be migrated once. The Manager derives the missing scoped
+public key only from the exact Manager-owned signed shell, verifies its
+signature, complete file index, manifest/package hash, publisher tuple and
+fingerprint, connector, permissions, signed publishedAt, Agent Runtime
+contract, and accepted manifest, then publishes the installation-scoped
+consent before the key-bearing state. The old 1.17.x generated Tool bytes are
+accepted only through an explicit byte-for-byte legacy writer contract; they
+are never compared with the current generator or adopted from state alone.
+Only after state is durable is the exact historical `remote-confirmation`
+trust slot retired; that legacy source is never preserved as Local authority.
+A failed phase leaves no stale snapshot restore or unlink: any exact consent
+residue remains non-authoritative evidence until the serialized startup gate
+retries the forward transition on the next operation/restart. A missing,
+substituted, revoked, incomplete, aliased, or
+otherwise unverifiable shell remains fail-closed; no network manifest or
+credential data is used. A second restart sees the canonical newer shape and
+performs no migration write beyond finishing an interrupted trust retirement.
 
 Remote health and update behavior is request- and generation-bound. Stale
 health responses cannot overwrite newer observations. Update application

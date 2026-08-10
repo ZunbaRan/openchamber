@@ -324,6 +324,122 @@ const remoteManagerAt = (dataDirectory, options = {}) => managerAt(dataDirectory
   ...options,
 });
 
+// Byte-for-byte 1.17.x Hosted Tool writer (historical commit 459e27ad's
+// installHostedAgentRuntime/hostedToolSource). The historical writer used this
+// description (the current generator intentionally uses a different one).
+const HISTORICAL_REMOTE_OPEN_TOOL_SHA256 = 'sha256-DphAePgmeHJssyllkMVDIEC0NfvZKZ0+D6kr9p2vDw4=';
+const historicalHostedToolSource = ({ kind, title, surfaceId, defaultContext = {} }) => {
+  const schema = kind === 'view'
+    ? 'openchamber://interactive-result/v1'
+    : 'openchamber://installed-html-artifact-result/v1';
+  const surfaceKey = kind === 'view' ? 'view' : 'artifact';
+  const summary = `Open hosted ${title}`;
+  return `import { tool } from '@opencode-ai/plugin';
+
+export default tool({
+  description: ${JSON.stringify(`Open the installed Hosted OCIX surface “${title}”. Use contextJson only for parameters explicitly supplied or inferred from the user. The page calls business APIs through OpenChamber Business Gateway; never invent replacement business data.`)},
+  args: {
+    contextJson: tool.schema.string().optional().describe('Optional JSON object containing the surface parameters'),
+  },
+  async execute(args) {
+    let context = ${JSON.stringify(defaultContext)};
+    if (args.contextJson) {
+      let parsed;
+      try {
+        parsed = JSON.parse(args.contextJson);
+      } catch {
+        throw new Error('contextJson must be valid JSON');
+      }
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        throw new Error('contextJson must contain a JSON object');
+      }
+      context = { ...context, ...parsed };
+    }
+    return JSON.stringify({
+      $schema: ${JSON.stringify(schema)},
+      schemaVersion: 1,
+      ${surfaceKey}: ${JSON.stringify(surfaceId)},
+      mode: 'live',
+      summary: ${JSON.stringify(summary)},
+      context,
+      updatedAt: new Date().toISOString(),
+    });
+  },
+});
+`;
+};
+
+const historicalRemoteProfile = async (dataDirectory, remote, publisherKeys) => {
+  const statePath = statePathFor(dataDirectory);
+  const state = JSON.parse(await fs.readFile(statePath, 'utf8'));
+  const metadata = state.extensions[remote.document.extension.id].versions[remote.document.app.version];
+  delete metadata.remote.publisherPublicKey;
+  const shell = path.join(versionsPathFor(dataDirectory), remote.document.extension.id, remote.document.app.version);
+  const bindings = [];
+  for (const view of remote.document.extension.views ?? []) {
+    for (const name of view.tools ?? []) bindings.push({
+      kind: 'view',
+      title: typeof view.title === 'string' && view.title.trim() ? view.title.trim() : view.id,
+      surfaceId: view.id,
+      name,
+      defaultContext: view.dashboard?.defaultContext ?? {},
+    });
+  }
+  for (const artifact of remote.document.extension.artifacts ?? []) {
+    for (const name of artifact.tools ?? []) bindings.push({
+      kind: 'artifact',
+      title: typeof artifact.title === 'string' && artifact.title.trim() ? artifact.title.trim() : artifact.id,
+      surfaceId: artifact.id,
+      name,
+      defaultContext: artifact.dashboard?.defaultContext ?? {},
+    });
+  }
+  for (const binding of bindings) {
+    const file = path.join(shell, 'agent-runtime', 'tools', `${binding.name}.ts`);
+    const bytes = Buffer.from(historicalHostedToolSource(binding));
+    await fs.writeFile(file, bytes);
+    metadata.fileHashes[`agent-runtime/tools/${binding.name}.ts`] = hostedSha256(bytes);
+  }
+  await fs.writeFile(statePath, `${JSON.stringify(state, null, 2)}\n`);
+  const extraKeys = [generatePublisherKeyPair(), generatePublisherKeyPair()];
+  const trust = {
+    $schema: 'openchamber://extension-trust-store/v1',
+    publishers: {
+      [remote.document.publisher.id]: {
+        id: remote.document.publisher.id,
+        name: remote.document.publisher.name,
+        keys: {
+          [remote.document.publisher.keyId]: {
+            keyId: remote.document.publisher.keyId,
+            publicKey: publisherKeys.publicKey,
+            fingerprint: publicKeyFingerprint(publisherKeys.publicKey),
+            source: 'remote-confirmation',
+            trustedAt: '2026-07-18T00:00:00.000Z',
+          },
+          'legacy-2025': {
+            keyId: 'legacy-2025',
+            publicKey: extraKeys[0].publicKey,
+            fingerprint: publicKeyFingerprint(extraKeys[0].publicKey),
+            source: 'remote-confirmation',
+            trustedAt: '2026-07-18T00:00:00.000Z',
+          },
+          'legacy-2024': {
+            keyId: 'legacy-2024',
+            publicKey: extraKeys[1].publicKey,
+            fingerprint: publicKeyFingerprint(extraKeys[1].publicKey),
+            source: 'remote-confirmation',
+            trustedAt: '2026-07-18T00:00:00.000Z',
+          },
+        },
+      },
+    },
+  };
+  await fs.mkdir(path.dirname(trustPathFor(dataDirectory)), { recursive: true });
+  await fs.writeFile(trustPathFor(dataDirectory), `${JSON.stringify(trust, null, 2)}\n`);
+  await fs.rm(remoteConsentsPathFor(dataDirectory), { force: true });
+  return { state, trust };
+};
+
 describe('Interactive UI extension trust manager', () => {
   it('rejects incomplete construction dependencies and supports default construction', async () => {
     expect(() => createInteractiveUIExtensionManager({})).toThrow('dependencies are incomplete');
@@ -823,6 +939,42 @@ describe('Interactive UI extension trust manager', () => {
     expect(JSON.stringify(inspected)).not.toContain('BEGIN PUBLIC KEY');
     expect(JSON.stringify(inspected)).not.toContain(dataDirectory);
     expect(JSON.stringify(inspected)).not.toContain('trust.json');
+  });
+
+  it('never treats an orphan remote-confirmation slot as Local package authority', async () => {
+    const dataDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'ocix-manager-orphan-remote-confirmation-'));
+    temporaryDirectories.push(dataDirectory);
+    const keys = generatePublisherKeyPair();
+    const packed = await signPackage({ keys });
+    await fs.mkdir(path.dirname(trustPathFor(dataDirectory)), { recursive: true });
+    await fs.writeFile(trustPathFor(dataDirectory), `${JSON.stringify({
+      $schema: 'openchamber://extension-trust-store/v1',
+      publishers: {
+        'com.acme.publisher': {
+          id: 'com.acme.publisher',
+          name: 'Acme',
+          keys: {
+            'release-2026': {
+              keyId: 'release-2026',
+              publicKey: keys.publicKey,
+              fingerprint: publicKeyFingerprint(keys.publicKey),
+              source: 'remote-confirmation',
+              trustedAt: '2026-07-18T00:00:00.000Z',
+            },
+          },
+        },
+      },
+    }, null, 2)}\n`);
+    const manager = managerAt(dataDirectory, {
+      reconcileActivation: async () => ({ openCode: {}, rollback: async () => {} }),
+    });
+    await expect(manager.inspectPackage(packed.buffer)).resolves.toMatchObject({
+      publisher: { trusted: false },
+    });
+    await expect(manager.installPackage(packed.buffer)).rejects.toMatchObject({
+      code: 'publisher_untrusted',
+      status: 403,
+    });
   });
 
   it('resolves trust only from the exact own durable slot during inspection', async () => {
@@ -2096,6 +2248,229 @@ describe('Interactive UI extension trust manager', () => {
       expect(serialized).not.toContain('BEGIN PUBLIC KEY');
       expect(serialized).not.toContain(dataDirectory);
       expect((await restarted.getEnabledExtensionRoots())).toHaveLength(1);
+    });
+
+    it('restarts from the exact pre-consent Remote state shape', async () => {
+      const dataDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'ocix-manager-remote-legacy-restart-'));
+      temporaryDirectories.push(dataDirectory);
+      const keys = generatePublisherKeyPair();
+      const remote = createRemoteManifest({ keys });
+      const manager = remoteManagerAt(dataDirectory, { fetchImpl: remoteFetch(remote.document) });
+      const inspection = await manager.inspectRemote(appEntryUrl);
+      await manager.connectRemote({
+        appEntryUrl,
+        confirmedPublisherFingerprint: inspection.publisher.fingerprint,
+        confirmedManifestHash: inspection.manifest.manifestHash,
+      });
+
+      await historicalRemoteProfile(dataDirectory, remote, keys);
+      const historicalToolBytes = await fs.readFile(path.join(
+        versionsPathFor(dataDirectory),
+        'com.acme.remote',
+        '1.0.0',
+        'agent-runtime',
+        'tools',
+        'remote_open.ts',
+      ));
+      expect(hostedSha256(historicalToolBytes)).toBe(HISTORICAL_REMOTE_OPEN_TOOL_SHA256);
+
+      const restarted = remoteManagerAt(dataDirectory, { fetchImpl: remoteFetch(remote.document) });
+      await expect(restarted.list()).resolves.toMatchObject({
+        extensions: [{ id: 'com.acme.remote' }],
+      });
+      const migratedState = await fs.readFile(statePathFor(dataDirectory), 'utf8');
+      const migratedConsents = await fs.readFile(remoteConsentsPathFor(dataDirectory), 'utf8');
+      const secondRestart = remoteManagerAt(dataDirectory, { fetchImpl: remoteFetch(remote.document) });
+      await expect(secondRestart.list()).resolves.toMatchObject({
+        extensions: [{ id: 'com.acme.remote' }],
+      });
+      expect(await fs.readFile(statePathFor(dataDirectory), 'utf8')).toBe(migratedState);
+      expect(await fs.readFile(remoteConsentsPathFor(dataDirectory), 'utf8')).toBe(migratedConsents);
+      const retiredTrust = JSON.parse(await fs.readFile(trustPathFor(dataDirectory), 'utf8'));
+      expect(retiredTrust.publishers['com.acme.publisher'].keys).not.toHaveProperty('release-2026');
+      expect(retiredTrust.publishers['com.acme.publisher'].keys).toHaveProperty('legacy-2025');
+      expect(retiredTrust.publishers['com.acme.publisher'].keys).toHaveProperty('legacy-2024');
+    });
+
+    it('rejects legacy Remote migration when the stored publisher fingerprint is substituted', async () => {
+      const dataDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'ocix-manager-remote-legacy-fingerprint-'));
+      temporaryDirectories.push(dataDirectory);
+      const keys = generatePublisherKeyPair();
+      const remote = createRemoteManifest({ keys });
+      const manager = remoteManagerAt(dataDirectory, { fetchImpl: remoteFetch(remote.document) });
+      const inspection = await manager.inspectRemote(appEntryUrl);
+      await manager.connectRemote({
+        appEntryUrl,
+        confirmedPublisherFingerprint: inspection.publisher.fingerprint,
+        confirmedManifestHash: inspection.manifest.manifestHash,
+      });
+
+      await historicalRemoteProfile(dataDirectory, remote, keys);
+      const state = JSON.parse(await fs.readFile(statePathFor(dataDirectory), 'utf8'));
+      const metadata = state.extensions['com.acme.remote'].versions['1.0.0'];
+      metadata.publisher.fingerprint = publicKeyFingerprint(generatePublisherKeyPair().publicKey);
+      await fs.writeFile(statePathFor(dataDirectory), JSON.stringify(state));
+
+      const restarted = remoteManagerAt(dataDirectory, { fetchImpl: remoteFetch(remote.document) });
+      await expect(restarted.list()).rejects.toMatchObject({
+        code: 'manager_data_corrupt',
+        status: 500,
+      });
+      await expect(fs.stat(remoteConsentsPathFor(dataDirectory))).rejects.toMatchObject({ code: 'ENOENT' });
+      const persisted = JSON.parse(await fs.readFile(statePathFor(dataDirectory), 'utf8'));
+      expect(persisted.extensions['com.acme.remote'].versions['1.0.0'].remote)
+        .not.toHaveProperty('publisherPublicKey');
+    });
+
+    it('fails closed when the historical Remote confirmation is revoked or re-sourced', async () => {
+      for (const mode of ['revoked', 'manual']) {
+        const dataDirectory = await fs.mkdtemp(path.join(os.tmpdir(), `ocix-manager-remote-legacy-${mode}-`));
+        temporaryDirectories.push(dataDirectory);
+        const keys = generatePublisherKeyPair();
+        const remote = createRemoteManifest({ keys });
+        const manager = remoteManagerAt(dataDirectory, { fetchImpl: remoteFetch(remote.document) });
+        await connectLifecycleRemote(manager);
+        await historicalRemoteProfile(dataDirectory, remote, keys);
+        const trust = JSON.parse(await fs.readFile(trustPathFor(dataDirectory), 'utf8'));
+        if (mode === 'revoked') {
+          delete trust.publishers['com.acme.publisher'].keys['release-2026'];
+        } else {
+          trust.publishers['com.acme.publisher'].keys['release-2026'].source = 'manual';
+        }
+        await fs.writeFile(trustPathFor(dataDirectory), `${JSON.stringify(trust, null, 2)}\n`);
+        const restarted = remoteManagerAt(dataDirectory, { fetchImpl: remoteFetch(remote.document) });
+        await expect(restarted.list()).rejects.toMatchObject({ code: 'manager_data_corrupt', status: 500 });
+        await expect(fs.stat(remoteConsentsPathFor(dataDirectory))).rejects.toMatchObject({ code: 'ENOENT' });
+        const persisted = JSON.parse(await fs.readFile(statePathFor(dataDirectory), 'utf8'));
+        expect(persisted.extensions['com.acme.remote'].versions['1.0.0'].remote).not.toHaveProperty('publisherPublicKey');
+      }
+    });
+
+    it('serializes concurrent pre-initialize readers through one migration gate', async () => {
+      const dataDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'ocix-manager-remote-legacy-concurrency-'));
+      temporaryDirectories.push(dataDirectory);
+      const keys = generatePublisherKeyPair();
+      const remote = createRemoteManifest({ keys });
+      const manager = remoteManagerAt(dataDirectory, { fetchImpl: remoteFetch(remote.document) });
+      await connectLifecycleRemote(manager);
+      await historicalRemoteProfile(dataDirectory, remote, keys);
+      const restarted = remoteManagerAt(dataDirectory, { fetchImpl: remoteFetch(remote.document) });
+      const [enabled, blocked, firstList, secondList] = await Promise.all([
+        restarted.getEnabledRemoteExtensionIds(),
+        restarted.getBlockedRemoteCatalogEntries(),
+        restarted.list(),
+        restarted.list(),
+      ]);
+      expect(enabled).toEqual(['com.acme.remote']);
+      expect(blocked).toEqual([]);
+      expect(firstList.extensions).toHaveLength(1);
+      expect(secondList.extensions).toHaveLength(1);
+      expect(Object.values(JSON.parse(await fs.readFile(remoteConsentsPathFor(dataDirectory), 'utf8')).consents)).toHaveLength(1);
+      const trust = JSON.parse(await fs.readFile(trustPathFor(dataDirectory), 'utf8'));
+      expect(trust.publishers['com.acme.publisher'].keys).not.toHaveProperty('release-2026');
+    });
+
+    it('retains non-authoritative consent residue when state publication fails', async () => {
+      const dataDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'ocix-manager-remote-legacy-rollback-'));
+      temporaryDirectories.push(dataDirectory);
+      const keys = generatePublisherKeyPair();
+      const remote = createRemoteManifest({ keys });
+      const healthy = remoteManagerAt(dataDirectory, { fetchImpl: remoteFetch(remote.document) });
+      const inspection = await healthy.inspectRemote(appEntryUrl);
+      await healthy.connectRemote({
+        appEntryUrl,
+        confirmedPublisherFingerprint: inspection.publisher.fingerprint,
+        confirmedManifestHash: inspection.manifest.manifestHash,
+      });
+      await historicalRemoteProfile(dataDirectory, remote, keys);
+      const legacyState = await fs.readFile(statePathFor(dataDirectory), 'utf8');
+
+      let failed = false;
+      const failingFs = {
+        ...fs,
+        writeFile: async (filePath, ...rest) => {
+          const value = String(filePath);
+          if (!failed && value.includes('installations.json.')
+            && value.endsWith('.tmp')
+            && !value.endsWith('.rollback.tmp')) {
+            failed = true;
+            throw new Error('simulated migration state failure');
+          }
+          return fs.writeFile(filePath, ...rest);
+        },
+      };
+      const restarted = remoteManagerAt(dataDirectory, {
+        fsImpl: failingFs,
+        fetchImpl: remoteFetch(remote.document),
+      });
+      await expect(restarted.list()).rejects.toMatchObject({
+        code: 'manager_write_failed',
+        status: 500,
+      });
+      expect(await fs.readFile(statePathFor(dataDirectory), 'utf8')).toBe(legacyState);
+      const consentResidue = await fs.readFile(remoteConsentsPathFor(dataDirectory), 'utf8');
+      expect(JSON.parse(consentResidue).consents).toBeDefined();
+      await expect(restarted.list()).resolves.toMatchObject({ extensions: [{ id: 'com.acme.remote' }] });
+      expect(await fs.readFile(remoteConsentsPathFor(dataDirectory), 'utf8')).toBe(consentResidue);
+    });
+
+    it('recovers an interrupted final trust retirement without restoring stale state', async () => {
+      const dataDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'ocix-manager-remote-legacy-trust-retry-'));
+      temporaryDirectories.push(dataDirectory);
+      const keys = generatePublisherKeyPair();
+      const remote = createRemoteManifest({ keys });
+      const healthy = remoteManagerAt(dataDirectory, { fetchImpl: remoteFetch(remote.document) });
+      await connectLifecycleRemote(healthy);
+      await historicalRemoteProfile(dataDirectory, remote, keys);
+      let failed = false;
+      const retryFs = {
+        ...fs,
+        writeFile: async (filePath, ...rest) => {
+          const value = String(filePath);
+          if (!failed && value.includes('trust.json.') && value.endsWith('.tmp')) {
+            failed = true;
+            throw new Error('simulated trust retirement failure');
+          }
+          return fs.writeFile(filePath, ...rest);
+        },
+      };
+      const restarted = remoteManagerAt(dataDirectory, { fsImpl: retryFs, fetchImpl: remoteFetch(remote.document) });
+      await expect(restarted.list()).rejects.toMatchObject({ code: 'manager_write_failed', status: 500 });
+      const stateAfterFailure = await fs.readFile(statePathFor(dataDirectory), 'utf8');
+      expect(JSON.parse(stateAfterFailure).extensions['com.acme.remote'].versions['1.0.0'].remote.publisherPublicKey)
+        .toBe(keys.publicKey);
+      await expect(restarted.list()).resolves.toMatchObject({ extensions: [{ id: 'com.acme.remote' }] });
+      expect(await fs.readFile(statePathFor(dataDirectory), 'utf8')).toBe(stateAfterFailure);
+      const trust = JSON.parse(await fs.readFile(trustPathFor(dataDirectory), 'utf8'));
+      expect(trust.publishers['com.acme.publisher'].keys).not.toHaveProperty('release-2026');
+    });
+
+    it('retries cleanly when consent publication fails before state publication', async () => {
+      const dataDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'ocix-manager-remote-legacy-consent-retry-'));
+      temporaryDirectories.push(dataDirectory);
+      const keys = generatePublisherKeyPair();
+      const remote = createRemoteManifest({ keys });
+      const healthy = remoteManagerAt(dataDirectory, { fetchImpl: remoteFetch(remote.document) });
+      await connectLifecycleRemote(healthy);
+      await historicalRemoteProfile(dataDirectory, remote, keys);
+      let failed = false;
+      const retryFs = {
+        ...fs,
+        writeFile: async (filePath, ...rest) => {
+          const value = String(filePath);
+          if (!failed && value.includes('remote-consents.json.') && value.endsWith('.tmp')) {
+            failed = true;
+            throw new Error('simulated consent publication failure');
+          }
+          return fs.writeFile(filePath, ...rest);
+        },
+      };
+      const restarted = remoteManagerAt(dataDirectory, { fsImpl: retryFs, fetchImpl: remoteFetch(remote.document) });
+      await expect(restarted.list()).rejects.toMatchObject({ code: 'manager_write_failed', status: 500 });
+      expect(JSON.parse(await fs.readFile(statePathFor(dataDirectory), 'utf8')).extensions['com.acme.remote'].versions['1.0.0'].remote)
+        .not.toHaveProperty('publisherPublicKey');
+      await expect(fs.stat(remoteConsentsPathFor(dataDirectory))).rejects.toMatchObject({ code: 'ENOENT' });
+      await expect(restarted.list()).resolves.toMatchObject({ extensions: [{ id: 'com.acme.remote' }] });
     });
 
     it('rejects signed Remote documents with unknown or corrupt fields before any write', async () => {

@@ -46,6 +46,10 @@ const CONNECTOR_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 const INSTALLATION_ID_PATTERN = /^[^\u0000-\u001F\u007F]{1,128}$/;
 const MANUAL_SOURCE = 'manual';
 const PACKAGE_CONFIRMATION_SOURCE = 'package-confirmation';
+// 1.17.x connected Remote installations recorded a global confirmation slot.
+// It is accepted only while startup migration proves and scopes that exact
+// historical authority; new trust writes never emit this source.
+const REMOTE_CONFIRMATION_SOURCE = 'remote-confirmation';
 const REMOTE_LIFECYCLE_TTL_MS = 45_000;
 const REMOTE_LIFECYCLE_MAX_ENTRIES = 128;
 
@@ -353,6 +357,7 @@ const assertStoredDisplayName = (value) => {
 
 const assertStoredSource = (value) => {
   try {
+    if (value === REMOTE_CONFIRMATION_SOURCE) return value;
     return assertSource(value);
   } catch {
     throw corruptStore('Extension trust store contains an invalid key source');
@@ -1187,6 +1192,8 @@ export const createInteractiveUIExtensionManager = ({
   const remoteLifecycleCache = new Map();
   const remoteProbeInFlight = new Map();
   let mutationQueue = Promise.resolve();
+  let startupMigrationDone = false;
+  let startupMigrationPromise = null;
   const reportedQuarantines = new Set();
 
   const ensureManagedDirectory = async (target, label) => {
@@ -1203,8 +1210,35 @@ export const createInteractiveUIExtensionManager = ({
 
   // Serializes every trust mutation: concurrent trust/remove calls apply one
   // at a time and each one re-reads the durable file, so no mutation is lost.
+  // The first queued operation also runs the one-way persisted Remote
+  // migration. Keeping it inside this queue makes the migration and every
+  // subsequent read/mutation observe one serialized durable snapshot.
+  const ensureStartupMigration = async () => {
+    if (startupMigrationDone) return;
+    if (!startupMigrationPromise) {
+      startupMigrationPromise = (async () => {
+        await migrateLegacyRemoteState();
+      })();
+    }
+    try {
+      await startupMigrationPromise;
+      startupMigrationDone = true;
+    } catch (error) {
+      // A failed migration remains retryable (for example after a transient
+      // durable-write failure). Never retain a rejected once-promise forever.
+      startupMigrationPromise = null;
+      throw error;
+    }
+  };
+
   const mutate = (operation) => {
-    const pending = mutationQueue.then(operation, operation);
+    const pending = mutationQueue.then(async () => {
+      await ensureStartupMigration();
+      return operation();
+    }, async () => {
+      await ensureStartupMigration();
+      return operation();
+    });
     mutationQueue = pending.catch(() => {});
     return pending;
   };
@@ -1410,6 +1444,315 @@ export const createInteractiveUIExtensionManager = ({
     }
   };
 
+  const sameCanonicalValue = (left, right) => canonicalStringify(left) === canonicalStringify(right);
+
+  const readRawStateSnapshot = async () => {
+    try {
+      return await fsImpl.readFile(statePath, 'utf8');
+    } catch (error) {
+      if (error?.code === 'ENOENT') return null;
+      throw corruptState('Extension manager state is unreadable');
+    }
+  };
+
+  const assertLegacyRemoteTrust = (trust, remote) => {
+    const publisher = ownSlot(trust.publishers, remote.publisher.id);
+    const slot = ownSlot(publisher?.keys, remote.publisher.keyId);
+    if (!publisher
+      || publisher.id !== remote.publisher.id
+      || publisher.name !== remote.publisher.name
+      || !slot
+      || slot.keyId !== remote.publisher.keyId
+      || slot.source !== REMOTE_CONFIRMATION_SOURCE
+      || slot.publicKey !== remote.publisher.publicKey
+      || slot.fingerprint !== remote.publisher.fingerprint
+      || publicKeyFingerprint(slot.publicKey, cryptoImpl) !== remote.publisher.fingerprint) {
+      throw corruptState('Legacy Remote installation has no exact canonical confirmation authority');
+    }
+    return slot;
+  };
+
+  // Older 1.17.x Remote records predate the installation-scoped public key
+  // and consent digest. They are eligible for one-way migration only when
+  // the immutable Manager-owned shell proves the exact accepted installation.
+  // This helper deliberately never fetches a manifest or resource.
+  const verifyLegacyRemoteInstallation = async ({ extension, metadata, trust }) => {
+    const remoteMetadata = metadata?.remote;
+    let extensionId;
+    let version;
+    try {
+      extensionId = assertNamespacedId(extension?.id, 'Extension id');
+      version = assertStoredVersion(metadata?.version, 'Extension version');
+    } catch {
+      throw corruptState('Legacy Remote installation identity is invalid');
+    }
+    if (!isRecord(remoteMetadata)) {
+      throw corruptState('Legacy Remote installation metadata is invalid');
+    }
+    const extensionRoot = pathImpl.join(versionsDirectory, extensionId);
+    const versionDirectory = pathImpl.join(extensionRoot, version);
+    let rootStat;
+    let versionStat;
+    try {
+      [rootStat, versionStat] = await Promise.all([
+        fsImpl.lstat(extensionRoot),
+        fsImpl.lstat(versionDirectory),
+      ]);
+    } catch {
+      throw corruptState(`Extension ${extensionId}@${version} legacy Remote shell is missing`);
+    }
+    if (!rootStat.isDirectory() || rootStat.isSymbolicLink()
+      || !versionStat.isDirectory() || versionStat.isSymbolicLink()) {
+      throw corruptState(`Extension ${extensionId}@${version} legacy Remote shell is invalid`);
+    }
+    // lstat protects the final two components only. realpath equality also
+    // rejects an aliased versions root or a symlink/exchanged ancestor.
+    try {
+      const realDataRoot = await fsImpl.realpath(dataRoot);
+      const realVersionsDirectory = await fsImpl.realpath(versionsDirectory);
+      const realExtensionRoot = await fsImpl.realpath(extensionRoot);
+      const realVersionDirectory = await fsImpl.realpath(versionDirectory);
+      if (typeof fsImpl.realpath !== 'function'
+        || pathImpl.resolve(realVersionsDirectory) !== pathImpl.resolve(pathImpl.join(realDataRoot, 'extensions'))
+        || pathImpl.resolve(realExtensionRoot) !== pathImpl.resolve(pathImpl.join(realVersionsDirectory, extensionId))
+        || pathImpl.resolve(realVersionDirectory) !== pathImpl.resolve(pathImpl.join(realExtensionRoot, version))) {
+        throw new Error('aliased Remote shell path');
+      }
+    } catch {
+      throw corruptState(`Extension ${extensionId}@${version} legacy Remote shell is aliased`);
+    }
+
+    let actualHashes;
+    let signedDocument;
+    try {
+      // A pre-consent legacy shell must already be complete. An incomplete
+      // update marker is authority-less residue and is not adopted by this
+      // migration path.
+      actualHashes = await fileHashesForDirectory(versionDirectory);
+      const signedBytes = await readRegularFileNoFollow(
+        pathImpl.join(versionDirectory, HOSTED_OCIX_SIGNED_MANIFEST_FILE),
+        MAX_CATALOG_BYTES,
+      );
+      signedDocument = JSON.parse(signedBytes.toString('utf8'));
+    } catch {
+      throw corruptState(`Extension ${extensionId}@${version} legacy Remote shell cannot be verified`);
+    }
+
+    let remote;
+    try {
+      remote = verifyRemoteOcixManifest({ document: signedDocument, cryptoImpl });
+      // The production validator is pure and does not fetch. Reuse it when
+      // available, while retaining the signed-kernel checks for list/startup
+      // callers that only need to read durable state.
+      remote.connector = validateRemoteMetadata
+        ? await preflightRemoteShellMetadata(remote)
+        : selectRemoteConnector(remote.extension);
+    } catch (error) {
+      if (error instanceof InteractiveUIExtensionManagerError) throw error;
+      throw corruptState(`Extension ${extensionId}@${version} legacy Remote shell is not verifiable`);
+    }
+    const expectedShell = buildExpectedLegacyRemoteShell(remote);
+    if (!hashMapsEqual(actualHashes, expectedShell.fileHashes)
+      || !hashMapsEqual(metadata.fileHashes, expectedShell.fileHashes)
+      || remote.manifestHash !== metadata.packageHash
+      || remote.manifestHash !== remoteMetadata.acceptedManifest?.manifestHash
+      || expectedShell.fileHashes[HOSTED_OCIX_SIGNED_MANIFEST_FILE] !== metadata.packageHash
+      || remote.publishedAt !== remoteMetadata.acceptedManifest?.publishedAt
+      || canonicalStringify(metadata.agentRuntime) !== canonicalStringify(expectedShell.agentRuntime)) {
+      throw corruptState(`Extension ${extensionId}@${version} legacy Remote shell identity does not match state`);
+    }
+
+    let appEntryUrl;
+    let approvedPermissions;
+    let connectorRefs;
+    try {
+      appEntryUrl = normalizeRemoteUrl(remoteMetadata.appEntryUrl, 'Remote app entry URL');
+      approvedPermissions = normalizeHostedPermissions(remoteMetadata.approvedPermissions);
+      connectorRefs = remoteMetadata.connectorRefs;
+    } catch {
+      throw corruptState(`Extension ${extensionId}@${version} legacy Remote metadata is invalid`);
+    }
+    const expectedConnector = [{
+      id: remote.connector.id,
+      origin: remote.connector.origin,
+      authType: 'api-key',
+    }];
+    if (remoteMetadata.appEntryUrl !== appEntryUrl
+      || extension?.name !== (remote.extension?.name ?? remote.extensionId)
+      || remoteMetadata.publisherPublicKey !== undefined
+      || metadata.source?.type !== 'remote'
+      || metadata.source.appEntryUrl !== appEntryUrl
+      || remote.extensionId !== extensionId
+      || remote.version !== version
+      || remote.publisher.id !== metadata.publisher?.id
+      || remote.publisher.name !== metadata.publisher?.name
+      || remote.publisher.keyId !== metadata.publisher?.keyId
+      || remote.publisher.fingerprint !== metadata.publisher?.fingerprint
+      || remote.publisher.fingerprint !== publicKeyFingerprint(remote.publisher.publicKey, cryptoImpl)
+      || !sameCanonicalValue(connectorRefs, expectedConnector)
+      || !sameCanonicalValue(approvedPermissions, remote.permissions)
+      || !sameCanonicalValue(approvedPermissions, remoteMetadata.approvedPermissions)) {
+      throw corruptState(`Extension ${extensionId}@${version} legacy Remote identity does not match state`);
+    }
+
+    // Only the exact historical global confirmation is convertible. A
+    // missing/revoked/substituted key or a different source fails closed.
+    assertLegacyRemoteTrust(trust, remote);
+
+    // Run the current strict normalizer after deriving the key from the
+    // verified shell. This preserves every existing field/timestamp/grammar
+    // check and ensures the migration cannot widen the accepted contract.
+    const normalizedRemote = normalizeStoredRemoteMetadata({
+      value: { ...remoteMetadata, publisherPublicKey: remote.publisher.publicKey },
+      extensionId,
+      version,
+      packageHash: metadata.packageHash,
+      source: metadata.source,
+      publisher: metadata.publisher,
+      cryptoImpl,
+    });
+    return {
+      publisherPublicKey: remote.publisher.publicKey,
+      remote: normalizedRemote,
+    };
+  };
+
+  const retireMigratedRemoteTrust = (trust, migratedEntries) => {
+    const nextTrust = clone(trust);
+    let changed = false;
+    const migratedSlots = new Set(migratedEntries.map(({ remote }) => `${remote.publisher.id}\u0000${remote.publisher.keyId}`));
+    for (const slotKey of migratedSlots) {
+      const [publisherId, keyId] = slotKey.split('\u0000');
+      const publisher = nextTrust.publishers?.[publisherId];
+      const slot = publisher?.keys?.[keyId];
+      if (!slot || slot.source !== REMOTE_CONFIRMATION_SOURCE) continue;
+      const identity = migratedEntries.find(({ remote }) => (
+        remote.publisher.id === publisherId && remote.publisher.keyId === keyId
+      ))?.remote.publisher;
+      if (!identity
+        || slot.publicKey !== identity.publicKey
+        || slot.fingerprint !== identity.fingerprint) {
+        throw corruptState('Legacy Remote confirmation changed during migration');
+      }
+      delete publisher.keys[keyId];
+      if (Object.keys(publisher.keys).length === 0) delete nextTrust.publishers[publisherId];
+      changed = true;
+    }
+    return { trust: validateTrustStore(nextTrust, cryptoImpl), changed };
+  };
+
+  const migrateLegacyRemoteState = async () => {
+    const stateContent = await readRawStateSnapshot();
+    if (stateContent === null) return;
+    let parsed;
+    try {
+      parsed = JSON.parse(stateContent);
+    } catch {
+      throw corruptState('Extension manager state is not valid JSON');
+    }
+    if (!isRecord(parsed) || !isRecord(parsed.extensions)) return;
+    const remoteEntries = [];
+    for (const [extensionKey, extension] of Object.entries(parsed.extensions)) {
+      if (!isRecord(extension) || !isRecord(extension.versions)) continue;
+      for (const metadata of Object.values(extension.versions)) {
+        if (!isRecord(metadata) || metadata.delivery !== 'remote') continue;
+        remoteEntries.push({ extensionKey, extension, metadata });
+      }
+    }
+    if (remoteEntries.length === 0) return;
+
+    const needsMigration = remoteEntries.some(({ metadata }) => (
+      !isRecord(metadata.remote)
+      || !Object.prototype.hasOwnProperty.call(metadata.remote, 'publisherPublicKey')
+    ));
+    if (!needsMigration) {
+      // A process may have stopped after publishing state but before retiring
+      // the historical global slot. Re-validate the canonical current state,
+      // then finish only exact matching remote-confirmation slots; no shell or
+      // state snapshot is restored and unrelated trust remains untouched.
+      const currentState = validateState(parsed, cryptoImpl);
+      await assertStateRemoteConsents(currentState);
+      const trust = await readTrustStore();
+      const pendingEntries = remoteEntries.filter(({ extension, metadata }) => {
+        const slot = ownSlot(trust.publishers?.[metadata.publisher?.id]?.keys, metadata.publisher?.keyId);
+        return slot?.source === REMOTE_CONFIRMATION_SOURCE
+          && slot.publicKey === metadata.remote?.publisherPublicKey
+          && slot.fingerprint === metadata.publisher?.fingerprint;
+      }).map(({ extension, metadata }) => ({
+        extension,
+        metadata,
+        remote: {
+          publisher: {
+            ...metadata.publisher,
+            publicKey: metadata.remote.publisherPublicKey,
+          },
+        },
+      }));
+      const retired = retireMigratedRemoteTrust(trust, pendingEntries);
+      if (retired.changed) await writeTrustStore(retired.trust);
+      return;
+    }
+    const trust = await readTrustStore();
+    const consentStore = await readRemoteConsentStore();
+
+    const nextParsed = clone(parsed);
+    const migratedEntries = [];
+    for (const { extensionKey, extension, metadata } of remoteEntries) {
+      const nextExtension = nextParsed.extensions[extensionKey];
+      const nextMetadata = nextExtension?.versions?.[metadata.version];
+      if (!nextMetadata || !isRecord(nextMetadata.remote)) {
+        throw corruptState('Legacy Remote installation metadata is invalid');
+      }
+      const hasKey = Object.prototype.hasOwnProperty.call(nextMetadata.remote, 'publisherPublicKey');
+      const expectedConsent = hasKey ? null : await verifyLegacyRemoteInstallation({ extension, metadata, trust });
+      if (expectedConsent) {
+        nextMetadata.remote = { ...nextMetadata.remote, publisherPublicKey: expectedConsent.publisherPublicKey };
+        migratedEntries.push({
+          extension: nextExtension,
+          metadata: nextMetadata,
+          remote: {
+            publisher: {
+              ...nextMetadata.publisher,
+              publicKey: expectedConsent.publisherPublicKey,
+            },
+          },
+        });
+      }
+    }
+
+    const nextState = validateState(nextParsed, cryptoImpl);
+    const migratedVersionKeys = new Set(migratedEntries.map(({ extension, metadata }) => `${extension.id}@${metadata.version}`));
+    let consentChanged = false;
+    for (const extension of Object.values(nextState.extensions)) {
+      for (const metadata of Object.values(extension.versions)) {
+        if (metadata.delivery !== 'remote') continue;
+        const expected = remoteConsentRecordFor(extension, metadata, cryptoImpl);
+        const existing = consentStore.consents[expected.consentDigest];
+        if (existing) {
+          if (existing.installationId !== expected.installationId
+            || existing.extensionId !== expected.extensionId
+            || existing.confirmedAt !== expected.confirmedAt) {
+            throw corruptState(`Extension ${extension.id}@${metadata.version} Remote consent conflicts with state`);
+          }
+        } else if (migratedVersionKeys.has(`${extension.id}@${metadata.version}`)) {
+          consentStore.consents[expected.consentDigest] = expected;
+          consentChanged = true;
+        } else {
+          throw corruptState(`Extension ${extension.id}@${metadata.version} Remote consent is missing`);
+        }
+      }
+    }
+    if (migratedEntries.length === 0 && !consentChanged) return;
+    const retired = retireMigratedRemoteTrust(trust, migratedEntries);
+    // Consent is non-authoritative; state points at it; only then is the
+    // exact historical global slot retired. A failed phase is recoverable
+    // by rerunning this same serialized forward transition, never by
+    // restoring or unlinking a potentially stale snapshot.
+    if (consentChanged) await writeRemoteConsentStore(consentStore);
+    await writeState(nextState);
+    if (retired.changed) await writeTrustStore(retired.trust);
+  };
+
   const writeVerifiedFiles = async (stagingPath, files) => {
     for (const [relativePath, content] of files) {
       if (!normalizeStoredFilePath(relativePath) || !Buffer.isBuffer(content)) {
@@ -1529,6 +1872,51 @@ export default tool({
 `;
   };
 
+  // Exact 1.17.x generated Tool bytes from commit 459e27ad. The historical writer used the
+  // “Hosted OCIX” description; current installs intentionally use a newer
+  // description. Migration verifies this allowlisted legacy output separately
+  // instead of comparing old bytes with the current generator.
+  const legacyHostedToolSource = (binding) => {
+    const schema = binding.kind === 'view'
+      ? 'openchamber://interactive-result/v1'
+      : 'openchamber://installed-html-artifact-result/v1';
+    const surfaceKey = binding.kind === 'view' ? 'view' : 'artifact';
+    const summary = `Open hosted ${binding.title}`;
+    return `import { tool } from '@opencode-ai/plugin';
+
+export default tool({
+  description: ${JSON.stringify(`Open the installed Hosted OCIX surface “${binding.title}”. Use contextJson only for parameters explicitly supplied or inferred from the user. The page calls business APIs through OpenChamber Business Gateway; never invent replacement business data.`)},
+  args: {
+    contextJson: tool.schema.string().optional().describe('Optional JSON object containing the surface parameters'),
+  },
+  async execute(args) {
+    let context = ${JSON.stringify(binding.defaultContext)};
+    if (args.contextJson) {
+      let parsed;
+      try {
+        parsed = JSON.parse(args.contextJson);
+      } catch {
+        throw new Error('contextJson must be valid JSON');
+      }
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        throw new Error('contextJson must contain a JSON object');
+      }
+      context = { ...context, ...parsed };
+    }
+    return JSON.stringify({
+      $schema: ${JSON.stringify(schema)},
+      schemaVersion: 1,
+      ${surfaceKey}: ${JSON.stringify(binding.surfaceId)},
+      mode: 'live',
+      summary: ${JSON.stringify(summary)},
+      context,
+      updatedAt: new Date().toISOString(),
+    });
+  },
+});
+`;
+  };
+
   const collectInstalledFiles = async (root, current = root, result = []) => {
     const entries = await fsImpl.readdir(current, { withFileTypes: true });
     for (const entry of entries) {
@@ -1560,6 +1948,30 @@ export default tool({
     files['openchamber.extension.json'] = Buffer.from(`${JSON.stringify(remote.extension, null, 2)}\n`);
     for (const binding of bindings) {
       files[`agent-runtime/tools/${binding.name}.ts`] = Buffer.from(hostedToolSource(binding));
+    }
+    const fileHashes = Object.create(null);
+    for (const relativePath of Object.keys(files).sort(compareCodePoints)) {
+      fileHashes[relativePath] = packageHash(cryptoImpl, files[relativePath]);
+    }
+    return {
+      files,
+      fileHashes,
+      agentRuntime: {
+        tools: bindings.map(({ name }) => ({ name, entry: `agent-runtime/tools/${name}.ts` })),
+        skills: [],
+        unresolvedSurfaceTools: [],
+        unresolvedViewTools: [],
+      },
+    };
+  };
+
+  const buildExpectedLegacyRemoteShell = (remote) => {
+    const bindings = hostedSurfaceBindings(remote.extension);
+    const files = Object.create(null);
+    files[HOSTED_OCIX_SIGNED_MANIFEST_FILE] = Buffer.from(canonicalStringify(remote.signedDocument));
+    files['openchamber.extension.json'] = Buffer.from(`${JSON.stringify(remote.extension, null, 2)}\n`);
+    for (const binding of bindings) {
+      files[`agent-runtime/tools/${binding.name}.ts`] = Buffer.from(legacyHostedToolSource(binding));
     }
     const fileHashes = Object.create(null);
     for (const relativePath of Object.keys(files).sort(compareCodePoints)) {
@@ -2224,9 +2636,17 @@ export default tool({
       );
     }
     const expectedShell = buildExpectedRemoteShell(remote);
-    if (!hashMapsEqual(actualHashes, expectedShell.fileHashes)
-      || !hashMapsEqual(metadata.fileHashes, expectedShell.fileHashes)
-      || canonicalStringify(metadata.agentRuntime) !== canonicalStringify(expectedShell.agentRuntime)) {
+    const expectedLegacyShell = buildExpectedLegacyRemoteShell(remote);
+    const shellContract = hashMapsEqual(actualHashes, expectedShell.fileHashes)
+      && hashMapsEqual(metadata.fileHashes, expectedShell.fileHashes)
+      && canonicalStringify(metadata.agentRuntime) === canonicalStringify(expectedShell.agentRuntime)
+      ? expectedShell
+      : hashMapsEqual(actualHashes, expectedLegacyShell.fileHashes)
+        && hashMapsEqual(metadata.fileHashes, expectedLegacyShell.fileHashes)
+        && canonicalStringify(metadata.agentRuntime) === canonicalStringify(expectedLegacyShell.agentRuntime)
+        ? expectedLegacyShell
+        : null;
+    if (!shellContract) {
       throw new InteractiveUIExtensionManagerError(
         'Remote shell files or Agent Runtime differ from the signed deterministic shell',
         'remote_shell_integrity_failed',
@@ -2527,7 +2947,8 @@ export default tool({
     // Marketplace-delegated keys, if present in an older durable store, are
     // never global Local-package authority. Marketplace installs verify the
     // exact signed catalog entry in their own request-bound transaction.
-    if (trustedSlot?.source?.startsWith(MARKETPLACE_SOURCE_PREFIX)) return null;
+    if (trustedSlot?.source?.startsWith(MARKETPLACE_SOURCE_PREFIX)
+      || trustedSlot?.source === REMOTE_CONFIRMATION_SOURCE) return null;
     return trustedSlot;
   };
 
@@ -3862,15 +4283,15 @@ export default tool({
     return buildLifecycleResult(await resolveRemoteLifecycle(extensionId));
   };
 
-  const getEnabledRemoteExtensionIds = async () => {
+  const getEnabledRemoteExtensionIds = () => mutate(async () => {
     const state = await readState();
     return Object.values(state.extensions).filter((extension) => {
       const active = extension.versions?.[extension.activeVersion];
       return extension.enabled === true && active?.delivery === 'remote';
     }).map((extension) => extension.id).sort(compareCodePoints);
-  };
+  });
 
-  const getBlockedRemoteCatalogEntries = async () => {
+  const getBlockedRemoteCatalogEntries = () => mutate(async () => {
     const state = await readState();
     const entries = [];
     for (const extension of Object.values(state.extensions)) {
@@ -3911,7 +4332,7 @@ export default tool({
       entries.push(entry);
     }
     return entries;
-  };
+  });
 
   const isWithin = (child, parent) => {
     const relative = pathImpl.relative(pathImpl.resolve(parent), pathImpl.resolve(child));
@@ -3921,7 +4342,7 @@ export default tool({
   // Central authority classifier shared by runtime authorization and Remote
   // resource postflight. It never widens global trust: Remote identity is
   // anchored solely by installation metadata + consent.
-  const classifyExtensionAuthority = async ({ extensionId, authority }) => {
+  const classifyExtensionAuthorityInternal = async ({ extensionId, authority }) => {
     if (!isRecord(authority)
       || typeof authority.directory !== 'string'
       || typeof authority.extensionHash !== 'string'
@@ -3983,12 +4404,16 @@ export default tool({
     }
   };
 
+  const classifyExtensionAuthority = ({ extensionId, authority }) => mutate(() => (
+    classifyExtensionAuthorityInternal({ extensionId, authority })
+  ));
+
   const throwAuthority = (decision) => {
     throw new InteractiveUIExtensionManagerError(decision.message, decision.code, decision.status);
   };
   const authorizeExtensionAuthority = (extensionId, authority) => mutate(async () => {
     assertNamespacedId(extensionId, 'Extension id');
-    const decision = await classifyExtensionAuthority({ extensionId, authority });
+    const decision = await classifyExtensionAuthorityInternal({ extensionId, authority });
     if (!decision.ok) throwAuthority(decision);
     return { authorized: true, kind: decision.kind, extensionId };
   });
@@ -3996,7 +4421,7 @@ export default tool({
   const resolveExtensionResource = async (extensionId, relativePath, authority) => {
     assertNamespacedId(extensionId, 'Extension id');
     const plan = await mutate(async () => {
-      const decision = await classifyExtensionAuthority({ extensionId, authority });
+      const decision = await classifyExtensionAuthorityInternal({ extensionId, authority });
       if (!decision.ok) throwAuthority(decision);
       if (decision.kind === 'ordinary' || decision.kind === 'local') return null;
       const normalizedPath = safeRelativePath(relativePath);
@@ -4026,7 +4451,7 @@ export default tool({
       manifestHash: plan.manifestHash,
     });
     return mutate(async () => {
-      const decision = await classifyExtensionAuthority({ extensionId, authority: plan.authority });
+      const decision = await classifyExtensionAuthorityInternal({ extensionId, authority: plan.authority });
       if (!decision.ok || decision.kind !== 'remote') throwAuthority(decision.ok ? { message: 'Remote resource is no longer current', code: 'remote_shell_integrity_failed', status: 409 } : decision);
       const currentResource = decision.manifest.resources.find((candidate) => candidate.path === plan.resource.path);
       if (!currentResource
@@ -4282,10 +4707,10 @@ export default tool({
     };
   };
 
-  const inspectMarketplace = async (catalogUrl) => {
+  const inspectMarketplace = (catalogUrl) => mutate(async () => {
     const { publicKey: _publicKey, ...inspection } = await inspectMarketplaceInternal(catalogUrl);
     return inspection;
-  };
+  });
 
   const addMarketplace = (input) => mutate(async () => {
     if (!isRecord(input)) {
