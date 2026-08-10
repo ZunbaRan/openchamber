@@ -1441,3 +1441,43 @@
 - Resume condition: n/a
 - Continuation decision: Removes five final target-caller errors before issue-070.
 - Next action: Resolved; include these call sites in the next combined UI typecheck and lint gate.
+
+## issue-074: Clear remaining target-host UI lint errors
+
+- Status: READY
+- Classification: NORMAL
+- Goal / user outcome: The integrated v1.18.1 UI passes the repository lint gate without altering retained feature behavior.
+- First-principles root cause: Narrow donor/target integration residues left unused parameters, sparse-array fixtures, one mutable declaration, and one intentional control-character matcher that violate the target ESLint contract.
+- Core acceptance invariant: Fix only the eight reported lint errors; preserve parser, sanitizer, artifact bridge, and mobile navigation behavior; do not suppress unrelated rules or absorb the two existing Hook warnings.
+- Dependencies: issues 036-044, 069, 073
+- Dispatch order: Final static-analysis cleanup before the canonical build.
+- Ownership: `packages/ui/src/apps/MobileWorkspaceDrawer.tsx`; `packages/ui/src/lib/generative-widget/parseShowWidget.ts`; `packages/ui/src/lib/generative-widget/parseShowWidget.test.ts`; `packages/ui/src/lib/generative-widget/sanitizer.ts`; `packages/ui/src/lib/generative-widget/sanitizer.test.ts`; `packages/ui/src/lib/interactive-ui/artifactBridge.test.ts`.
+- Focused verification: Run the owning parser/sanitizer/artifact tests, UI lint, UI typecheck, and `git diff --check`.
+- Pi binding: unassigned
+- Pi attempts: none
+- Primary attempts: not eligible while Pi retries remain
+- Current evidence: Workspace lint on 2026-08-10 reports exactly eight errors across the owned files plus two non-blocking pre-existing Hook dependency warnings in `McpAppRenderer.tsx`; Web, Mobile, and Electron lint packages pass.
+- Suspension decision: n/a
+- Resume condition: n/a
+- Continuation decision: Unblocks issue-070 canonical build/package gate.
+- Next action: Dispatch one bounded Pi lane for lint-only corrections and focused regressions.
+
+## issue-075: Run Electron syntax checks with the required Node runtime
+
+- Status: RESOLVED
+- Classification: NORMAL
+- Goal / user outcome: Electron source receives a real Node syntax gate in environments where Bun is installed but `node` is absent from the default shell PATH.
+- First-principles root cause: `bun run` falls back to Bun for `node --check` when no Node executable is discoverable, and Bun then resolves Electron's CommonJS shim during check mode, producing a false named-export failure.
+- Core acceptance invariant: Do not change Electron source or weaken its syntax checks; supply the repository-required Node >=22 runtime to the existing script.
+- Dependencies: issue-067
+- Dispatch order: Environment correction before packaging.
+- Ownership: validation environment only; no repository files.
+- Focused verification: Run all five existing Electron `node --check` targets with bundled Node and rerun `type-check:electron` with that Node first on PATH.
+- Pi binding: not required; no implementation defect exists.
+- Pi attempts: none
+- Primary attempts: One diagnosis attempt established the missing-Node PATH condition and verified the existing command under bundled Node.
+- Current evidence: All five Electron files pass direct Node syntax checks, and `bun run type-check:electron` passes unchanged when Node 24 from the Codex workspace runtime is first on PATH.
+- Suspension decision: n/a
+- Resume condition: n/a
+- Continuation decision: Keep the Node-first PATH for the canonical validation and packaging commands.
+- Next action: Resolved; no code change.
