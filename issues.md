@@ -700,7 +700,7 @@
 
 ## issue-036: Register Applications settings without replacing upstream settings UI
 
-- Status: READY
+- Status: RESOLVED
 - Classification: NORMAL
 - Goal / user outcome: Desktop and mobile users can reach the OCIX Applications surface through upstream settings navigation and search.
 - First-principles root cause: Target settings metadata/navigation knows no OCIX section; donor files also contain unrelated UI drift.
@@ -709,14 +709,14 @@
 - Dispatch order: Narrow host seam after feature sections.
 - Ownership: `packages/ui/src/components/views/SettingsView.tsx`; `packages/ui/src/lib/settings/metadata.ts`; `packages/ui/src/lib/settings/search.ts`; `packages/ui/src/apps/MobileApp.tsx`.
 - Focused verification: Focused settings/search tests, UI typecheck/lint, and line-level diff against `v1.18.1`.
-- Pi binding: unassigned for reopened target-settings adapter
-- Pi attempts: none for reopened defect
+- Pi binding: batch `253e064d-9f86-4be5-b110-cf74637a8c22`, run `74ab8de9-bf6b-4b11-a373-4af810b02c8b`, base `eb9ce926`, revision 1; policy-clean formal handoff.
+- Pi attempts: Correction 1 completed the bounded additive registration after revision 0 ended on provider error without file changes.
 - Primary attempts: not eligible while Pi retries remain
-- Current evidence: Reopened 2026-08-10. SettingsView already contains the narrow Applications page branches, but target metadata does not register `interactive-ui.extensions`; its search runtime context also requires `isWindowsArm64`, which SettingsView omits. UI typecheck reports five slug errors plus the missing context field. The repair must add only the Applications metadata/search registration and pass the existing platform predicate without replaying donor deletions.
+- Current evidence: Resolved 2026-08-10. Applications is registered once in target metadata and through exactly seven retained search entries; SettingsView supplies the existing Windows ARM64 predicate while target search items and availability gates remain intact. Primary matched all four Pi candidate hashes and independently ran the new focused suite **8/8** with 29 expectations plus `git diff --check`. The next combined typecheck verifies the six-error delta.
 - Suspension decision: n/a
 - Resume condition: n/a
 - Continuation decision: Enables user-facing OCIX configuration acceptance.
-- Next action: Dispatch one bounded Pi lane on metadata/search/SettingsView plus focused settings tests.
+- Next action: Resolved; include Applications navigation/search in final UI acceptance.
 
 ## issue-037: Add only fork-required localization keys
 
