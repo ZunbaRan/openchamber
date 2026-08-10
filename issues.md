@@ -867,8 +867,8 @@
 - Core acceptance invariant: The adapter is capability-gated and lazy; existing context modes and panel sizing stay byte-for-byte target-owned except the narrow branch.
 - Dependencies: issue-043
 - Dispatch order: Final Workbench layout seam.
-- Ownership: `packages/ui/src/components/layout/ContextPanel.tsx`; focused context-mode test if target precedent supports it.
-- Focused verification: UI typecheck/lint, focused mode test, and line-level target diff.
+- Ownership: `packages/ui/src/components/layout/ContextPanel.tsx`; `packages/ui/src/components/views/TerminalView.tsx`; focused terminal-selection/context-mode test if target precedent supports it.
+- Focused verification: UI typecheck/lint, focused preferred-terminal-tab test, and line-level target/donor adapter diff.
 - Pi binding: unassigned
 - Pi attempts: none
 - Primary attempts: not eligible while Pi retries remain
@@ -876,7 +876,7 @@
 - Suspension decision: n/a
 - Resume condition: n/a
 - Continuation decision: Completes Workbench host registration.
-- Next action: After the four-lane repair wave, inspect the terminal tab intent and implement the narrow verified adapter before final ContextPanel acceptance.
+- Next action: Dispatch one bounded Pi lane adding only the optional preferred terminal-tab prop and visible-state synchronization effect proven in the maintained donor.
 
 ## issue-045: Restore the privileged Electron Artifact Runner boundary
 
