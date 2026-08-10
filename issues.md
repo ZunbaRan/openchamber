@@ -1598,13 +1598,13 @@
 
 - Status: OPEN
 - Classification: NON-BLOCKING
-- Goal / user outcome: The packaged native Desktop Runner can host script-enabled Artifacts without Chromium opaque-origin site-tuple failures, while untrusted Artifact HTML remains isolated in an opaque sandboxed child.
-- First-principles root cause: The server applies `Content-Security-Policy: sandbox allow-scripts` to the host-authored top-level Broker document. That makes the Broker's own HTTP origin opaque; Electron `WebContentsView` cannot attach/navigate that top-level site inside the packaged `openchamber-ui://` window and never reaches layout acknowledgement. The actual untrusted Artifact already runs in a nested `iframe sandbox="allow-scripts"`, so making only the trusted Broker same-origin does not grant the Artifact same-origin access.
-- Core acceptance invariant: The top-level Broker CSP uses `sandbox allow-scripts allow-same-origin` so Chromium has a valid tuple, while the nested Artifact iframe remains exactly `sandbox="allow-scripts"` with no `allow-same-origin`. `default-src 'none'`, no eval/connect/forms/navigation/popups/storage, frame ancestry, response hardening, Broker message validation, and static Artifact policy remain unchanged. Focused route tests must distinguish outer Broker policy from inner untrusted sandbox; packaged acceptance must reach native Runner ready/stop without origin-tuple errors.
-- Dependencies: issues 077, 080, 081
-- Dispatch order: Serial after issue081 packaged falsification; blocks its end-to-end acceptance and local installation.
-- Ownership: `packages/web/server/lib/interactive-ui/routes.js`; `packages/web/server/lib/interactive-ui/routes.artifact.test.js`.
-- Focused verification: `bun test packages/web/server/lib/interactive-ui/routes.artifact.test.js --only-failures`, Web lint/typecheck, `git diff --check`, then primary rebuild plus full packaged desktop acceptance.
+- Goal / user outcome: Distinguish Chromium's opaque-origin site-tuple diagnostic from observable Artifact Runner failure so a log-only condition does not justify weakening the Broker sandbox.
+- First-principles root cause: Early packaged runs correlated repeated opaque-origin diagnostics with Runner timeout, but the later live inspection and issue083 proved the actual missing handshake was the omitted external Runner preload. With that preload packaged, the original stronger `Content-Security-Policy: sandbox allow-scripts` Broker policy reaches native Runner ready/stop, clipping, installed-Artifact restart persistence, and zero reported runtime errors. The diagnostic may still be emitted by Chromium for the intentionally opaque Broker, but no supported behavior currently depends on removing that opacity.
+- Core acceptance invariant: Retain the stronger top-level Broker CSP and the nested Artifact `sandbox="allow-scripts"` isolation. Treat the Chromium line as non-blocking unless a reproducible supported behavior fails while the preload/lifecycle are present. Any future CSP relaxation requires a new observable failing case plus focused outer/inner sandbox tests; log suppression alone is not an acceptance goal.
+- Dependencies: issues 077, 080, 081, 083
+- Dispatch order: Diagnostic-only follow-up; does not block local installation while full packaged behavior remains green.
+- Ownership: No active product-code ownership. If a future behaviorally failing case appears, reopen with its observed path before assigning route/CSP files.
+- Focused verification: Correlate application diagnostics with the full packaged report; require native Runner ready/stop, clipping, restart persistence, and zero runtime errors under the original stronger CSP.
 - Pi binding: run/session `65c4f2d8-8a66-404a-89a2-37840b3184db`, base `1b2aff7bb2a709ca1dc99c8d913d0b0fb330c4dc`, revision 0, supervised-local worktree `/Users/loloru/.codex/sol-pi-advisor/worktrees/65c4f2d8-8a66-404a-89a2-37840b3184db`.
 - Pi attempts: Revision 0 changed exactly the two owned files: the trusted Broker CSP now has `allow-same-origin`, and route tests assert the outer directive exactly while proving the inner iframe remains `allow-scripts` only. Policy state is clean with diff digest `c45483d7…`; no correction has been required.
 - Primary attempts: none while Pi retries remain. Primary integrated the exact candidate and performed dependency-backed verification unavailable in the isolated Pi worktree.
@@ -1616,7 +1616,7 @@
 
 ## issue-083: Include the Artifact Runner preload in the packaged app
 
-- Status: RESOLVED
+- Status: READY
 - Classification: P0
 - Goal / user outcome: Script-enabled Artifacts in the packaged desktop app execute their isolated Runner preload, acknowledge native layout, receive `host.init`, and reach `artifact.ready`.
 - First-principles root cause: `createArtifactRunnerManager` resolves the packaged preload at `app.getAppPath()/artifact-runner-preload.cjs`, but Electron `build.files` includes only `dist-bundle/main.mjs` and `preload.mjs`. The built `app.asar` therefore omits `artifact-runner-preload.cjs`; the Broker loads, but no preload applies layout or sends `openchamber:artifact-runner-layout-applied`, so the main process never emits `loaded` and the Host never sends `host.init`.
@@ -1648,8 +1648,8 @@
 - Pi binding: run/session `5b73d482-a3a8-498d-b8a9-ddcef1c2d10e`, base `f06c8964055c7bbe1e2a591ed0f4b7e8f1e5a596`, revision 0, supervised-local worktree `/Users/loloru/.codex/sol-pi-advisor/worktrees/5b73d482-a3a8-498d-b8a9-ddcef1c2d10e`.
 - Pi attempts: Revision 0 changed exactly the pre-Runner spacer from `h-44` to `h-[500px]` and added an adjacent geometry comment; policy is clean with diff digest `22dae6cb…`. Pi's isolated worktree lacked dependencies, so primary owns the hydrated checks.
 - Primary attempts: The first rebuilt package with issue083 fixed reached native Runner ready, then failed exactly at `runner.bottom > scroller.bottom`; diagnostics showed the Broker iframe at 974×120 and no renderer errors. Primary integrated revision 0, independently passed Web typecheck/lint, rebuilt with the exact fork CLI override, and ran the full packaged acceptance.
-- Current evidence: The old fixture used a 520 px scroller, a 176 px (`h-44`) pre-Runner spacer, and an 80 px scroll. The packaged native Runner measured 120 px high, leaving its bottom above the scroller bottom. Revision 0 makes the spacer 500 px, producing a deterministic 580 px content-bottom position after the same 80 px scroll and therefore a stable 60 px crossing. The guard remains below the scroller; the packaged assertion and pixel inspection are unchanged. The primary worktree independently passes Web typecheck/lint and the full packaged acceptance records 0 magenta pixels over the guard, 397631 green pixels, 95.58% green ratio, and zero runtime errors.
+- Current evidence: The old fixture used a 520 px scroller, a 176 px (`h-44`) pre-Runner spacer, and an 80 px scroll. The packaged native Runner measured 120 px high, leaving its bottom above the scroller bottom. Revision 0 makes the spacer 500 px, producing a deterministic 580 px content-bottom position after the same 80 px scroll and therefore a stable 60 px crossing. The guard remains below the scroller; the packaged assertion and pixel inspection are unchanged. The primary worktree independently passes Web typecheck/lint and the full packaged acceptance records 0 magenta pixels over the guard, 397631 green pixels, 95.58% green ratio, and zero runtime errors. Fresh Sol review nevertheless found the durable contract incomplete because no focused source-level/browser-independent regression command locks these geometry inputs.
 - Suspension decision: n/a
 - Resume condition: n/a
 - Continuation decision: Adjust only the deterministic acceptance fixture/test geometry, not native Runner layout or production clipping behavior.
-- Next action: Resolved; retain the deterministic geometry and pixel-level packaged assertion.
+- Next action: Send correction 1 to the same Pi run/session to add a focused browser-independent source-geometry regression within the existing allowed paths; then rebuild, rerun full packaged acceptance, and obtain a new fresh review.
