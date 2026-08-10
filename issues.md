@@ -1060,23 +1060,23 @@
 
 ## issue-054: Bind the target UI to the rebuilt Fork SDK and acceptance commands
 
-- Status: RESOLVED
-- Classification: NORMAL
+- Status: READY
+- Classification: P0
 - Goal / user outcome: OpenChamber consumes the accepted `@zunbaran/opencode-sdk` build and exposes only the retained fork test/release commands.
 - First-principles root cause: Clean target package metadata points at upstream SDK and has no fork acceptance scripts.
 - Core acceptance invariant: SDK provenance matches the exact integrated OpenCode commit, lockfile is deterministic, no unrelated dependency/version/script drift enters, and every added command names an existing accepted script.
-- Dependencies: OpenCode issues 010-011; OpenChamber issues 049-053
-- Dispatch order: Late dependency/package seam after SDK packaging and scripts freeze.
+- Dependencies: none for the already-published fork SDK `1.18.10-oc.1`; product acceptance in issues 049-053 remains downstream.
+- Dispatch order: First repair lane. The fork SDK dependency must be deterministic before client-wrapper and full typecheck repair.
 - Ownership: `package.json`; `bun.lock`; generated local SDK package metadata/evidence outside source as directed by the release script.
 - Focused verification: Frozen install, SDK provenance check, typecheck, Web/Electron builds, and command resolution audit.
 - Pi binding: unassigned
 - Pi attempts: none
 - Primary attempts: not eligible while Pi retries remain
-- Current evidence: Bulk READY restoration 2026-08-09: modules restored from accepted openchamber fork client surfaces (interactive-ui lib/client/manager/routing/review/workbench, generative-widget runtime bridges, settings sections, chat ToolPart/AssistantTextPart/ChatInput dispatch, Electron artifact-runner + desktop-binary-save, acceptance scripts). Focused re-verify 2026-08-09: UI 346/346 pass (0 fail) + electron artifact/binary-save 15/15 pass (0 fail); logs under goal implementer scratch ready-unit-gate.log.  Donor package/lock include broad historical drift; only exact SDK alias/version and accepted commands may be replayed.
+- Current evidence: Reopened 2026-08-10 after the canonical packaging audit. Integration HEAD `a3ce959d016bcefd6cf20569d74a794c7564e899` still declares official `@opencode-ai/sdk@1.18.12`; its Electron preparation script therefore downloads the official anomalyco CLI. The maintained fork product already pins `npm:@zunbaran/opencode-sdk@1.18.10-oc.1`. Only the exact SDK alias and matching lock entries may be replayed; commands and unrelated dependency drift are excluded from this repair slice.
 - Suspension decision: n/a
 - Resume condition: n/a
-- Continuation decision: Enables final cross-repo gates.
-- Next action: Resolved in bulk READY closeout (2026-08-09): donor UI/client/workbench/widget/settings/electron/acceptance modules ported into integration worktree; focused unit gates 361/361 + electron artifact/binary-save 15/15; `@modelcontextprotocol/ext-apps@1.7.5` bound for MCP App host.
+- Continuation decision: Enables issue-029 client-wrapper repair and dependency-backed typechecking.
+- Next action: Dispatch one supervised-local Pi lane restricted to `package.json` and `bun.lock`; primary independently audits the minimal diff and runs a frozen install/provenance check before integration.
 
 ## issue-055: Enforce upstream UI parity outside the Fork allowlist
 
@@ -1277,3 +1277,111 @@
 - Resume condition: n/a
 - Continuation decision: issue-005 is RESOLVED; issue-061 is enabled as the next serial Manager slice.
 - Next action: Commit only `issues.md` and the two accepted Manager files, then use the new commit as issue-061's immutable base.
+
+## issue-065: Restore the v1.18.1 desktop settings contract before replaying fork adapters
+
+- Status: READY
+- Classification: P0
+- Goal / user outcome: Official v1.18.1 desktop, provider, walkthrough, persistence, and mobile UI compile and behave normally while retained fork capabilities use only explicit narrow desktop adapters.
+- First-principles root cause: `packages/ui/src/lib/desktop.ts` was copied wholesale from the older donor generation while its consumers are target v1.18.1. That incompatible type/behavior boundary accounts for a large cluster of TS2345/TS2339/TS2322 failures.
+- Core acceptance invariant: Start from the immutable upstream v1.18.1 file, replay only fork-required members proven by current fork consumers, and retain every target desktop setting/default/migration. No consumer file may be weakened with casts or optional fallbacks to hide the mismatch.
+- Dependencies: none
+- Dispatch order: Independent foundation wave; may run with issue-068, issue-069, and issue-042 because paths and contracts are disjoint.
+- Ownership: `packages/ui/src/lib/desktop.ts`; `packages/ui/src/lib/desktop.test.ts` if a focused regression is required.
+- Focused verification: Relevant desktop tests, `bun run type-check:ui` error delta, line-level diff against upstream v1.18.1, and `git diff --check`.
+- Pi binding: unassigned
+- Pi attempts: none
+- Primary attempts: not eligible while Pi retries remain
+- Current evidence: Reopened packaging audit at integration HEAD `a3ce959d016bcefd6cf20569d74a794c7564e899`: `desktop.ts` is byte-identical to the donor branch and differs from upstream v1.18.1 while most failing consumers remain target-owned. Full UI typecheck reports 289 errors.
+- Continuation decision: Enables trustworthy persistence/provider/walkthrough type repair without donor-wide UI replacement.
+- Next action: Dispatch a supervised-local Pi lane with the two-file ceiling; primary verifies that target contracts are restored and only demonstrably required fork members remain.
+
+## issue-066: Add a deterministic fork OpenCode CLI distribution lock and self-check contract
+
+- Status: READY
+- Classification: P0
+- Goal / user outcome: The Electron package embeds the exact maintained OpenCode fork binary, with immutable URL, checksum, version, release tag, and commit provenance rather than silently downloading the official CLI.
+- First-principles root cause: The v1.18.1 integration worktree has no fork CLI lock or self-check scripts; `prepare-opencode-cli.mjs` derives an official anomalyco download from the SDK version.
+- Core acceptance invariant: One checked-in lock names fork `1.18.10-oc.1`, the exact ZunbaRan release artifact and SHA-256, and its source/release provenance. Parsers reject missing, malformed, unsupported-platform, version-mismatched, or checksum-mismatched locks. No network or binary mutation occurs in the pure contract tests.
+- Dependencies: none
+- Dispatch order: Independent foundation wave; issue-067 consumes the frozen lock API.
+- Ownership: `packages/electron/opencode-cli.lock.json`; `packages/electron/scripts/opencode-cli-lock.mjs`; `packages/electron/scripts/opencode-cli-lock.test.mjs`; `packages/electron/scripts/opencode-cli-self-check.mjs`; `packages/electron/scripts/opencode-cli-self-check.test.mjs`.
+- Focused verification: Run both Node test files; audit exact donor lock provenance and reject official-host fallback; `git diff --check`.
+- Pi binding: unassigned
+- Pi attempts: none
+- Primary attempts: not eligible while Pi retries remain
+- Current evidence: These five maintained fork distribution files exist on `docs/interactive-ui-mcp-apps` but are absent from the P0 integration; the existing packaged path is therefore not fork-provenant.
+- Continuation decision: Enables issue-067 Electron packaging wiring.
+- Next action: Dispatch a supervised-local Pi lane restricted to the five pure lock/self-check files.
+
+## issue-067: Wire Electron prepare, verify, and runtime gates to the fork CLI lock
+
+- Status: OPEN
+- Classification: P0
+- Goal / user outcome: `electron:build` stages, verifies, launches, and packages only the locked fork CLI, and the packaged app proves its embedded runtime identity before installation.
+- First-principles root cause: Current Electron preparation/verification scripts use the official SDK version and lack fork runtime/provenance enforcement.
+- Core acceptance invariant: Prepare and verify consume issue-066's lock, validate SHA/version/fork identity, reject fallback to official URLs, and keep the existing target platform/arch packaging behavior. The packaged `.app` must pass the same self-check against its embedded binary.
+- Dependencies: issue-066, issue-054
+- Dispatch order: Serial after the lock API and fork SDK bind are integrated.
+- Ownership: `packages/electron/scripts/prepare-opencode-cli.mjs`; `packages/electron/scripts/verify-opencode-cli.mjs`; `packages/electron/scripts/verify-opencode-cli-runtime.mjs`; `packages/electron/package.json`; root packaging command wiring in `package.json` only if issue-054 did not already own it.
+- Focused verification: Electron script tests, locked binary prepare/verify, canonical `electron:build`, packaged runtime self-check, and provenance report inspection.
+- Pi binding: unassigned
+- Pi attempts: none
+- Primary attempts: not eligible while Pi retries remain
+- Current evidence: Canonical packaging on 2026-08-10 fails before Electron packaging, and static inspection proves the remaining CLI path is official-upstream keyed. The maintained fork branch provides a robust lock-driven implementation for narrow replay onto the target scripts.
+- Continuation decision: Enables issue-070 installable artifact gate.
+- Next action: Remain BLOCKED until issues 054 and 066 are RESOLVED; then dispatch one serial Pi lane with frozen ownership.
+
+## issue-068: Regenerate the target icon contract for retained fork surfaces
+
+- Status: READY
+- Classification: P0
+- Goal / user outcome: Retained Applications/Workbench UI uses valid generated icon names without weakening icon typing or importing donor-wide generated drift.
+- First-principles root cause: Fork consumers reference `apps-2-ai` and `sort-desc`, but the v1.18.1 generated icon union/sprite in the integration does not contain them.
+- Core acceptance invariant: Use the repository icon generator/source-of-truth; generated type and sprite remain synchronized; only icons required by retained fork surfaces are added; no `as IconName` escape hatch.
+- Dependencies: none
+- Dispatch order: Independent foundation wave.
+- Ownership: `packages/ui/src/components/icon/icons.ts`; `packages/ui/src/components/icon/sprite.ts`; the existing generator source/test only if generation proves it is the authoritative missing input.
+- Focused verification: Run `bun run icons:generate`, require a clean second generation, UI typecheck error delta, and focused icon lint/tests.
+- Pi binding: unassigned
+- Pi attempts: none
+- Primary attempts: not eligible while Pi retries remain
+- Current evidence: UI typecheck reports invalid icon-name literals for both retained fork surfaces; generated declarations and sprite are target-owned and currently omit those names.
+- Continuation decision: Removes generated-contract noise before host-seam repairs.
+- Next action: Dispatch a supervised-local Pi lane; primary reruns the generator and rejects hand-edited generated drift.
+
+## issue-069: Restore a narrow authoritative composer-prefill event contract
+
+- Status: READY
+- Classification: P0
+- Goal / user outcome: Artifact/Workbench actions can prefill the current target composer without importing donor ChatInput chrome or bypassing the normal send path.
+- First-principles root cause: Retained fork surfaces call a composer-prefill event that is absent from target `sessionEvents.ts`; copying donor ChatInput wholesale hid the missing contract and introduced an unresolved `MobileSessionStatusBar` import.
+- Core acceptance invariant: The event payload is bounded text, listeners are scoped and disposable, and ChatInput remains target v1.18.1 plus the later narrow issue-034 adapters. No global mutable queue or direct API send is introduced.
+- Dependencies: none
+- Dispatch order: Event contract before issue-034 replays the target ChatInput adapters.
+- Ownership: `packages/ui/src/lib/sessionEvents.ts`; a focused adjacent test file if needed.
+- Focused verification: Focused event subscribe/unsubscribe/bounds tests, UI typecheck error delta, and `git diff --check`.
+- Pi binding: unassigned
+- Pi attempts: none
+- Primary attempts: not eligible while Pi retries remain
+- Current evidence: `sessionEvents.ts` is byte-identical to upstream v1.18.1 while retained fork consumers require the missing prefill API; current ChatInput is donor-wide and canonical build fails resolving `./MobileSessionStatusBar`.
+- Continuation decision: Enables issue-034 to restore upstream ChatInput and add only Widget-send and prefill listeners.
+- Next action: Dispatch a supervised-local Pi lane restricted to the event contract and its focused test.
+
+## issue-070: Close the canonical build, fork provenance, package, and local installation gate
+
+- Status: OPEN
+- Classification: P0
+- Goal / user outcome: Produce one verified macOS arm64 OpenChamber application from the P0 integration, preserve the current installation as a recoverable backup, replace `/Applications/OpenChamber.app`, and prove the launched app uses the embedded fork runtime.
+- First-principles root cause: The previous completion narrative stopped at ledger and focused unit tests; it never proved the canonical build, fork distribution, packaged runtime, or installed application.
+- Core acceptance invariant: UI/Web/Electron typechecks and builds pass; fork SDK/CLI provenance and checksums match; the `.app` is arm64 and starts; existing application is moved to a timestamped backup before replacement; no user settings/data are deleted; final roadmap/evidence cites exact commits and artifacts.
+- Dependencies: issues 025-029, 034, 036-037, 042-044, 053-055, 065-069
+- Dispatch order: Primary-owned final integration and release gate after all bounded repair lanes.
+- Ownership: No speculative product-code ownership. Primary owns verification logs, release evidence, roadmap/status documents, backup/replacement, and launch smoke; any discovered bounded defect reopens its stable owning issue.
+- Focused verification: Full typecheck/lint, Web and Electron builds, retained focused/unit gates, interop acceptance, fork CLI self-check/provenance, `file`/codesign assessment, packaged launch smoke, installed launch smoke, and backup existence.
+- Pi binding: not applicable unless a new bounded product defect is assigned to an existing stable issue
+- Pi attempts: none
+- Primary attempts: n/a
+- Current evidence: UI typecheck fails with 289 errors; `CSC_IDENTITY_AUTO_DISCOVERY=false bun run electron:build` fails after 2348 modules because donor-wide `ChatInput.tsx` imports absent `./MobileSessionStatusBar`; package metadata and Electron prepare scripts still resolve the official SDK/CLI. `/Applications/OpenChamber.app` remains untouched at version 1.17.1 arm64.
+- Continuation decision: Only a fully green and provenance-verified result permits P0 to return to done and P1 to resume.
+- Next action: Remain BLOCKED; primary coordinates the dependency DAG and performs installation only after a fresh Sol/High final review returns ship.
