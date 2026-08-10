@@ -42,4 +42,26 @@ describe('i18n dictionaries', () => {
       expect(dictionary['common.language.japanese']).toBeTruthy();
     }
   });
+
+  test('all locales expose representative retained fork keys', () => {
+    // Fork-only keys referenced by retained Applications, Workbench, Artifact,
+    // MCP App, Widget, and fork settings surfaces. Missing keys fail the lane.
+    const forkKeys = [
+      'shell.navigation.applications',
+      'settings.page.interactiveUI.title',
+      'settings.interactiveUI.toast.connectionSaved',
+      'workbench.board.title',
+      'workbench.tile.popout',
+      'interactiveUI.state.unconfigured.title',
+      'interactiveUI.artifact.experimental',
+      'interactiveUI.host.live',
+      'chat.messageBody.richResult.showAgentNotes',
+    ] as const;
+
+    for (const [locale, dictionary] of Object.entries(localeDictionaries)) {
+      for (const key of forkKeys) {
+        expect({ locale, key, value: dictionary[key] }).toMatchObject({ value: expect.any(String) });
+      }
+    }
+  });
 });

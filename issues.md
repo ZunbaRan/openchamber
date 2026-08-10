@@ -720,7 +720,7 @@
 
 ## issue-037: Add only fork-required localization keys
 
-- Status: READY
+- Status: RESOLVED
 - Classification: NORMAL
 - Goal / user outcome: Fork Applications, Workbench, Artifact, MCP App, and Widget surfaces have complete supported-locale labels while upstream wording remains target-owned.
 - First-principles root cause: New fork surfaces require keys absent from target locale modules.
@@ -729,14 +729,14 @@
 - Dispatch order: After visible contracts freeze, before final UI acceptance.
 - Ownership: `packages/ui/src/lib/i18n/messages/en.ts`; `packages/ui/src/lib/i18n/messages/en.settings.ts`; `packages/ui/src/lib/i18n/messages/zh-CN.ts`; `packages/ui/src/lib/i18n/messages/zh-CN.settings.ts`; `packages/ui/src/lib/i18n/messages/zh-TW.ts`; `packages/ui/src/lib/i18n/messages/zh-TW.settings.ts`; `packages/ui/src/lib/i18n/messages/ja.ts`; `packages/ui/src/lib/i18n/messages/ja.settings.ts`; `packages/ui/src/lib/i18n/messages/ko.ts`; `packages/ui/src/lib/i18n/messages/ko.settings.ts`; `packages/ui/src/lib/i18n/messages/de.ts`; `packages/ui/src/lib/i18n/messages/de.settings.ts`; `packages/ui/src/lib/i18n/messages/es.ts`; `packages/ui/src/lib/i18n/messages/es.settings.ts`; `packages/ui/src/lib/i18n/messages/fr.ts`; `packages/ui/src/lib/i18n/messages/fr.settings.ts`; `packages/ui/src/lib/i18n/messages/pl.ts`; `packages/ui/src/lib/i18n/messages/pl.settings.ts`; `packages/ui/src/lib/i18n/messages/pt-BR.ts`; `packages/ui/src/lib/i18n/messages/pt-BR.settings.ts`; `packages/ui/src/lib/i18n/messages/uk.ts`; `packages/ui/src/lib/i18n/messages/uk.settings.ts`; `packages/ui/src/lib/i18n/messages.test.ts`.
 - Focused verification: Run locale key-parity tests, UI typecheck, and review a key-only diff against target.
-- Pi binding: unassigned
-- Pi attempts: none
-- Primary attempts: not eligible while Pi retries remain
-- Current evidence: Reopened 2026-08-10. The current locale corpus came from a donor generation and omits many v1.18.1 target keys; UI typecheck now reports 196 TS2345 key errors across upstream provider, walkthrough, mobile, file, git, session, and retained fork settings surfaces. Correct reconciliation is immutable v1.18.1 locale baselines plus only the exact retained fork keys, with identical supported-locale key sets; donor-wide locale copies remain forbidden.
+- Pi binding: batch `d82216c1-d5c3-4f02-b92f-ff4dd99c3f90`, run `c8f4766c-74d0-46d8-8969-4fc2f2e623bb`, base `d9f6632f`, final revision 2.
+- Pi attempts: Correction 1 was lost to repeated provider 429 responses without file changes; correction 2 mechanically rebuilt all 22 locale modules from immutable `v1.18.1` plus the referenced retained-fork inventory and extended parity coverage. Pi retry budget is exhausted with a policy-clean formal handoff.
+- Primary attempts: After Pi retries were exhausted, primary made one test-only microfix to use the repository's one-argument Bun `expect` typing; no production locale content changed.
+- Current evidence: Resolved 2026-08-10. Every locale contains the exact **5,021** target keys and values plus the same **309** referenced fork keys (88 main, 221 settings); all target values are byte-identical to tag `ce519219`, and 56 unreferenced donor-only keys are absent. Main-worktree parity/representative tests pass **3/3** with 143 expectations. Full UI typecheck errors fell **223 → 16** and missing-key `TS2345` fell to **0**; the only locale-owned residual was the new test assertion signature, fixed afterward and reverified by the focused suite. All remaining production errors are non-locale seams.
 - Suspension decision: n/a
 - Resume condition: n/a
 - Continuation decision: Enables final settings/workbench acceptance.
-- Next action: Dispatch one locale-only Pi lane; primary independently measures TS2345 elimination and key parity.
+- Next action: Resolved; continue with the 15 non-locale target host seams and final acceptance.
 
 ## issue-038: Restore Workbench shared client state
 
