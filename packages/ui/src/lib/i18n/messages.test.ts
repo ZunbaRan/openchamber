@@ -58,9 +58,9 @@ describe('i18n dictionaries', () => {
       'chat.messageBody.richResult.showAgentNotes',
     ] as const;
 
-    for (const [locale, dictionary] of Object.entries(localeDictionaries)) {
+    for (const dictionary of Object.values(localeDictionaries)) {
       for (const key of forkKeys) {
-        expect({ locale, key, value: dictionary[key] }).toMatchObject({ value: expect.any(String) });
+        expect(dictionary[key]).toBeTruthy();
       }
     }
   });

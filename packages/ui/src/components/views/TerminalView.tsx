@@ -24,11 +24,12 @@ import { applyTerminalModifier, terminalControlCharacter, terminalSequenceForKey
 
 type TerminalViewProps = {
     visible?: boolean;
+    preferredTabId?: string | null;
 };
 
 const FALLBACK_TERMINAL_SIZE = { cols: 80, rows: 24 } as const;
 
-export const TerminalView: React.FC<TerminalViewProps> = ({ visible }) => {
+export const TerminalView: React.FC<TerminalViewProps> = ({ visible, preferredTabId = null }) => {
     const { t } = useI18n();
     const { terminal, runtime } = useRuntimeAPIs();
     const { currentTheme } = useThemeSystem();
@@ -175,6 +176,17 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ visible }) => {
     React.useEffect(() => {
         directoryRef.current = effectiveDirectory;
     }, [effectiveDirectory]);
+
+    // Maintained-donor tab handoff: when the context panel pins a preferred tab
+    // (e.g. an action or tool terminal), adopt it once its directory state
+    // exists. This effect only ever switches to the donor's tab; everything
+    // else is a no-op so local tab choices are never overridden.
+    React.useEffect(() => {
+        if (!isTerminalVisible || !effectiveDirectory || !preferredTabId) return;
+        if (activeTabId === preferredTabId) return;
+        if (!directoryTerminalState?.tabs.some((tab) => tab.id === preferredTabId)) return;
+        setActiveTab(effectiveDirectory, preferredTabId);
+    }, [activeTabId, directoryTerminalState, effectiveDirectory, isTerminalVisible, preferredTabId, setActiveTab]);
 
     React.useEffect(() => {
         if (!showQuickKeys && activeModifier !== null) {

@@ -731,8 +731,8 @@
 - Focused verification: Run locale key-parity tests, UI typecheck, and review a key-only diff against target.
 - Pi binding: batch `d82216c1-d5c3-4f02-b92f-ff4dd99c3f90`, run `c8f4766c-74d0-46d8-8969-4fc2f2e623bb`, base `d9f6632f`, final revision 2.
 - Pi attempts: Correction 1 was lost to repeated provider 429 responses without file changes; correction 2 mechanically rebuilt all 22 locale modules from immutable `v1.18.1` plus the referenced retained-fork inventory and extended parity coverage. Pi retry budget is exhausted with a policy-clean formal handoff.
-- Primary attempts: After Pi retries were exhausted, primary made one test-only microfix to use the repository's one-argument Bun `expect` typing; no production locale content changed.
-- Current evidence: Resolved 2026-08-10. Every locale contains the exact **5,021** target keys and values plus the same **309** referenced fork keys (88 main, 221 settings); all target values are byte-identical to tag `ce519219`, and 56 unreferenced donor-only keys are absent. Main-worktree parity/representative tests pass **3/3** with 143 expectations. Full UI typecheck errors fell **223 → 16** and missing-key `TS2345` fell to **0**; the only locale-owned residual was the new test assertion signature, fixed afterward and reverified by the focused suite. All remaining production errors are non-locale seams.
+- Primary attempts: After Pi retries were exhausted, primary made two test-only matcher corrections: first removing Bun's unsupported two-argument `expect`, then replacing unsupported asymmetric matcher typing with a direct truthiness assertion. No production locale content changed.
+- Current evidence: Resolved 2026-08-10. Every locale contains the exact **5,021** target keys and values plus the same **309** referenced fork keys (88 main, 221 settings); all target values are byte-identical to tag `ce519219`, and 56 unreferenced donor-only keys are absent. Main-worktree locale plus terminal rerun passes **6/6** with 157 expectations, missing-key `TS2345` is **0**, and the complete UI typecheck now passes with **0 errors**.
 - Suspension decision: n/a
 - Resume condition: n/a
 - Continuation decision: Enables final settings/workbench acceptance.
@@ -840,7 +840,7 @@
 
 ## issue-043: Register the Workbench tab in the upstream right sidebar
 
-- Status: OPEN
+- Status: RESOLVED
 - Classification: NORMAL
 - Goal / user outcome: The Workbench is reachable as a right-sidebar tab without changing any upstream terminal/files/git tab behavior.
 - First-principles root cause: Target right-sidebar tabs lack the feature.
@@ -851,16 +851,16 @@
 - Focused verification: UI typecheck/lint, focused tab test, and line-level target diff.
 - Pi binding: unassigned
 - Pi attempts: none
-- Primary attempts: not eligible while Pi retries remain
-- Current evidence: Bulk READY restoration 2026-08-09: modules restored from accepted openchamber fork client surfaces (interactive-ui lib/client/manager/routing/review/workbench, generative-widget runtime bridges, settings sections, chat ToolPart/AssistantTextPart/ChatInput dispatch, Electron artifact-runner + desktop-binary-save, acceptance scripts). Focused re-verify 2026-08-09: UI 346/346 pass (0 fail) + electron artifact/binary-save 15/15 pass (0 fail); logs under goal implementer scratch ready-unit-gate.log.  Target file is upstream-active and donor has broad layout drift.
+- Primary attempts: No implementation attempt; primary audited the retained narrow branch after the target store contract and full UI typing were restored.
+- Current evidence: Resolved 2026-08-10. `RightSidebarTabs` retains the target git/files/context ordering, fallback, hidden-tab policy, and git polling while adding one isolated `extensions` content branch backed by `ExtensionWorkbench`. Store persistence/sanitization tests pass **38/38**, the prior focused READY suite remains **346/346**, and the complete UI typecheck passes with **0 errors**.
 - Suspension decision: n/a
 - Resume condition: n/a
 - Continuation decision: Enables issue-044.
-- Next action: Resolved in bulk READY closeout (2026-08-09): donor UI/client/workbench/widget/settings/electron/acceptance modules ported into integration worktree; focused unit gates 361/361 + electron artifact/binary-save 15/15; `@modelcontextprotocol/ext-apps@1.7.5` bound for MCP App host.
+- Next action: Resolved; include right-sidebar Applications reachability in final desktop acceptance.
 
 ## issue-044: Host Workbench mode in the upstream Context Panel
 
-- Status: READY
+- Status: RESOLVED
 - Classification: NORMAL
 - Goal / user outcome: Selecting Workbench renders the persistent board in the existing Context Panel with correct close/focus behavior.
 - First-principles root cause: Target Context Panel has no Workbench mode.
@@ -869,14 +869,14 @@
 - Dispatch order: Final Workbench layout seam.
 - Ownership: `packages/ui/src/components/layout/ContextPanel.tsx`; `packages/ui/src/components/views/TerminalView.tsx`; focused terminal-selection/context-mode test if target precedent supports it.
 - Focused verification: UI typecheck/lint, focused preferred-terminal-tab test, and line-level target/donor adapter diff.
-- Pi binding: unassigned
-- Pi attempts: none
-- Primary attempts: not eligible while Pi retries remain
-- Current evidence: Reopened 2026-08-10. Workbench/files/extensions mode errors are gone after issue-042, leaving one target integration mismatch: ContextPanel passes a retained `preferredTabId` to target TerminalView, whose props accept only `visible`. This must be resolved from target behavior and current terminal-store semantics without widening props blindly or replaying donor-wide ContextPanel/TerminalView drift.
+- Pi binding: run `84e1d7e4-012a-45fe-986c-76842f80c094`, base `98ddfcca`, revision 0; policy-clean formal handoff.
+- Pi attempts: Revision 0 added only the optional terminal-tab handoff and a focused regression guard; no correction was required.
+- Primary attempts: No implementation attempt; primary integrated the Pi candidate and made only the issue-037 test matcher correction before independent verification.
+- Current evidence: Resolved 2026-08-10. ContextPanel's retained Applications branch renders `ExtensionWorkbench`; terminal tabs pass their target id through the optional `preferredTabId` adapter. TerminalView switches only when visible and when that tab already exists, preserving local selection and avoiding tab creation/close/stream side effects. Terminal plus remount tests pass **11/11**, locale plus terminal rerun passes **6/6** with 157 expectations, `git diff --check` passes, and the complete UI typecheck passes with **0 errors**.
 - Suspension decision: n/a
 - Resume condition: n/a
 - Continuation decision: Completes Workbench host registration.
-- Next action: Dispatch one bounded Pi lane adding only the optional preferred terminal-tab prop and visible-state synchronization effect proven in the maintained donor.
+- Next action: Resolved; include Applications mode and preferred terminal-tab handoff in final desktop acceptance.
 
 ## issue-045: Restore the privileged Electron Artifact Runner boundary
 
