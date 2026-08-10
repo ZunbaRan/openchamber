@@ -56,7 +56,8 @@
     "productName": "OpenChamber",
     "files": [
       "dist-bundle/main.mjs",
-      "preload.mjs"
+      "preload.mjs",
+      "artifact-runner-preload.cjs"
     ],
     "extraResources": [
       {

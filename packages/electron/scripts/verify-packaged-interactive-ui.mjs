@@ -619,7 +619,12 @@ try {
     session: 'ses_packaged_generated_artifact_clip_test',
     clipTest: 'true',
   });
-  await waitFor(browser, `document.querySelector('[data-ocix-artifact-state="ready"] [data-ocix-artifact-backend="desktop-runner"]') !== null`, 'packaged Scripts Artifact Desktop Runner');
+  await waitFor(
+    browser,
+    `document.querySelector('[data-ocix-artifact-state="ready"] [data-ocix-artifact-backend="desktop-runner"]') !== null`,
+    'packaged Scripts Artifact Desktop Runner',
+    process.env.OPENCHAMBER_PACKAGED_DIAGNOSTIC_FAST === '1' ? 30 : 240,
+  );
   const scriptsRunner = await browser.evaluate(`(() => {
     const host = document.querySelector('[data-ocix-artifact-host]');
     const runner = host?.querySelector('[data-ocix-artifact-backend="desktop-runner"]');
@@ -865,6 +870,8 @@ try {
   console.log(JSON.stringify({ ...report, reportPath: path.relative(projectRoot, reportPath) }, null, 2));
 } catch (error) {
   let rendererDiagnostics = null;
+  let devtoolsTargets = null;
+  const devtoolsTargetDiagnostics = [];
   try {
     rendererDiagnostics = browser
       ? await browser.evaluate(`(() => ({
@@ -883,11 +890,53 @@ try {
   } catch {
     // Best-effort diagnostics must not replace the original acceptance error.
   }
+  try {
+    const response = await fetch(`http://127.0.0.1:${debugPort}/json/list`, {
+      signal: AbortSignal.timeout(2_000),
+    });
+    if (response.ok) {
+      const targets = await response.json();
+      devtoolsTargets = targets.map(({ id, type, title, url }) => ({
+        id,
+        type,
+        title: String(title || '').slice(0, 240),
+        url: String(url || '').slice(0, 500),
+      }));
+      for (const target of targets.filter((entry) => entry.webSocketDebuggerUrl)) {
+        let targetBrowser = null;
+        try {
+          targetBrowser = await connect(target);
+          devtoolsTargetDiagnostics.push(await targetBrowser.evaluate(`(() => ({
+            type: ${JSON.stringify(target.type)},
+            url: location.href.slice(0, 500),
+            readyState: document.readyState,
+            lang: document.documentElement.lang,
+            theme: document.documentElement.dataset.ocixTheme || null,
+            broker: document.body?.hasAttribute('data-ocix-artifact-broker') || false,
+            innerFrameStyle: document.querySelector('body[data-ocix-artifact-broker] > iframe')?.getAttribute('style') || null,
+            artifactBridge: typeof window.openchamberArtifact,
+          }))()`));
+        } catch (targetError) {
+          devtoolsTargetDiagnostics.push({
+            type: target.type,
+            url: String(target.url || '').slice(0, 500),
+            error: targetError instanceof Error ? targetError.message : String(targetError),
+          });
+        } finally {
+          targetBrowser?.socket.close();
+        }
+      }
+    }
+  } catch {
+    // Best-effort diagnostics must not replace the original acceptance error.
+  }
   const message = error instanceof Error ? error.message : String(error);
   failure = new Error([
     message,
     `Renderer diagnostics: ${JSON.stringify(rendererDiagnostics)}`,
     `Renderer errors: ${JSON.stringify(browser?.runtimeErrors ?? [])}`,
+    `DevTools targets: ${JSON.stringify(devtoolsTargets)}`,
+    `DevTools target diagnostics: ${JSON.stringify(devtoolsTargetDiagnostics)}`,
     `Application output (tail): ${processOutput.slice(-5_000)}`,
   ].join('\n'), { cause: error });
 } finally {

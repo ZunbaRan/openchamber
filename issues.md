@@ -1596,8 +1596,8 @@
 
 ## issue-082: Give the trusted Artifact Broker a valid top-level origin
 
-- Status: VERIFYING
-- Classification: P0
+- Status: OPEN
+- Classification: NON-BLOCKING
 - Goal / user outcome: The packaged native Desktop Runner can host script-enabled Artifacts without Chromium opaque-origin site-tuple failures, while untrusted Artifact HTML remains isolated in an opaque sandboxed child.
 - First-principles root cause: The server applies `Content-Security-Policy: sandbox allow-scripts` to the host-authored top-level Broker document. That makes the Broker's own HTTP origin opaque; Electron `WebContentsView` cannot attach/navigate that top-level site inside the packaged `openchamber-ui://` window and never reaches layout acknowledgement. The actual untrusted Artifact already runs in a nested `iframe sandbox="allow-scripts"`, so making only the trusted Broker same-origin does not grant the Artifact same-origin access.
 - Core acceptance invariant: The top-level Broker CSP uses `sandbox allow-scripts allow-same-origin` so Chromium has a valid tuple, while the nested Artifact iframe remains exactly `sandbox="allow-scripts"` with no `allow-same-origin`. `default-src 'none'`, no eval/connect/forms/navigation/popups/storage, frame ancestry, response hardening, Broker message validation, and static Artifact policy remain unchanged. Focused route tests must distinguish outer Broker policy from inner untrusted sandbox; packaged acceptance must reach native Runner ready/stop without origin-tuple errors.
@@ -1608,8 +1608,28 @@
 - Pi binding: run/session `65c4f2d8-8a66-404a-89a2-37840b3184db`, base `1b2aff7bb2a709ca1dc99c8d913d0b0fb330c4dc`, revision 0, supervised-local worktree `/Users/loloru/.codex/sol-pi-advisor/worktrees/65c4f2d8-8a66-404a-89a2-37840b3184db`.
 - Pi attempts: Revision 0 changed exactly the two owned files: the trusted Broker CSP now has `allow-same-origin`, and route tests assert the outer directive exactly while proving the inner iframe remains `allow-scripts` only. Policy state is clean with diff digest `c45483d7…`; no correction has been required.
 - Primary attempts: none while Pi retries remain. Primary integrated the exact candidate and performed dependency-backed verification unavailable in the isolated Pi worktree.
-- Current evidence: The issue081 rebuild preserved attach-before-load but packaged acceptance still reported host `timed-out` plus repeated opaque-origin tuple failures. The revision-0 candidate is byte-identical to Pi, passes the real HTML Artifact route suite 14/14 (64 assertions) in the approved loopback environment, Web typecheck, Web lint, and `git diff --check`. The test contract distinguishes the trusted top-level Broker's exact `sandbox allow-scripts allow-same-origin` from the nested untrusted iframe's exact `allow-scripts` sandbox.
+- Current evidence: The issue081 rebuild preserved attach-before-load but packaged acceptance still reported host `timed-out` plus repeated opaque-origin tuple failures. Revision 0 passed the route suite 14/14, Web typecheck/lint, and its two-layer CSP assertions, but the rebuilt package still failed identically. A fast live inspection then proved both the top-level Broker and nested data iframe reach `readyState=complete`; the actual missing event is layout acknowledgement because the external Runner preload is absent from `app.asar` (issue083). Revision 0 is rejected and its CSP relaxation is reverted.
 - Suspension decision: n/a
 - Resume condition: n/a
-- Continuation decision: Change only the trusted Broker's CSP sandbox token set and lock the two-layer boundary in route tests; do not weaken the nested Artifact sandbox or Electron permissions.
-- Next action: Rebuild the Electron package and rerun the full packaged desktop acceptance.
+- Continuation decision: Do not retain an unnecessary same-origin relaxation. The remaining Chromium diagnostic is independent of the proven package-resource omission and does not block testing issue083 with the original stronger Broker policy.
+- Next action: Keep documented as non-blocking diagnostic noise unless it persists with observable impact after issue083 restores the preload.
+
+## issue-083: Include the Artifact Runner preload in the packaged app
+
+- Status: VERIFYING
+- Classification: P0
+- Goal / user outcome: Script-enabled Artifacts in the packaged desktop app execute their isolated Runner preload, acknowledge native layout, receive `host.init`, and reach `artifact.ready`.
+- First-principles root cause: `createArtifactRunnerManager` resolves the packaged preload at `app.getAppPath()/artifact-runner-preload.cjs`, but Electron `build.files` includes only `dist-bundle/main.mjs` and `preload.mjs`. The built `app.asar` therefore omits `artifact-runner-preload.cjs`; the Broker loads, but no preload applies layout or sends `openchamber:artifact-runner-layout-applied`, so the main process never emits `loaded` and the Host never sends `host.init`.
+- Core acceptance invariant: `artifact-runner-preload.cjs` is present at the exact packaged `app.getAppPath()` path on every target, while remaining an external narrow preload (not merged into the main/UI bundle). Existing Electron sandbox/contextIsolation/partition permissions and Broker/inner Artifact CSP remain unchanged. Package inspection must prove the file exists in `app.asar`, and packaged acceptance must show native Runner ready/stop, inner theme initialization, installed Artifact behavior, restart persistence, and no runtime errors.
+- Dependencies: issues 077, 080, 081
+- Dispatch order: Serial packaging blocker; issue082 response-policy candidate is rejected and reverted first.
+- Ownership: `packages/electron/package.json`.
+- Focused verification: parse package config and confirm `build.files` contains `artifact-runner-preload.cjs`; primary Electron package build, `@electron/asar` listing/extraction check, packaged CLI check, and full packaged desktop acceptance.
+- Pi binding: run/session `1abff818-f65b-4a9a-a0e1-cd8e528b29cd`, base `adba62a627cf54061dca4113b7dc10f8fedf7208`, revision 0, supervised-local worktree `/Users/loloru/.codex/sol-pi-advisor/worktrees/1abff818-f65b-4a9a-a0e1-cd8e528b29cd`.
+- Pi attempts: Revision 0 adds exactly `artifact-runner-preload.cjs` to `build.files`; one owned manifest changed, policy state is clean, and diff digest is `0e07e2ce…`. No correction has been required.
+- Primary attempts: none while Pi retries remain. Primary integrated the exact candidate and verified the manifest parses with the required entry exactly once.
+- Current evidence: Live fast diagnostics show the Runner backend plus both Broker/inner iframe targets at `readyState=complete`, but the Broker iframe has no layout style and Host stays `loading`. The previous built app has no Runner preload in its app root, while `main.mjs` explicitly requests `path.join(app.getAppPath(), "artifact-runner-preload.cjs")`. Revision 0 is byte-identical to Pi, `build.files` now contains `["dist-bundle/main.mjs","preload.mjs","artifact-runner-preload.cjs"]`, and `git diff --check` passes. By contrast the fork CLI was already present under `Contents/Resources/opencode-cli/opencode` and passed its packaged verifier.
+- Suspension decision: n/a
+- Resume condition: n/a
+- Continuation decision: Add the missing external preload to the electron-builder file allowlist; do not modify runtime handshake or weaken sandboxing.
+- Next action: Rebuild, prove the preload exists inside `app.asar`, rerun packaged CLI verification and the full packaged desktop acceptance.

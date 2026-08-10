@@ -479,7 +479,7 @@ const brokerContentSecurityPolicy = () => [
   "media-src 'none'",
   "base-uri 'none'",
   "form-action 'none'",
-  'sandbox allow-scripts allow-same-origin',
+  'sandbox allow-scripts',
   "frame-ancestors 'self' openchamber-ui://app",
 ].join('; ');
 
