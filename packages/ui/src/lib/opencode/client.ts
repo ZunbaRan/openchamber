@@ -67,6 +67,75 @@ type SdkResult<T> = {
   response?: { status?: number };
 };
 
+type OpenCodeDistributionCapabilities = {
+  distribution: string;
+  version: string;
+  upstreamVersion: string;
+  upstreamCommit: string;
+  forkCommit: string;
+  apiVersion: string;
+  managedUpdate: boolean;
+  features: {
+    mcpLegacy: boolean;
+    mcp20260728: boolean;
+    mcpApps: boolean;
+    mcpAppToolCall: boolean;
+  };
+};
+
+export type OpenCodeMcpAppResource = {
+  server: string;
+  resourceUri: string;
+  mimeType: string;
+  html: string;
+  sha256: string;
+  meta?: {
+    csp?: {
+      [key: string]: unknown;
+    };
+    permissions?: {
+      [key: string]: unknown;
+    };
+    domain?: string;
+    prefersBorder?: boolean;
+  };
+};
+
+type OpenCodeMcpAppSdk = {
+  global?: {
+    capabilities?: (
+      options?: { signal?: AbortSignal },
+    ) => Promise<SdkResult<OpenCodeDistributionCapabilities>>;
+  };
+  mcp?: {
+    app?: {
+      resource?: (
+        parameters: {
+          directory?: string;
+          sessionID: string;
+          messageID: string;
+          server: string;
+          resourceUri: string;
+          force?: 'true' | 'false';
+        },
+        options?: { signal?: AbortSignal },
+      ) => Promise<SdkResult<OpenCodeMcpAppResource>>;
+      toolCall?: (
+        parameters: {
+          directory?: string;
+          sessionID: string;
+          messageID: string;
+          server: string;
+          resourceUri: string;
+          name: string;
+          arguments?: Record<string, unknown>;
+        },
+        options?: { signal?: AbortSignal },
+      ) => Promise<SdkResult<unknown>>;
+    };
+  };
+};
+
 function unwrapSdkData<T>(result: SdkResult<T>, operation: string): T {
   if (result.error) {
     const status = result.response?.status;
@@ -425,6 +494,172 @@ class OpencodeService {
   // Get the raw API client for direct access
   getApiClient(): OpencodeClient {
     return this.client;
+  }
+
+  async getDistributionCapabilities(signal?: AbortSignal): Promise<OpenCodeDistributionCapabilities> {
+    const sdk = this.client as OpencodeClient & OpenCodeMcpAppSdk;
+    if (typeof sdk.global?.capabilities !== 'function') {
+      throw new Error('The selected OpenCode CLI does not expose OpenChamber distribution capabilities');
+    }
+    return unwrapSdkData(
+      await sdk.global.capabilities({ signal }),
+      'Get OpenCode distribution capabilities',
+    );
+  }
+
+  async getMcpAppResource(input: {
+    directory: string;
+    sessionId: string;
+    messageId: string;
+    partId: string;
+    server: string;
+    resourceUri: string;
+    toolKey: string;
+    force?: boolean;
+    signal?: AbortSignal;
+  }): Promise<OpenCodeMcpAppResource> {
+    const scoped = this.getScopedApiClient(input.directory) as OpencodeClient & OpenCodeMcpAppSdk;
+    if (typeof scoped.mcp?.app?.resource !== 'function') {
+      throw new Error('The selected OpenCode CLI does not support MCP Apps');
+    }
+
+    // Keep the generated method check above as the external-CLI capability
+    // gate, but use the runtime-aware transport for the actual resource read.
+    // The generated SDK request can remain pending across a renderer reload in
+    // desktop/proxied runtimes even though the same verified endpoint is
+    // immediately reachable through runtimeFetch. A permanently pending read
+    // leaves restored MCP Apps as an infinite skeleton. The direct request is
+    // also consistent with the exact ToolPart-bound AppBridge route below.
+    const query = new URLSearchParams({
+      directory: input.directory,
+      sessionID: input.sessionId,
+      messageID: input.messageId,
+      partID: input.partId,
+      server: input.server,
+      resourceUri: input.resourceUri,
+      toolKey: input.toolKey,
+      force: input.force ? 'true' : 'false',
+    });
+    const baseUrl = this.baseUrl.replace(/\/+$/, '');
+    const response = await runtimeFetch(
+      `${baseUrl}/mcp/app/resource?${query.toString()}`,
+      {
+        method: 'GET',
+        headers: { Accept: 'application/json' },
+        signal: input.signal,
+      },
+    );
+    const payload = await response.json().catch(() => undefined) as unknown;
+    if (!response.ok) {
+      const error = new Error(
+        `Load MCP App resource failed (${response.status}): ${formatSdkError(payload ?? response.statusText)}`,
+      ) as Error & { status?: number };
+      error.status = response.status;
+      throw error;
+    }
+    if (!payload || typeof payload !== 'object') {
+      throw new Error('Load MCP App resource failed: empty response');
+    }
+    return payload as OpenCodeMcpAppResource;
+  }
+
+  async callMcpAppTool(input: {
+    directory: string;
+    sessionId: string;
+    messageId: string;
+    partId: string;
+    server: string;
+    resourceUri: string;
+    toolKey: string;
+    name: string;
+    arguments?: Record<string, unknown>;
+    signal?: AbortSignal;
+  }): Promise<unknown> {
+    const scoped = this.getScopedApiClient(input.directory) as OpencodeClient & OpenCodeMcpAppSdk;
+    if (typeof scoped.mcp?.app?.toolCall !== 'function') {
+      throw new Error('The selected OpenCode CLI does not support MCP App tool calls');
+    }
+
+    // SDK gap: the published fork SDK exposes this endpoint but its generated
+    // serializer predates the exact ToolPart binding fields and silently drops
+    // unknown keys. Keep the method check above for external-CLI degradation,
+    // then send the complete body through the same runtime-aware transport.
+    const baseUrl = this.baseUrl.replace(/\/+$/, '');
+    const response = await runtimeFetch(
+      `${baseUrl}/mcp/app/tool-call?directory=${encodeURIComponent(input.directory)}`,
+      {
+        method: 'POST',
+        headers: {
+          Accept: 'application/json',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          sessionID: input.sessionId,
+          messageID: input.messageId,
+          partID: input.partId,
+          server: input.server,
+          resourceUri: input.resourceUri,
+          toolKey: input.toolKey,
+          name: input.name,
+          arguments: input.arguments ?? {},
+        }),
+        signal: input.signal,
+      },
+    );
+    const payload = await response.json().catch(() => undefined) as unknown;
+    if (!response.ok) {
+      const error = new Error(
+        `Call MCP App tool failed (${response.status}): ${formatSdkError(payload ?? response.statusText)}`,
+      ) as Error & { status?: number };
+      error.status = response.status;
+      throw error;
+    }
+    if (payload === undefined || payload === null) {
+      throw new Error('Call MCP App tool failed: empty response');
+    }
+    return payload;
+  }
+
+  async updateMessagePart(input: {
+    directory: string;
+    sessionId: string;
+    messageId: string;
+    partId: string;
+    part: Part;
+    signal?: AbortSignal;
+  }): Promise<Part> {
+    const scoped = this.getScopedApiClient(input.directory);
+    return unwrapSdkData(
+      await scoped.part.update({
+        directory: input.directory,
+        sessionID: input.sessionId,
+        messageID: input.messageId,
+        partID: input.partId,
+        part: input.part,
+      }, { signal: input.signal }),
+      'Update message part',
+    );
+  }
+
+  async getMessagePart(input: {
+    directory: string;
+    sessionId: string;
+    messageId: string;
+    partId: string;
+    signal?: AbortSignal;
+  }): Promise<Part> {
+    const scoped = this.getScopedApiClient(input.directory);
+    const message = unwrapSdkData(
+      await scoped.session.message({
+        directory: input.directory,
+        sessionID: input.sessionId,
+        messageID: input.messageId,
+      }, { signal: input.signal }),
+      'Get session message',
+    );
+    const part = message.parts.find((candidate) => candidate.id === input.partId);
+    if (!part) throw new Error('Get session message part failed: part not found');
+    return part;
   }
 
   // Get system information including home directory

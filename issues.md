@@ -562,7 +562,7 @@
 
 ## issue-029: Restore OpenCode capability and MCP App client wrappers
 
-- Status: READY
+- Status: RESOLVED
 - Classification: NORMAL
 - Goal / user outcome: Shared UI reads the fork capability document and performs exact MCP App resource/tool-call requests across supported runtimes.
 - First-principles root cause: Target `opencode/client.ts` lacks fork API gaps and runtime capability diagnostics.
@@ -571,14 +571,14 @@
 - Dispatch order: Serial client seam before renderer/ToolPart acceptance.
 - Ownership: `packages/ui/src/lib/opencode/client.ts`; matching focused client tests discovered in the target package before dispatch.
 - Focused verification: Run focused client tests and UI typecheck; inspect exact session/message/part/tool/server/resource fidelity through scoped Fork SDK methods, managed-versus-explicit-reduced capability behavior, runtime-base reconnection, AbortSignal forwarding, and bounded diagnostic errors.
-- Pi binding: unassigned
-- Pi attempts: none
-- Primary attempts: not eligible while Pi retries remain
-- Current evidence: Reopened 2026-08-10. After the workspace is bound to fork SDK `1.18.10-oc.1`, UI typecheck proves `McpAppRenderer` cannot import `OpenCodeMcpAppResource` and `OpencodeService` lacks `getMcpAppResource`/`callMcpAppTool`; Workbench and ToolPart also lack scoped message-part wrappers. The installed fork SDK exposes generated `global.capabilities`, `mcp.appResource`, `mcp.appToolCall`, `part.update`, and exact MCP identity fields. The repair must wrap those runtime-scoped SDK methods rather than replay donor direct-HTTP compatibility code.
+- Pi binding: batch `d82216c1-d5c3-4f02-b92f-ff4dd99c3f90`, run `9b812839-db5a-4ad1-983d-6b8b5b301439`, base `d9f6632f`, final revision 2.
+- Pi attempts: Correction 1 replaced the false generated-SDK serializer assumption with identity-complete runtime transport while retaining SDK capability/method gating; correction 2 added exact request, signal, persistence, absence, and failure regressions. Pi retry budget exhausted cleanly with a formal handoff.
+- Primary attempts: No implementation attempt; primary integrated the byte-identical Pi candidate and independently reran the focused gate.
+- Current evidence: Resolved 2026-08-10. `getDistributionCapabilities` and message-part operations use the fork SDK. Because installed fork SDK `1.18.10-oc.1` omits `partID`/`toolKey` from its MCP App serializers, MCP resource/tool calls deliberately use the runtime-scoped HTTP seam after checking generated SDK method availability, preserving the exact directory/session/message/part/server/resource/tool identity and `AbortSignal`. `bun test packages/ui/src/lib/opencode/` passes **17/17**; full UI typecheck errors fell **255 → 248**, with all seven owned client-contract errors removed.
 - Suspension decision: n/a
 - Resume condition: n/a
 - Continuation decision: Enables issues 028 and 026.
-- Next action: Dispatch one bounded Pi lane on current target `client.ts` plus discovered focused tests; require exact fork-SDK method use and typecheck delta.
+- Next action: Resolved; downstream renderer/ToolPart acceptance may consume the restored wrapper contract.
 
 ## issue-030: Restore Generative Widget parsing and sanitization
 
