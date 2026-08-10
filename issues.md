@@ -68,7 +68,7 @@
 
 ## issue-004: Restore signed OCIX package parsing and verification
 
-- Status: RESOLVED
+- Status: READY
 - Classification: NORMAL
 - Goal / user outcome: The target server accepts only structurally valid, size-bounded, correctly signed `.ocix` packages with deterministic identity.
 - First-principles root cause: The clean upstream target has no OCIX package-format boundary.
@@ -1585,14 +1585,14 @@
 - Dispatch order: Serial blocker for the next packaged desktop acceptance rerun.
 - Ownership: `packages/electron/artifact-runner.mjs`; `packages/electron/artifact-runner.test.mjs`.
 - Focused verification: `bun run --cwd packages/electron test:artifact-runner`, Electron syntax/type check, `git diff --check`, then primary rebuild plus `bun run test:interactive-ui-desktop-packaged` against the rebuilt app.
-- Pi binding: run/session `f6dff310-ae57-4661-aa52-b7981bb17685`, base `f35b4ffdf220c3b21c94d25a95a54d0361005e33`, revision 0, supervised-local worktree `/Users/loloru/.codex/sol-pi-advisor/worktrees/f6dff310-ae57-4661-aa52-b7981bb17685`.
-- Pi attempts: Revision 0 changed only the two owned files, restored attach-before-load ordering, and added explicit success-order plus load-failure cleanup tests; policy state is clean with diff digest `d6adc16b…`. No correction has been required.
+- Pi binding: run/session `f6dff310-ae57-4661-aa52-b7981bb17685`, base `f35b4ffdf220c3b21c94d25a95a54d0361005e33`, active revision 1, supervised-local worktree `/Users/loloru/.codex/sol-pi-advisor/worktrees/f6dff310-ae57-4661-aa52-b7981bb17685`.
+- Pi attempts: Revision 0 changed only the two owned files, restored attach-before-load ordering, and added explicit success-order plus load-failure cleanup tests; policy state was clean with diff digest `d6adc16b…`. A later fresh review found the implementation comment still attributed the packaged timeout to Chromium site-tuple rejection after issue083 proved the missing preload was the actual handshake cause; correction 1 is assigned to the same run/session and stable issue.
 - Primary attempts: none while Pi retries remain. Primary integrated the exact revision-0 candidate and independently reran its focused gates.
-- Current evidence: Before the fix, rebuilt-package acceptance timed out with no backend. The accepted candidate passes 9/9 Artifact Runner tests and Electron type/syntax checks; its negative test proves failed navigation detaches/closes the View, clears partition storage/state, and emits controlled `load-failed` termination. After issue083 restored the omitted preload, the final packaged acceptance reaches `desktop-runner:ready-then-stopped`, proves native clipping and installed-Artifact restart persistence, and reports zero runtime errors. This establishes the attach-before-load lifecycle as correct; the residual Chromium diagnostic is separately non-blocking issue082.
+- Current evidence: Before the fix, rebuilt-package acceptance timed out with no backend. The accepted candidate passes 9/9 Artifact Runner tests and Electron type/syntax checks; its negative test proves failed navigation detaches/closes the View, clears partition storage/state, and emits controlled `load-failed` termination. After issue083 restored the omitted preload, the final packaged acceptance reaches `desktop-runner:ready-then-stopped`, proves native clipping and installed-Artifact restart persistence, and reports zero runtime errors. This establishes the attach-before-load lifecycle as correct; the residual Chromium diagnostic is separately non-blocking issue082. Fresh review found only the nearby explanatory comment still conflates those two causes; runtime behavior is unchanged.
 - Suspension decision: n/a
 - Resume condition: n/a
 - Continuation decision: Restore the required lifecycle ordering with focused regression coverage; do not weaken CSP sandboxing or fall back to an iframe for scripts.
-- Next action: Resolved; keep the focused ordering/cleanup tests and packaged Runner acceptance as regression gates.
+- Next action: Reuse the original Pi run/session for a comment-only correction that describes ownership-before-navigation and deterministic failure cleanup without attributing the historical timeout to site-tuple rejection; rerun focused checks and obtain another fresh review.
 
 ## issue-082: Classify opaque-origin diagnostics without weakening the Broker sandbox
 
