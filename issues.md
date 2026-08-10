@@ -1424,7 +1424,7 @@
 
 ## issue-073: Remove donor-only caller props from target host APIs
 
-- Status: READY
+- Status: RESOLVED
 - Classification: P0
 - Goal / user outcome: Mobile notes, grouped turn activity, and relay-host probing compile against the retained v1.18.1 component/runtime contracts without weakening types or changing authentication behavior.
 - First-principles root cause: Four donor call sites retained props that their target-owned callees intentionally do not accept: ProjectContextPanel owns its navigation, TurnActivity receives no runtime identity props, and relay tunnel probes authenticate through the encrypted tunnel rather than bearer/request-header options.
@@ -1433,11 +1433,11 @@
 - Dispatch order: Independent final type-repair wave; paths are disjoint from issues 025, 026, and 036.
 - Ownership: `packages/ui/src/apps/MobileWorkspaceDrawer.tsx`; `packages/ui/src/components/chat/message/MessageBody.tsx`; `packages/ui/src/components/desktop/DesktopHostSwitcher.tsx`; `packages/ui/src/components/sections/remote-instances/RemoteInstancesPage.tsx`; focused existing tests only if already adjacent and no other production file.
 - Focused verification: Relevant mobile/message/desktop-host tests, line-level diff against target APIs, full UI typecheck delta, and `git diff --check`.
-- Pi binding: unassigned
+- Pi binding: batch `253e064d-9f86-4be5-b110-cf74637a8c22`, run `36461d8b-3f46-429c-b3f5-f95a87779330`, base `eb9ce926`, revision 0; policy-clean formal handoff.
 - Pi attempts: none
 - Primary attempts: not eligible while Pi retries remain
-- Current evidence: Full UI typecheck after locale reconciliation reports one ProjectContextPanel prop error, one TurnActivity prop error, and three `probeRelayDesktopHost` option errors. Target declarations prove the rejected props are absent; direct probes still accept bearer/header options, while relay probes accept only `keepTunnel` and use E2EE tunnel fetch.
+- Current evidence: Resolved 2026-08-10. The accepted four-file diff removes only two ProjectContextPanel props, two TurnActivity props, and credential/header options from three relay probes while retaining `keepTunnel` at the tunnel-adoption call. Direct host probes and runtime switching still receive credentials. Primary independently ran `desktopHosts.test.ts` **7/7** and `git diff --check`; the next combined UI typecheck measures the exact five-error delta.
 - Suspension decision: n/a
 - Resume condition: n/a
 - Continuation decision: Removes five final target-caller errors before issue-070.
-- Next action: Dispatch one bounded Pi lane to delete only the rejected caller props and prove no target API widening.
+- Next action: Resolved; include these call sites in the next combined UI typecheck and lint gate.

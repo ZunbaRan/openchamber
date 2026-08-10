@@ -436,7 +436,7 @@ export function DesktopHostSwitcherDialog({
         hosts.map(async (h) => {
           const clientToken = h.id === LOCAL_HOST_ID ? localClientToken : (h.clientToken || '');
           const probeRelayLeg = async (): Promise<HostStatus> => {
-            const res = await probeRelayDesktopHost(h.relay!, { clientToken, requestHeaders: h.requestHeaders || null }).catch((): HostProbeResult => ({ status: 'unreachable', latencyMs: 0 }));
+            const res = await probeRelayDesktopHost(h.relay!).catch((): HostProbeResult => ({ status: 'unreachable', latencyMs: 0 }));
             return { status: res.status, latencyMs: res.latencyMs, ...(res.status === 'ok' ? { via: 'relay' as const } : {}) };
           };
           // Relay-only host: no HTTP address — probe through the E2EE tunnel.
@@ -572,7 +572,7 @@ export function DesktopHostSwitcherDialog({
       }
       let relayProbeTunnel: ReturnType<typeof createRelayTunnelClient> | undefined;
       if (!transport && host.relay) {
-        const probe = await probeRelayDesktopHost(host.relay, { keepTunnel: true, clientToken: clientToken || null, requestHeaders: host.requestHeaders || null })
+        const probe = await probeRelayDesktopHost(host.relay, { keepTunnel: true })
           .catch((): HostProbeResult => ({ status: 'unreachable', latencyMs: 0 }));
         if (probe.status === 'ok') {
           finalStatus = { status: probe.status, latencyMs: probe.latencyMs, via: 'relay' };

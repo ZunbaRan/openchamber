@@ -1786,8 +1786,6 @@ const AssistantMessageBody = React.memo(({
             return (
                 <div key={`progressive-group-${segment.id}`} className="mb-3">
                     <TurnActivity
-                        sessionId={sessionId}
-                        projectDirectory={projectDirectory}
                         parts={visibleSegmentParts}
                         isExpanded={turnGroupingContext?.isGroupExpanded === true}
                         collapsedPreviewCount={collapsedPreviewCount}
