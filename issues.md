@@ -1316,7 +1316,7 @@
 
 ## issue-067: Wire Electron prepare, verify, and runtime gates to the fork CLI lock
 
-- Status: READY
+- Status: RESOLVED
 - Classification: P0
 - Goal / user outcome: `electron:build` stages, verifies, launches, and packages only the locked fork CLI, and the packaged app proves its embedded runtime identity before installation.
 - First-principles root cause: Current Electron preparation/verification scripts use the official SDK version and lack fork runtime/provenance enforcement.
@@ -1325,12 +1325,12 @@
 - Dispatch order: Serial after the lock API and fork SDK bind are integrated.
 - Ownership: `packages/electron/scripts/prepare-opencode-cli.mjs`; `packages/electron/scripts/verify-opencode-cli.mjs`; `packages/electron/scripts/verify-opencode-cli-runtime.mjs`; `packages/electron/package.json`; root packaging command wiring in `package.json` only if issue-054 did not already own it.
 - Focused verification: Electron script tests, locked binary prepare/verify, canonical `electron:build`, packaged runtime self-check, and provenance report inspection.
-- Pi binding: unassigned
+- Pi binding: run/session `51458b31-fe52-46d3-84cb-7718a76c75f6`, batch `dca705e2-05ca-45ac-8890-bf7059cc1a45`, base `74699f8ed24a856b454a27694f9c1c9702bea9fd`, revision 0, supervised-local without sandbox; policy-clean with four changed owned paths and no dependency/staged/outside-path changes.
 - Pi attempts: none
 - Primary attempts: not eligible while Pi retries remain
-- Current evidence: Canonical packaging on 2026-08-10 fails before Electron packaging, and static inspection proves the remaining CLI path is official-upstream keyed. The maintained fork branch provides a robust lock-driven implementation for narrow replay onto the target scripts.
+- Current evidence: Pi replayed the three Electron CLI scripts byte-identically from maintained donor commit `870cc00cb471743795d2a8c9746247951e78f931` (primary independently matched blob IDs `6ea24e14`, `af1d7af5`, and `29a38fac`) and added only the two package-script verification gates. Prepare now accepts only the issue-066 lock or an explicit local override, verifies archive/binary SHA and Generative Widget manifest, and writes distribution provenance. Staged and packaged verification consume the same lock; the runtime probe validates fork capabilities and managed-tool discovery. Primary reran lock/self-check/architecture tests **10/10**, all three scripts pass Node syntax checks, and `git diff --check` is clean. Real binary download, canonical packaging, packaged runtime verification, and provenance inspection remain issue-070 gates.
 - Continuation decision: Enables issue-070 installable artifact gate.
-- Next action: Dependencies 054 and 066 are RESOLVED; dispatch one serial Pi lane with frozen ownership.
+- Next action: Resolved; issue-070 must exercise the locked binary and packaged `.app` end to end before installation.
 
 ## issue-068: Regenerate the target icon contract for retained fork surfaces
 
