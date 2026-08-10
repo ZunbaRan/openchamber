@@ -864,7 +864,32 @@ try {
   await fs.writeFile(reportPath, `${JSON.stringify(report, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
   console.log(JSON.stringify({ ...report, reportPath: path.relative(projectRoot, reportPath) }, null, 2));
 } catch (error) {
-  failure = error;
+  let rendererDiagnostics = null;
+  try {
+    rendererDiagnostics = browser
+      ? await browser.evaluate(`(() => ({
+          url: location.href,
+          artifact: (() => {
+            const host = document.querySelector('[data-ocix-artifact-host]');
+            return {
+              state: host?.getAttribute('data-ocix-artifact-state') || null,
+              backend: host?.querySelector('[data-ocix-artifact-backend]')?.getAttribute('data-ocix-artifact-backend') || null,
+              iframeCount: host?.querySelectorAll('iframe').length ?? 0,
+              text: host?.textContent?.trim().slice(0, 1_000) || null,
+            };
+          })(),
+        }))()`)
+      : null;
+  } catch {
+    // Best-effort diagnostics must not replace the original acceptance error.
+  }
+  const message = error instanceof Error ? error.message : String(error);
+  failure = new Error([
+    message,
+    `Renderer diagnostics: ${JSON.stringify(rendererDiagnostics)}`,
+    `Renderer errors: ${JSON.stringify(browser?.runtimeErrors ?? [])}`,
+    `Application output (tail): ${processOutput.slice(-5_000)}`,
+  ].join('\n'), { cause: error });
 } finally {
   try {
     browser?.socket.close();

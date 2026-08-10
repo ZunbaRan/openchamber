@@ -14,7 +14,9 @@ const createHarness = () => {
   let nextWebContentsId = 1;
   let now = 1_000;
   let metrics = [];
+  let failNextLoad = false;
   const emitted = [];
+  const order = [];
   const partitionSessions = [];
   const browserWindows = [];
   class MockWebContents extends EventEmitter {
@@ -26,7 +28,15 @@ const createHarness = () => {
       this.osPid = 100 + this.id;
     }
     setWindowOpenHandler(handler) { this.windowOpenHandler = handler; }
-    loadURL(url) { this.url = url; return Promise.resolve(); }
+    loadURL(url) {
+      this.url = url;
+      order.push({ type: 'loadURL', webContents: this });
+      if (failNextLoad) {
+        this.emit('did-fail-load', {}, -3, 'ERR_ABORTED', url, true);
+        return Promise.reject(new Error('net::ERR_ABORTED'));
+      }
+      return Promise.resolve();
+    }
     send(channel, message) { this.sent.push({ channel, message }); }
     close() { this.closed = true; }
     forcefullyCrashRenderer() { this.closed = true; }
@@ -77,8 +87,14 @@ const createHarness = () => {
   const owner = {
     contentView: {
       children: [],
-      addChildView(view) { this.children.push(view); },
-      removeChildView(view) { this.children = this.children.filter((entry) => entry !== view); },
+      addChildView(view) {
+        this.children.push(view);
+        order.push({ type: 'addChildView', view });
+      },
+      removeChildView(view) {
+        this.children = this.children.filter((entry) => entry !== view);
+        order.push({ type: 'removeChildView', view });
+      },
     },
     isDestroyed: () => false,
     getContentBounds: () => ({ x: 0, y: 0, width: 1_200, height: 800 }),
@@ -90,6 +106,7 @@ const createHarness = () => {
     app: { getAppMetrics: () => metrics },
     preloadPath: '/app/artifact-runner-preload.cjs',
     emit: (_window, detail) => emitted.push(detail),
+    logger: { warn() {} },
     now: () => now,
     setIntervalImpl: () => ({ unref() {} }),
     clearIntervalImpl() {},
@@ -98,10 +115,12 @@ const createHarness = () => {
     manager,
     owner,
     emitted,
+    order,
     browserWindows,
     partitionSessions,
     setNow(value) { now = value; },
     setMetrics(value) { metrics = value; },
+    setFailNextLoad(value) { failNextLoad = value; },
   };
 };
 
@@ -122,6 +141,45 @@ test('starts a sandboxed runner with denied permissions and destroys it on stop'
   assert.equal(harness.manager.stop(state.id).stopped, true);
   assert.equal(view.webContents.closed, true);
   assert.equal(harness.owner.contentView.children.length, 0);
+});
+
+test('attaches the empty invisible view before loading the artifact document', async () => {
+  const harness = createHarness();
+  const url = `http://127.0.0.1:47832/api/interactive-ui/artifacts/${'a'.repeat(64)}/document`;
+  await harness.manager.start(harness.owner, { url, bounds: { x: 0, y: 0, width: 640, height: 360 } });
+  const view = harness.owner.contentView.children[0];
+  const attachAt = harness.order.findIndex((entry) => entry.type === 'addChildView' && entry.view === view);
+  const loadAt = harness.order.findIndex((entry) => entry.type === 'loadURL' && entry.webContents === view.webContents);
+  assert.notEqual(attachAt, -1);
+  assert.notEqual(loadAt, -1);
+  assert.ok(attachAt < loadAt, 'the empty view must attach before loadURL');
+  assert.equal(view.visible, false);
+});
+
+test('detaches the view and clears runner state when the document load fails', async () => {
+  const harness = createHarness();
+  harness.setFailNextLoad(true);
+  const url = `http://127.0.0.1:47832/api/interactive-ui/artifacts/${'f'.repeat(64)}/document`;
+  await assert.rejects(
+    harness.manager.start(harness.owner, { url, bounds: { x: 0, y: 0, width: 640, height: 360 } }),
+    /Artifact Runner document could not be loaded/,
+  );
+  const attachEvent = harness.order.find((entry) => entry.type === 'addChildView');
+  assert.ok(attachEvent, 'start must attach the view before loading');
+  const view = attachEvent.view;
+  const attachAt = harness.order.indexOf(attachEvent);
+  const loadAt = harness.order.findIndex((entry) => entry.type === 'loadURL' && entry.webContents === view.webContents);
+  const detachAt = harness.order.findIndex((entry) => entry.type === 'removeChildView' && entry.view === view);
+  assert.ok(attachAt < loadAt, 'the view must attach before loadURL');
+  assert.notEqual(detachAt, -1, 'a failed load must detach the view');
+  assert.ok(loadAt < detachAt, 'the detach must follow the failed load');
+  assert.equal(harness.owner.contentView.children.length, 0);
+  assert.equal(view.webContents.closed, true);
+  assert.equal(harness.partitionSessions[0].cleared, true);
+  const terminated = harness.emitted.at(-1);
+  assert.equal(terminated.type, 'terminated');
+  assert.equal(terminated.reason, 'load-failed');
+  assert.equal(harness.manager.get(terminated.runnerId), null);
 });
 
 test('stops every native runner owned by a window when that owner navigates', async () => {

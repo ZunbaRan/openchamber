@@ -253,7 +253,15 @@ export const createArtifactRunnerManager = ({
     runner.webContents.on('did-fail-load', (_event, _code, _description, failedUrl, isMainFrame) => {
       if (isMainFrame && failedUrl === url) stop(id, 'load-failed');
     });
+    // Attach the empty, invisible view to the live owner before navigating.
+    // Loading the CSP-sandboxed (opaque-origin) artifact document first and
+    // only then attaching the view makes Chromium reject the site tuple, so
+    // no loaded/layout acknowledgement ever reaches the host. The view stays
+    // hidden and unreported until navigation succeeds and staged geometry is
+    // acknowledged; a failed load reuses stop() to detach, close, and clear.
     try {
+      owner.contentView.addChildView(view);
+      runner.attached = true;
       await runner.webContents.loadURL(url);
     } catch (error) {
       logger.warn?.('[ArtifactRunner] document load failed', error?.message || error);
@@ -261,8 +269,6 @@ export const createArtifactRunnerManager = ({
       throw new Error('Artifact Runner document could not be loaded');
     }
     if (!runners.has(id)) throw new Error('Artifact Runner document could not be loaded');
-    owner.contentView.addChildView(view);
-    runner.attached = true;
     runner.state = 'running';
     stageGeometry(runner, resolveGeometry(runner.container, runner.requestedBounds, runner.requestedClipBounds));
     return publicState(runner);

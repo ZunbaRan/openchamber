@@ -1504,7 +1504,7 @@
 
 ## issue-077: Restore the declared packaged desktop acceptance harness
 
-- Status: RESOLVED
+- Status: VERIFYING
 - Classification: P0
 - Goal / user outcome: The canonical arm64 `OpenChamber.app` is exercised through the repository-declared packaged desktop acceptance command before replacing the installed application.
 - First-principles root cause: `package.json` declares `test:interactive-ui-desktop-packaged`, but the referenced `packages/electron/scripts/verify-packaged-interactive-ui.mjs` was omitted from this integration branch even though the maintained donor contains the complete harness and the target retains all of its fixture/helper dependencies.
@@ -1558,7 +1558,7 @@
 
 ## issue-080: Bind staged Local package validation in production runtime wiring
 
-- Status: READY
+- Status: RESOLVED
 - Classification: P0
 - Goal / user outcome: A trusted signed Local OCIX package can install through the real packaged server only after its staged tree passes the same Interactive UI runtime manifest contract.
 - First-principles root cause: The hardened Manager intentionally fails closed without an injected `validateStagedPackage` adapter, but `createFeatureRoutesRuntime(...).registerRoutes` binds the Remote normalizer and activation reconciler only. Focused Manager tests used injected test adapters, so production installation remained unexercised until the packaged acceptance reached it.
@@ -1573,3 +1573,23 @@
 - Current evidence: The production registration suite passes 9/9 (108 assertions), including a real signed/trusted Local package appearing in both Manager and runtime registry plus a runtime-invalid package rejected before activation with controlled `staged_extension_invalid`. Manager/Remote/Artifact regressions pass 129/129 (730 assertions); Web typecheck, Web lint, and `git diff --check` pass. The initial sandbox run could not bind loopback port 0; the identical test passed in the approved host test environment.
 - Continuation decision: The Manager remains fail-closed without an adapter, while production now supplies the authoritative staged-only validator without exposing paths or raw parser errors.
 - Next action: Resolved; rebuild the Electron package and rerun packaged desktop acceptance end to end.
+
+## issue-081: Attach sandboxed Artifact Runner before document navigation
+
+- Status: VERIFYING
+- Classification: P0
+- Goal / user outcome: Script-enabled generated and installed HTML Artifacts render through the native Desktop Runner inside the packaged `openchamber-ui://` application instead of timing out.
+- First-principles root cause: The Artifact document response is intentionally CSP-sandboxed and therefore has an opaque top-level origin. `createArtifactRunnerManager.start` currently loads that document before attaching its `WebContentsView` to the owning window; packaged Electron then rejects the invalid site tuple during attachment. The host never receives the Runner `loaded`/heartbeat path and transitions to `timed-out`.
+- Core acceptance invariant: The empty Runner view is attached to the live owner before navigation, remains invisible until layout acknowledgement, and is fully detached/closed on load failure. URL allowlisting, isolated partition, permission denial, navigation blocking, limits, clipping, popout behavior, and controlled public errors remain unchanged. A focused unit test must lock the attach-before-load ordering and failure cleanup; packaged acceptance must reach `desktop-runner` ready rather than `timed-out` without Chromium origin-tuple errors.
+- Dependencies: issues 077, 080
+- Dispatch order: Serial blocker for the next packaged desktop acceptance rerun.
+- Ownership: `packages/electron/artifact-runner.mjs`; `packages/electron/artifact-runner.test.mjs`.
+- Focused verification: `bun run --cwd packages/electron test:artifact-runner`, Electron syntax/type check, `git diff --check`, then primary rebuild plus `bun run test:interactive-ui-desktop-packaged` against the rebuilt app.
+- Pi binding: run/session `f6dff310-ae57-4661-aa52-b7981bb17685`, base `f35b4ffdf220c3b21c94d25a95a54d0361005e33`, revision 0, supervised-local worktree `/Users/loloru/.codex/sol-pi-advisor/worktrees/f6dff310-ae57-4661-aa52-b7981bb17685`.
+- Pi attempts: Revision 0 changed only the two owned files, restored attach-before-load ordering, and added explicit success-order plus load-failure cleanup tests; policy state is clean with diff digest `d6adc16b…`. No correction has been required.
+- Primary attempts: none while Pi retries remain. Primary integrated the exact revision-0 candidate and independently reran its focused gates.
+- Current evidence: Before the fix, two rebuilt-package acceptance runs reached signed Local OCIX install, then timed out with host state `timed-out`, no iframe/backend, and repeated Chromium opaque-origin site-tuple failures. In both the Pi and integration worktrees, the candidate passes 9/9 Artifact Runner tests, Electron syntax/type check, exact candidate comparison, and `git diff --check`; the new negative test proves failed navigation detaches/closes the View, clears partition storage/state, and emits controlled `load-failed` termination.
+- Suspension decision: n/a
+- Resume condition: n/a
+- Continuation decision: Restore the required lifecycle ordering with focused regression coverage; do not weaken CSP sandboxing or fall back to an iframe for scripts.
+- Next action: Rebuild the packaged app and rerun the full packaged desktop acceptance against revision 0.
