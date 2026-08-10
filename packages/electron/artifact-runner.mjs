@@ -254,11 +254,11 @@ export const createArtifactRunnerManager = ({
       if (isMainFrame && failedUrl === url) stop(id, 'load-failed');
     });
     // Attach the empty, invisible view to the live owner before navigating.
-    // Loading the CSP-sandboxed (opaque-origin) artifact document first and
-    // only then attaching the view makes Chromium reject the site tuple, so
-    // no loaded/layout acknowledgement ever reaches the host. The view stays
-    // hidden and unreported until navigation succeeds and staged geometry is
-    // acknowledged; a failed load reuses stop() to detach, close, and clear.
+    // Ownership before navigation establishes deterministic lifecycle
+    // ordering: the view is attached once, before any document state exists,
+    // and a failed load reuses stop() to detach, close, and clear state. The
+    // view stays hidden and unreported until navigation succeeds and staged
+    // geometry is acknowledged.
     try {
       owner.contentView.addChildView(view);
       runner.attached = true;
