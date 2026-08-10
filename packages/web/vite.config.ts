@@ -131,6 +131,9 @@ export default defineConfig({
         main: path.resolve(__dirname, 'index.html'),
         mobile: path.resolve(__dirname, 'mobile.html'),
         miniChat: path.resolve(__dirname, 'mini-chat.html'),
+        interactiveUiDemo: path.resolve(__dirname, 'interactive-ui-demo.html'),
+        workbenchPopout: path.resolve(__dirname, 'workbench-popout.html'),
+        artifactPopoutHost: path.resolve(__dirname, 'artifact-popout-host.html'),
       },
       external: ['node:child_process', 'node:fs', 'node:path', 'node:url'],
       output: {

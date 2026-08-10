@@ -1531,9 +1531,27 @@
 - Dispatch order: Before rebuilding the canonical app and rerunning issue-077.
 - Ownership: `packages/web/artifact-popout-host.html`; `packages/web/interactive-ui-demo.html`; `packages/web/workbench-popout.html`; `packages/web/src/interactive-ui-demo.tsx`; `packages/web/src/workbench-popout.tsx`; `packages/web/vite.config.ts`. Six files are one indivisible multi-page build contract: the five entry documents/modules and the existing Vite input map that makes them distributable.
 - Focused verification: Donor byte comparison for the five restored files; exact three-key Vite diff; Web typecheck/lint; production Web build; assert all three HTML files and their referenced assets exist in `packages/web/dist`; `git diff --check`.
+- Pi binding: run `172ab3ab-f37d-44a9-b346-7c4725fe578e`, base `0a9f2139`, revision 1 partial; policy-clean with exactly the six owned paths.
+- Pi attempts: Revision 0 was recoverably paused after producing no candidate; correction 1 restored the five donor files and three exact Vite keys, then isolated two missing out-of-scope fixture dependencies and one owned lint error. Correction 2 is narrowing the owned lint fix only.
+- Primary attempts: none while Pi retries remain.
+- Current evidence: The policy-clean candidate restores all five files at exact donor blob hashes and changes Vite by exactly three input lines. A disposable alias build proves all six pages emit and every hashed asset resolves. The real build now fails only because the donor demo entry imports two additional omitted fixture files tracked by issue-079; owned lint has one entry-module-only React Refresh error under correction.
+- Continuation decision: Accept the six-file slice after its owned lint is clean; issue-079 completes the dependency graph before the production rebuild.
+- Next action: Finish correction 2, then run issue-079 from the integrated base.
+
+## issue-079: Restore the demo entry fixture dependency graph
+
+- Status: READY
+- Classification: P0
+- Goal / user outcome: The restored packaged Interactive UI demo entry typechecks and builds from checked-in sources without aliases or undeclared modules.
+- First-principles root cause: The omitted multi-page entry also statically imports `packages/web/src/interactive-ui-visual-fixtures.ts` and the JavaScript fixture `examples/interactive-ui/artifact-fixtures.mjs` requires its maintained adjacent declaration file. Both were omitted from the integration branch.
+- Core acceptance invariant: Restore the two maintained donor fixture support files byte-for-byte; do not alter the demo entry, fixture implementation, TypeScript config, or module resolution. The real Web typecheck, lint, and production build must pass without scratch aliases.
+- Dependencies: issue-078
+- Dispatch order: Immediately after the six-file entry-point slice.
+- Ownership: `packages/web/src/interactive-ui-visual-fixtures.ts`; `examples/interactive-ui/artifact-fixtures.d.mts`.
+- Focused verification: Exact donor blob hashes, Web typecheck and lint, real production Web build, all three restored HTML outputs and referenced assets, `git diff --check`.
 - Pi binding: pending
 - Pi attempts: none
 - Primary attempts: none while Pi retries remain.
-- Current evidence: Production Electron code resolves `/artifact-popout-host.html`, UI resolves `/workbench-popout.html`, and the packaged acceptance harness resolves `/interactive-ui-demo.html`; none exists in the current source or built output. Maintained donor commit `870cc00c` contains the five files and the three Vite input keys.
-- Continuation decision: Restore this missing packaged surface before issue-070 review or installation.
-- Next action: Dispatch through Sol Pi Advisor with the six-file multi-page contract only.
+- Current evidence: Real build fails resolving `./interactive-ui-visual-fixtures`; Web typecheck additionally reports no declaration for `examples/interactive-ui/artifact-fixtures.mjs`. The maintained donor contains both files, and a scratch-only alias of the exact visual fixture makes the full build emit all expected pages.
+- Continuation decision: Restore this exact two-file dependency graph; no config workaround is acceptable.
+- Next action: Dispatch the two-file READY issue through Sol Pi Advisor.
