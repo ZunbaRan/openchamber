@@ -1555,3 +1555,21 @@
 - Current evidence: Both files are byte-identical to donor blobs `e52e1695…` and `ad2f0540…`. Pi and primary independently pass Web typecheck, Web lint, and the real checked-in-config production build without aliases. The build emits `interactive-ui-demo.html`, `workbench-popout.html`, and `artifact-popout-host.html`; all local hashed references resolve.
 - Continuation decision: Resolves the demo dependency graph and removes the last known Web build blocker.
 - Next action: Resolved; rebuild the Electron package so staged Web assets include these pages.
+
+## issue-080: Bind staged Local package validation in production runtime wiring
+
+- Status: READY
+- Classification: P0
+- Goal / user outcome: A trusted signed Local OCIX package can install through the real packaged server only after its staged tree passes the same Interactive UI runtime manifest contract.
+- First-principles root cause: The hardened Manager intentionally fails closed without an injected `validateStagedPackage` adapter, but `createFeatureRoutesRuntime(...).registerRoutes` binds the Remote normalizer and activation reconciler only. Focused Manager tests used injected test adapters, so production installation remained unexercised until the packaged acceptance reached it.
+- Core acceptance invariant: Production wiring supplies a staged-tree validator that uses the authoritative runtime parser against only the staged directory, rejects load errors, duplicate/missing extensions, or any id/version mismatch with the verified package, and exposes no staged path or raw parser error publicly. Existing Remote validation, authorization, activation, and route ordering remain unchanged. A public-route test must install a real signed/trusted Local package and prove it appears in both Manager and runtime registry.
+- Dependencies: issues 014, 061, 077
+- Dispatch order: Before the next packaged acceptance rerun.
+- Ownership: `packages/web/server/lib/opencode/feature-routes-runtime.js`; `packages/web/server/lib/opencode/feature-routes-runtime.test.js`.
+- Focused verification: New production-registration Local install test, existing feature-routes runtime suite, Interactive UI Manager/routes regressions, Web lint/typecheck, `git diff --check`.
+- Pi binding: pending
+- Pi attempts: none
+- Primary attempts: none while Pi retries remain.
+- Current evidence: The rebuilt app passes package inspection and explicit Publisher trust, then `POST /api/interactive-ui/manager/packages` fails closed with HTTP 503 `extension_validation_unavailable`. `feature-routes-runtime.js` constructs the Manager without `validateStagedPackage`; the Manager contract and documentation require that caller-owned adapter.
+- Continuation decision: Wire and test the missing production adapter; do not weaken the Manager fail-closed behavior.
+- Next action: Dispatch this two-file production seam through Sol Pi Advisor.
