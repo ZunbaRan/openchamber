@@ -660,23 +660,23 @@
 
 ## issue-034: Add the narrow Widget send bridge to target ChatInput
 
-- Status: RESOLVED
-- Classification: NORMAL
+- Status: READY
+- Classification: P0
 - Goal / user outcome: `window.__widgetSendMessage` follow-ups use the current session/provider/model/agent/variant through the normal send path.
 - First-principles root cause: The target ChatInput does not register the Widget send handler.
 - Core acceptance invariant: The bridge is bounded and cleaned up; it never sends without current authoritative context or lets the iframe call APIs directly; ordinary ChatInput behavior remains target-owned.
-- Dependencies: issue-031
-- Dispatch order: Serial host seam after bridge module.
+- Dependencies: issue-031, issue-069
+- Dispatch order: Serial host seam after bridge and composer-prefill contracts.
 - Ownership: `packages/ui/src/components/chat/ChatInput.tsx`; one focused bridge lifecycle test if target precedent supports it.
 - Focused verification: Focused bridge lifecycle test plus UI typecheck/lint; inspect current-context fidelity and cleanup.
-- Pi binding: unassigned
+- Pi binding: unassigned for the reopened repair
 - Pi attempts: none
 - Primary attempts: not eligible while Pi retries remain
-- Current evidence: Bulk READY restoration 2026-08-09: modules restored from accepted openchamber fork client surfaces (interactive-ui lib/client/manager/routing/review/workbench, generative-widget runtime bridges, settings sections, chat ToolPart/AssistantTextPart/ChatInput dispatch, Electron artifact-runner + desktop-binary-save, acceptance scripts). Focused re-verify 2026-08-09: UI 346/346 pass (0 fail) + electron artifact/binary-save 15/15 pass (0 fail); logs under goal implementer scratch ready-unit-gate.log.  Donor adds one effect; target ChatInput is upstream-active.
+- Current evidence: Reopened 2026-08-10. Integration `ChatInput.tsx` is byte-identical to the older donor generation instead of upstream v1.18.1. Canonical `electron:build` fails after 2348 modules because it imports absent `./MobileSessionStatusBar`; UI typecheck also reports donor/target signature mismatches for slash starters and `MobilePillComposerProps`. issue-069 now provides the bounded authoritative prefill event. The correct repair is upstream v1.18.1 ChatInput plus only the proven Widget-send and composer-prefill effects, not adding the donor-only missing component.
 - Suspension decision: n/a
 - Resume condition: n/a
 - Continuation decision: Enables Widget model E2E.
-- Next action: Resolved in bulk READY closeout (2026-08-09): donor UI/client/workbench/widget/settings/electron/acceptance modules ported into integration worktree; focused unit gates 361/361 + electron artifact/binary-save 15/15; `@modelcontextprotocol/ext-apps@1.7.5` bound for MCP App host.
+- Next action: Dispatch one supervised-local Pi lane restricted to `ChatInput.tsx` and an adjacent focused test if supported; require line-level target diff and canonical Web build to advance past the prior missing-module failure.
 
 ## issue-035: Restore Applications settings feature sections
 
