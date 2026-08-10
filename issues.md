@@ -562,7 +562,7 @@
 
 ## issue-029: Restore OpenCode capability and MCP App client wrappers
 
-- Status: RESOLVED
+- Status: READY
 - Classification: NORMAL
 - Goal / user outcome: Shared UI reads the fork capability document and performs exact MCP App resource/tool-call requests across supported runtimes.
 - First-principles root cause: Target `opencode/client.ts` lacks fork API gaps and runtime capability diagnostics.
@@ -574,11 +574,11 @@
 - Pi binding: unassigned
 - Pi attempts: none
 - Primary attempts: not eligible while Pi retries remain
-- Current evidence: Bulk READY restoration 2026-08-09: modules restored from accepted openchamber fork client surfaces (interactive-ui lib/client/manager/routing/review/workbench, generative-widget runtime bridges, settings sections, chat ToolPart/AssistantTextPart/ChatInput dispatch, Electron artifact-runner + desktop-binary-save, acceptance scripts). Focused re-verify 2026-08-09: UI 346/346 pass (0 fail) + electron artifact/binary-save 15/15 pass (0 fail); logs under goal implementer scratch ready-unit-gate.log.  Target `client.ts`/tests are byte-identical to upstream v1.18.1. Donor's direct HTTP MCP App calls work around an obsolete generated-SDK bug that dropped `partID`/`toolKey`; the accepted OpenCode v1.18.15 SDK now carries every required field, so issue-029 must use the runtime-scoped SDK and must not restore the hard-coded compatibility layer. The target capability endpoint is still absent and is now explicitly owned by issue-014.
+- Current evidence: Reopened 2026-08-10. After the workspace is bound to fork SDK `1.18.10-oc.1`, UI typecheck proves `McpAppRenderer` cannot import `OpenCodeMcpAppResource` and `OpencodeService` lacks `getMcpAppResource`/`callMcpAppTool`; Workbench and ToolPart also lack scoped message-part wrappers. The installed fork SDK exposes generated `global.capabilities`, `mcp.appResource`, `mcp.appToolCall`, `part.update`, and exact MCP identity fields. The repair must wrap those runtime-scoped SDK methods rather than replay donor direct-HTTP compatibility code.
 - Suspension decision: n/a
 - Resume condition: n/a
 - Continuation decision: Enables issues 028 and 026.
-- Next action: Resolved in bulk READY closeout (2026-08-09): donor UI/client/workbench/widget/settings/electron/acceptance modules ported into integration worktree; focused unit gates 361/361 + electron artifact/binary-save 15/15; `@modelcontextprotocol/ext-apps@1.7.5` bound for MCP App host.
+- Next action: Dispatch one bounded Pi lane on current target `client.ts` plus discovered focused tests; require exact fork-SDK method use and typecheck delta.
 
 ## issue-030: Restore Generative Widget parsing and sanitization
 
@@ -720,7 +720,7 @@
 
 ## issue-037: Add only fork-required localization keys
 
-- Status: RESOLVED
+- Status: READY
 - Classification: NORMAL
 - Goal / user outcome: Fork Applications, Workbench, Artifact, MCP App, and Widget surfaces have complete supported-locale labels while upstream wording remains target-owned.
 - First-principles root cause: New fork surfaces require keys absent from target locale modules.
@@ -732,11 +732,11 @@
 - Pi binding: unassigned
 - Pi attempts: none
 - Primary attempts: not eligible while Pi retries remain
-- Current evidence: Bulk READY restoration 2026-08-09: modules restored from accepted openchamber fork client surfaces (interactive-ui lib/client/manager/routing/review/workbench, generative-widget runtime bridges, settings sections, chat ToolPart/AssistantTextPart/ChatInput dispatch, Electron artifact-runner + desktop-binary-save, acceptance scripts). Focused re-verify 2026-08-09: UI 346/346 pass (0 fail) + electron artifact/binary-save 15/15 pass (0 fail); logs under goal implementer scratch ready-unit-gate.log.  Donor locale files contain broad upstream drift, so only exact fork keys may be replayed.
+- Current evidence: Reopened 2026-08-10. The current locale corpus came from a donor generation and omits many v1.18.1 target keys; UI typecheck now reports 196 TS2345 key errors across upstream provider, walkthrough, mobile, file, git, session, and retained fork settings surfaces. Correct reconciliation is immutable v1.18.1 locale baselines plus only the exact retained fork keys, with identical supported-locale key sets; donor-wide locale copies remain forbidden.
 - Suspension decision: n/a
 - Resume condition: n/a
 - Continuation decision: Enables final settings/workbench acceptance.
-- Next action: Resolved in bulk READY closeout (2026-08-09): donor UI/client/workbench/widget/settings/electron/acceptance modules ported into integration worktree; focused unit gates 361/361 + electron artifact/binary-save 15/15; `@modelcontextprotocol/ext-apps@1.7.5` bound for MCP App host.
+- Next action: Dispatch one locale-only Pi lane; primary independently measures TS2345 elimination and key parity.
 
 ## issue-038: Restore Workbench shared client state
 
@@ -820,7 +820,7 @@
 
 ## issue-042: Persist only Workbench UI state in the target UI store
 
-- Status: RESOLVED
+- Status: READY
 - Classification: NORMAL
 - Goal / user outcome: The upstream UI store persists the minimum Workbench tab/layout visibility state without adopting unrelated donor preferences.
 - First-principles root cause: Target `useUIStore` has no Workbench fields or sanitizer.
@@ -832,15 +832,15 @@
 - Pi binding: unassigned
 - Pi attempts: none
 - Primary attempts: not eligible while Pi retries remain
-- Current evidence: Bulk READY restoration 2026-08-09: modules restored from accepted openchamber fork client surfaces (interactive-ui lib/client/manager/routing/review/workbench, generative-widget runtime bridges, settings sections, chat ToolPart/AssistantTextPart/ChatInput dispatch, Electron artifact-runner + desktop-binary-save, acceptance scripts). Focused re-verify 2026-08-09: UI 346/346 pass (0 fail) + electron artifact/binary-save 15/15 pass (0 fail); logs under goal implementer scratch ready-unit-gate.log.  Donor and target stores diverge broadly; whole-file replacement is forbidden.
+- Current evidence: Reopened 2026-08-10. Current `useUIStore.ts` is target v1.18.1 and lacks retained fork fields used by Workbench/Artifact hosts: right-sidebar open/tab controls and `ocixStylePreset`; it also does not export the context-panel sizing constants expected by the current host. UI typecheck reports these as a coherent store contract cluster. The repair must add only versioned/sanitized fork state and proven exports to the target store.
 - Suspension decision: n/a
 - Resume condition: n/a
 - Continuation decision: Enables layout registration.
-- Next action: Resolved in bulk READY closeout (2026-08-09): donor UI/client/workbench/widget/settings/electron/acceptance modules ported into integration worktree; focused unit gates 361/361 + electron artifact/binary-save 15/15; `@modelcontextprotocol/ext-apps@1.7.5` bound for MCP App host.
+- Next action: Dispatch one bounded target-store Pi lane with a focused persistence/sanitizer test.
 
 ## issue-043: Register the Workbench tab in the upstream right sidebar
 
-- Status: RESOLVED
+- Status: OPEN
 - Classification: NORMAL
 - Goal / user outcome: The Workbench is reachable as a right-sidebar tab without changing any upstream terminal/files/git tab behavior.
 - First-principles root cause: Target right-sidebar tabs lack the feature.
@@ -860,7 +860,7 @@
 
 ## issue-044: Host Workbench mode in the upstream Context Panel
 
-- Status: RESOLVED
+- Status: OPEN
 - Classification: NORMAL
 - Goal / user outcome: Selecting Workbench renders the persistent board in the existing Context Panel with correct close/focus behavior.
 - First-principles root cause: Target Context Panel has no Workbench mode.
