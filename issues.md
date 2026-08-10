@@ -1280,7 +1280,7 @@
 
 ## issue-065: Restore the v1.18.1 desktop settings contract before replaying fork adapters
 
-- Status: READY
+- Status: RESOLVED
 - Classification: P0
 - Goal / user outcome: Official v1.18.1 desktop, provider, walkthrough, persistence, and mobile UI compile and behave normally while retained fork capabilities use only explicit narrow desktop adapters.
 - First-principles root cause: `packages/ui/src/lib/desktop.ts` was copied wholesale from the older donor generation while its consumers are target v1.18.1. That incompatible type/behavior boundary accounts for a large cluster of TS2345/TS2339/TS2322 failures.
@@ -1289,12 +1289,12 @@
 - Dispatch order: Independent foundation wave; may run with issue-068, issue-069, and issue-042 because paths and contracts are disjoint.
 - Ownership: `packages/ui/src/lib/desktop.ts`; `packages/ui/src/lib/desktop.test.ts` if a focused regression is required.
 - Focused verification: Relevant desktop tests, `bun run type-check:ui` error delta, line-level diff against upstream v1.18.1, and `git diff --check`.
-- Pi binding: unassigned
+- Pi binding: run/session `4247002c-da0f-476a-9bb8-78dcba70a874`, batch `7c48e442-3dbe-4be2-a421-8b5f59cc69ac`, base `9024883a1c77b5bc1e9133760dc1ef9b7083026d`, revision 0, supervised-local without sandbox; policy-clean with exactly the two owned paths.
 - Pi attempts: none
 - Primary attempts: not eligible while Pi retries remain
-- Current evidence: Reopened packaging audit at integration HEAD `a3ce959d016bcefd6cf20569d74a794c7564e899`: `desktop.ts` is byte-identical to the donor branch and differs from upstream v1.18.1 while most failing consumers remain target-owned. Full UI typecheck reports 289 errors.
+- Current evidence: Pi restored immutable upstream v1.18.1 `desktop.ts` plus only three consumer-proven fork exports (`canUseTrustedDesktopFileIPC`, `listenDesktopEvent`, `saveDesktopBinaryFile`) and their private helpers. Primary independently ran desktop + composer focused tests **20/20**, synchronized dependencies from the frozen committed lock, and measured UI typecheck **289 → 266** after issues 065 and 069 together; the owned desktop files have zero errors and diff against v1.18.1 is four additive fork-adapter hunks with no target deletions.
 - Continuation decision: Enables trustworthy persistence/provider/walkthrough type repair without donor-wide UI replacement.
-- Next action: Dispatch a supervised-local Pi lane with the two-file ceiling; primary verifies that target contracts are restored and only demonstrably required fork members remain.
+- Next action: Resolved; remaining type errors belong to separately ledgered host/i18n/client seams.
 
 ## issue-066: Add a deterministic fork OpenCode CLI distribution lock and self-check contract
 
@@ -1352,7 +1352,7 @@
 
 ## issue-069: Restore a narrow authoritative composer-prefill event contract
 
-- Status: READY
+- Status: RESOLVED
 - Classification: P0
 - Goal / user outcome: Artifact/Workbench actions can prefill the current target composer without importing donor ChatInput chrome or bypassing the normal send path.
 - First-principles root cause: Retained fork surfaces call a composer-prefill event that is absent from target `sessionEvents.ts`; copying donor ChatInput wholesale hid the missing contract and introduced an unresolved `MobileSessionStatusBar` import.
@@ -1361,12 +1361,12 @@
 - Dispatch order: Event contract before issue-034 replays the target ChatInput adapters.
 - Ownership: `packages/ui/src/lib/sessionEvents.ts`; a focused adjacent test file if needed.
 - Focused verification: Focused event subscribe/unsubscribe/bounds tests, UI typecheck error delta, and `git diff --check`.
-- Pi binding: unassigned
-- Pi attempts: none
+- Pi binding: run/session `6df2d9dd-8c47-4784-85ee-2e0c9031104a`, batch `7c48e442-3dbe-4be2-a421-8b5f59cc69ac`, base `9024883a1c77b5bc1e9133760dc1ef9b7083026d`, final revision 2, supervised-local without sandbox; policy-clean with exactly the two owned paths.
+- Pi attempts: correction 1 added runtime-invalid/size/identity bounds after primary proved revision 0 called `.trim()` on unchecked input and had no maximum. Correction 2 (final) replaced `Object.keys` + per-key descriptor rereads after primary proved a stateful descriptor-proxy TOCTOU; the final atomic descriptor snapshot reads each key/descriptor once.
 - Primary attempts: not eligible while Pi retries remain
-- Current evidence: `sessionEvents.ts` is byte-identical to upstream v1.18.1 while retained fork consumers require the missing prefill API; current ChatInput is donor-wide and canonical build fails resolving `./MobileSessionStatusBar`.
+- Current evidence: Final revision 2 adds only the bounded prefill contract to upstream v1.18.1: 4,000-character text and 128-character optional session identity, exact valid-text preservation, deterministic disposer, atomic own-data snapshot, and fail-closed malformed/accessor/proxy handling. Primary independently ran the combined desktop/session suites **20/20**; session tests are **14/14**, `git diff --check` passes, and the final UI typecheck is 266 errors with no owned-file error.
 - Continuation decision: Enables issue-034 to restore upstream ChatInput and add only Widget-send and prefill listeners.
-- Next action: Dispatch a supervised-local Pi lane restricted to the event contract and its focused test.
+- Next action: Resolved; issue-034 may now restore upstream ChatInput and replay only Widget-send plus composer-prefill adapters.
 
 ## issue-070: Close the canonical build, fork provenance, package, and local installation gate
 

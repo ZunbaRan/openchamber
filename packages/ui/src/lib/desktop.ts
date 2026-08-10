@@ -1,4 +1,4 @@
-import type { ProjectEntry, TerminalShell } from '@/lib/api/types';
+import type { ProjectEntry, RuntimeAPIs, TerminalShell } from '@/lib/api/types';
 import { getInjectedBootOutcome } from '@/lib/desktopBoot';
 import type { DraftStarterRef } from '@/lib/draftStarters';
 import type { MobileKeyboardMode } from '@/lib/mobileKeyboardMode';
@@ -12,7 +12,6 @@ type ManagedRemoteTunnelPreset = {
 };
 
 export type UpdateInfo = {
-  updatesEnabled?: boolean;
   available: boolean;
   version?: string;
   currentVersion: string;
@@ -42,6 +41,8 @@ export type SkillCatalogConfig = {
 export type DesktopWindowControlsPosition = 'left' | 'right';
 export type DesktopWindowControlsSide = 'left' | 'right';
 export type DesktopWindowControlAction = 'close' | 'minimize' | 'maximize';
+// No fixed-width constant: control width depends on the style (classic vs traffic-lights).
+export type DesktopWindowControlsStyle = 'classic' | 'traffic-lights';
 
 export type DesktopSettings = {
   themeId?: string;
@@ -106,6 +107,7 @@ export type DesktopSettings = {
     renamedGroups?: Record<string, string>;  // groupId -> custom label
   }>;  // Per-provider custom model groups configuration
   autoDeleteEnabled?: boolean;
+  autoSaveEnabled?: boolean;
   autoDeleteAfterDays?: number;
   sessionRetentionAction?: 'archive' | 'delete';
   tunnelProvider?: string;
@@ -129,6 +131,10 @@ export type DesktopSettings = {
   sessionGoalDefaultBudgetEnabled?: boolean;
   sessionGoalDefaultBudget?: number;
   smallModelOverride?: string; // format: "provider/model"
+  // The walkthrough needs structured output and a roomy context, which the
+  // small model is often deliberately not chosen for. Unset means "use the
+  // small model"; a value replaces it for this feature only.
+  walkthroughModelOverride?: string; // format: "provider/model"
   defaultGitIdentityId?: string; // ''/undefined = unset, 'global' or profile id
   openInAppId?: string;
   autoCreateWorktree?: boolean;
@@ -143,6 +149,7 @@ export type DesktopSettings = {
   pwaOrientation?: 'system' | 'portrait' | 'landscape';
   mobileKeyboardMode?: MobileKeyboardMode;
   desktopWindowControlsPosition?: DesktopWindowControlsPosition;
+  desktopWindowControlsStyle?: DesktopWindowControlsStyle;
   inputSpellcheckEnabled?: boolean;
   showOpenCodeUpdateNotifications?: boolean;
   agentControlToolEnabled?: boolean;
@@ -217,7 +224,6 @@ export type DesktopSettings = {
 };
 
 type DesktopBridgeGlobal = {
-  updatesEnabled?: boolean;
   invoke?: (cmd: string, args?: Record<string, unknown>) => Promise<unknown>;
   openDialog?: (options: Record<string, unknown>) => Promise<unknown>;
   grantFileAccess?: (path: string) => Promise<unknown>;
@@ -253,9 +259,6 @@ export const getElectronPlatform = (): string | null => {
   const platform = (window as unknown as { __OPENCHAMBER_PLATFORM__?: string }).__OPENCHAMBER_PLATFORM__;
   return typeof platform === 'string' ? platform : null;
 };
-
-/** Width of the three in-app window control buttons when placed on the left (3 × w-8). */
-export const DESKTOP_WINDOW_CONTROLS_WIDTH_PX = 96;
 
 /** Default side for in-app window controls (Windows-style, right). */
 export const DEFAULT_DESKTOP_WINDOW_CONTROLS_POSITION: DesktopWindowControlsPosition = 'right';
@@ -310,7 +313,7 @@ export const canUseElectronDesktopIPC = (): boolean => isElectronShell() && hasD
 // only accepts local sidecar and packaged-UI senders for privileged commands.
 // Keep this predicate aligned with that trust boundary without coupling it to
 // whichever OpenCode backend is currently active.
-export const matchesTrustedDesktopFileOrigin = (
+const matchesTrustedDesktopFileOrigin = (
   current: string,
   injectedLocalOrigin: string,
 ): boolean => {
@@ -333,8 +336,6 @@ export const canUseTrustedDesktopFileIPC = (): boolean => {
     : '';
   return matchesTrustedDesktopFileOrigin(current, local);
 };
-
-export const isDesktopUpdatesEnabled = (): boolean => getDesktopBridge()?.updatesEnabled === true;
 
 export const invokeDesktop = async <T = unknown>(command: string, args?: Record<string, unknown>): Promise<T | null> => {
   const bridge = getDesktopBridge();
@@ -599,6 +600,15 @@ export const isWebRuntime = (): boolean => {
   // Default: anything that's not VSCode behaves like web (HTTP UI).
   return !isVSCodeRuntime();
 };
+
+/**
+ * Electron reuses the web RuntimeAPIs implementation, so distinguish a browser
+ * client from an Electron renderer with both the runtime descriptor and shell.
+ */
+export const isBrowserClientRuntime = (
+  platform: RuntimeAPIs['runtime']['platform'],
+  desktopShell = isDesktopShell(),
+): boolean => platform === 'web' && !desktopShell;
 
 export const getDesktopHomeDirectory = async (): Promise<string | null> => {
   if (typeof window !== 'undefined') {
@@ -900,7 +910,129 @@ export const saveDesktopMarkdownFile = async (
   }
 };
 
-export type DesktopBinarySaveOutcome = 'saved' | 'cancelled' | 'unavailable';
+export const openDesktopProjectInApp = async (
+  projectPath: string,
+  appId: string,
+  appName: string,
+): Promise<boolean> => {
+  if (!hasDesktopInvoke() || !isDesktopLocalOriginActive()) {
+    return false;
+  }
+
+  const trimmedProjectPath = projectPath?.trim();
+  const trimmedAppId = appId?.trim();
+  const trimmedAppName = appName?.trim();
+
+  if (!trimmedProjectPath || !trimmedAppId || !trimmedAppName) {
+    return false;
+  }
+
+  try {
+    await invokeDesktop('desktop_open_in_app', {
+      projectPath: trimmedProjectPath,
+      appId: trimmedAppId,
+      appName: trimmedAppName,
+    });
+    return true;
+  } catch (error) {
+    console.warn('Failed to open project in app', error);
+    return false;
+  }
+};
+
+export const openDesktopFileInApp = async (
+  filePath: string,
+  appId: string,
+  appName: string,
+): Promise<boolean> => {
+  if (!hasDesktopInvoke() || !isDesktopLocalOriginActive()) {
+    return false;
+  }
+
+  const trimmedFilePath = filePath?.trim();
+  const trimmedAppId = appId?.trim();
+  const trimmedAppName = appName?.trim();
+
+  if (!trimmedFilePath || !trimmedAppId || !trimmedAppName) {
+    return false;
+  }
+
+  try {
+    await invokeDesktop('desktop_open_file_in_app', {
+      filePath: trimmedFilePath,
+      appId: trimmedAppId,
+      appName: trimmedAppName,
+    });
+    return true;
+  } catch (error) {
+    console.warn('Failed to open file in app', error);
+    return false;
+  }
+};
+
+export type InstalledDesktopAppInfo = {
+  name: string;
+  iconDataUrl?: string | null;
+};
+
+export type FetchDesktopInstalledAppsResult = {
+  apps: InstalledDesktopAppInfo[];
+  success: boolean;
+  hasCache: boolean;
+  isCacheStale: boolean;
+};
+
+export const fetchDesktopInstalledApps = async (
+  apps: string[],
+  force?: boolean
+): Promise<FetchDesktopInstalledAppsResult> => {
+  if (!hasDesktopInvoke() || !isDesktopLocalOriginActive()) {
+    return { apps: [], success: false, hasCache: false, isCacheStale: false };
+  }
+
+  const candidate = Array.isArray(apps) ? apps.filter((value) => typeof value === 'string') : [];
+  if (candidate.length === 0) {
+    return { apps: [], success: true, hasCache: false, isCacheStale: false };
+  }
+
+  try {
+    const result = await invokeDesktop<unknown>('desktop_get_installed_apps', {
+      apps: candidate,
+      force: force === true ? true : undefined,
+    });
+    if (!result || typeof result !== 'object') {
+      return { apps: [], success: false, hasCache: false, isCacheStale: false };
+    }
+    const payload = result as { apps?: unknown; hasCache?: unknown; isCacheStale?: unknown; supported?: unknown };
+    if (payload.supported === false) {
+      return { apps: [], success: true, hasCache: false, isCacheStale: false };
+    }
+    if (!Array.isArray(payload.apps)) {
+      return { apps: [], success: false, hasCache: false, isCacheStale: false };
+    }
+    const installedApps = payload.apps
+      .filter((entry) => entry && typeof entry === 'object')
+      .map((entry) => {
+        const record = entry as { name?: unknown; iconDataUrl?: unknown };
+        return {
+          name: typeof record.name === 'string' ? record.name : '',
+          iconDataUrl: typeof record.iconDataUrl === 'string' ? record.iconDataUrl : null,
+        };
+      })
+      .filter((entry) => entry.name.length > 0);
+    return {
+      apps: installedApps,
+      success: true,
+      hasCache: payload.hasCache === true,
+      isCacheStale: payload.isCacheStale === true,
+    };
+  } catch (error) {
+    console.warn('Failed to fetch installed apps', error);
+    return { apps: [], success: false, hasCache: false, isCacheStale: false };
+  }
+};
+
+type DesktopBinarySaveOutcome = 'saved' | 'cancelled' | 'unavailable';
 
 let desktopBinarySaveRequestSequence = 0;
 
@@ -993,132 +1125,5 @@ export const saveDesktopBinaryFile = async (
     return 'saved';
   } finally {
     removeAbortListener();
-  }
-};
-
-export const openDesktopProjectInApp = async (
-  projectPath: string,
-  appId: string,
-  appName: string,
-): Promise<boolean> => {
-  if (!hasDesktopInvoke() || !isDesktopLocalOriginActive()) {
-    return false;
-  }
-
-  const trimmedProjectPath = projectPath?.trim();
-  const trimmedAppId = appId?.trim();
-  const trimmedAppName = appName?.trim();
-
-  if (!trimmedProjectPath || !trimmedAppId || !trimmedAppName) {
-    return false;
-  }
-
-  try {
-    await invokeDesktop('desktop_open_in_app', {
-      projectPath: trimmedProjectPath,
-      appId: trimmedAppId,
-      appName: trimmedAppName,
-    });
-    return true;
-  } catch (error) {
-    console.warn('Failed to open project in app', error);
-    return false;
-  }
-};
-
-export const openDesktopFileInApp = async (
-  filePath: string,
-  appId: string,
-  appName: string,
-): Promise<boolean> => {
-  if (!hasDesktopInvoke() || !isDesktopLocalOriginActive()) {
-    return false;
-  }
-
-  const trimmedFilePath = filePath?.trim();
-  const trimmedAppId = appId?.trim();
-  const trimmedAppName = appName?.trim();
-
-  if (!trimmedFilePath || !trimmedAppId || !trimmedAppName) {
-    return false;
-  }
-
-  try {
-    await invokeDesktop('desktop_open_file_in_app', {
-      filePath: trimmedFilePath,
-      appId: trimmedAppId,
-      appName: trimmedAppName,
-    });
-    return true;
-  } catch (error) {
-    console.warn('Failed to open file in app', error);
-    return false;
-  }
-};
-
-export type InstalledDesktopAppInfo = {
-  name: string;
-  iconDataUrl?: string | null;
-};
-
-export type FetchDesktopInstalledAppsResult = {
-  apps: InstalledDesktopAppInfo[];
-  success: boolean;
-  hasCache: boolean;
-  isCacheStale: boolean;
-};
-
-export const fetchDesktopInstalledApps = async (
-  apps: string[],
-  force?: boolean
-): Promise<FetchDesktopInstalledAppsResult> => {
-  if (!hasDesktopInvoke() || !isDesktopLocalOriginActive()) {
-    return { apps: [], success: false, hasCache: false, isCacheStale: false };
-  }
-
-  // Linux desktop does not resolve installed GUI apps; skip the IPC round-trip.
-  if (getElectronPlatform() === 'linux') {
-    return { apps: [], success: true, hasCache: false, isCacheStale: false };
-  }
-
-  const candidate = Array.isArray(apps) ? apps.filter((value) => typeof value === 'string') : [];
-  if (candidate.length === 0) {
-    return { apps: [], success: true, hasCache: false, isCacheStale: false };
-  }
-
-  try {
-    const result = await invokeDesktop<unknown>('desktop_get_installed_apps', {
-      apps: candidate,
-      force: force === true ? true : undefined,
-    });
-    if (!result || typeof result !== 'object') {
-      return { apps: [], success: false, hasCache: false, isCacheStale: false };
-    }
-    const payload = result as { apps?: unknown; hasCache?: unknown; isCacheStale?: unknown; supported?: unknown };
-    if (payload.supported === false) {
-      return { apps: [], success: true, hasCache: false, isCacheStale: false };
-    }
-    if (!Array.isArray(payload.apps)) {
-      return { apps: [], success: false, hasCache: false, isCacheStale: false };
-    }
-    const installedApps = payload.apps
-      .filter((entry) => entry && typeof entry === 'object')
-      .map((entry) => {
-        const record = entry as { name?: unknown; iconDataUrl?: unknown };
-        return {
-          name: typeof record.name === 'string' ? record.name : '',
-          iconDataUrl: typeof record.iconDataUrl === 'string' ? record.iconDataUrl : null,
-        };
-      })
-      .filter((entry) => entry.name.length > 0);
-    return {
-      apps: installedApps,
-      success: true,
-      hasCache: payload.hasCache === true,
-      isCacheStale: payload.isCacheStale === true,
-    };
-  } catch (error) {
-    console.warn('Failed to fetch installed apps', error);
-    return { apps: [], success: false, hasCache: false, isCacheStale: false };
   }
 };
