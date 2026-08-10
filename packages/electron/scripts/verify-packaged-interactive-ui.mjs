@@ -20,6 +20,83 @@ const outputDirectory = path.join(projectRoot, '.tmp', 'interactive-ui-packaged-
 const reportPath = path.join(outputDirectory, 'report.json');
 const execFileAsync = promisify(execFile);
 
+// issue-084 source contract: the packaged clipping acceptance must exercise
+// real clipping, so the fixture geometry in packages/web/src/interactive-ui-demo.tsx
+// must keep the 520px scroller, the 500px pre-Runner spacer, their p-5/mb-5
+// spacing, and the 80px scrollTop that place the 120px native Runner across the
+// scroller's lower edge. This browser-independent verifier recomputes that
+// precondition from the source, so geometry drift fails fast with a focused
+// error: standalone via --verify-clip-fixture-source and as the first gate of
+// the full packaged acceptance below.
+const CLIP_FIXTURE_SOURCE_PATH = path.join(projectRoot, 'packages', 'web', 'src', 'interactive-ui-demo.tsx');
+const CLIP_SCROLL_TOP = 80;
+const CLIP_FIXTURE_SCROLLER_PADDING_TOP = 20; // scroller p-5
+const CLIP_FIXTURE_SPACER_MARGIN_BOTTOM = 20; // spacer mb-5
+const CLIP_FIXTURE_RUNNER_HEIGHT = 120; // measured packaged desktop Runner height (px)
+
+const verifyClipFixtureSource = async () => {
+  const source = await fs.readFile(CLIP_FIXTURE_SOURCE_PATH, 'utf8');
+  const relativeSource = path.relative(projectRoot, CLIP_FIXTURE_SOURCE_PATH);
+  const readOpeningTag = (marker, label) => {
+    const markerIndex = source.indexOf(`data-ocix-clip-test-${marker}`);
+    assert.equal(
+      markerIndex !== -1,
+      true,
+      `issue-084: ${relativeSource} must keep data-ocix-clip-test-${marker} on the ${label} opening tag`,
+    );
+    const tagStart = source.lastIndexOf('<', markerIndex);
+    const tagEnd = source.indexOf('>', markerIndex);
+    assert.equal(
+      tagStart !== -1 && tagEnd !== -1 && tagStart < markerIndex && markerIndex < tagEnd,
+      true,
+      `issue-084: cannot isolate the ${label} opening tag carrying data-ocix-clip-test-${marker} in ${relativeSource}`,
+    );
+    const className = source.slice(tagStart, tagEnd).match(/className="([^"]*)"/)?.[1];
+    assert.notEqual(
+      className,
+      undefined,
+      `issue-084: the ${label} opening tag carrying data-ocix-clip-test-${marker} must keep an explicit className`,
+    );
+    return className.split(/\s+/).filter(Boolean);
+  };
+  const scrollerClasses = readOpeningTag('scroller', 'clipping scroller');
+  const spacerClasses = readOpeningTag('spacer', 'pre-Runner spacer');
+  const heightOf = (classes, label) => {
+    const token = classes.find((className) => /^h-\[\d+px\]$/.test(className));
+    assert.notEqual(
+      token,
+      undefined,
+      `issue-084: the ${label} must keep an explicit h-[Npx] height class`,
+    );
+    return Number(token.slice(3, -3));
+  };
+  const scrollerHeight = heightOf(scrollerClasses, 'clipping scroller');
+  const spacerHeight = heightOf(spacerClasses, 'pre-Runner spacer');
+  assert.equal(scrollerHeight, 520, `issue-084: the clipping scroller must stay 520px tall (found ${scrollerHeight}px)`);
+  assert.equal(spacerHeight, 500, `issue-084: the pre-Runner spacer must stay 500px tall (found ${spacerHeight}px)`);
+  assert.equal(scrollerClasses.includes('p-5'), true, 'issue-084: the clipping scroller must keep p-5 padding');
+  assert.equal(spacerClasses.includes('mb-5'), true, 'issue-084: the pre-Runner spacer must keep mb-5 margin');
+  const runnerBottom = CLIP_FIXTURE_SCROLLER_PADDING_TOP + spacerHeight + CLIP_FIXTURE_SPACER_MARGIN_BOTTOM
+    + CLIP_FIXTURE_RUNNER_HEIGHT - CLIP_SCROLL_TOP;
+  assert.equal(
+    runnerBottom > scrollerHeight,
+    true,
+    `issue-084: fixture geometry must place the ${CLIP_FIXTURE_RUNNER_HEIGHT}px Runner across the ${scrollerHeight}px `
+      + `scroller edge after scrollTop=${CLIP_SCROLL_TOP} (computed runner.bottom=${runnerBottom}px must exceed ${scrollerHeight}px)`,
+  );
+  return { scrollerHeight, spacerHeight, crossingMargin: runnerBottom - scrollerHeight };
+};
+
+const clipFixtureSource = await verifyClipFixtureSource();
+if (process.argv.includes('--verify-clip-fixture-source')) {
+  console.log(
+    `[clip-fixture-source] OK: scroller ${clipFixtureSource.scrollerHeight}px with p-5, spacer `
+      + `${clipFixtureSource.spacerHeight}px with mb-5, scrollTop=${CLIP_SCROLL_TOP}, ${CLIP_FIXTURE_RUNNER_HEIGHT}px Runner crosses `
+      + `the scroller edge by ${clipFixtureSource.crossingMargin}px`,
+  );
+  process.exit(0);
+}
+
 try {
   await assertHybridCrmFixtureAvailable();
 } catch (error) {
@@ -652,8 +729,8 @@ try {
     const scroller = document.querySelector('[data-ocix-clip-test-scroller]');
     const runner = document.querySelector('[data-ocix-artifact-backend="desktop-runner"]');
     if (!(scroller instanceof HTMLElement) || !(runner instanceof HTMLElement)) return false;
-    scroller.scrollTop = 80;
-    return scroller.scrollTop === 80;
+    scroller.scrollTop = ${CLIP_SCROLL_TOP};
+    return scroller.scrollTop === ${CLIP_SCROLL_TOP};
   })()`);
   await delay(500);
   const clipMetrics = await browser.evaluate(`(() => {
