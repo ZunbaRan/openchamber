@@ -1334,7 +1334,7 @@
 
 ## issue-068: Regenerate the target icon contract for retained fork surfaces
 
-- Status: OPEN
+- Status: RESOLVED
 - Classification: P0
 - Goal / user outcome: Retained Applications/Workbench UI uses valid generated icon names without weakening icon typing or importing donor-wide generated drift.
 - First-principles root cause: Fork consumers reference `apps-2-ai` and `sort-desc`, but the v1.18.1 generated icon union/sprite in the integration does not contain them.
@@ -1346,9 +1346,9 @@
 - Pi binding: run/session `2dc69087-5926-43a9-a644-3ae8f100229d`, batch `dca705e2-05ca-45ac-8890-bf7059cc1a45`, final revision 1, supervised-local without sandbox; final worktree clean because the incomplete generated output was correctly reverted.
 - Pi attempts: correction 1 formalized the generator false-negative and reverted the incomplete `apps-2-ai`-only output after revision 0 ended on provider TPM errors without a handoff.
 - Primary attempts: not eligible while Pi retries remain
-- Current evidence: Pi ran the documented generator repeatedly and proved it deterministically emits real Remix path data for `apps-2-ai` but omits `sort-desc`; a clean second run is byte-identical. The generator recognizes direct literal props and typed `*IconName` variables but not the retained `DeclarativeInteractiveView.tsx` JSX ternary containing `sort-desc`. `RiSortDesc` exists in the pinned Remix bundle; the missing path is solely a scanner false-negative. Pi restored a clean worktree rather than leave output that the next generation would delete.
+- Current evidence: After issue-072 repaired the scanner, primary ran the documented generator twice. The generated delta is exactly two real Remix path entries, `apps-2-ai` and `sort-desc`; the second run is byte-identical at SHA-256 `4470729f01c1c99499b6b4a5e8f45ed330fb9a63d4da67bf5123ecbe7a461855`. The focused nested-expression generation test passes **1/1**. UI typecheck falls from 260 to **255** errors with no icon-name error, and `git diff --check` is clean.
 - Continuation decision: Removes generated-contract noise before host-seam repairs.
-- Next action: Resolve issue-072, then rerun generation twice and close this derived-output issue.
+- Next action: Resolved; generated outputs remain guarded by the issue-072 regression test.
 
 ## issue-069: Restore a narrow authoritative composer-prefill event contract
 
@@ -1406,7 +1406,7 @@
 
 ## issue-072: Teach the icon generator to retain JSX expression icon literals
 
-- Status: READY
+- Status: RESOLVED
 - Classification: P0
 - Goal / user outcome: Generated icon typing and sprite data remain complete when an `<Icon name={...}>` expression selects literal names through nested conditionals, so retained fork UI cannot compile against an icon that generation later deletes.
 - First-principles root cause: `scripts/generate-icon-sprite.mjs` scans direct literal `name` props and a few typed-variable shapes, but it does not parse or conservatively inspect the expression body of an Icon `name={...}` prop. The retained `DeclarativeInteractiveView` selects `sort-desc` in a nested ternary, producing a deterministic false-negative even though `RiSortDesc` exists.
@@ -1415,9 +1415,9 @@
 - Dispatch order: Bounded generator repair before derived-output issue-068.
 - Ownership: `scripts/generate-icon-sprite.mjs`; one focused adjacent generator test/fixture if the repository has a viable convention. Generated `packages/ui/src/components/icon/sprite.ts` remains issue-068-owned and must not be edited in this lane.
 - Focused verification: Focused scanner test covering nested ternary, direct literal, malformed/unbalanced expression, and unrelated string false positives; generator dry evidence or primary-owned full generation; syntax check and `git diff --check`.
-- Pi binding: unassigned
-- Pi attempts: none
-- Primary attempts: not eligible while Pi retries remain
-- Current evidence: issue-068 revision 1 applied all current scanner regexes to the real consumer and found no match for `sort-desc`; the same generator retains the donor's icon only when another donor component contains a direct `<Icon name="sort-desc">`. This is distinct from output regeneration and bounded to scanner recognition.
+- Pi binding: run/session `fcdad883-684c-4fa6-b14b-fc397d62e61a`, base `48170cbac02632b270ccac2cb6a5096724d77623`, final revision 2, supervised-local without sandbox; policy-clean with exactly the generator source changed.
+- Pi attempts: correction 1 narrowed a runaway zero-change reasoning turn to a concrete balanced JSX scanner design; correction 2 (final) implemented the single-file scanner after correction 1 again stalled without tools or edits.
+- Primary attempts: Attempt 1 after Pi retries were exhausted added the focused generator regression test only; it exercises the real nested ternary consumer, both required generated paths, checked-in freshness, and byte-identical second generation. No second primary attempt used.
+- Current evidence: The accepted scanner finds each `<Icon>` tag, ignores quoted/comment text, balances expression braces, and passes only `name={...}` expression bodies through the existing known-icon filter; malformed/unbalanced expressions fail closed and arbitrary source prose is not scanned. Primary Node syntax check and focused test **1/1** pass, full generation is clean on the second run, typecheck has no `apps-2-ai`/`sort-desc` errors, and `git diff --check` passes.
 - Continuation decision: Enables issue-068 to generate stable synchronized icon output.
-- Next action: Dispatch one supervised-local Pi lane restricted to the generator and focused test/fixture; do not edit consumers or generated output.
+- Next action: Resolved; issue-068 generated output is now stable.

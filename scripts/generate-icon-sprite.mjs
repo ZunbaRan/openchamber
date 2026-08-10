@@ -249,6 +249,96 @@ function findMatchingBrace(content, openBraceIndex) {
   return -1
 }
 
+const findJsxTagEnd = (content, start) => {
+  let depth = 0
+  let quote = null
+  let escaped = false
+  let lineComment = false
+  let blockComment = false
+
+  for (let i = start; i < content.length; i++) {
+    const char = content[i]
+    const next = content[i + 1]
+
+    if (lineComment) {
+      if (char === "\n") lineComment = false
+      continue
+    }
+
+    if (blockComment) {
+      if (char === "*" && next === "/") {
+        blockComment = false
+        i++
+      }
+      continue
+    }
+
+    if (quote) {
+      if (escaped) {
+        escaped = false
+      } else if (char === "\\") {
+        escaped = true
+      } else if (char === quote) {
+        quote = null
+      }
+      continue
+    }
+
+    if (char === "/" && next === "/") {
+      lineComment = true
+      i++
+      continue
+    }
+
+    if (char === "/" && next === "*") {
+      blockComment = true
+      i++
+      continue
+    }
+
+    if (char === "\"" || char === "'" || char === "`") {
+      quote = char
+      continue
+    }
+
+    if (char === "{") {
+      depth++
+    } else if (char === "}") {
+      if (depth === 0) return -1 // stray close before tag end: fail closed
+      depth--
+    } else if (char === ">" && depth === 0) {
+      return i
+    }
+  }
+
+  return -1
+}
+
+// Retains kebab-case literals selected through balanced JSX
+// <Icon name={EXPRESSION}> props, e.g. nested ternaries such as
+// name={cond ? (x ? 'a' : 'b') : 'sort-desc'}. Only the balanced expression
+// body of the name prop contributes; malformed/unbalanced tags or
+// expressions fail closed and arbitrary source strings are never scanned.
+const addIconNameExpressionProps = (content) => {
+  const iconTagRegex = /<Icon\b/g
+  let tagMatch
+  while ((tagMatch = iconTagRegex.exec(content)) !== null) {
+    const tagEnd = findJsxTagEnd(content, tagMatch.index)
+    if (tagEnd === -1) continue
+
+    const tag = content.slice(tagMatch.index, tagEnd + 1)
+    const nameAttrRegex = /\bname\s*=\s*{/g
+    let nameMatch
+    while ((nameMatch = nameAttrRegex.exec(tag)) !== null) {
+      const openBraceIndex = tagMatch.index + nameMatch.index + nameMatch[0].lastIndexOf("{")
+      const closeBraceIndex = findMatchingBrace(content, openBraceIndex)
+      if (closeBraceIndex === -1 || closeBraceIndex > tagEnd) continue
+      addIconLiterals(content.slice(openBraceIndex + 1, closeBraceIndex))
+      nameAttrRegex.lastIndex = closeBraceIndex - tagMatch.index + 1
+    }
+  }
+}
+
 const addIconNameFunctionReturns = (content) => {
   const functionRegex = /function\s+\w+\s*\([^)]*\)\s*:\s*IconName(?:\s*\|\s*null)?\s*{/g
   let match
@@ -321,6 +411,11 @@ for (const file of allSrcFiles) {
   while ((nm = iconNameRegex.exec(content)) !== null) {
     addKebabIcon(nm[1] || nm[2])
   }
+
+  // Also retain literals from balanced <Icon name={...}> expression props
+  // (nested ternaries and multiple branches) without scanning arbitrary
+  // source strings; malformed/unbalanced expressions fail closed.
+  addIconNameExpressionProps(content)
 
   // Also scan for icon: 'kebab-name' / Icon: 'kebab-name' in object literals.
   const iconPropRegex = /\b[Ii]con:\s*["']([a-z][a-z0-9-]*)["']/g
