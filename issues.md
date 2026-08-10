@@ -1298,7 +1298,7 @@
 
 ## issue-066: Add a deterministic fork OpenCode CLI distribution lock and self-check contract
 
-- Status: READY
+- Status: RESOLVED
 - Classification: P0
 - Goal / user outcome: The Electron package embeds the exact maintained OpenCode fork binary, with immutable URL, checksum, version, release tag, and commit provenance rather than silently downloading the official CLI.
 - First-principles root cause: The v1.18.1 integration worktree has no fork CLI lock or self-check scripts; `prepare-opencode-cli.mjs` derives an official anomalyco download from the SDK version.
@@ -1307,12 +1307,12 @@
 - Dispatch order: Independent foundation wave; issue-067 consumes the frozen lock API.
 - Ownership: `packages/electron/opencode-cli.lock.json`; `packages/electron/scripts/opencode-cli-lock.mjs`; `packages/electron/scripts/opencode-cli-lock.test.mjs`; `packages/electron/scripts/opencode-cli-self-check.mjs`; `packages/electron/scripts/opencode-cli-self-check.test.mjs`.
 - Focused verification: Run both Node test files; audit exact donor lock provenance and reject official-host fallback; `git diff --check`.
-- Pi binding: unassigned
+- Pi binding: run/session `b0cbc425-a501-4744-b7b5-46dd935178a0`, batch `7c48e442-3dbe-4be2-a421-8b5f59cc69ac`, base `9024883a1c77b5bc1e9133760dc1ef9b7083026d`, revision 0, supervised-local without sandbox; policy-clean with exactly the five owned paths and no dependency/staged/outside-path changes.
 - Pi attempts: none
 - Primary attempts: not eligible while Pi retries remain
-- Current evidence: These five maintained fork distribution files exist on `docs/interactive-ui-mcp-apps` but are absent from the P0 integration; the existing packaged path is therefore not fork-provenant.
+- Current evidence: Pi replayed all five files byte-identically from maintained donor commit `870cc00cb471743795d2a8c9746247951e78f931`; primary independently verified the recorded SHA-256 values, exact five-path ownership, and Node tests **4/4**. The lock pins fork `1.18.10-oc.1`, ZunbaRan release URLs/checksums, upstream/fork commits, and fork SDK provenance; validation rejects version drift and official-host fallback.
 - Continuation decision: Enables issue-067 Electron packaging wiring.
-- Next action: Dispatch a supervised-local Pi lane restricted to the five pure lock/self-check files.
+- Next action: Resolved; issue-067 may consume this immutable lock/self-check API after issue-054 resolves.
 
 ## issue-067: Wire Electron prepare, verify, and runtime gates to the fork CLI lock
 
