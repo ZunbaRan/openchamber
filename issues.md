@@ -1501,3 +1501,21 @@
 - Resume condition: n/a
 - Continuation decision: Unblocks honest local package verification without weakening issue-066's still-open immutable Release requirement.
 - Next action: Resolved; use this exact local override and provenance for the canonical arm64 package.
+
+## issue-077: Restore the declared packaged desktop acceptance harness
+
+- Status: READY
+- Classification: P0
+- Goal / user outcome: The canonical arm64 `OpenChamber.app` is exercised through the repository-declared packaged desktop acceptance command before replacing the installed application.
+- First-principles root cause: `package.json` declares `test:interactive-ui-desktop-packaged`, but the referenced `packages/electron/scripts/verify-packaged-interactive-ui.mjs` was omitted from this integration branch even though the maintained donor contains the complete harness and the target retains all of its fixture/helper dependencies.
+- Core acceptance invariant: Restore only the missing declared harness; preserve isolated data/config roots, bundled-runtime-only launch, fork capability/health checks, extension install/persistence checks, runtime-error collection, clean shutdown, and report output. Do not weaken assertions or silently skip when the checked-in CRM fixture exists.
+- Dependencies: issues 067, 070, 076
+- Dispatch order: Final packaged-app gate before fresh read-only review and local installation.
+- Ownership: `packages/electron/scripts/verify-packaged-interactive-ui.mjs` only.
+- Focused verification: Byte comparison with maintained donor when compatible, Node syntax check, repository script against the canonical arm64 app with the exact staged local-override provenance, generated report inspection, clean process/port shutdown, and `git diff --check`.
+- Pi binding: pending
+- Pi attempts: none
+- Primary attempts: none while Pi retries remain.
+- Current evidence: The package script is present at root, the target CRM fixture and helper are present, and the canonical signed arm64 app exists; invoking the command currently fails before launch because the referenced 860-line harness file is absent.
+- Continuation decision: Restore and execute this gate before issue-070 may authorize installation.
+- Next action: Dispatch the single-file READY issue through Sol Pi Advisor.
