@@ -660,7 +660,7 @@
 
 ## issue-034: Add the narrow Widget send bridge to target ChatInput
 
-- Status: READY
+- Status: RESOLVED
 - Classification: P0
 - Goal / user outcome: `window.__widgetSendMessage` follow-ups use the current session/provider/model/agent/variant through the normal send path.
 - First-principles root cause: The target ChatInput does not register the Widget send handler.
@@ -669,14 +669,14 @@
 - Dispatch order: Serial host seam after bridge and composer-prefill contracts.
 - Ownership: `packages/ui/src/components/chat/ChatInput.tsx`; one focused bridge lifecycle test if target precedent supports it.
 - Focused verification: Focused bridge lifecycle test plus UI typecheck/lint; inspect current-context fidelity and cleanup.
-- Pi binding: unassigned for the reopened repair
-- Pi attempts: none
+- Pi binding: run/session `7b0903dc-e7d8-4fd9-8253-2a607152c47f`, batch `dca705e2-05ca-45ac-8890-bf7059cc1a45`, base `74699f8ed24a856b454a27694f9c1c9702bea9fd`, final revision 1, supervised-local without sandbox; policy-clean with exactly one changed owned path.
+- Pi attempts: correction 1 removed four inherited v1.18.1 trailing spaces after primary proved they were newly introduced relative to integration HEAD and failed the repository diff gate; adapter logic was unchanged.
 - Primary attempts: not eligible while Pi retries remain
-- Current evidence: Reopened 2026-08-10. Integration `ChatInput.tsx` is byte-identical to the older donor generation instead of upstream v1.18.1. Canonical `electron:build` fails after 2348 modules because it imports absent `./MobileSessionStatusBar`; UI typecheck also reports donor/target signature mismatches for slash starters and `MobilePillComposerProps`. issue-069 now provides the bounded authoritative prefill event. The correct repair is upstream v1.18.1 ChatInput plus only the proven Widget-send and composer-prefill effects, not adding the donor-only missing component.
+- Current evidence: The accepted file is immutable upstream v1.18.1 ChatInput plus only the Generative Widget send-handler import/effect, the bounded composer-prefill effect, and removal of four upstream trailing spaces. The send bridge reads session/provider/model/agent/variant from authoritative stores at call time, uses the normal target send path, and cleans up deterministically; prefill is session-scoped and returns the event disposer. Primary matched final blob `f7f03da8`, ran composer event tests **14/14**, and measured UI typecheck at **260** errors (down from 266) with no ChatInput or `MobileSessionStatusBar` error/reference. `git diff --check` is clean.
 - Suspension decision: n/a
 - Resume condition: n/a
 - Continuation decision: Enables Widget model E2E.
-- Next action: Dispatch one supervised-local Pi lane restricted to `ChatInput.tsx` and an adjacent focused test if supported; require line-level target diff and canonical Web build to advance past the prior missing-module failure.
+- Next action: Resolved; later canonical Web/Electron build must prove the former module-2348 failure is gone end to end.
 
 ## issue-035: Restore Applications settings feature sections
 
