@@ -207,7 +207,10 @@ const ClipTestDemo = () => (
       className="mx-auto h-[520px] w-full max-w-5xl overflow-y-auto rounded-2xl border-4 border-white bg-[#24242b] p-5"
       data-ocix-clip-test-scroller
     >
-      <div className="mb-5 flex h-44 items-center justify-center rounded-xl bg-[#353541] text-xl font-semibold">
+      {/* Deliberate deterministic geometry: 20px padding-top + 500px spacer +
+          20px margin + 120px native Runner − 80px scrollTop = 580px, which stably
+          crosses the 520px scroller edge so packaged clipping is exercised. */}
+      <div className="mb-5 flex h-[500px] items-center justify-center rounded-xl bg-[#353541] text-xl font-semibold">
         Scroll spacer
       </div>
       <DemoContent />

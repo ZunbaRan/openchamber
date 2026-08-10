@@ -1636,7 +1636,7 @@
 
 ## issue-084: Make the packaged clipping fixture deterministically cross the scroller edge
 
-- Status: READY
+- Status: VERIFYING
 - Classification: P0
 - Goal / user outcome: The real packaged desktop acceptance proves native Artifact Runner pixels are clipped at the scroll container and cannot cover the green sibling guard.
 - First-principles root cause: The test assumes that setting `scrollTop = 80` leaves the native Runner crossing the scroller's lower edge, but the current fixture's pre-Runner spacer is only `h-44`. With the packaged Runner's measured 120 px content height, its bottom remains above the 520 px scroller edge, so the test aborts before inspecting actual clipping. The Runner itself is healthy (`ready`, `desktop-runner`, stop present); the fixture geometry no longer establishes the precondition the assertion is meant to verify.
@@ -1646,10 +1646,10 @@
 - Ownership: `packages/web/src/interactive-ui-demo.tsx`; `packages/electron/scripts/verify-packaged-interactive-ui.mjs`; at most one focused test file if an existing adjacent test seam requires it.
 - Focused verification: Web typecheck/lint; Electron script syntax check or closest package test; a deterministic geometry regression that would fail with the old `h-44` fixture; `git diff --check`. Primary then rebuilds and reruns the full packaged desktop acceptance.
 - Pi binding: run/session `5b73d482-a3a8-498d-b8a9-ddcef1c2d10e`, base `f06c8964055c7bbe1e2a591ed0f4b7e8f1e5a596`, revision 0, supervised-local worktree `/Users/loloru/.codex/sol-pi-advisor/worktrees/5b73d482-a3a8-498d-b8a9-ddcef1c2d10e`.
-- Pi attempts: none.
+- Pi attempts: Revision 0 changed exactly the pre-Runner spacer from `h-44` to `h-[500px]` and added an adjacent geometry comment; policy is clean with diff digest `22dae6cb…`. Pi's isolated worktree lacked dependencies, so primary owns the hydrated checks.
 - Primary attempts: The first rebuilt package with issue083 fixed reached native Runner ready, then failed exactly at `runner.bottom > scroller.bottom`; diagnostics showed the Broker iframe at 974×120 and no renderer errors.
-- Current evidence: The demo uses a 520 px scroller, a 176 px (`h-44`) pre-Runner spacer, and an 80 px scroll. The packaged native Runner measured 120 px high, leaving its bottom above the scroller bottom; therefore no clipping edge is exercised. The guard remains below the scroller as intended.
+- Current evidence: The old fixture used a 520 px scroller, a 176 px (`h-44`) pre-Runner spacer, and an 80 px scroll. The packaged native Runner measured 120 px high, leaving its bottom above the scroller bottom. Revision 0 makes the spacer 500 px, producing a deterministic 580 px content-bottom position after the same 80 px scroll and therefore a stable 60 px crossing. The guard remains below the scroller; the packaged assertion and pixel inspection are unchanged. The primary worktree independently passes Web typecheck, Web lint, and `git diff --check`.
 - Suspension decision: n/a
 - Resume condition: n/a
 - Continuation decision: Adjust only the deterministic acceptance fixture/test geometry, not native Runner layout or production clipping behavior.
-- Next action: Monitor revision 0, inspect its complete diff, and independently rerun focused verification before integration.
+- Next action: Rebuild the Electron package from the integrated candidate and rerun the full packaged desktop acceptance.
