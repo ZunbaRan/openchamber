@@ -75,18 +75,26 @@ DialogOverlay.displayName = "DialogOverlay";
 type DialogContentProps = Omit<React.ComponentProps<typeof BaseDialog.Popup>, "children"> & {
   showCloseButton?: boolean
   children?: React.ReactNode
+  /**
+   * Optional portal container for the popup, matching BaseDialog.Portal's
+   * container. Omitted by default, so every existing caller keeps the popup
+   * portaled to <body>; expanded installed HTML Artifacts pass their native
+   * dialog host so the popup joins the same top layer.
+   */
+  portalContainer?: React.ComponentProps<typeof BaseDialog.Portal>['container']
 }
 
 function DialogContent({
   className,
   children,
   showCloseButton = true,
+  portalContainer,
   ...props
 }: DialogContentProps) {
   const { t } = useI18n()
 
   return (
-    <DialogPortal>
+    <DialogPortal container={portalContainer}>
       <DialogOverlay className="rounded-none" />
       <div className="fixed inset-0 z-50 flex items-center justify-center pointer-events-none p-4">
         <BaseDialog.Popup

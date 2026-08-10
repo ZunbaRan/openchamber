@@ -482,7 +482,7 @@
 
 ## issue-025: Restore Installed Artifact host confirmation write safety
 
-- Status: READY
+- Status: RESOLVED
 - Classification: NORMAL
 - Goal / user outcome: Third-party Installed Artifacts can request business writes only through a host-top-layer confirmation with Cancel as safe focus and exactly one write after Confirm.
 - First-principles root cause: The clean target lacks the Installed Artifact confirmation host; the latest implementation exists only as an uncommitted descendant donor.
@@ -491,14 +491,14 @@
 - Dispatch order: Serial security/UI lane after gateway and Artifact host. It explicitly does not resume suspended issue-001.
 - Ownership: `packages/ui/src/components/interactive-ui/InstalledArtifactConfirmationHost.tsx`; `packages/ui/src/components/interactive-ui/InstalledArtifactConfirmationHost.test.tsx`; `packages/ui/src/components/interactive-ui/InteractiveConfirmationDialog.tsx`; `packages/ui/src/components/interactive-ui/HTMLArtifactView.tsx`; `packages/ui/src/components/interactive-ui/artifactBusinessRequest.ts`.
 - Focused verification: Run Installed Artifact host tests and conversation-browser Confirm/Escape/Cancel evidence; exactly 0/0/1 writes and host-top-layer focus are required.
-- Pi binding: unassigned for reopened target-dialog adapter
-- Pi attempts: none for reopened defect
+- Pi binding: batch `253e064d-9f86-4be5-b110-cf74637a8c22`, run `5e4a19e6-e6f5-4ada-ac68-276ba696223d`, base `eb9ce926`, final revision 2; policy-clean one-file handoff.
+- Pi attempts: Correction 1 implemented the exact adapter but overran without handoff; correction 2 made no edits and immediately formalized the existing candidate. Pi retry budget exhausted cleanly.
 - Primary attempts: not eligible while Pi retries remain
-- Current evidence: Reopened 2026-08-10. The retained confirmation host requests `DialogContent.portalContainer`, but target v1.18.1 `DialogContent` wraps `BaseDialog.Portal` without exposing its `container` prop. UI typecheck reports three owned errors. The repair must add only an optional portal-container adapter to the target dialog primitive and preserve default body-portaled behavior plus Escape/Cancel/Confirm safety.
+- Current evidence: Resolved 2026-08-10. Target DialogContent now exposes only an optional BaseDialog portal container, destructures it before popup prop spread, and keeps `undefined` as the original body-portal default. No retained confirmation file required modification. Primary independently ran confirmation/installed-host tests **27/27**, covering Cancel/Confirm and fail-closed lifecycle behavior, plus `git diff --check`.
 - Suspension decision: n/a; only issue-001/002/003 remain suspended
 - Resume condition: n/a
 - Continuation decision: Enables issue-026/027 and final product acceptance.
-- Next action: Dispatch one bounded Pi lane on the dialog primitive and confirmation host tests.
+- Next action: Resolved; include real top-layer confirmation behavior in final browser acceptance.
 
 ## issue-026: Add narrow rich-result dispatch to the target ToolPart
 
