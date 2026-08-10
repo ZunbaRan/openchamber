@@ -1299,7 +1299,7 @@
 ## issue-066: Add a deterministic fork OpenCode CLI distribution lock and self-check contract
 
 - Status: OPEN
-- Classification: P0
+- Classification: NON-BLOCKING
 - Goal / user outcome: The Electron package embeds the exact maintained OpenCode fork binary, with immutable URL, checksum, version, release tag, and commit provenance rather than silently downloading the official CLI.
 - First-principles root cause: The v1.18.1 integration worktree has no fork CLI lock or self-check scripts; `prepare-opencode-cli.mjs` derives an official anomalyco download from the SDK version.
 - Core acceptance invariant: One checked-in lock names fork `1.18.10-oc.1`, the exact ZunbaRan release artifact and SHA-256, and its source/release provenance. Parsers reject missing, malformed, unsupported-platform, version-mismatched, or checksum-mismatched locks. No network or binary mutation occurs in the pure contract tests.
@@ -1310,7 +1310,7 @@
 - Pi binding: run/session `b0cbc425-a501-4744-b7b5-46dd935178a0`, batch `7c48e442-3dbe-4be2-a421-8b5f59cc69ac`, base `9024883a1c77b5bc1e9133760dc1ef9b7083026d`, revision 0, supervised-local without sandbox; policy-clean with exactly the five owned paths and no dependency/staged/outside-path changes.
 - Pi attempts: none
 - Primary attempts: not eligible while Pi retries remain
-- Current evidence: Reopened 2026-08-10 by the real prepare gate. The downloaded arm64 archive matches the lock SHA-256, but its CLI does **not** expose `debug generative-widget`, so `assertOpenCodeCliBinary` correctly rejects release `v1.18.10-oc.1`. The later clean local fork build at embedded commit `f263f908da3f71aa637ddb356328901b6ce231f2` passes the same asset self-check and is usable only through the explicit local-override path; it does not make the immutable GitHub Release lock true.
+- Current evidence: Reopened 2026-08-10 by the real prepare gate. The downloaded arm64 archive matches the lock SHA-256, but its CLI does **not** contain the required Generative Widget assets, so `assertOpenCodeCliBinary` correctly rejects release `v1.18.10-oc.1`. The later clean local fork build at embedded commit `f263f908da3f71aa637ddb356328901b6ce231f2` passes the same asset self-check and is usable only through the explicit local-override path; it does not make the immutable GitHub Release lock true. For the current local-install-only goal, the final packaged acceptance proves that exact override is running as `1.18.10-oc.1+f263f908` with `interactive_ui` and `html_artifact`; therefore this remains a Release/P0-completion blocker but is non-blocking for the explicitly provenance-bound local replacement.
 - Continuation decision: Enables issue-067 Electron packaging wiring.
 - Next action: Keep open until a new immutable ZunbaRan fork Release contains the verified post-`f263f908` CLI and the lock is updated to that release URL, version, commits, and checksums. Local installation may proceed through exact local-override provenance without claiming the Release gate is closed.
 
@@ -1370,7 +1370,7 @@
 
 ## issue-070: Close the canonical build, fork provenance, package, and local installation gate
 
-- Status: OPEN
+- Status: VERIFYING
 - Classification: P0
 - Goal / user outcome: Produce one verified macOS arm64 OpenChamber application from the P0 integration, preserve the current installation as a recoverable backup, replace `/Applications/OpenChamber.app`, and prove the launched app uses the embedded fork runtime.
 - First-principles root cause: The previous completion narrative stopped at ledger and focused unit tests; it never proved the canonical build, fork distribution, packaged runtime, or installed application.
@@ -1382,9 +1382,9 @@
 - Pi binding: not applicable unless a new bounded product defect is assigned to an existing stable issue
 - Pi attempts: none
 - Primary attempts: n/a
-- Current evidence: UI typecheck fails with 289 errors; `CSC_IDENTITY_AUTO_DISCOVERY=false bun run electron:build` fails after 2348 modules because donor-wide `ChatInput.tsx` imports absent `./MobileSessionStatusBar`; package metadata and Electron prepare scripts still resolve the official SDK/CLI. `/Applications/OpenChamber.app` remains untouched at version 1.17.1 arm64.
+- Current evidence: Final integration HEAD `9df893a0` passes workspace typecheck, workspace lint with 0 errors (two documented Hook warnings), Electron architecture 38/38, Artifact Runner 9/9, fork CLI identity/self-check 12/12, canonical arm64 packaging, app deep codesign verification, and the full isolated packaged desktop acceptance. The report is `ok: true`, bundled runtime `1.18.10-oc.1+f263f908` is running with `interactive_ui`/`html_artifact`, native Runner clipping has 0 magenta leak pixels and 95.58% green guard pixels, restart persistence passes, and runtime errors are 0. The `.app` is version 1.18.1 arm64; package SHA-256 values are DMG `5f1d6270…`, ZIP `c45553e3…`, packaged CLI `83b90c95…`, with signed CLI CDHash `c2bd49e1…`. `/Applications/OpenChamber.app` remains untouched at version 1.17.1 arm64 pending fresh reviewer verdict.
 - Continuation decision: Only a fully green and provenance-verified result permits P0 to return to done and P1 to resume.
-- Next action: Remain BLOCKED; primary coordinates the dependency DAG and performs installation only after a fresh Sol/High final review returns ship.
+- Next action: Obtain the required fresh Sol/High read-only verdict; on `ship`, back up and replace the installed app, launch it, and verify installed fork provenance before resolving.
 
 ## issue-071: Bind every direct workspace consumer to one fork SDK resolution
 
@@ -1504,7 +1504,7 @@
 
 ## issue-077: Restore the declared packaged desktop acceptance harness
 
-- Status: VERIFYING
+- Status: RESOLVED
 - Classification: P0
 - Goal / user outcome: The canonical arm64 `OpenChamber.app` is exercised through the repository-declared packaged desktop acceptance command before replacing the installed application.
 - First-principles root cause: `package.json` declares `test:interactive-ui-desktop-packaged`, but the referenced `packages/electron/scripts/verify-packaged-interactive-ui.mjs` was omitted from this integration branch even though the maintained donor contains the complete harness and the target retains all of its fixture/helper dependencies.
@@ -1516,9 +1516,9 @@
 - Pi binding: run `3934dd57-2f1e-4edf-97f0-ec789932541b`, base `fb2ebe1f`, revision 1; policy-clean with exactly the owned harness path.
 - Pi attempts: Revision 0 was recoverably paused after broad compatibility analysis produced no candidate; correction 1 restored the exact donor harness and passed syntax/hash/diff checks.
 - Primary attempts: none while Pi retries remain.
-- Current evidence: The exact donor harness is now committed at SHA-256 `c4e174f2eaed25b0bc90dfcd56657fc00f7be3be763de8e9636ee343babae084`. Its first real isolated packaged-app launch reaches a healthy bundled runtime, then fails at the stale assertion `manager.builtInRuntime`: the current Manager list intentionally exposes only managed extensions, while built-in runtime presence is exposed by `/api/interactive-ui/extensions` and readiness is independently proven by tool/skill discovery. The inspection permission shape likewise replaced obsolete `sandboxedArtifacts` with bounded `network` and `nativeCode` fields.
+- Current evidence: The restored harness plus bounded current-contract adaptations now completes against the canonical arm64 app. The generated report is `ok: true`, proves the bundled fork runtime is running, exercises generated/static/script-enabled/installed Artifacts, validates native clipping by screenshot pixels, verifies same-content-id cache/restart persistence, records three screenshots, and reports zero runtime errors. The isolated process shuts down cleanly.
 - Continuation decision: Use the remaining same-root correction to bind assertions to current public routes without weakening built-in presence/readiness or package permission checks, then rerun after issue-078 restores the declared demo/popout entry points.
-- Next action: Correct the single owned harness file against current public contracts.
+- Next action: Resolved; retain this command as a mandatory pre-install packaging gate.
 
 ## issue-078: Restore packaged Interactive UI demo and popout entry points
 
@@ -1576,7 +1576,7 @@
 
 ## issue-081: Attach sandboxed Artifact Runner before document navigation
 
-- Status: VERIFYING
+- Status: RESOLVED
 - Classification: P0
 - Goal / user outcome: Script-enabled generated and installed HTML Artifacts render through the native Desktop Runner inside the packaged `openchamber-ui://` application instead of timing out.
 - First-principles root cause: The Artifact document response is intentionally CSP-sandboxed and therefore has an opaque top-level origin. `createArtifactRunnerManager.start` currently loads that document before attaching its `WebContentsView` to the owning window; packaged Electron then rejects the invalid site tuple during attachment. The host never receives the Runner `loaded`/heartbeat path and transitions to `timed-out`.
@@ -1588,11 +1588,11 @@
 - Pi binding: run/session `f6dff310-ae57-4661-aa52-b7981bb17685`, base `f35b4ffdf220c3b21c94d25a95a54d0361005e33`, revision 0, supervised-local worktree `/Users/loloru/.codex/sol-pi-advisor/worktrees/f6dff310-ae57-4661-aa52-b7981bb17685`.
 - Pi attempts: Revision 0 changed only the two owned files, restored attach-before-load ordering, and added explicit success-order plus load-failure cleanup tests; policy state is clean with diff digest `d6adc16b…`. No correction has been required.
 - Primary attempts: none while Pi retries remain. Primary integrated the exact revision-0 candidate and independently reran its focused gates.
-- Current evidence: Before the fix, two rebuilt-package acceptance runs reached signed Local OCIX install, then timed out with host state `timed-out`, no iframe/backend, and repeated Chromium opaque-origin site-tuple failures. In both the Pi and integration worktrees, the candidate passes 9/9 Artifact Runner tests, Electron syntax/type check, exact candidate comparison, and `git diff --check`; the new negative test proves failed navigation detaches/closes the View, clears partition storage/state, and emits controlled `load-failed` termination. The rebuilt packaged app still fails identically, proving attach ordering is necessary lifecycle hardening but not sufficient while the trusted top-level Broker itself remains opaque; that distinct response-policy root cause is issue082.
+- Current evidence: Before the fix, rebuilt-package acceptance timed out with no backend. The accepted candidate passes 9/9 Artifact Runner tests and Electron type/syntax checks; its negative test proves failed navigation detaches/closes the View, clears partition storage/state, and emits controlled `load-failed` termination. After issue083 restored the omitted preload, the final packaged acceptance reaches `desktop-runner:ready-then-stopped`, proves native clipping and installed-Artifact restart persistence, and reports zero runtime errors. This establishes the attach-before-load lifecycle as correct; the residual Chromium diagnostic is separately non-blocking issue082.
 - Suspension decision: n/a
 - Resume condition: n/a
 - Continuation decision: Restore the required lifecycle ordering with focused regression coverage; do not weaken CSP sandboxing or fall back to an iframe for scripts.
-- Next action: Keep revision 0 under verification; resolve issue082, then rerun packaged acceptance to determine the combined end-to-end result.
+- Next action: Resolved; keep the focused ordering/cleanup tests and packaged Runner acceptance as regression gates.
 
 ## issue-082: Give the trusted Artifact Broker a valid top-level origin
 
@@ -1612,7 +1612,7 @@
 - Suspension decision: n/a
 - Resume condition: n/a
 - Continuation decision: Do not retain an unnecessary same-origin relaxation. The remaining Chromium diagnostic is independent of the proven package-resource omission and does not block testing issue083 with the original stronger Broker policy.
-- Next action: Keep documented as non-blocking diagnostic noise unless it persists with observable impact after issue083 restores the preload.
+- Next action: The final packaged acceptance passes with zero runtime errors and no observable impact while retaining the stronger original Broker policy. Keep documented as non-blocking Chromium diagnostic noise; do not weaken CSP without a behaviorally failing case.
 
 ## issue-083: Include the Artifact Runner preload in the packaged app
 
@@ -1636,7 +1636,7 @@
 
 ## issue-084: Make the packaged clipping fixture deterministically cross the scroller edge
 
-- Status: VERIFYING
+- Status: RESOLVED
 - Classification: P0
 - Goal / user outcome: The real packaged desktop acceptance proves native Artifact Runner pixels are clipped at the scroll container and cannot cover the green sibling guard.
 - First-principles root cause: The test assumes that setting `scrollTop = 80` leaves the native Runner crossing the scroller's lower edge, but the current fixture's pre-Runner spacer is only `h-44`. With the packaged Runner's measured 120 px content height, its bottom remains above the 520 px scroller edge, so the test aborts before inspecting actual clipping. The Runner itself is healthy (`ready`, `desktop-runner`, stop present); the fixture geometry no longer establishes the precondition the assertion is meant to verify.
@@ -1647,9 +1647,9 @@
 - Focused verification: Web typecheck/lint; Electron script syntax check or closest package test; a deterministic geometry regression that would fail with the old `h-44` fixture; `git diff --check`. Primary then rebuilds and reruns the full packaged desktop acceptance.
 - Pi binding: run/session `5b73d482-a3a8-498d-b8a9-ddcef1c2d10e`, base `f06c8964055c7bbe1e2a591ed0f4b7e8f1e5a596`, revision 0, supervised-local worktree `/Users/loloru/.codex/sol-pi-advisor/worktrees/5b73d482-a3a8-498d-b8a9-ddcef1c2d10e`.
 - Pi attempts: Revision 0 changed exactly the pre-Runner spacer from `h-44` to `h-[500px]` and added an adjacent geometry comment; policy is clean with diff digest `22dae6cb…`. Pi's isolated worktree lacked dependencies, so primary owns the hydrated checks.
-- Primary attempts: The first rebuilt package with issue083 fixed reached native Runner ready, then failed exactly at `runner.bottom > scroller.bottom`; diagnostics showed the Broker iframe at 974×120 and no renderer errors.
-- Current evidence: The old fixture used a 520 px scroller, a 176 px (`h-44`) pre-Runner spacer, and an 80 px scroll. The packaged native Runner measured 120 px high, leaving its bottom above the scroller bottom. Revision 0 makes the spacer 500 px, producing a deterministic 580 px content-bottom position after the same 80 px scroll and therefore a stable 60 px crossing. The guard remains below the scroller; the packaged assertion and pixel inspection are unchanged. The primary worktree independently passes Web typecheck, Web lint, and `git diff --check`.
+- Primary attempts: The first rebuilt package with issue083 fixed reached native Runner ready, then failed exactly at `runner.bottom > scroller.bottom`; diagnostics showed the Broker iframe at 974×120 and no renderer errors. Primary integrated revision 0, independently passed Web typecheck/lint, rebuilt with the exact fork CLI override, and ran the full packaged acceptance.
+- Current evidence: The old fixture used a 520 px scroller, a 176 px (`h-44`) pre-Runner spacer, and an 80 px scroll. The packaged native Runner measured 120 px high, leaving its bottom above the scroller bottom. Revision 0 makes the spacer 500 px, producing a deterministic 580 px content-bottom position after the same 80 px scroll and therefore a stable 60 px crossing. The guard remains below the scroller; the packaged assertion and pixel inspection are unchanged. The primary worktree independently passes Web typecheck/lint and the full packaged acceptance records 0 magenta pixels over the guard, 397631 green pixels, 95.58% green ratio, and zero runtime errors.
 - Suspension decision: n/a
 - Resume condition: n/a
 - Continuation decision: Adjust only the deterministic acceptance fixture/test geometry, not native Runner layout or production clipping behavior.
-- Next action: Rebuild the Electron package from the integrated candidate and rerun the full packaged desktop acceptance.
+- Next action: Resolved; retain the deterministic geometry and pixel-level packaged assertion.
