@@ -1616,7 +1616,7 @@
 
 ## issue-083: Include the Artifact Runner preload in the packaged app
 
-- Status: VERIFYING
+- Status: RESOLVED
 - Classification: P0
 - Goal / user outcome: Script-enabled Artifacts in the packaged desktop app execute their isolated Runner preload, acknowledge native layout, receive `host.init`, and reach `artifact.ready`.
 - First-principles root cause: `createArtifactRunnerManager` resolves the packaged preload at `app.getAppPath()/artifact-runner-preload.cjs`, but Electron `build.files` includes only `dist-bundle/main.mjs` and `preload.mjs`. The built `app.asar` therefore omits `artifact-runner-preload.cjs`; the Broker loads, but no preload applies layout or sends `openchamber:artifact-runner-layout-applied`, so the main process never emits `loaded` and the Host never sends `host.init`.
@@ -1628,8 +1628,28 @@
 - Pi binding: run/session `1abff818-f65b-4a9a-a0e1-cd8e528b29cd`, base `adba62a627cf54061dca4113b7dc10f8fedf7208`, revision 0, supervised-local worktree `/Users/loloru/.codex/sol-pi-advisor/worktrees/1abff818-f65b-4a9a-a0e1-cd8e528b29cd`.
 - Pi attempts: Revision 0 adds exactly `artifact-runner-preload.cjs` to `build.files`; one owned manifest changed, policy state is clean, and diff digest is `0e07e2ce…`. No correction has been required.
 - Primary attempts: none while Pi retries remain. Primary integrated the exact candidate and verified the manifest parses with the required entry exactly once.
-- Current evidence: Live fast diagnostics show the Runner backend plus both Broker/inner iframe targets at `readyState=complete`, but the Broker iframe has no layout style and Host stays `loading`. The previous built app has no Runner preload in its app root, while `main.mjs` explicitly requests `path.join(app.getAppPath(), "artifact-runner-preload.cjs")`. Revision 0 is byte-identical to Pi, `build.files` now contains `["dist-bundle/main.mjs","preload.mjs","artifact-runner-preload.cjs"]`, and `git diff --check` passes. By contrast the fork CLI was already present under `Contents/Resources/opencode-cli/opencode` and passed its packaged verifier.
+- Current evidence: Live fast diagnostics showed the Runner backend plus both Broker/inner iframe targets at `readyState=complete`, but the Broker iframe had no layout style and Host stayed `loading`. The previous built app had no Runner preload in its app root, while `main.mjs` explicitly requests `path.join(app.getAppPath(), "artifact-runner-preload.cjs")`. Revision 0 is byte-identical to Pi, `build.files` contains `["dist-bundle/main.mjs","preload.mjs","artifact-runner-preload.cjs"]`, and `git diff --check` passes. The rebuilt `app.asar` now contains `artifact-runner-preload.cjs` (2819 bytes, SHA-256 `370d3be6…`), and the real packaged acceptance reaches host state `ready` with backend `desktop-runner`, zero host iframes, and a working stop action. The later clipping-fixture assertion is a distinct test-geometry defect tracked as issue084. The fork CLI is present under `Contents/Resources/opencode-cli/opencode`, reports `1.18.10-oc.1+f263f908`, and embeds distribution `ZunbaRan/opencode` plus full fork/upstream commits.
 - Suspension decision: n/a
 - Resume condition: n/a
 - Continuation decision: Add the missing external preload to the electron-builder file allowlist; do not modify runtime handshake or weaken sandboxing.
-- Next action: Rebuild, prove the preload exists inside `app.asar`, rerun packaged CLI verification and the full packaged desktop acceptance.
+- Next action: Resolved; continue the already-running packaged acceptance through issue084's deterministic clipping fixture.
+
+## issue-084: Make the packaged clipping fixture deterministically cross the scroller edge
+
+- Status: READY
+- Classification: P0
+- Goal / user outcome: The real packaged desktop acceptance proves native Artifact Runner pixels are clipped at the scroll container and cannot cover the green sibling guard.
+- First-principles root cause: The test assumes that setting `scrollTop = 80` leaves the native Runner crossing the scroller's lower edge, but the current fixture's pre-Runner spacer is only `h-44`. With the packaged Runner's measured 120 px content height, its bottom remains above the 520 px scroller edge, so the test aborts before inspecting actual clipping. The Runner itself is healthy (`ready`, `desktop-runner`, stop present); the fixture geometry no longer establishes the precondition the assertion is meant to verify.
+- Core acceptance invariant: Make the fixture geometry deterministic so, after the existing 80 px scroll, the Runner rectangle extends across the scroller's lower edge by a stable positive margin while the green guard remains a sibling below the scroller. Preserve the real scroll action, Runner content, 520 px scroller, screenshot/pixel guard inspection, and all runtime/security behavior. Add a focused source-level or browser-independent regression assertion that locks the geometry precondition; do not weaken or remove the packaged assertion.
+- Dependencies: issues 077, 081, 083
+- Dispatch order: Immediate serial blocker for completing packaged desktop acceptance and local installation.
+- Ownership: `packages/web/src/interactive-ui-demo.tsx`; `packages/electron/scripts/verify-packaged-interactive-ui.mjs`; at most one focused test file if an existing adjacent test seam requires it.
+- Focused verification: Web typecheck/lint; Electron script syntax check or closest package test; a deterministic geometry regression that would fail with the old `h-44` fixture; `git diff --check`. Primary then rebuilds and reruns the full packaged desktop acceptance.
+- Pi binding: pending.
+- Pi attempts: none.
+- Primary attempts: The first rebuilt package with issue083 fixed reached native Runner ready, then failed exactly at `runner.bottom > scroller.bottom`; diagnostics showed the Broker iframe at 974×120 and no renderer errors.
+- Current evidence: The demo uses a 520 px scroller, a 176 px (`h-44`) pre-Runner spacer, and an 80 px scroll. The packaged native Runner measured 120 px high, leaving its bottom above the scroller bottom; therefore no clipping edge is exercised. The guard remains below the scroller as intended.
+- Suspension decision: n/a
+- Resume condition: n/a
+- Continuation decision: Adjust only the deterministic acceptance fixture/test geometry, not native Runner layout or production clipping behavior.
+- Next action: Dispatch one supervised-local Pi lane from integration HEAD with the two fixture/harness paths allowed.
