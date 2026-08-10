@@ -820,7 +820,7 @@
 
 ## issue-042: Persist only Workbench UI state in the target UI store
 
-- Status: READY
+- Status: RESOLVED
 - Classification: NORMAL
 - Goal / user outcome: The upstream UI store persists the minimum Workbench tab/layout visibility state without adopting unrelated donor preferences.
 - First-principles root cause: Target `useUIStore` has no Workbench fields or sanitizer.
@@ -829,14 +829,14 @@
 - Dispatch order: Narrow store adapter after Workbench schema freezes.
 - Ownership: `packages/ui/src/stores/useUIStore.ts`; one focused persistence/sanitizer test discovered before dispatch.
 - Focused verification: Focused persistence test, UI typecheck, and line-level diff against target.
-- Pi binding: unassigned
-- Pi attempts: none
-- Primary attempts: not eligible while Pi retries remain
-- Current evidence: Reopened 2026-08-10. Current `useUIStore.ts` is target v1.18.1 and lacks retained fork fields used by Workbench/Artifact hosts: right-sidebar open/tab controls and `ocixStylePreset`; it also does not export the context-panel sizing constants expected by the current host. UI typecheck reports these as a coherent store contract cluster. The repair must add only versioned/sanitized fork state and proven exports to the target store.
+- Pi binding: batch `d82216c1-d5c3-4f02-b92f-ff4dd99c3f90`, run `73507971-a723-41a9-a0c3-3e01474ae913`, base `d9f6632f`, final revision 2.
+- Pi attempts: Correction 1 was lost to repeated provider 429 responses without file changes; correction 2 implemented the bounded store adapter and six regressions. Pi retry budget is exhausted with a policy-clean formal handoff.
+- Primary attempts: No implementation attempt; primary integrated the byte-identical Pi candidate and independently reran focused tests and full UI typecheck.
+- Current evidence: Resolved 2026-08-10. The target store now adds only persisted/sanitized right-sidebar open/tab state, `ocixStylePreset`, two required context modes, and exports the unchanged 380/380/1400 sizing constants; migration **13 → 14** drops obsolete width while preserving and sanitizing retained values. Store plus adjacent persistence tests pass **38/38**. Full UI typecheck errors fell **248 → 223**, removing all 25 owned store-contract errors; the revealed `TerminalView.preferredTabId` mismatch is a separate host seam.
 - Suspension decision: n/a
 - Resume condition: n/a
 - Continuation decision: Enables layout registration.
-- Next action: Dispatch one bounded target-store Pi lane with a focused persistence/sanitizer test.
+- Next action: Resolved; issues 043-044 may consume the restored target store contract.
 
 ## issue-043: Register the Workbench tab in the upstream right sidebar
 

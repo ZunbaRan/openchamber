@@ -9,12 +9,14 @@ import { DEFAULT_MONO_FONT, DEFAULT_UI_FONT, type MonoFontOption, type UiFontOpt
 import { getStoredMobileKeyboardMode, type MobileKeyboardMode } from '@/lib/mobileKeyboardMode';
 import { getRuntimeKey } from '@/lib/runtime-switch';
 import type { TerminalShell } from '@/lib/api/types';
+import { normalizeOcixStylePreset, type OcixStylePreset } from '@/lib/interactive-ui/stylePresets';
 import { useFilesViewTabsStore } from './useFilesViewTabsStore';
 import { isWindowsArm64 } from '@/lib/platform';
 
 export type MainTab = 'chat' | 'plan' | 'git' | 'diff' | 'terminal' | 'files' | 'context' | 'diagram';
 export type PendingDiffScope = 'working' | 'staged' | 'turn';
-export type ContextPanelMode = 'diff' | 'walkthrough' | 'file' | 'context' | 'plan' | 'chat' | 'preview' | 'browser' | 'git' | 'pr' | 'notes' | 'terminal';
+export type RightSidebarTab = 'git' | 'files' | 'context' | 'extensions';
+export type ContextPanelMode = 'diff' | 'walkthrough' | 'file' | 'context' | 'plan' | 'chat' | 'preview' | 'browser' | 'git' | 'pr' | 'notes' | 'terminal' | 'files-root' | 'extensions';
 export type MermaidRenderingMode = 'svg' | 'ascii';
 export type UserMessageRenderingMode = 'markdown' | 'plain';
 export type ChatRenderMode = 'sorted' | 'live';
@@ -116,9 +118,9 @@ const isLegacyDefaultTemplates = (value: unknown): boolean => {
   );
 };
 
-const CONTEXT_PANEL_DEFAULT_WIDTH = 380;
-const CONTEXT_PANEL_MIN_WIDTH = 380;
-const CONTEXT_PANEL_MAX_WIDTH = 1400;
+export const CONTEXT_PANEL_DEFAULT_WIDTH = 380;
+export const CONTEXT_PANEL_MIN_WIDTH = 380;
+export const CONTEXT_PANEL_MAX_WIDTH = 1400;
 const CONTEXT_PANEL_MAX_TABS = 12;
 const CONTEXT_PANEL_MAX_LABEL_LENGTH = 120;
 const LEFT_SIDEBAR_MIN_WIDTH = 280;
@@ -288,7 +290,7 @@ const sanitizeContextPanelTabs = (tabs: unknown): ContextPanelTab[] => {
       touchedAt?: unknown;
     };
 
-    if (candidate.mode !== 'diff' && candidate.mode !== 'walkthrough' && candidate.mode !== 'file' && candidate.mode !== 'context' && candidate.mode !== 'plan' && candidate.mode !== 'chat' && candidate.mode !== 'preview' && candidate.mode !== 'browser' && candidate.mode !== 'git' && candidate.mode !== 'pr' && candidate.mode !== 'notes' && candidate.mode !== 'terminal') {
+    if (candidate.mode !== 'diff' && candidate.mode !== 'walkthrough' && candidate.mode !== 'file' && candidate.mode !== 'context' && candidate.mode !== 'plan' && candidate.mode !== 'chat' && candidate.mode !== 'preview' && candidate.mode !== 'browser' && candidate.mode !== 'files-root' && candidate.mode !== 'git' && candidate.mode !== 'pr' && candidate.mode !== 'notes' && candidate.mode !== 'terminal' && candidate.mode !== 'extensions') {
       continue;
     }
 
@@ -523,7 +525,7 @@ const sanitizeContextPanelByDirectory = (
     if (candidate.widthByMode && typeof candidate.widthByMode === 'object') {
       for (const [mode, value] of Object.entries(candidate.widthByMode as Record<string, unknown>)) {
         if (
-          (mode === 'diff' || mode === 'file' || mode === 'context' || mode === 'plan' || mode === 'chat' || mode === 'preview' || mode === 'browser' || mode === 'git' || mode === 'pr' || mode === 'notes' || mode === 'terminal')
+          (mode === 'diff' || mode === 'file' || mode === 'context' || mode === 'plan' || mode === 'chat' || mode === 'preview' || mode === 'browser' || mode === 'files-root' || mode === 'git' || mode === 'pr' || mode === 'notes' || mode === 'terminal' || mode === 'extensions')
           && typeof value === 'number'
           && Number.isFinite(value)
         ) {
@@ -572,6 +574,8 @@ interface UIStore {
   isSidebarOpen: boolean;
   sidebarWidth: number;
   hasManuallyResizedLeftSidebar: boolean;
+  isRightSidebarOpen: boolean;
+  rightSidebarTab: RightSidebarTab;
   contextPanelByDirectory: Record<string, ContextPanelDirectoryState>;
   contextRailOrder: string[];
   contextEditorTreeVisible: boolean;
@@ -712,11 +716,15 @@ interface UIStore {
   reportUsage: boolean;
   shortcutOverrides: Record<string, ShortcutCombo>;
   fileEditorKeymap: FileEditorKeymap;
+  ocixStylePreset: OcixStylePreset;
 
   setTheme: (theme: 'light' | 'dark' | 'system') => void;
+  setOcixStylePreset: (preset: OcixStylePreset) => void;
   toggleSidebar: () => void;
   setSidebarOpen: (open: boolean) => void;
   setSidebarWidth: (width: number) => void;
+  setRightSidebarOpen: (open: boolean) => void;
+  setRightSidebarTab: (tab: RightSidebarTab) => void;
   setContextRailOrder: (order: string[]) => void;
   toggleContextEditorTree: () => void;
   setContextEditorTreeWidth: (width: number) => void;
@@ -894,6 +902,8 @@ export const useUIStore = create<UIStore>()(
         isSidebarOpen: true,
         sidebarWidth: LEFT_SIDEBAR_MIN_WIDTH,
         hasManuallyResizedLeftSidebar: false,
+        isRightSidebarOpen: false,
+        rightSidebarTab: 'git',
         contextPanelByDirectory: {},
         contextRailOrder: [],
         contextEditorTreeVisible: true,
@@ -1024,10 +1034,15 @@ export const useUIStore = create<UIStore>()(
         reportUsage: true,
         shortcutOverrides: {},
         fileEditorKeymap: 'default',
+        ocixStylePreset: 'linear',
 
         setTheme: (theme) => {
           set({ theme });
           get().applyTheme();
+        },
+
+        setOcixStylePreset: (preset) => {
+          set({ ocixStylePreset: normalizeOcixStylePreset(preset) });
         },
 
         toggleSidebar: () => {
@@ -1070,6 +1085,14 @@ export const useUIStore = create<UIStore>()(
 
         setSidebarWidth: (width) => {
           set({ sidebarWidth: width, hasManuallyResizedLeftSidebar: true });
+        },
+
+        setRightSidebarOpen: (open) => {
+          set({ isRightSidebarOpen: open });
+        },
+
+        setRightSidebarTab: (tab) => {
+          set({ rightSidebarTab: tab });
         },
 
         setContextRailOrder: (order) => {
@@ -2253,7 +2276,7 @@ export const useUIStore = create<UIStore>()(
       {
         name: 'ui-store',
         storage: createDeferredSafeJSONStorage(),
-        version: 13,
+        version: 14,
         migrate: (persistedState, version) => {
           if (!persistedState || typeof persistedState !== 'object') {
             return persistedState;
@@ -2339,11 +2362,21 @@ export const useUIStore = create<UIStore>()(
             delete state.memoryLimitActiveSession;
           }
 
-          // Right-sidebar state was removed with the sidebar itself; drop
-          // stale persisted fields.
-          delete state.isRightSidebarOpen;
+          // The obsolete right-sidebar width predates the current right
+          // sidebar; it must never resurrect.
           delete state.rightSidebarWidth;
-          delete state.rightSidebarTab;
+
+          // v13 -> v14: re-introduce right-sidebar open/tab controls and the
+          // host OCIX style preset with strict persisted-state sanitization.
+          if (version < 14) {
+            if (typeof state.isRightSidebarOpen !== 'boolean') {
+              state.isRightSidebarOpen = false;
+            }
+            if (state.rightSidebarTab !== 'git' && state.rightSidebarTab !== 'files' && state.rightSidebarTab !== 'context' && state.rightSidebarTab !== 'extensions') {
+              state.rightSidebarTab = 'git';
+            }
+            state.ocixStylePreset = normalizeOcixStylePreset(state.ocixStylePreset);
+          }
 
           state.contextPanelByDirectory = sanitizeContextPanelByDirectory(state.contextPanelByDirectory);
 
@@ -2392,6 +2425,8 @@ export const useUIStore = create<UIStore>()(
           theme: state.theme,
           isSidebarOpen: state.isSidebarOpen,
           sidebarWidth: state.sidebarWidth,
+          isRightSidebarOpen: state.isRightSidebarOpen,
+          rightSidebarTab: state.rightSidebarTab,
           contextPanelByDirectory: state.contextPanelByDirectory,
           contextRailOrder: state.contextRailOrder,
           contextEditorTreeVisible: state.contextEditorTreeVisible,
@@ -2482,6 +2517,7 @@ export const useUIStore = create<UIStore>()(
           draftStartersVisible: state.draftStartersVisible,
           shortcutOverrides: state.shortcutOverrides,
           fileEditorKeymap: state.fileEditorKeymap,
+          ocixStylePreset: state.ocixStylePreset,
         })
       }
     ),

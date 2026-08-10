@@ -1,9 +1,12 @@
 import { beforeEach, describe, expect, test } from 'bun:test';
 import { CONTEXT_SURFACES, sortContextSurfaces } from '../lib/surfaces/registry';
+import type { OcixStylePreset } from '../lib/interactive-ui/stylePresets';
+import { getSafeStorage } from './utils/safeStorage';
 import { useUIStore } from './useUIStore';
 
 beforeEach(() => {
   useUIStore.setState({ contextPanelByDirectory: {}, contextRailOrder: [] });
+  useUIStore.setState({ isRightSidebarOpen: false, rightSidebarTab: 'git', ocixStylePreset: 'linear' });
 });
 
 describe('useUIStore context panel tabs', () => {
@@ -173,5 +176,103 @@ describe('useUIStore contextRailOrder', () => {
     // surface is added or removed.
     expect(new Set(ids)).toEqual(new Set(CONTEXT_SURFACES.map((surface) => surface.id)));
     expect(ids).toHaveLength(CONTEXT_SURFACES.length);
+  });
+});
+
+describe('useUIStore right-sidebar and OCIX preset fork state', () => {
+  test('initial defaults are closed sidebar, git tab, linear preset', () => {
+    const initial = useUIStore.getInitialState();
+    expect(initial.isRightSidebarOpen).toBe(false);
+    expect(initial.rightSidebarTab).toBe('git');
+    expect(initial.ocixStylePreset).toBe('linear');
+  });
+
+  test('setRightSidebarOpen and setRightSidebarTab store the raw values', () => {
+    useUIStore.getState().setRightSidebarOpen(true);
+    useUIStore.getState().setRightSidebarTab('extensions');
+
+    const state = useUIStore.getState();
+    expect(state.isRightSidebarOpen).toBe(true);
+    expect(state.rightSidebarTab).toBe('extensions');
+  });
+
+  test('setOcixStylePreset stores a valid preset and normalizes unknown ids', () => {
+    useUIStore.getState().setOcixStylePreset('vercel');
+    expect(useUIStore.getState().ocixStylePreset).toBe('vercel');
+
+    useUIStore.getState().setOcixStylePreset('bogus' as OcixStylePreset);
+    expect(useUIStore.getState().ocixStylePreset).toBe('linear');
+  });
+});
+
+describe('useUIStore persisted fork state sanitization', () => {
+  const drainDeferredWrites = async () => {
+    // The store persists through a deferred storage that flushes on a
+    // zero-delay timer; wait for any queued flush so a seeded value cannot
+    // be shadowed by an in-flight write.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  };
+
+  const seedAndRehydrate = async (state: Record<string, unknown>, version: number) => {
+    await drainDeferredWrites();
+    getSafeStorage().setItem('ui-store', JSON.stringify({ state, version }));
+    await useUIStore.persist.rehydrate();
+  };
+
+  test('v13 migration sanitizes malformed open/tab/preset and drops obsolete width', async () => {
+    await seedAndRehydrate({
+      theme: 'dark',
+      messageLimit: 250,
+      isRightSidebarOpen: 'yes',
+      rightSidebarTab: 'bogus',
+      ocixStylePreset: 'bogus',
+      rightSidebarWidth: 500,
+    }, 13);
+
+    const state = useUIStore.getState();
+    expect(state.isRightSidebarOpen).toBe(false);
+    expect(state.rightSidebarTab).toBe('git');
+    expect(state.ocixStylePreset).toBe('linear');
+    expect((state as unknown as Record<string, unknown>).rightSidebarWidth).toBe(undefined);
+    // Unrelated persisted state is preserved across the migration.
+    expect(state.theme).toBe('dark');
+    expect(state.messageLimit).toBe(250);
+  });
+
+  test('v13 migration keeps valid persisted fork values', async () => {
+    await seedAndRehydrate({
+      isRightSidebarOpen: true,
+      rightSidebarTab: 'extensions',
+      ocixStylePreset: 'vercel',
+    }, 13);
+
+    const state = useUIStore.getState();
+    expect(state.isRightSidebarOpen).toBe(true);
+    expect(state.rightSidebarTab).toBe('extensions');
+    expect(state.ocixStylePreset).toBe('vercel');
+  });
+
+  test('context panel tabs using the new modes survive sanitization', async () => {
+    await seedAndRehydrate({
+      contextPanelByDirectory: {
+        '/repo': {
+          isOpen: true,
+          expanded: false,
+          tabs: [
+            { id: 'extensions', mode: 'extensions', targetPath: null, dedupeKey: 'extensions', label: 'Applications', sessionTitleFallback: null, readOnly: false, stagedDiff: false, diffScope: 'working', touchedAt: 1 },
+            { id: 'files-root', mode: 'files-root', targetPath: null, dedupeKey: 'files-root', label: 'Files', sessionTitleFallback: null, readOnly: false, stagedDiff: false, diffScope: 'working', touchedAt: 2 },
+          ],
+          activeTabId: 'files-root',
+          widthByMode: { extensions: 700, 'files-root': 100 },
+          touchedAt: 3,
+        },
+      },
+    }, 13);
+
+    const state = useUIStore.getState().contextPanelByDirectory['/repo'];
+    expect(state?.tabs.map((tab) => tab.mode)).toEqual(['extensions', 'files-root']);
+    expect(state?.activeTabId).toBe('files-root');
+    expect(state?.widthByMode.extensions).toBe(700);
+    expect(state?.widthByMode['files-root']).toBe(380);
   });
 });
