@@ -1578,9 +1578,9 @@
 
 - Status: RESOLVED
 - Classification: P0
-- Goal / user outcome: Script-enabled generated and installed HTML Artifacts render through the native Desktop Runner inside the packaged `openchamber-ui://` application instead of timing out.
-- First-principles root cause: The Artifact document response is intentionally CSP-sandboxed and therefore has an opaque top-level origin. `createArtifactRunnerManager.start` currently loads that document before attaching its `WebContentsView` to the owning window; packaged Electron then rejects the invalid site tuple during attachment. The host never receives the Runner `loaded`/heartbeat path and transitions to `timed-out`.
-- Core acceptance invariant: The empty Runner view is attached to the live owner before navigation, remains invisible until layout acknowledgement, and is fully detached/closed on load failure. URL allowlisting, isolated partition, permission denial, navigation blocking, limits, clipping, popout behavior, and controlled public errors remain unchanged. A focused unit test must lock the attach-before-load ordering and failure cleanup; packaged acceptance must reach `desktop-runner` ready rather than `timed-out` without Chromium origin-tuple errors.
+- Goal / user outcome: Script-enabled generated and installed HTML Artifacts use a lifecycle-safe native Desktop Runner whose view is owned before navigation and cannot leak state/resources on navigation failure.
+- First-principles root cause: `createArtifactRunnerManager.start` loaded the Artifact document before attaching its empty `WebContentsView` to the owning window, violating the required ownership-before-navigation lifecycle and leaving failure cleanup under-specified. Early packaged timeouts also emitted opaque-origin diagnostics, but later evidence proved their actual missing handshake was the distinct omitted-preload defect in issue083; this issue owns attach ordering and cleanup, not suppression of that diagnostic.
+- Core acceptance invariant: The empty Runner view is attached to the live owner before navigation, remains invisible until layout acknowledgement, and is fully detached/closed on load failure. URL allowlisting, isolated partition, permission denial, navigation blocking, limits, clipping, popout behavior, and controlled public errors remain unchanged. A focused unit test must lock the attach-before-load ordering and failure cleanup; packaged acceptance must reach `desktop-runner` ready rather than `timed-out`. Opaque-origin diagnostic lines are classified separately by issue082 and do not fail this invariant without observable supported-behavior impact.
 - Dependencies: issues 077, 080
 - Dispatch order: Serial blocker for the next packaged desktop acceptance rerun.
 - Ownership: `packages/electron/artifact-runner.mjs`; `packages/electron/artifact-runner.test.mjs`.
@@ -1594,7 +1594,7 @@
 - Continuation decision: Restore the required lifecycle ordering with focused regression coverage; do not weaken CSP sandboxing or fall back to an iframe for scripts.
 - Next action: Resolved; keep the focused ordering/cleanup tests and packaged Runner acceptance as regression gates.
 
-## issue-082: Give the trusted Artifact Broker a valid top-level origin
+## issue-082: Classify opaque-origin diagnostics without weakening the Broker sandbox
 
 - Status: OPEN
 - Classification: NON-BLOCKING
