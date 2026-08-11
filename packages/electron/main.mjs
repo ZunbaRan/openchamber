@@ -2252,7 +2252,6 @@ const scheduleMacVibrancyReady = (browserWindow, delayMs = 160) => {
   }, delayMs);
   if (typeof timer?.unref === "function") timer.unref();
 };
-
 const setTaskbarProgress = (value) => {
   if (process.platform !== "win32") return;
   for (const browserWindow of BrowserWindow.getAllWindows()) {
@@ -2574,6 +2573,23 @@ const dispatchDeepLink = (link) => {
     log.warn("[electron] invalid connect deep-link payload");
     return;
   }
+  // Sent by the MCP OAuth callback page after it completes authorization in
+  // the system browser. The work is already done server-side; all this has to
+  // do is bring the app back to the front, since the user's attention is in a
+  // browser tab at that moment.
+  if (link.type === "focus") {
+    const target = state.mainWindow && !state.mainWindow.isDestroyed()
+      ? state.mainWindow
+      : BrowserWindow.getAllWindows().find((window) => !window.isDestroyed());
+    if (target) {
+      if (target.isMinimized()) target.restore();
+      target.show();
+      target.focus();
+    }
+    emitToAllWindows("openchamber:deep-link-focus", { reason: link.value || null });
+    return;
+  }
+
   if (link.type === "session" && link.value) {
     emitToAllWindows("openchamber:open-session", { sessionId: link.value });
     return;
@@ -2845,12 +2861,10 @@ const createBrowserWindow = ({
     };
     browserWindow.on("minimize", () => {
       refreshTrafficLights();
-      setMacVibrancyReady(browserWindow, false);
     });
     browserWindow.on("restore", () => {
       refreshTrafficLights();
       setTimeout(refreshTrafficLights, 250);
-      scheduleMacVibrancyReady(browserWindow, 180);
     });
     // Only suppress vibrancy around the minimize/restore cycle (it flashes raw
     // transparency during the genie animation). A plain show — cold launch from
@@ -3054,7 +3068,6 @@ const createBrowserWindow = ({
   browserWindow.once("ready-to-show", () => {
     browserWindow.show();
     browserWindow.focus();
-    if (useVibrancy) applyMacVibrancy(browserWindow);
   });
 
   if (url) {
@@ -3406,7 +3419,6 @@ const createMiniChatWindow = async ({
   browserWindow.once("ready-to-show", () => {
     browserWindow.show();
     browserWindow.focus();
-    if (useVibrancy) applyMacVibrancy(browserWindow);
   });
 
   browserWindow.webContents.setWindowOpenHandler(({ url }) => {
@@ -4459,6 +4471,22 @@ const handleInvoke = async (browserWindow, command, args = {}) => {
     case "desktop_start_window_drag":
       return null;
 
+    // Used after an MCP authorization finishes in the system browser: the app
+    // raises itself rather than relying on the browser to hand control back.
+    // A browser will not follow a custom-protocol link without a user gesture,
+    // and the completion page has none.
+    case "desktop_focus_window": {
+      const target = browserWindow && !browserWindow.isDestroyed()
+        ? browserWindow
+        : (state.mainWindow && !state.mainWindow.isDestroyed() ? state.mainWindow : null);
+      if (!target) return false;
+      if (target.isMinimized()) target.restore();
+      target.show();
+      target.focus();
+      app.focus?.({ steal: true });
+      return true;
+    }
+
     case "desktop_is_window_fullscreen":
       return Boolean(browserWindow?.isFullScreen());
 
@@ -5474,7 +5502,12 @@ const handleInvoke = async (browserWindow, command, args = {}) => {
 
     case "desktop_minimize_current_window":
       if (browserWindow && !browserWindow.isDestroyed()) {
-        browserWindow.minimize();
+        if (shouldHideMainWindowToTray(browserWindow)) {
+          debounceWindowStatePersist(browserWindow, true);
+          browserWindow.hide();
+        } else {
+          browserWindow.minimize();
+        }
       }
       return null;
 

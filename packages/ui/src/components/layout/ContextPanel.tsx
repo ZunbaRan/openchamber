@@ -1,25 +1,32 @@
 import React from "react";
 
-import { FileTypeIcon } from "@/components/icons/FileTypeIcon";
-import { Button } from "@/components/ui/button";
-import { SortableTabsStrip } from "@/components/ui/sortable-tabs-strip";
-import { DiffView } from "@/components/views/DiffView";
-import { FilesView } from "@/components/views/FilesView";
-import { GitView } from "@/components/views/GitView";
-import { ExtensionWorkbench } from "@/components/interactive-ui/workbench/ExtensionWorkbench";
-import { PullRequestView } from "@/components/views/PullRequestView";
-import { TerminalView } from "@/components/views/TerminalView";
-import { PlanView } from "@/components/views/PlanView";
-import { ProjectContextPanel } from "./RightSidebarTabs";
-import { SidebarFilesTree } from "./SidebarFilesTree";
-import { useThemeSystem } from "@/contexts/useThemeSystem";
-import { openExternalUrl } from "@/lib/url";
-import { copyTextToClipboard } from "@/lib/clipboard";
-import { useEffectiveDirectory } from "@/hooks/useEffectiveDirectory";
-import { cn } from "@/lib/utils";
-import { useI18n } from "@/lib/i18n";
-import { useFilesViewTabsStore } from "@/stores/useFilesViewTabsStore";
-import { useTerminalStore } from "@/stores/useTerminalStore";
+import { FileTypeIcon } from '@/components/icons/FileTypeIcon';
+import { DiffViewIcon } from '@/components/icons/DiffIcon';
+import { Button } from '@/components/ui/button';
+import { SortableTabsStrip } from '@/components/ui/sortable-tabs-strip';
+import { PullRequestView } from '@/components/views/PullRequestView';
+import { TerminalView } from '@/components/views/TerminalView';
+import { lazyWithChunkRecovery } from '@/lib/chunkLoadRecovery';
+
+// Heavy views stay on-demand (same as MainLayout): importing DiffView/FilesView
+// or the walkthrough statically pulls the CodeMirror and @pierre/diffs stacks
+// into the eager startup graph even when no such tab is open.
+const WalkthroughView = lazyWithChunkRecovery(() => import('@/components/views/walkthrough/WalkthroughView').then((m) => ({ default: m.WalkthroughView })));
+const DiffView = lazyWithChunkRecovery(() => import('@/components/views/DiffView').then((m) => ({ default: m.DiffView })));
+const FilesView = lazyWithChunkRecovery(() => import('@/components/views/FilesView').then((m) => ({ default: m.FilesView })));
+const GitView = lazyWithChunkRecovery(() => import('@/components/views/GitView').then((m) => ({ default: m.GitView })));
+const PlanView = lazyWithChunkRecovery(() => import('@/components/views/PlanView').then((m) => ({ default: m.PlanView })));
+import { ExtensionWorkbench } from '@/components/interactive-ui/workbench/ExtensionWorkbench';
+import { ProjectContextPanel } from './RightSidebarTabs';
+import { SidebarFilesTree } from './SidebarFilesTree';
+import { useThemeSystem } from '@/contexts/useThemeSystem';
+import { openExternalUrl } from '@/lib/url';
+import { copyTextToClipboard } from '@/lib/clipboard';
+import { useEffectiveDirectory } from '@/hooks/useEffectiveDirectory';
+import { cn } from '@/lib/utils';
+import { useI18n } from '@/lib/i18n';
+import { useFilesViewTabsStore } from '@/stores/useFilesViewTabsStore';
+import { useTerminalStore } from '@/stores/useTerminalStore';
 import {
   CONTEXT_PANEL_DEFAULT_WIDTH,
   CONTEXT_PANEL_MAX_WIDTH,
@@ -27,22 +34,20 @@ import {
   useUIStore,
   type ContextPanelMode,
   type PendingDiffScope,
-} from "@/stores/useUIStore";
-import { useInlineCommentDraftStore } from "@/stores/useInlineCommentDraftStore";
-import { useSessionUIStore } from "@/sync/session-ui-store";
-import { useInputStore } from "@/sync/input-store";
-import { markSessionViewed } from "@/sync/notification-store";
-import {
-  setExternallyViewedSession,
-  useDirectoryStore,
-} from "@/sync/sync-context";
-import { ContextPanelContent } from "./ContextSidebarTab";
-import { toast } from "@/components/ui";
-import { runtimeFetch } from "@/lib/runtime-fetch";
-import { refreshRuntimeUrlAuthToken } from "@/lib/runtime-auth";
-import { getRuntimeUrlResolver } from "@/lib/runtime-url";
-import { getRuntimeApiBaseUrl } from "@/lib/runtime-switch";
-import { getPreviewTargetRecoveryAction } from "@/lib/preview/proxy-response";
+} from '@/stores/useUIStore';
+import { useInlineCommentDraftStore } from '@/stores/useInlineCommentDraftStore';
+import { useSessionUIStore } from '@/sync/session-ui-store';
+import { useInputStore } from '@/sync/input-store';
+import { markSessionViewed } from '@/sync/notification-store';
+import { setExternallyViewedSession, useDirectoryStore } from '@/sync/sync-context';
+import { ContextPanelContent } from './ContextSidebarTab';
+import { toast } from '@/components/ui';
+import { runtimeFetch } from '@/lib/runtime-fetch';
+import { getRuntimeBearerTokenSync, getRuntimeExtraHeadersSync, refreshRuntimeUrlAuthToken } from '@/lib/runtime-auth';
+import { getRuntimeUrlResolver } from '@/lib/runtime-url';
+import { getRuntimeApiBaseUrl, getRuntimeKey } from '@/lib/runtime-switch';
+import { getActiveRelayDescriptor } from '@/lib/relay/runtime-tunnel';
+import { getPreviewTargetRecoveryAction } from '@/lib/preview/proxy-response';
 import { Icon } from "@/components/icon/Icon";
 import { OpenChamberLogo } from "@/components/ui/OpenChamberLogo";
 import {
@@ -53,10 +58,14 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { invokeDesktopCommand } from "@/lib/desktopNative";
 import {
+  EMBEDDED_RUNTIME_BOOTSTRAP_REQUEST,
+  EMBEDDED_RUNTIME_BOOTSTRAP_RESPONSE,
   getOrCreateEmbeddedSessionChatURL,
   type EmbeddedSessionChatURLCacheEntry,
-} from "./contextPanelEmbeddedChat";
-import { getContextSurfaceWidthFraction } from "@/lib/surfaces/registry";
+  type EmbeddedSessionRuntimeBootstrap,
+} from './contextPanelEmbeddedChat';
+import { getContextSurfaceWidthFraction } from '@/lib/surfaces/registry';
+import { isTerminalEventTarget } from '@/lib/terminalFocus';
 import {
   type PreviewElementMetadata,
   isPreviewElementMetadata,
@@ -278,7 +287,11 @@ const getTabIcon = (tab: {
   }
 
   if (tab.mode === "diff") {
-    return <Icon name="arrow-left-right" className="h-3.5 w-3.5" />;
+    return <DiffViewIcon className="h-3.5 w-3.5" />;
+  }
+
+  if (tab.mode === "walkthrough") {
+    return <Icon name="route" className="h-3.5 w-3.5" />;
   }
 
   if (tab.mode === "git") {
@@ -3143,7 +3156,7 @@ export const ContextPanel: React.FC = () => {
 
   const handlePanelKeyDownCapture = React.useCallback(
     (event: React.KeyboardEvent<HTMLElement>) => {
-      if (event.key !== "Escape") {
+      if (event.key !== 'Escape') {
         return;
       }
       if (
@@ -3153,12 +3166,17 @@ export const ContextPanel: React.FC = () => {
         return;
       }
 
+      // Terminal owns Escape so the PTY receives it (e.g. Vim Normal mode).
+      // ghostty-web listens in the bubble phase; stopping capture here would
+      // swallow the key before the terminal ever sees it (issue #2644).
+      if (isTerminalEventTarget(event.target)) {
+        return;
+      }
+
       event.preventDefault();
       event.stopPropagation();
       handleClose();
-    },
-    [handleClose],
-  );
+    }, [handleClose]);
 
   React.useEffect(() => {
     if (!directoryKey || !activeTab) {
@@ -3388,7 +3406,33 @@ export const ContextPanel: React.FC = () => {
         return;
       }
 
-      const data = event.data as { type?: unknown };
+      const data = event.data as { type?: unknown; requestId?: unknown };
+      if (data?.type === EMBEDDED_RUNTIME_BOOTSTRAP_REQUEST) {
+        if (typeof data.requestId !== "string" || !data.requestId) return;
+        const runtimeKey = getRuntimeKey();
+        const payload: EmbeddedSessionRuntimeBootstrap = {
+          apiBaseUrl: getRuntimeApiBaseUrl(),
+          clientToken: getRuntimeBearerTokenSync(),
+          localOrigin:
+            typeof window.__OPENCHAMBER_LOCAL_ORIGIN__ === "string"
+              ? window.__OPENCHAMBER_LOCAL_ORIGIN__
+              : "",
+          runtimeHeaders: getRuntimeExtraHeadersSync(),
+          relayHostId: runtimeKey.startsWith("host:")
+            ? runtimeKey.slice("host:".length)
+            : "",
+          relay: getActiveRelayDescriptor() ?? undefined,
+        };
+        (event.source as WindowProxy | null)?.postMessage(
+          {
+            type: EMBEDDED_RUNTIME_BOOTSTRAP_RESPONSE,
+            requestId: data.requestId,
+            payload,
+          },
+          event.origin,
+        );
+        return;
+      }
       if (data?.type === "openchamber:theme-sync-request") {
         postThemeSyncToEmbeddedChat();
         return;
@@ -3471,33 +3515,25 @@ export const ContextPanel: React.FC = () => {
     [activeModeTabs, effectiveDirectory, sessionTitleById, t],
   );
 
-  const activeNonChatContent =
-    activeTab?.mode === "context" ? (
-      <ContextPanelContent />
-    ) : activeTab?.mode === "git" ? (
-      <GitView isActive={isOpen} />
-    ) : activeTab?.mode === "pr" ? (
-      <PullRequestView />
-    ) : activeTab?.mode === "notes" ? (
-      <ProjectContextPanel />
-    ) : activeTab?.mode === "plan" ? (
-      <PlanView targetPath={activeTab.targetPath} />
-    ) : activeTab?.mode === "preview" ? (
-      <PreviewPane
-        rawUrl={activeTab.targetPath ?? ""}
-        onNavigate={(url) => openContextPreview(effectiveDirectory, url)}
-      />
-    ) : (
-      <div className="flex h-full flex-col items-center justify-center gap-3 p-6 text-center">
-        <Icon name="global" className="h-12 w-12 text-muted-foreground/50" />
-        <div className="typography-ui-header text-foreground">
-          {t("contextPanel.preview.title")}
-        </div>
-        <div className="max-w-sm typography-micro text-muted-foreground">
-          {t("contextPanel.preview.description")}
-        </div>
-      </div>
-    );
+  const activeNonChatContent = activeTab?.mode === 'context'
+        ? <ContextPanelContent />
+        : activeTab?.mode === 'git'
+            ? <React.Suspense fallback={null}><GitView isActive={isOpen} /></React.Suspense>
+            : activeTab?.mode === 'pr'
+                ? <PullRequestView />
+            : activeTab?.mode === 'notes'
+                ? <ProjectContextPanel />
+        : activeTab?.mode === 'plan'
+            ? <React.Suspense fallback={null}><PlanView targetPath={activeTab.targetPath} /></React.Suspense>
+            : activeTab?.mode === 'preview'
+                ? <PreviewPane rawUrl={activeTab.targetPath ?? ''} onNavigate={(url) => openContextPreview(effectiveDirectory, url)} />
+                : (
+                  <div className="flex h-full flex-col items-center justify-center gap-3 p-6 text-center">
+                    <Icon name="global" className="h-12 w-12 text-muted-foreground/50" />
+                    <div className="typography-ui-header text-foreground">{t('contextPanel.preview.title')}</div>
+                    <div className="max-w-sm typography-micro text-muted-foreground">{t('contextPanel.preview.description')}</div>
+                  </div>
+                );
 
   const chatTabs = React.useMemo(
     () => tabs.filter((tab) => tab.mode === "chat"),
@@ -3513,6 +3549,12 @@ export const ContextPanel: React.FC = () => {
   );
   const hasTerminalTab = React.useMemo(
     () => tabs.some((tab) => tab.mode === "terminal"),
+    [tabs],
+  );
+  // Keep-alive: the walkthrough holds reading progress and scroll position that
+  // a remount would silently throw away.
+  const hasWalkthroughTab = React.useMemo(
+    () => tabs.some((tab) => tab.mode === "walkthrough"),
     [tabs],
   );
   const BrowserPane = isElectronBrowserRuntime()
@@ -3801,7 +3843,9 @@ export const ContextPanel: React.FC = () => {
                 isGitActive ? "block" : "hidden",
               )}
             >
-              <GitView isActive={isOpen && isGitActive} />
+              <React.Suspense fallback={null}>
+                <GitView isActive={isOpen && isGitActive} />
+              </React.Suspense>
             </div>
           ) : null}
           {tabs.some((tab) => tab.mode === "extensions") ? (
@@ -3823,7 +3867,9 @@ export const ContextPanel: React.FC = () => {
             >
               <div className="h-full min-w-0 flex-1">
                 {hasOpenEditorFile ? (
-                  <FilesView mode="editor-only" />
+                  <React.Suspense fallback={null}>
+                    <FilesView mode="editor-only" />
+                  </React.Suspense>
                 ) : (
                   <div className="flex h-full flex-col items-center justify-center gap-3 p-6 text-center">
                     <Icon
@@ -3900,18 +3946,20 @@ export const ContextPanel: React.FC = () => {
                 activeTab?.id !== tab.id && "hidden",
               )}
             >
-              <DiffView
-                hideStackedFileSidebar
-                stackedDefaultCollapsedAll
-                pinSelectedFileHeaderToTopOnNavigate
-                showOpenInEditorAction
-                diffScope={
-                  tab.diffScope ?? (tab.stagedDiff ? "staged" : "working")
-                }
-                onDiffScopeChange={handleDiffScopeChange}
-                targetFilePath={tab.targetPath}
-                flushContent
-              />
+              <React.Suspense fallback={null}>
+                <DiffView
+                  hideStackedFileSidebar
+                  stackedDefaultCollapsedAll
+                  pinSelectedFileHeaderToTopOnNavigate
+                  showOpenInEditorAction
+                  diffScope={
+                    tab.diffScope ?? (tab.stagedDiff ? "staged" : "working")
+                  }
+                  onDiffScopeChange={handleDiffScopeChange}
+                  targetFilePath={tab.targetPath}
+                  flushContent
+                />
+              </React.Suspense>
             </div>
           ))}
           {activeTab &&
@@ -3922,7 +3970,8 @@ export const ContextPanel: React.FC = () => {
           !isTerminalActive &&
           !isExtensionsActive &&
           activeTab?.mode !== "browser" &&
-          activeTab?.mode !== "diff"
+          activeTab?.mode !== "diff" &&
+          activeTab?.mode !== "walkthrough"
             ? activeNonChatContent
             : null}
           {hasTerminalTab ? (
@@ -3936,6 +3985,18 @@ export const ContextPanel: React.FC = () => {
                 visible={isOpen && activeTab?.mode === "terminal"}
                 preferredTabId={activeTab?.targetPath ?? null}
               />
+            </div>
+          ) : null}
+          {hasWalkthroughTab ? (
+            <div
+              className={cn(
+                "absolute inset-0",
+                activeTab?.mode === "walkthrough" ? "block" : "hidden",
+              )}
+            >
+              <React.Suspense fallback={null}>
+                <WalkthroughView directory={effectiveDirectory} />
+              </React.Suspense>
             </div>
           ) : null}
         </div>

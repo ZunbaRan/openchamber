@@ -2,7 +2,7 @@
   "name": "openchamber",
   "displayName": "OpenChamber",
   "description": "%extension.description%",
-  "version": "1.18.1",
+  "version": "1.18.2",
   "publisher": "fedaykindev",
   "private": true,
   "repository": {
@@ -245,7 +245,7 @@
   "dependencies": {
     "@openchamber/ui": "workspace:*",
     "@opencode-ai/sdk": "npm:@zunbaran/opencode-sdk@1.18.10-oc.1",
-    "adm-zip": "^0.5.16",
+    "adm-zip": "^0.6.0",
     "jsonc-parser": "^3.3.1",
     "react": "^19.1.1",
     "react-dom": "^19.1.1",

@@ -1,3 +1,5 @@
+import { buildExternalManualRestartResponse } from './config-mutation-response.js';
+
 const parseLoopbackUrl = (rawUrl) => {
   if (typeof rawUrl !== 'string') {
     return null;
@@ -67,6 +69,12 @@ export const registerServerStatusRoutes = (app, dependencies) => {
     serverStartedAt,
     gracefulShutdown,
     getHealthSnapshot,
+    // Port this OpenChamber instance serves on and the tunnel public URL (if
+    // a tunnel is active). Exposed on /api/system/info so the UI can surface
+    // the active instance's service URLs. Optional: older wiring omits them
+    // and the endpoint reports null.
+    getServerPort = () => null,
+    getTunnelUrl = () => null,
     // Stable server identity (hash of the public signing key — not a secret).
     // Exposed on /health and /api/version so a client can verify that a
     // learned/probed address belongs to the expected server BEFORE sending its
@@ -357,6 +365,8 @@ export const registerServerStatusRoutes = (app, dependencies) => {
       runtime: runtimeName,
       pid: process.pid,
       startedAt: serverStartedAt,
+      port: getServerPort(),
+      tunnelUrl: getTunnelUrl(),
     });
   });
 
@@ -1025,7 +1035,13 @@ export const registerSettingsUtilityRoutes = (app, dependencies) => {
     try {
       console.log('[Server] Manual configuration reload requested');
 
-      await refreshOpenCodeAfterConfigChange('manual configuration reload');
+      const refreshResult = await refreshOpenCodeAfterConfigChange('manual configuration reload');
+
+      if (refreshResult?.external) {
+        return res.json(buildExternalManualRestartResponse(
+          'Configuration is saved on disk. Restart your connected OpenCode server to apply the changes.',
+        ));
+      }
 
       res.json({
         success: true,
