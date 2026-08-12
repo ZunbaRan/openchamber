@@ -177,10 +177,14 @@ const WidgetRendererInner: React.FC<WidgetRendererProps> = ({
 
   const showLoadingOverlay = hasCDN && !isStreaming && iframeReady && !finalized;
   const visibleTitle = title?.trim();
+  const widgetSegmentState = isStreaming ? 'streaming' : finalized ? 'ready' : 'loading';
 
   return (
     <div
       className="group/widget relative my-1 rounded-xl bg-muted/20 p-4"
+      data-generative-widget-segment="widget"
+      data-generative-widget-state={widgetSegmentState}
+      data-generative-widget-title={visibleTitle || undefined}
       style={{
         backgroundImage:
           'radial-gradient(circle, color-mix(in oklch, var(--muted-foreground) 8%, transparent) 0.8px, transparent 0.8px)',

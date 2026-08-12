@@ -125,14 +125,96 @@ describe('Interactive UI Agent routing metadata', () => {
       normalizedExtension(routedManifest()),
     ], new Map([['com.acme.crm', [{ configured: false, expired: false }]]]));
     const system = renderInteractiveUIRoutingSystemPrompt(catalog);
-    expect(system).toContain('matching installed business tool');
+    expect(system).toContain('matching installed connected-business-system Tool');
     expect(system).toContain('even when its connection is unconfigured or expired');
     expect(system).toContain('Never replace it with fabricated business metrics');
-    expect(system).toContain('at most one primary OpenChamber surface per assistant turn');
     expect(system).toContain('do not call interactive_ui or html_artifact to restate the same data');
-    expect(system).toContain('exactly one short conclusion or next-step sentence');
     expect(system).toContain('presentation=tabs or presentation=accordion');
     expect(system).toContain('the user explicitly asks for an HTML Artifact');
+  });
+
+  it('orders routing from explicit tools through visuals to plain text, keeping MCP Apps out of the visual tracks', () => {
+    const system = renderInteractiveUIRoutingSystemPrompt([]);
+    const at = (fragment) => system.indexOf(fragment);
+    expect(at('explicitly requested available Tool or form')).toBeGreaterThan(-1);
+    expect(at('matching installed connected-business-system Tool')).toBeGreaterThan(-1);
+    expect(at('matching installed specialized Tool or MCP Tool/App')).toBeGreaterThan(-1);
+    expect(at('interactive_ui for a structured, governable, zero-install Declarative snapshot')).toBeGreaterThan(-1);
+    expect(at('show-widget fence')).toBeGreaterThan(-1);
+    expect(at('assistant text wire format')).toBeGreaterThan(-1);
+    expect(at('never invent or call one')).toBeGreaterThan(-1);
+    expect(at('html_artifact for a large canvas, multiple coordinated regions, or complex local state')).toBeGreaterThan(-1);
+    expect(at('short factual answer')).toBeGreaterThan(-1);
+    expect(at('separate protocol layer, never a numbered visual type')).toBeGreaterThan(-1);
+    expect(at('explicitly requested available Tool or form')).toBeLessThan(at('matching installed connected-business-system Tool'));
+    expect(at('matching installed connected-business-system Tool')).toBeLessThan(at('matching installed specialized Tool or MCP Tool/App'));
+    expect(at('matching installed specialized Tool or MCP Tool/App')).toBeLessThan(at('interactive_ui for a structured, governable, zero-install Declarative snapshot'));
+    expect(at('interactive_ui for a structured, governable, zero-install Declarative snapshot')).toBeLessThan(at('show-widget fence'));
+    expect(at('show-widget fence')).toBeLessThan(at('html_artifact for a large canvas, multiple coordinated regions, or complex local state'));
+    expect(at('html_artifact for a large canvas, multiple coordinated regions, or complex local state')).toBeLessThan(at('short factual answer'));
+  });
+
+  it('allows multiple different-focus visuals with bridge prose and a soft four-visual guidance limit', () => {
+    const system = renderInteractiveUIRoutingSystemPrompt([]);
+    expect(system).toContain('Multiple OpenChamber surface calls in one turn are allowed only when each surface has a different focus');
+    expect(system).toContain('bridge text');
+    expect(system).toContain('short conclusion or next-step sentence');
+    expect(system).toContain('soft guidance limit');
+    expect(system).toContain('no more than four visuals');
+    expect(system).toContain('not a hard cap');
+  });
+
+  it('keeps same-data dedupe fail-closed while allowing a different non-business focus', () => {
+    const system = renderInteractiveUIRoutingSystemPrompt([]);
+    expect(system).toContain('generic surfaces, widgets, and Markdown must not redraw the same metrics, tables, or data');
+    expect(system).toContain('clearly different, non-business explanatory focus may still use a visual');
+    expect(system).toContain('do not call interactive_ui or html_artifact to restate the same data');
+    expect(system).toContain('do not duplicate it as Markdown or a show-widget fence');
+  });
+
+  it('drops the legacy single-surface and single-conclusion absolutes', () => {
+    const system = renderInteractiveUIRoutingSystemPrompt([]);
+    expect(system).not.toContain('at most one primary');
+    expect(system).not.toContain('Use at most one');
+    expect(system).not.toContain('Stop calling tools');
+    expect(system).not.toContain('first primary surface tool succeeds');
+    expect(system).not.toContain('exactly one short conclusion');
+    expect(system).not.toMatch(/finish with exactly one/i);
+  });
+
+  it('keeps explicit visualization mandatory while matching the form to the request, and short factual answers plain text', () => {
+    const system = renderInteractiveUIRoutingSystemPrompt([]);
+    expect(system).toContain('explicitly asks to visualize, chart, tabulate, compare, diagram');
+    expect(system).toContain('a visual answer is mandatory');
+    expect(system).toContain('choose the available visual form that fits the requested shape and complexity');
+    expect(system).toContain('interactive_ui remains the preferred form when its standard components satisfy an explicit chart or table request');
+    expect(system).toContain('show-widget fence');
+    expect(system).toContain('html_artifact remains legitimate for a large canvas, multiple coordinated regions, or complex local state');
+    expect(system).toContain('A Markdown table, ASCII diagram, or prose-only answer does not satisfy that request');
+    expect(system).not.toMatch(/MUST call interactive_ui/i);
+    expect(system).not.toMatch(/interactive_ui when it is available/i);
+    expect(system).toContain('normal text when there is no visual benefit');
+    expect(system).toContain('short factual answer');
+    const at = (fragment) => system.indexOf(fragment);
+    expect(at('normal text when there is no visual benefit')).toBeGreaterThan(at('show-widget fence'));
+    expect(at('normal text when there is no visual benefit')).toBeGreaterThan(at('html_artifact for a large canvas, multiple coordinated regions, or complex local state'));
+  });
+
+  it('keeps write confirmation and catalog truncation guardrails', () => {
+    const manifest = routedManifest();
+    const longIntents = Array.from({ length: 16 }, (_, index) => `crm.longintent${String(index).padStart(2, '0')}${'x'.repeat(80)}`);
+    manifest.agentRouting.intents = longIntents;
+    manifest.views = Array.from({ length: 128 }, (_, index) => ({
+      id: `com.acme.crm.view${String(index).padStart(3, '0')}`,
+      tools: [`crm_tool_${String(index).padStart(3, '0')}`],
+      routing: { intents: longIntents, priority: 50, operation: 'read' },
+    }));
+    const system = renderInteractiveUIRoutingSystemPrompt(buildInteractiveUICapabilityCatalog([normalizedExtension(manifest)]));
+    expect(system).toContain('A write or mixed operation remains subject to the tool and host confirmation policy');
+    expect(system).toContain('[capability catalog truncated]');
+    expect(system).toContain('</openchamber_interactive_ui_routing>');
+    expect(system.length).toBeLessThan(12_100);
+    expect(system).not.toContain('tool=crm_tool_127');
   });
 
   it('keeps the bilingual routing corpus aligned with example extension capabilities', async () => {

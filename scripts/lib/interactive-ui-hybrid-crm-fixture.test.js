@@ -71,4 +71,46 @@ describe('repository-owned hybrid CRM acceptance fixture', () => {
     const revokedResponse = await request('/dashboard', api.keys.revoked);
     expect(revokedResponse.status).toBe(401);
   });
+
+  it('scopes dedupe to the same request or data and drops global stop wording', async () => {
+    const temporaryRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'hybrid-crm-fixture-test-'));
+    temporaryDirectories.push(temporaryRoot);
+    const api = await startHybridCrmApi();
+    servers.push(api);
+
+    const packed = await createHybridCrmPackage({ temporaryRoot, crmApiUrl: api.url });
+    const skill = await fs.readFile(
+      path.join(packed.extensionDirectory, 'agent-runtime', 'skills', HYBRID_CRM_FIXTURE.skillName, 'SKILL.md'),
+      'utf8',
+    );
+    const tools = await Promise.all(HYBRID_CRM_FIXTURE.toolNames.map((name) => fs.readFile(
+      path.join(packed.extensionDirectory, 'agent-runtime', 'tools', `${name}.ts`),
+      'utf8',
+    )));
+    const sources = [skill, ...tools];
+
+    for (const source of sources) {
+      expect(source).toMatch(/at most once per assistant turn or request to prevent duplicate business calls/);
+      expect(source).toMatch(/same request, data, metrics, or table/);
+    }
+    expect(skill).toMatch(/authoritative Simple CRM View is rendered/);
+    for (const toolSource of tools) {
+      expect(toolSource).toContain('already rendered');
+    }
+    expect(skill).toContain('Normal explanatory prose is fine');
+    expect(skill).toContain('clearly unrelated-focus non-business explanatory visual');
+
+    const globalStopWording = [
+      'do not call a second primary visualization Tool',
+      'stop selecting visualization tools',
+      'no second primary',
+      'stop after any visual',
+      'at most one primary',
+    ];
+    for (const source of sources) {
+      for (const wording of globalStopWording) {
+        expect(source).not.toContain(wording);
+      }
+    }
+  });
 });

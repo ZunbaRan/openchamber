@@ -10,6 +10,11 @@
  * - Show code toggling keeps working.
  * - Blank/absent titles fall back to a safe iframe title without inventing a
  *   visually prominent fake title.
+ * - The card root exposes stable observation markers
+ *   (`data-generative-widget-segment`/`-state`/`-title`) and transitions
+ *   streaming -> loading -> ready without altering rendering.
+ * - MessageBody/ToolPart part markers are covered with static source
+ *   assertions, since the minimal DOM stub cannot render the chat pipeline.
  *
  * Follows the repository's Bun/createRoot minimal-DOM-stub pattern (see
  * packages/ui/src/components/ui/number-input.test.tsx): a hand-rolled
@@ -323,9 +328,11 @@ const installDomStub = (): DomStub => {
 interface WidgetHandle {
   container: FakeNode;
   find(tag: string): FakeNode | null;
+  findWhere(predicate: (node: FakeNode) => boolean): FakeNode | null;
   findButton(): FakeNode | null;
   findOverlay(): FakeNode | null;
   clickButton(): void;
+  rerender(props: WidgetRendererProps): void;
   unmount(): void;
 }
 
@@ -362,6 +369,7 @@ const mountWidget = (props: WidgetRendererProps): WidgetHandle => {
   return {
     container,
     find,
+    findWhere,
     findButton: () => find('button'),
     findOverlay: () => findWhere(
       (node) => String(node.style.background ?? '').includes('linear-gradient'),
@@ -378,6 +386,11 @@ const mountWidget = (props: WidgetRendererProps): WidgetHandle => {
       if (!onClick) throw new Error('Show code button has no onClick handler');
       act(() => {
         onClick({});
+      });
+    },
+    rerender(nextProps: WidgetRendererProps) {
+      act(() => {
+        root.render(React.createElement(WidgetRenderer, nextProps));
       });
     },
     unmount() {
@@ -516,5 +529,146 @@ describe('WidgetRenderer visible title and sandbox contract', () => {
       handle.unmount();
       expect(listeners.get('message')?.length).toBe(0);
     });
+  });
+});
+
+describe('WidgetRenderer segment observation markers', () => {
+  const findWidgetRoot = (handle: WidgetHandle): FakeNode | null =>
+    handle.findWhere((node) => node.getAttribute('data-generative-widget-segment') === 'widget');
+
+  test('marks the card root as a widget segment with an initial loading state', () => {
+    withWidget({
+      widgetCode: '<div>Seg</div>',
+      isStreaming: false,
+      title: 'Seg',
+    }, (handle) => {
+      const root = findWidgetRoot(handle);
+      expect(root).not.toBeNull();
+      // The marker lives on the card root: the header (title/Show code) and
+      // the iframe both sit inside the marked segment.
+      const isDescendantOf = (node: FakeNode | null): boolean => {
+        let current: FakeNode | null = node;
+        while (current) {
+          if (current === root) return true;
+          current = current.parentNode;
+        }
+        return false;
+      };
+      expect(isDescendantOf(handle.findButton())).toBe(true);
+      expect(isDescendantOf(handle.find('iframe'))).toBe(true);
+      expect(root?.getAttribute('data-generative-widget-state')).toBe('loading');
+    });
+  });
+
+  test('transitions streaming -> loading -> ready while preserving rendering', () => {
+    withWidget({
+      widgetCode: '<div>S</div>',
+      isStreaming: true,
+      title: 'S',
+    }, (handle, listeners) => {
+      const root = () => findWidgetRoot(handle);
+      expect(root()?.getAttribute('data-generative-widget-state')).toBe('streaming');
+
+      // Streaming stops: iframe/finalization is not ready yet -> loading.
+      handle.rerender({ widgetCode: '<div>S</div>', isStreaming: false, title: 'S' });
+      expect(root()?.getAttribute('data-generative-widget-state')).toBe('loading');
+
+      // The card itself keeps rendering the title/control/iframe while loading.
+      expect(root()?.textContent).toContain('S');
+      expect(root()?.textContent).toContain('Show code');
+      expect(handle.find('iframe')).not.toBeNull();
+
+      // Widget reaches its final ready state (scriptsReady / finalize path).
+      const messageListener = listeners.get('message')?.[0];
+      expect(messageListener).toBeDefined();
+      act(() => {
+        (messageListener as (event: unknown) => void)({
+          data: { type: 'widget:scriptsReady' },
+          source: undefined,
+        });
+      });
+      expect(root()?.getAttribute('data-generative-widget-state')).toBe('ready');
+
+      // Rendering is preserved after the transition: title still visible, the
+      // iframe still mounted, and the Show code control still toggles.
+      expect(root()?.textContent).toContain('S');
+      expect(handle.find('iframe')).not.toBeNull();
+      handle.clickButton();
+      expect(root()?.textContent).toContain('<div>S</div>');
+    });
+  });
+
+  test('keeps streaming priority over a stale final state', () => {
+    withWidget({
+      widgetCode: '<div>P</div>',
+      isStreaming: false,
+    }, (handle, listeners) => {
+      const messageListener = listeners.get('message')?.[0];
+      expect(messageListener).toBeDefined();
+      act(() => {
+        (messageListener as (event: unknown) => void)({
+          data: { type: 'widget:scriptsReady' },
+          source: undefined,
+        });
+      });
+      expect(findWidgetRoot(handle)?.getAttribute('data-generative-widget-state')).toBe('ready');
+
+      handle.rerender({ widgetCode: '<div>P</div>', isStreaming: true });
+      expect(findWidgetRoot(handle)?.getAttribute('data-generative-widget-state')).toBe('streaming');
+    });
+  });
+
+  test('exposes data-generative-widget-title only for a normalized visible title', () => {
+    withWidget({
+      widgetCode: '<div>T</div>',
+      isStreaming: false,
+      title: '  Trim Me  ',
+    }, (handle) => {
+      expect(findWidgetRoot(handle)?.getAttribute('data-generative-widget-title')).toBe('Trim Me');
+    });
+
+    withWidget({
+      widgetCode: '<div>T</div>',
+      isStreaming: false,
+      title: '   ',
+    }, (handle) => {
+      expect(findWidgetRoot(handle)?.hasAttribute('data-generative-widget-title')).toBe(false);
+    });
+
+    withWidget({
+      widgetCode: '<div>T</div>',
+      isStreaming: false,
+    }, (handle) => {
+      expect(findWidgetRoot(handle)?.hasAttribute('data-generative-widget-title')).toBe(false);
+    });
+  });
+});
+
+describe('static message-part marker contract', () => {
+  // MessageBody and ToolPart need the full chat pipeline, which the minimal
+  // DOM stub cannot render; assert their stable marker attributes directly
+  // against the source so the observation contract stays regression-covered.
+  // Source is read through DOM-only APIs (fetch over a file: URL) so the
+  // assertion stays type-clean under the UI package's restricted types config.
+  const readSource = async (relative: string): Promise<string> =>
+    (await fetch(new URL(relative, import.meta.url))).text();
+
+  test('MessageBody assistant text wrappers carry stable part identity markers', async () => {
+    const source = await readSource('../message/MessageBody.tsx');
+    expect(source).toContain('data-message-part-type="text"');
+    expect(source).toContain('data-message-part-id={textPartId}');
+    expect(source).toContain('data-message-part-index={i}');
+    // Existing export markers are preserved exactly on the wrappers.
+    expect(source).toContain('data-message-text-export-source="true"');
+    expect(source).toContain('data-post-rich-result-notes="collapsed"');
+  });
+
+  test('ToolPart outer wrapper carries tool and rich-result markers', async () => {
+    const source = await readSource('../message/parts/ToolPart.tsx');
+    expect(source).toContain('className="contents"');
+    expect(source).toContain('data-message-part-type="tool"');
+    expect(source).toContain('data-message-part-id=');
+    expect(source).toContain('data-tool-name={toolName}');
+    expect(source).toContain('data-rich-result-runtime={richResultRuntime}');
   });
 });

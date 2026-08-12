@@ -3521,16 +3521,43 @@ const ToolPart: React.FC<ToolPartProps> = (props) => {
   const { t } = useI18n();
   const toolName = normalizeToolName(props.part.tool) || "tool";
   const displayName = getToolMetadata(toolName).displayName;
+  const richResultRuntime = React.useMemo((): "interactive-ui" | "html-artifact" | "mcp-app" | undefined => {
+    const state = props.part.state as ToolStateWithMetadata | undefined;
+    if (!state) return undefined;
+    // Reuse the production binding/parser logic used by the inner render:
+    // MCP App needs a recognized binding on a renderable state; HTML Artifact
+    // (installed or ordinary) and Interactive UI envelopes only count once the
+    // tool completed. Error/incomplete/ordinary output is never marked rich.
+    if (createMcpAppEnvelopeFromPart(props.part)) return "mcp-app";
+    if (state.status !== "completed") return undefined;
+    const outputString = typeof state.output === "string" ? state.output : "";
+    if (
+      parseHTMLArtifactResultEnvelope(outputString) ||
+      parseInstalledHTMLArtifactResultEnvelope(outputString)
+    ) {
+      return "html-artifact";
+    }
+    if (parseInteractiveResultEnvelope(outputString)) return "interactive-ui";
+    return undefined;
+  }, [props.part]);
 
   return (
-    <ToolPartErrorBoundary
-      displayName={displayName}
-      errorLabel={t("chat.toolPart.error")}
-      resetKey={props.part}
-      toolName={toolName}
+    <div
+      className="contents"
+      data-message-part-type="tool"
+      data-message-part-id={props.part.id || `${props.part.messageID}-part-${props.part.type}`}
+      data-tool-name={toolName}
+      data-rich-result-runtime={richResultRuntime}
     >
-      <ToolPartContent {...props} />
-    </ToolPartErrorBoundary>
+      <ToolPartErrorBoundary
+        displayName={displayName}
+        errorLabel={t("chat.toolPart.error")}
+        resetKey={props.part}
+        toolName={toolName}
+      >
+        <ToolPartContent {...props} />
+      </ToolPartErrorBoundary>
+    </div>
   );
 };
 

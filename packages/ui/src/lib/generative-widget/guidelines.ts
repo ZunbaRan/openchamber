@@ -1,57 +1,97 @@
 /**
  * Generative Widget prompts + full design guidelines.
- * Adapted from CodePilot/Claude generative UI design guidance for OpenChamber show-widget.
+ * OpenChamber parity/documentation helpers for OpenCode's production
+ * show-widget prompt and on-demand Skill (both authoritative; see
+ * packages/ui/src/components/chat/generative-widget/DOCUMENTATION.md for the
+ * actual production source paths).
+ *
+ * These assets are NOT the production injected prompt and do not become a
+ * third routing policy. They mirror the production semantic invariants
+ * (wire fence, selection hierarchy, interleaving, dedupe, labeling,
+ * restraint, design modules) without claiming byte identity.
  *
  * Always-on: GENERATIVE_WIDGET_WIRE_FORMAT + GENERATIVE_WIDGET_SYSTEM_PROMPT
  * On-demand: getGuidelines(modules) via skill generative-widget-guidelines
  */
 
-export const CANONICAL_SHOW_WIDGET_JSON = "{\"title\":\"Hello\",\"widget_code\":\"<div style='padding:8px;font:14px var(--font-sans)'>Hello world</div>\"}";
+export const CANONICAL_SHOW_WIDGET_JSON =
+  "{\"widget_code\":\"<div style='padding:8px;font:14px var(--font-sans)'>Hello world</div>\",\"title\":\"Hello\"}";
 
-export const GENERATIVE_WIDGET_WIRE_FORMAT = `## FINAL OUTPUT FORMAT — non-negotiable
+export const GENERATIVE_WIDGET_WIRE_FORMAT = `## FINAL OUTPUT FORMAT
 
-The ONLY way to render a widget is a code fence labelled \`show-widget\` whose body is a JSON object with a \`widget_code\` string:
+The ONLY way to render a widget is a code fence labelled \`show-widget\` whose body is a JSON object with string fields \`widget_code\` and \`title\`:
 
 \`\`\`show-widget
-{"title":"<human-readable title>","widget_code":"<escaped HTML/SVG string>"}
+{"widget_code":"<escaped HTML/SVG string>","title":"<human-readable title>"}
 \`\`\`
 
-- \`widget_code\` is a **JSON-encoded string**, not raw HTML. Prefer **single-quote** HTML attributes (\`<div style='...'>\`) so the JSON body never needs to escape double quotes.
-- If you need double-quote HTML attributes inside \`widget_code\`, use **one** backslash (\`\\"\`) — never two.
-- Escape newlines as \`\\n\` and backslashes as \`\\\\\` inside the JSON string.
-- A raw HTML fence (\`\`\`html) is NEVER rendered as a widget.
-- A \`show-widget\` fence whose body is HTML (not JSON) is NEVER rendered as a widget.
-- Any HTML example in design guidelines goes **inside** \`widget_code\`.
+- \`widget_code\` is a **JSON-encoded string**, not raw HTML — prefer **single-quote** HTML attributes; double quotes inside need exactly **one** backslash (\`\\"\`), never two; escape newlines \`\\n\`, backslashes \`\\\\\`.
+- A raw HTML fence (\`\`\`html) is NEVER a widget; a \`show-widget\` fence with a non-JSON body is NEVER a widget.
+- Design-guideline HTML/SVG examples go INSIDE \`widget_code\`.
+- Explanatory prose goes OUTSIDE the fence; multiple widgets use SEPARATE fences with prose between.
 
-Minimal correct example:
+Minimal example:
 
 \`\`\`show-widget
-{"title":"Hello","widget_code":"<div style='padding:8px;font:14px var(--font-sans)'>Hello world</div>"}
+${CANONICAL_SHOW_WIDGET_JSON}
 \`\`\``;
 
+export const GENERATIVE_WIDGET_PARITY_NOTE = `## OpenChamber parity note
+
+This is an OpenChamber parity/documentation helper for OpenCode's production show-widget prompt and Skill. It is NOT the production injected prompt and does not become a third routing policy; the production always-on prompt and on-demand Skill remain authoritative.`;
+
+export const GENERATIVE_WIDGET_SELECTION_HIERARCHY = `## Visual selection hierarchy
+1. Prefer an installed specialized Tool/View for its unique connected/installed capability.
+2. Otherwise prefer Declarative interactive_ui for compact structured charts/diagrams/tables when available.
+3. Use show-widget for small free-form conversational HTML/CSS/SVG and streaming narrative widgets.
+4. Use html_artifact for complex custom canvas/document/simulation artifacts.
+MCP Apps remain outside this four-track numbering.`;
+
+export const GENERATIVE_WIDGET_INTERLEAVING = `## Conversational interleaving
+- Emit 1-N visuals for genuinely different focuses; preserve generation order.
+- Short prose may appear before, after, and between visuals as bridges.
+- Use one primary visual per focus.
+- Soft target: normally no more than four primary visuals in one answer; exceed only with strong user need — guidance, not a hard gate.`;
+
+export const GENERATIVE_WIDGET_DEDUPE_AND_LABELS = `## Dedupe and data labeling
+- Never repeat the same business data or conclusion across show-widget, Declarative, installed business Tool/View, and html_artifact. If one track already represents that data, use text or a different-focus visual.
+- Label example/simulated/generated data clearly. Installed connected-business data stays governed by its Tool authority.`;
+
+export const GENERATIVE_WIDGET_RESTRAINT = `## Restraint
+- Short factual answers and ordinary prose remain prose; show-widget is not a Tool — do not require a widget or force a visual merely because the capability exists.`;
+
 export const GENERATIVE_WIDGET_SYSTEM_PROMPT = `<generative-widget-capability>
-You can create interactive visualizations using the \`show-widget\` code fence. The wire format is documented in the FINAL OUTPUT FORMAT block; do not re-paraphrase it.
+You can create interactive visualizations with \`show-widget\` fences; the host renders them in a sandboxed iframe (no network APIs). Wire format: FINAL OUTPUT FORMAT.
+
+${GENERATIVE_WIDGET_PARITY_NOTE}
+
+${GENERATIVE_WIDGET_SELECTION_HIERARCHY}
+
+${GENERATIVE_WIDGET_INTERLEAVING}
+
+${GENERATIVE_WIDGET_DEDUPE_AND_LABELS}
+
+${GENERATIVE_WIDGET_RESTRAINT}
 
 ## Design specs
-Before your first non-trivial widget, load skill \`generative-widget-guidelines\` for detailed design modules.
-Available modules mentioned in that skill: interactive, chart, mockup, art, diagram.
+After show-widget is already selected for a visual, load skill \`generative-widget-guidelines\` (modules: interactive, chart, mockup, art, diagram) for detailed design/wire guidance before emitting it.
 
-## Required rules (always apply)
-1. widget_code is a JSON string — escape quotes, newlines. No DOCTYPE/html/head/body
-2. Transparent background — host provides bg
-3. Each widget ≤ 3000 chars. Always close JSON + fence
-4. Streaming order: SVG → \`<defs>\` first; HTML → \`<style>\` → content → \`<script>\` last
+## Required rules
+1. widget_code is a JSON string; no DOCTYPE/head/body
+2. Transparent background (host provides bg)
+3. ≤ 3000 chars/widget; always close JSON + fence
+4. Streaming: SVG \`<defs>\` first; HTML \`<style>\` → content → \`<script>\` last
 5. CDN allowlist: cdnjs.cloudflare.com, cdn.jsdelivr.net, unpkg.com, esm.sh
-6. CDN scripts: \`onload="initFn()"\` + \`if(window.Lib) initFn();\` fallback
-7. Text explanations go OUTSIDE the code fence
-8. Multi-widget: interleave text, each widget in a SEPARATE fence
-9. SVG: \`<svg width="100%" viewBox="0 0 680 H">\`, arrow marker in \`<defs>\`
-10. Interactive controls MUST update visuals — call \`chart.update()\` after data changes
-11. Clickable drill-down: \`onclick="window.__widgetSendMessage('...')"\`
-12. Title should be human-readable in the user's language
-13. Use \`min-height\` instead of \`height\` on the outermost container
-14. Cross-widget filter: \`window.__widgetPublish('topic', {key:'value'})\`. Listen with \`window.addEventListener('widget-filter', ...)\`
-15. Do not use fetch/XHR/WebSocket — sandbox blocks network APIs
+6. CDN scripts: \`onload="initFn()"\` + \`if(window.Lib) initFn();\`
+7. Text OUTSIDE fences; each widget in a SEPARATE fence
+8. SVG: \`<svg width="100%" viewBox="0 0 680 H">\` + arrow marker in \`<defs>\`
+9. Controls MUST update visuals — \`chart.update()\` after data changes
+10. Drill-down: \`onclick="window.__widgetSendMessage('...')"\`
+11. Title human-readable in the user's language
+12. Outermost container: \`min-height\`, not fixed \`height\`
+13. Cross-widget filter: \`window.__widgetPublish('topic',{key:'value'})\` + \`widget-filter\` events
+14. Accessibility: readable contrast, ≥11px text, aria-labels on controls
+15. No fetch/XHR/WebSocket — sandbox blocks network APIs
 </generative-widget-capability>`;
 
 const CORE_DESIGN_SYSTEM = `## Core Design System
@@ -74,6 +114,7 @@ const CORE_DESIGN_SYSTEM = `## Core Design System
 - No dark/colored backgrounds on outer containers
 - Typography: weights 400/500 only, sentence case
 - No DOCTYPE/html/head/body
+- Accessibility: readable contrast, no black-on-dark text, ≥11px text, aria-labels on interactive controls, human-readable titles
 - CDN allowlist: \\\`cdnjs.cloudflare.com\\\`, \\\`esm.sh\\\`, \\\`cdn.jsdelivr.net\\\`, \\\`unpkg.com\\\`. No Tailwind CDN — utilities are built-in.
 
 ### CSS Variables (HTML widgets)
@@ -208,13 +249,21 @@ Two parallel groups. Matching rows. Different fill colors per group. Optional co
 - Clickable nodes: \\\`onclick="window.__widgetSendMessage('...')"\\\` on 2-3 key nodes
 
 ### Multi-widget narratives
-For complex topics, output multiple widgets of DIFFERENT types:
+For complex topics, emit multiple visuals for genuinely different focuses — one primary visual per focus, normally no more than four primary visuals in one answer (exceed only with strong user need). Preserve generation order and bridge with short prose:
 1. Overview SVG (e.g. hierarchy)
-2. Text explaining one part
+2. Short prose bridge explaining one part
 3. Detail SVG (e.g. cycle diagram for that part)
 4. Text with quantitative insight
 5. Interactive Chart.js with controls
-Mix types freely.`;
+Mix types freely, never repeating the same business data or conclusion across visuals or tracks.`;
+
+const PARITY_CONTEXT_SECTIONS = [
+  GENERATIVE_WIDGET_PARITY_NOTE,
+  GENERATIVE_WIDGET_SELECTION_HIERARCHY,
+  GENERATIVE_WIDGET_INTERLEAVING,
+  GENERATIVE_WIDGET_DEDUPE_AND_LABELS,
+  GENERATIVE_WIDGET_RESTRAINT,
+];
 
 const MODULE_SECTIONS: Record<string, string[]> = {
   interactive: [CORE_DESIGN_SYSTEM, UI_COMPONENTS, COLOR_PALETTE],
@@ -232,6 +281,12 @@ export function getGuidelines(moduleNames: string[]): string {
     "\n\n> **Reading this document:** every HTML / SVG / Chart.js snippet below is an INTERNAL EXAMPLE for inside `widget_code`. The only wire format is the show-widget JSON fence above.\n";
   const seen = new Set<string>();
   const parts: string[] = [reminder];
+  for (const section of PARITY_CONTEXT_SECTIONS) {
+    if (!seen.has(section)) {
+      seen.add(section);
+      parts.push(section);
+    }
+  }
   for (const mod of moduleNames) {
     const key = mod.toLowerCase().trim();
     const sections = MODULE_SECTIONS[key];
@@ -256,7 +311,7 @@ export const GENERATIVE_WIDGET_KEYWORDS =
 export const shouldOfferWidgetGuidelines = (prompt: string): boolean =>
   GENERATIVE_WIDGET_KEYWORDS.test(prompt);
 
-/** Always-on system fragment for OpenCode / agent instructions. */
+/** Always-on system fragment (parity helper — NOT the production injected prompt). */
 export function getAlwaysOnGenerativeWidgetPrompt(): string {
   return `${GENERATIVE_WIDGET_WIRE_FORMAT}\n\n${GENERATIVE_WIDGET_SYSTEM_PROMPT}`;
 }

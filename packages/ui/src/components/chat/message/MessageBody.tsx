@@ -1876,15 +1876,22 @@ const AssistantMessageBody = React.memo(({
                 const shouldCollapse = shouldCollapsePostRichResultText(
                     visibleParts,
                     i,
-                    isMessageCompleted,
-                    hasEarlierRichResultInTurn,
+                    {
+                        isMessageCompleted,
+                        isLastAssistantInTurn: turnGroupingContext?.isLastAssistantInTurn,
+                        hasEarlierRichResultInTurn,
+                    },
                 );
+                const textPartId = part.id ?? `${messageId}-part-${i}-${part.type}`;
                 rendered.push(shouldCollapse ? (
                     <div
                         key={`assistant-text-${messageId}-${i}`}
                         ref={messageTextContentRef}
                         data-message-text-export-source="true"
                         data-post-rich-result-notes="collapsed"
+                        data-message-part-type="text"
+                        data-message-part-id={textPartId}
+                        data-message-part-index={i}
                         className="mt-2 border-t border-border/40 pt-2"
                     >
                         <details className="group/post-rich-notes">
@@ -1897,7 +1904,14 @@ const AssistantMessageBody = React.memo(({
                         </details>
                     </div>
                 ) : (
-                    <div key={`assistant-text-${messageId}-${i}`} ref={messageTextContentRef} data-message-text-export-source="true">
+                    <div
+                        key={`assistant-text-${messageId}-${i}`}
+                        ref={messageTextContentRef}
+                        data-message-text-export-source="true"
+                        data-message-part-type="text"
+                        data-message-part-id={textPartId}
+                        data-message-part-index={i}
+                    >
                         {textContent}
                     </div>
                 ));

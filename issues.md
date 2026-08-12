@@ -1693,3 +1693,334 @@
 - Resume condition: n/a
 - Continuation decision: Implement a bounded one-way persisted-state migration for this exact existing consumer, not a general compatibility layer or permissive parser.
 - Next action: Resolved; the documented exact-history replay boundary remains the only known migration residual risk.
+
+## P2 execution authority (2026-08-11)
+
+- Authoritative priority: `/Users/loloru/Documents/data/project/openChamber/roadmap.md`.
+- P2 detailed implementation blueprint: `/Users/loloru/Documents/data/project/openChamber/openchamber/docs/CONVERSATIONAL_INTERACTIVE_UI_P2_IMPLEMENTATION_PLAN.md`.
+- P3 detailed implementation blueprint, recorded for the post-P2 phase only: `/Users/loloru/Documents/data/project/openChamber/openchamber/docs/P3_NEXT_WAVE_CAPABILITIES_IMPLEMENTATION_PLAN.md`.
+- Frozen P2 product design: `/Users/loloru/Documents/data/project/openChamber/openchamber/docs/CONVERSATIONAL_INTERACTIVE_UI_FOUR_TRACKS_DESIGN.md`.
+- Target repository/worktree: this integration worktree at commit `12f512419b11b742a49dc90056f6a4f2b4d31749`; the planning documents above live in the separate user-owned `openchamber/` worktree and are inputs, not a substitute for current target-branch source inspection.
+- Observable P2 goal: teaching answers preserve natural `text -> visual -> text` order, may use multiple single-focus visuals without duplicating authoritative business data, keep bridge explanations visible, support a signed non-live Trusted Snapshot Explainer, and expose privacy-safe deterministic I1-I5 transcript/browser acceptance.
+- Core causal model: message ordering and rich renderers already exist; conflicting single-surface policy, an under-specified post-rich collapse boundary, the absence of a bounded installed explainer contract, and an oracle that cannot observe widget/tool order prevent the desired experience.
+- Global invariants: no new message protocol or explainer mode; no hard per-turn runtime counter; no business-authority, signing, CSP, confirmation, Connector, or sandbox weakening; the frozen 17-case corpus remains unchanged; reports contain no raw prompt, transcript, widget code, Tool input/output, credentials, or business rows; no dependency addition; no push, release, publication, or installed-app mutation without separate explicit authority.
+
+## issue-087: Preserve the pre-existing OCIX extension-suite fixture gap as explicit residual risk
+
+- Status: OPEN
+- Classification: NON-BLOCKING
+- Goal / user outcome: P2 acceptance distinguishes its own explainer failures from the target branch's pre-existing missing extension template and Acme Sales Artifact fixtures.
+- First-principles root cause: the integration commit does not contain `templates/interactive-ui-extension/` or `examples/interactive-ui/acme-sales/ui/artifacts/order-detail.html`, while the existing broad extension test assumes both are present; this is unrelated to the new P2 explainer contract.
+- Core acceptance invariant: no P2 change skips or weakens the broad suite; the new explainer receives its own deterministic validate/pack/verify/decoder tests, and the known baseline command remains reported separately until its missing legacy assets are restored under a dedicated authorization/scope.
+- Dependencies: none
+- Dispatch order: Not dispatched in the active P2 DAG because evidence proves the missing legacy fixtures are independent of the new snapshot-only extension path and every P2 runtime/security invariant.
+- Ownership: none in the active P2 implementation; potential future ownership is the missing legacy template and Acme Sales Artifact fixture paths only.
+- Focused verification: baseline `node --test scripts/interactive-ui-extension.test.mjs` currently returns 2 pass / 5 fail with only ENOENT failures for the named missing paths; new P2.3 focused tests must pass independently.
+- Pi binding: unassigned
+- Pi attempts: none
+- Primary attempts: none; symptom suppression by skipping tests is not eligible.
+- Current evidence: On clean target commit `12f512419`, policy/collapse/widget baselines pass 27/27, while the broad extension suite fails only because the two legacy fixture roots are absent.
+- Suspension decision: n/a
+- Resume condition: n/a
+- Continuation decision: Continue P2.1-P2.4 because this missing legacy fixture set is not imported, executed, or trusted by the new explainer and does not affect later P2 interfaces; disclose it as residual risk.
+- Next action: Keep OPEN and rerun the exact baseline after any future restoration; do not count it as a P2 regression.
+
+## issue-088: Replace the single-surface routing policy with multi-focus conversational visuals
+
+- Status: RESOLVED
+- Classification: NORMAL
+- Goal / user outcome: The authoritative OpenChamber routing prompt allows short prose before, after, and between 1-N single-focus visuals while preserving business-first routing and same-data deduplication.
+- First-principles root cause: three absolute prompt sentences require at most one primary surface, stop after first success, and exactly one final sentence, so the model is instructed against the requested interleaving behavior even though parts/rendering already preserve order.
+- Core acceptance invariant: selection order covers explicit safe requests, installed business/specialized/MCP, Declarative, show-widget, Artifact, and text; multi-focus guidance uses a soft limit of four; the three absolute legacy instructions disappear; unconfigured business authority, write confirmation, catalog truncation/redaction, short-answer restraint, and same-data dedupe remain fail-closed.
+- Dependencies: none
+- Dispatch order: Wave 1; independent frozen policy seam with disjoint ownership and its own semantic unit test.
+- Ownership: `packages/web/server/lib/interactive-ui/routing.js`; `packages/web/server/lib/interactive-ui/routing.test.js`.
+- Focused verification: `bun test packages/web/server/lib/interactive-ui/routing.test.js`; success requires all existing cases plus positive/negative P2 policy assertions and the frozen 17-case distribution unchanged.
+- Pi binding: batch `fb3d7d1c-6f28-4736-b239-b3b0da75caa0`; lane `routing-policy`; run/session `9f8a2af2-0ac4-4848-9e36-20ff9087b97f`; worktree `/Users/loloru/.codex/sol-pi-advisor/worktrees/9f8a2af2-0ac4-4848-9e36-20ff9087b97f`; base `12f512419b11b742a49dc90056f6a4f2b4d31749`; revision 1; pid 87333; supervised-local, sandbox not enforced.
+- Pi attempts: correction 1/2 to replace the surviving `MUST call interactive_ui` absolute with appropriate-form selection and to complete the handoff after the initial TPM 429 interruption.
+- Primary attempts: not eligible while Pi retries remain.
+- Current evidence: Pi revision 1 changed exactly the two owned files with no policy violations; primary rejected the surviving `MUST call interactive_ui` absolute, then inspected the corrected diff, integrated it, and reran routing at 14/14 plus the combined routing/collapse gate at 34/34. The 0–6 selection order, multi-focus bridge pattern, soft four-visual guidance, form-fit explicit visualization, short-answer text restraint, same-data dedupe, business authority, write confirmation, and prompt truncation are pinned; no runtime gate/protocol/counter changed.
+- Suspension decision: n/a
+- Resume condition: n/a
+- Continuation decision: Resolve before policy mirrors and model-routing integration; no runtime counter or protocol change.
+- Next action: Closed; issue-092/094 and OpenCode issue-001 mirror this settled policy without redefining it.
+
+## issue-089: Keep interleaving explanations visible while folding only final recaps
+
+- Status: RESOLVED
+- Classification: NORMAL
+- Goal / user outcome: Rich results can be followed by visible explanations and later visuals; only a completed turn's final long/structured recap enters Agent notes, with original text preserved for copy/export.
+- First-principles root cause: `shouldCollapsePostRichResultText` receives positional booleans and sees only earlier rich Tool results, so it cannot fail open for a non-final assistant message, a later rich/widget visual, or a widget in the current text.
+- Core acceptance invariant: incomplete/non-final messages, current widget text, and text with a later visual remain expanded; ungrouped historical message-local behavior is preserved by `undefined`; only final post-visual content reaches the existing 240/120 structured thresholds; all OCIX/Artifact/MCP rich predicates remain unchanged; export source and natural/sorted ordering remain intact.
+- Dependencies: none
+- Dispatch order: Wave 1; independent UI-state seam with frozen context interface and disjoint files.
+- Ownership: `packages/ui/src/components/chat/message/parts/toolRenderUtils.ts`; `packages/ui/src/components/chat/message/parts/toolRenderUtils.test.ts`; `packages/ui/src/components/chat/message/MessageBody.tsx`.
+- Focused verification: `bun test packages/ui/src/components/chat/message/parts/toolRenderUtils.test.ts`; `bun run type-check:ui`; `bun run lint:ui`; manual diff trace of natural and sorted render branches.
+- Pi binding: batch `fb3d7d1c-6f28-4736-b239-b3b0da75caa0`; lane `collapse-classifier`; run/session `df600cdb-bf34-48be-a6b9-279fae170402`; worktree `/Users/loloru/.codex/sol-pi-advisor/worktrees/df600cdb-bf34-48be-a6b9-279fae170402`; base `12f512419b11b742a49dc90056f6a4f2b4d31749`; revision 0; pid 83738; supervised-local, sandbox not enforced.
+- Pi attempts: none
+- Primary attempts: not eligible while Pi retries remain.
+- Current evidence: Pi candidate changed exactly the three owned files with no policy violations; primary inspected the complete diff, integrated it into the dedicated integration worktree, and reran `toolRenderUtils.test.ts` at 20/20, `type-check:ui` successfully, and `lint:ui` with 0 errors (two pre-existing McpAppRenderer hook warnings). C-01–C-15, explicit undefined turn grouping, production show-widget predicate reuse, original 240/120 thresholds, natural/sorted shared call path, and copy/export DOM source are preserved.
+- Suspension decision: n/a
+- Resume condition: n/a
+- Continuation decision: Resolve before browser/unified acceptance; do not redesign Agent notes or add language-specific recap heuristics.
+- Next action: Closed; issue-099 will add browser/unified DOM evidence and the owning documentation will be synchronized in issue-101.
+
+## issue-090: Add a signed deterministic Trusted Snapshot Explainer example
+
+- Status: RESOLVED
+- Classification: NORMAL
+- Goal / user outcome: An installed Trusted Native OCIX explainer opens a bounded, replayable, visibly non-live OCIX trust lesson from inline snapshot data without Connector, action, network, storage, credential, or Gateway authority.
+- First-principles root cause: the existing snapshot envelope and Native host can already replay inline data, but there is no independent `generated` extension that binds a strict enum Tool, signed Native view, visible source notice, and decoder into a copyable end-to-end contract.
+- Core acceptance invariant: one namespaced extension/view/tool/Skill pair uses `mode=snapshot`, deterministic inline `data`, no `dataRef`/`updatedAt`, exact own-key enum validation, nested schema/bounds, zero connector/action/network/dashboard, `native-code` trust, visible zh-CN/en non-live notice, strict decoder/fail-closed state, local-only interaction, and no business/network calls; generic RLHF routing remains unaffected.
+- Dependencies: none for the self-contained example; issue-087 is proven independent and is not imported by this slice.
+- Dispatch order: Wave 1; independent trust-domain vertical slice. Seven expected files exceed the usual five-file estimate because manifest, Tool, Skill, Native decoder, README, and executable Tool/package contract tests form one indivisible signed-extension acceptance boundary; no second risk domain is included.
+- Ownership: `examples/interactive-ui/trusted-snapshot-explainer/`; `scripts/lib/ocix-snapshot-explainer-tool.test.ts`; `scripts/lib/ocix-snapshot-explainer-extension.test.mjs`.
+- Focused verification: `bun test scripts/lib/ocix-snapshot-explainer-tool.test.ts`; `node --test scripts/lib/ocix-snapshot-explainer-extension.test.mjs`; direct validator/temporary Ed25519 pack/verify; success requires deterministic byte-equivalent results, invalid enum/unknown-field rejection, no live/dataRef/I/O authority, valid package inventory, and decoder rejection cases.
+- Pi binding: batch `fb3d7d1c-6f28-4736-b239-b3b0da75caa0`; lane `snapshot-explainer`; run/session `3a5a3ff4-2a70-433a-8582-64b808eae695`; worktree `/Users/loloru/.codex/sol-pi-advisor/worktrees/3a5a3ff4-2a70-433a-8582-64b808eae695`; base `12f512419b11b742a49dc90056f6a4f2b4d31749`; revision 2; pid 15420; supervised-local, sandbox not enforced.
+- Pi attempts: correction 1/2 ended on provider TPM 429 before any edit; correction 2/2 completed the seven-file candidate and structured handoff in the same run/worktree.
+- Primary attempts: round 1 corrected one settled contract deviation after Pi retries were exhausted: `buildSnapshotExplainerResult` now returns a fresh structured envelope and the default Tool handler alone serializes it, matching P2 §8. Focused Tool tests passed 9/9; no round 2 was needed.
+- Current evidence: Primary inspected all seven files and integrated their exact post-repair hashes. In the integration worktree, Tool tests pass 9/9 (1791 assertions), Native/manifest/sign/pack tests pass 13/13, direct extension validation reports one Trusted Native view with zero actions and one Tool/Skill, and `git diff --check` passes. The manifest is generated/read/inline with empty network permission and no Connector/action/dashboard; decoder, locale notices, stable DOM attributes, deterministic replay data, and prohibited-surface negatives are executable evidence. The unrelated broad extension-suite baseline remains issue-087.
+- Suspension decision: n/a
+- Resume condition: n/a
+- Continuation decision: Add only the example and its self-contained contract tests; no new runtime mode, endpoint, parser, fake Connector, Workbench dashboard, or default model-demo installation.
+- Next action: Closed; issue-096 will add repository discovery/result/system replay coverage, issue-099 will add browser replay evidence, and issue-101 will integrate the Developer Guide and cross-cutting documentation.
+
+## issue-091: Normalize finalized conversations into privacy-safe interleaving evidence
+
+- Status: RESOLVED
+- Classification: NORMAL
+- Goal / user outcome: I1-I5 can deterministically prove text/visual order, multi-widget order, business single-view dedupe, and short-answer restraint without retaining raw model or business content.
+- First-principles root cause: the production widget parser is intentionally streaming-permissive, while the existing acceptance runner counts only completed presentation Tools and cannot see widget fences or relative text/visual positions.
+- Core acceptance invariant: the production parser gains an explicit default-compatible `streaming-permissive` versus `finalized-strict` mode; strict mode converts every recognized invalid/unclosed/truncated/non-string marker into malformed evidence; one oracle reuses production envelope/widget parsers, preserves message/part/segment order, validates an exactly-five-case strict corpus, evaluates discriminated expectations, excludes MCP Apps from four-track counts, and projects no raw text/code/output/title values into persisted reports.
+- Dependencies: none
+- Dispatch order: Wave 1; independent parser/privacy seam with a frozen interface and five owned files.
+- Ownership: `packages/ui/src/lib/generative-widget/parseShowWidget.ts`; `packages/ui/src/lib/generative-widget/parseShowWidget.test.ts`; `examples/interactive-ui/conversational-interleaving-corpus.json`; `scripts/lib/interactive-ui-conversation-transcript.ts`; `scripts/lib/interactive-ui-conversation-transcript.test.ts`.
+- Focused verification: `bun test packages/ui/src/lib/generative-widget/parseShowWidget.test.ts scripts/lib/interactive-ui-conversation-transcript.test.ts`; success requires existing partial-preview/key tests unchanged, strict malformed negatives, all expectation positive/negative cases, strict corpus validation, and privacy projection assertions.
+- Pi binding: batch `fb3d7d1c-6f28-4736-b239-b3b0da75caa0`; lane `transcript-oracle`; run/session `da7224f4-3e59-4c27-9804-6d69db670fb0`; worktree `/Users/loloru/.codex/sol-pi-advisor/worktrees/da7224f4-3e59-4c27-9804-6d69db670fb0`; base `12f512419b11b742a49dc90056f6a4f2b4d31749`; revision 2; pid 1715; supervised-local, sandbox not enforced.
+- Pi attempts: correction 1/2 recovered the infrastructure-only TPM 429 and produced a 57/57 candidate; correction 2/2 is aligning the corpus to the frozen model-runner schema (`tools.disable`, object visual allowlists, no stored assistant output) and fixing ordinary-vs-business Tool classification, with the same run/session/worktree.
+- Primary attempts: round 1 causal hypothesis was confirmed: Pi revision 2 implementation was complete but dependency-free worktree checks missed two static-only defects. Exact micro-fix: add the `malformed_widget` branch to one test union map and remove one unnecessary character-class escape. Commands/results: focused parser/oracle 59/59; `type-check:ui` pass; `lint:ui` 0 errors (two pre-existing McpAppRenderer hook warnings); `git diff --check` pass. No round 2 needed.
+- Current evidence: Pi revision 1 reached 57/57 before its first 429 interruption. Primary found and sent the frozen corpus/schema and Tool-classification correction; revision 2 uses `prompt + tools.disable + expectation`, object visual allowlists, local-only transcript fixtures, ordinary Tool classification, strict parser modes, MCP exclusion, stable safe diagnostics, and privacy-safe projection. The two Pi corrections ended on provider TPM 429 without structured handoff, so the bounded primary path integrated the exact artifact, verified all five hashes before its two-line micro-fix, and closed the static gates. Combined routing/collapse/parser/oracle integration gate passes 93/93 before the micro-fix; focused parser/oracle remains 59/59 after it.
+- Suspension decision: n/a
+- Resume condition: n/a
+- Continuation decision: Resolve before model/browser v2 runners; do not duplicate fence scanners or envelope parsers under `scripts/`.
+- Next action: Closed; issue-098/099 consume the frozen corpus/oracle contracts, and issue-101 will document the provider-handoff exception and evidence.
+
+## issue-092: Align the managed built-in Agent policy assets with the frozen routing contract
+
+- Status: RESOLVED
+- Classification: NORMAL
+- Goal / user outcome: The installed built-in Skill and presentation Tool descriptions teach the same multi-focus/bridge/short-answer policy as the authoritative routing prompt.
+- First-principles root cause: the three shipped Agent assets repeat the obsolete one-primary-view/exactly-one-sentence policy independently of `routing.js`, so updating only the server prompt would leave managed OpenCode instructions contradictory.
+- Core acceptance invariant: each Tool call remains one focus; different-focus visuals may interleave with prose; same business data may never be redrawn; Declarative/show-widget/Artifact boundaries, source labeling, a11y, unit separation, CSP, validators, schema, and execute behavior remain unchanged.
+- Dependencies: issue-088
+- Dispatch order: Wave 2 after issue-088 acceptance; files are disjoint and the shared semantic contract is already frozen by the primary.
+- Ownership: `packages/web/server/lib/interactive-ui/builtin/agent-runtime/skills/interactive-ui-visualization/SKILL.md`; `packages/web/server/lib/interactive-ui/builtin/agent-runtime/tools/interactive_ui.ts`; `packages/web/server/lib/interactive-ui/builtin/agent-runtime/tools/html_artifact.ts`.
+- Focused verification: source invariant assertions plus `bun test packages/web/server/lib/interactive-ui/builtin-runtime.test.js`; inspection must prove only descriptions/Skill policy changed, not Tool schemas or execute paths.
+- Pi binding: batch `f6175c2e-b1db-4f42-84d3-293f71674c4a`; lane `builtin-policy-assets`; run/session `95b3a47e-f8c2-4ea6-b2a9-61e5326f8f52`; worktree `/Users/loloru/.codex/sol-pi-advisor/worktrees/95b3a47e-f8c2-4ea6-b2a9-61e5326f8f52`; base `12f512419b11b742a49dc90056f6a4f2b4d31749`; revision 0; pid 43360; supervised-local, sandbox not enforced.
+- Pi attempts: correction 1/2 removed one residual global `stop:` imperative and scoped the rule to the already-satisfied business-data focus; no second correction was needed.
+- Primary attempts: not eligible while Pi retries remain.
+- Current evidence: Primary inspected and integrated the three-path prose-only diff. Dependency-complete integration tests pass: built-in runtime 21/21 and routing 14/14 (35/35 combined), UI Tool schemas/execute paths are unchanged, and `git diff --check` passes. The Skill and two Tool descriptions now express one focus per visual, 1-N different-focus visuals with bridge prose, soft four guidance, scoped same-data dedupe, short-answer restraint, source labels, and the Declarative/widget/Artifact boundary without global stop language.
+- Suspension decision: n/a
+- Resume condition: n/a
+- Continuation decision: Resolve before built-in version/hash migration.
+- Next action: Closed; issue-093 consumes the accepted asset bytes for the v1.4.0 ownership-hash migration.
+
+## issue-093: Migrate built-in Agent assets to v1.4.0 without adopting user files
+
+- Status: READY
+- Classification: NORMAL
+- Goal / user outcome: Managed installations safely upgrade the three changed built-in assets to v1.4.0 while every user-owned same-name file and malformed ownership state remains fail-closed.
+- First-principles root cause: asset contents are ownership-hashed; changing them without a version bump and exact legacy allowlist makes safe upgrades conflict, while broad adoption would overwrite user content.
+- Core acceptance invariant: built-in and manifest versions are 1.4.0; the exact current 1.3.0 hashes `HFJw...`, `lJzu...`, and `1M6V...` are appended without deleting older hashes; exact 1.3 content migrates, arbitrary same-name content conflicts, older allowlists remain, and generic reconcile code is unchanged.
+- Dependencies: issue-092
+- Dispatch order: Serial security/ownership step after policy-asset acceptance.
+- Ownership: `packages/web/server/lib/interactive-ui/builtin-runtime.js`; `packages/web/server/lib/interactive-ui/builtin/openchamber.extension.json`; `packages/web/server/lib/interactive-ui/builtin-runtime.test.js`; `packages/web/server/lib/interactive-ui/manager.test.js`.
+- Focused verification: `bun test packages/web/server/lib/interactive-ui/builtin-runtime.test.js packages/web/server/lib/interactive-ui/manager.test.js`; success includes exact-old migration, custom-file conflict, retained older hashes, idempotence, rollback, and no outside-path diff.
+- Pi binding: unassigned
+- Pi attempts: none
+- Primary attempts: not eligible while Pi retries remain.
+- Current evidence: Base version is 1.3.0; current asset hashes match the three blueprint values exactly, while `LEGACY_BUILT_IN_ASSETS` contains only earlier shipped hashes.
+- Suspension decision: n/a
+- Resume condition: n/a
+- Continuation decision: Keep serial because ownership migration is a distinct security risk domain from policy prose.
+- Next action: Dispatch after issue-092 is accepted.
+
+## issue-094: Align example and business Tool policy without weakening same-data dedupe
+
+- Status: RESOLVED
+- Classification: NORMAL
+- Goal / user outcome: Bundled examples and the hybrid CRM acceptance fixture permit ordinary explanation and unrelated-focus visuals while still forbidding a second rendering of the same authoritative business facts.
+- First-principles root cause: example/fixture text generalizes a business dedupe rule into a global stop-after-any-visual rule, so examples can override or regress the new policy.
+- Core acceptance invariant: generic example Skill/Tools match the four-track contract; CRM/Sales/fixture wording scopes call-at-most-once and no-second-visual rules to the same request/data; Tool execution, schemas, business authority, missing-connection behavior, confirmation, and the frozen 17-case corpus remain unchanged.
+- Dependencies: issue-088
+- Dispatch order: Wave 2; semantic mirror with disjoint existing paths and frozen policy contract.
+- Ownership: `examples/interactive-ui/agent-runtime/skills/interactive-ui/SKILL.md`; `examples/interactive-ui/agent-runtime/tools/interactive_ui.ts`; `examples/interactive-ui/agent-runtime/tools/html_artifact.ts`; `examples/interactive-ui/agent-runtime/skills/acme-crm/SKILL.md`; `examples/interactive-ui/agent-runtime/tools/crm_open_dashboard.ts`; `examples/interactive-ui/acme-sales/agent-runtime/skills/acme-sales/SKILL.md`; `scripts/lib/interactive-ui-hybrid-crm-fixture.mjs`; `scripts/lib/interactive-ui-hybrid-crm-fixture.test.js`.
+- Focused verification: `node --test scripts/lib/interactive-ui-hybrid-crm-fixture.test.js`; focused source invariant scan; `bun test packages/web/server/lib/interactive-ui/routing.test.js`; exact inspection of descriptions only.
+- Pi binding: batch `f6175c2e-b1db-4f42-84d3-293f71674c4a`; lane `example-business-policy`; run/session `ae304742-4403-4a44-81af-796331bf3594`; worktree `/Users/loloru/.codex/sol-pi-advisor/worktrees/ae304742-4403-4a44-81af-796331bf3594`; base `12f512419b11b742a49dc90056f6a4f2b4d31749`; revision 0; pid 43361; supervised-local, sandbox not enforced.
+- Pi attempts: correction 1/2 removed six files that revision 0 had incorrectly synthesized from another worktree and restored the existing fixture test to its original bun:test framework; no second correction was needed.
+- Primary attempts: not eligible while Pi retries remain.
+- Current evidence: Current Git base contains only the two hybrid fixture paths from the eight-path planning list; the other six example copies are absent and therefore cannot inject contradictory policy. Primary integrated only the two existing files. In unsandboxed loopback verification, the fixture suite passes 3/3 with 45 assertions; routing remains 14/14, schemas/execute/envelopes are unchanged, and the embedded business copy scopes call-at-most-once/no-second-rendering to the same request/data while allowing normal prose and a genuinely unrelated-focus non-business visual. Missing example/template/interop roots remain issue-087 and were not revived.
+- Suspension decision: n/a
+- Resume condition: n/a
+- Continuation decision: Eight files exceed the usual estimate because they are text-only mirrors of one frozen policy with one deterministic fixture test; no product runtime, security, schema, or state logic is included.
+- Next action: Closed for the current Git product surface; do not recreate the six removed example paths unless roadmap/Git scope changes explicitly.
+
+## issue-095: Keep the OpenChamber widget parity helper subordinate to the production OpenCode policy
+
+- Status: RESOLVED
+- Classification: NORMAL
+- Goal / user outcome: OpenChamber's documentation/parity helper is loaded only after show-widget is selected and cannot become a contradictory third routing policy.
+- First-principles root cause: the helper Skill description currently targets every non-trivial visualization and lacks the complete four-track/same-data/short-answer boundary, despite not being the production system-prompt source.
+- Core acceptance invariant: wire/sandbox guidance remains intact; the helper clearly identifies itself as parity/documentation, activates after widget selection, preserves multi-fence prose/single-focus/source labels, and defers business/structured/large-canvas selection to the frozen routing policy.
+- Dependencies: issue-088 and OpenCode issue-001
+- Dispatch order: Later policy-parity wave after both authoritative prompt sources are accepted.
+- Ownership: `packages/ui/src/lib/generative-widget/guidelines.ts`; `packages/ui/src/lib/generative-widget/GENERATIVE_WIDGET_GUIDELINES_SKILL.md`; `packages/ui/src/lib/generative-widget/guidelines.test.ts`; `packages/ui/src/components/chat/generative-widget/DOCUMENTATION.md`.
+- Focused verification: `bun test packages/ui/src/lib/generative-widget/guidelines.test.ts`; success preserves wire/safety/size invariants and proves no claim that this helper injects the production prompt.
+- Pi binding: batch `f6175c2e-b1db-4f42-84d3-293f71674c4a`; lane `widget-parity-helper`; run/session `37f2257f-96af-478b-be49-ccc4b0072e53`; worktree `/Users/loloru/.codex/sol-pi-advisor/worktrees/37f2257f-96af-478b-be49-ccc4b0072e53`; base `12f512419b11b742a49dc90056f6a4f2b4d31749`; revision 0; pid 43362; supervised-local, sandbox not enforced.
+- Pi attempts: revision 0 ended on provider TPM 429 without handoff after two files; correction 1/2 completed all four paths and restored the unchanged keyword-offer helper API.
+- Primary attempts: not eligible while Pi retries remain.
+- Current evidence: Primary inspected and integrated the four-path candidate. The focused parity suite passes 14/14 with 107 assertions; dependency-complete UI typecheck passes and lint reports 0 errors (two pre-existing McpAppRenderer hook warnings); `git diff --check` passes. Documentation names the actual OpenCode production sources, helpers explicitly deny production/routing authority, Skill activation is after show-widget selection, wire/safety/CDN/size/a11y contracts remain, and hierarchy/interleaving/dedupe/labels/restraint are jointly asserted.
+- Suspension decision: n/a
+- Resume condition: n/a
+- Continuation decision: Keep separate from runtime parser and policy injection.
+- Next action: Closed; issue-098 model acceptance consumes the OpenCode production policy, not these parity helpers.
+
+## issue-096: Integrate the snapshot explainer into discovery, result replay, and deterministic system acceptance
+
+- Status: READY
+- Classification: NORMAL
+- Goal / user outcome: The new explainer is discoverable as one generated/read/no-connection installed capability, binds only its declared Tool/View, and round-trips the same inline snapshot without changing the default generic model demo.
+- First-principles root cause: a self-contained extension proves its internal contract but does not yet prove repository discovery counts, binding failures, routing cases, or existing result-parser replay.
+- Core acceptance invariant: explicit zh-CN/en installed-explainer cases bind the new Tool; generic RLHF still resolves to `interactive_ui`; system inventory moves from 3 to 4 extensions while connectors remain 2; wrong Tool/View is rejected; snapshot nested source survives JSON round-trip with no dataRef; frozen 17 corpus and default demo installation remain unchanged.
+- Dependencies: issue-090 and issue-088
+- Dispatch order: Serial integration step after example and routing policy acceptance.
+- Ownership: `examples/interactive-ui/routing-cases.json`; `packages/ui/src/lib/interactive-ui/result.test.ts`; `scripts/interactive-ui-system-test.mjs`; `packages/web/server/lib/interactive-ui/routing.test.js`.
+- Focused verification: focused result/routing tests and `node scripts/interactive-ui-system-test.mjs`; inspect extension/connector counts and negative binding evidence.
+- Pi binding: unassigned
+- Pi attempts: none
+- Primary attempts: not eligible while Pi retries remain.
+- Current evidence: No explainer appears in current routing cases or system inventory.
+- Suspension decision: n/a
+- Resume condition: n/a
+- Continuation decision: Keep default model demo and frozen unified corpus unchanged.
+- Next action: Dispatch only from an accepted dependency state.
+
+## issue-097: Expose stable DOM evidence for interleaved text, widgets, and rich Tool results
+
+- Status: RESOLVED
+- Classification: NORMAL
+- Goal / user outcome: Browser acceptance can observe actual text/widget/Tool order and collapsed visibility without relying on layout-sensitive selectors or duplicating product parsing.
+- First-principles root cause: current render roots lack stable part/segment/runtime markers, so browser tests cannot map DOM nodes to the same token model as the transcript oracle.
+- Core acceptance invariant: data-only attributes identify text part/id/index, text/widget/malformed segments, widget streaming/loading/ready state, Tool part/name/runtime, and collapsed visibility; wrappers use `contents` where needed and do not change layout, user copy, parsing, sandboxing, or rendering behavior.
+- Dependencies: issue-089 and issue-091 contracts
+- Dispatch order: DOM wave after classifier and oracle interfaces are accepted.
+- Ownership: `packages/ui/src/components/chat/message/MessageBody.tsx`; `packages/ui/src/components/chat/message/parts/ToolPart.tsx`; `packages/ui/src/components/chat/generative-widget/renderAssistantTextWithWidgets.tsx`; `packages/ui/src/components/chat/generative-widget/WidgetRenderer.tsx`; `packages/ui/src/components/chat/generative-widget/MalformedWidgetNotice.tsx`; `packages/ui/src/components/chat/generative-widget/WidgetRenderer.test.tsx`. `MessageBody.tsx` is included because P2 §9.9 assigns the text part/id/index markers to its visible/collapsed wrappers; issue-089's classifier hunk remains an already-accepted disjoint edit in the integration worktree.
+- Focused verification: focused WidgetRenderer/ToolPart tests, source assertions for MessageBody and segment wrappers, UI typecheck/lint, and DOM inspection proving attributes without layout/style deltas.
+- Pi binding: run/session `fc35b1a6-27dd-468a-b384-59622562f8a2`; worktree `/Users/loloru/.codex/sol-pi-advisor/worktrees/fc35b1a6-27dd-468a-b384-59622562f8a2`; base `12f512419b11b742a49dc90056f6a4f2b4d31749`; revision 0; pid 56802; supervised-local, sandbox not enforced.
+- Pi attempts: initial candidate completed without correction; exactly the six owned paths changed and no policy violation was reported.
+- Primary attempts: not eligible while Pi retries remain.
+- Current evidence: Primary inspected and integrated the six-path candidate, merging the additive MessageBody marker hunk beside issue-089's accepted classifier change. Focused WidgetRenderer/ToolPart tests pass 45/45 with 101 assertions; dependency-complete UI typecheck passes, lint reports 0 errors (two pre-existing McpAppRenderer hook warnings), and `git diff --check` passes. Visible/collapsed text wrappers, prose/widget/malformed segments, widget lifecycle/title, and rich Tool runtimes now expose the frozen data-only attributes without parser/layout/user-copy/state changes.
+- Suspension decision: n/a
+- Resume condition: n/a
+- Continuation decision: Keep marker changes separate from parser/classifier logic.
+- Next action: Closed; issue-099's DOM normalizer/browser gate consumes these stable attributes.
+
+## issue-098: Upgrade model routing acceptance to frozen legacy plus I1-I5 transcript gates
+
+- Status: READY
+- Classification: NORMAL
+- Goal / user outcome: One model run reports the unchanged legacy 17-case thresholds and an independent 5/5 interleaving result with transient-only retries and privacy-safe observations.
+- First-principles root cause: runner v1 flattens only selected completed ToolParts, counts any second route Tool as duplicate, cannot see show-widget/text order, and cleans temporary business state only on the happy-path tail.
+- Core acceptance invariant: legacy metrics remain isolated with duplicate rate 0; I1-I5 use the oracle and per-case tool disables; semantic mismatches never retry; only explicit transient failures retry; partial/final v2 reports redact raw content; `complete=true` requires all planned models, both groups, and cleanup; fixture/publisher/session cleanup runs in `finally` and failures remain visible.
+- Dependencies: issue-088, issue-091, and OpenCode issue-001
+- Dispatch order: Serial runner integration after authoritative policies and oracle are accepted.
+- Ownership: `scripts/verify-interactive-ui-model-routing.mjs`; at most one adjacent deterministic runner test if the current seam needs it.
+- Focused verification: offline oracle/runner unit coverage, source-level retry/privacy/cleanup assertions, and a diagnostic subset that must emit `complete=false`; primary owns live-model full run.
+- Pi binding: unassigned
+- Pi attempts: none
+- Primary attempts: not eligible while Pi retries remain.
+- Current evidence: v1 report and `duplicatePrimaryViewRate` inspect only Tool envelopes; widget fences are invisible.
+- Suspension decision: n/a
+- Resume condition: n/a
+- Continuation decision: Do not alter the frozen corpus or retry semantic failures.
+- Next action: Dispatch from an accepted dependency state.
+
+## issue-099: Add conversation-browser v2 and unified P2 acceptance gates
+
+- Status: READY
+- Classification: NORMAL
+- Goal / user outcome: Real conversation DOM proves old installed cases, explainer replay, I1-I5 order, deterministic bridge visibility/final recap folding, and zero runtime errors; missing browser evidence blocks unified acceptance.
+- First-principles root cause: browser report v1 covers only installed CRM Artifact/Interactive UI and is not consumed by the unified aggregator; there is no deterministic fixture for interleaving/collapse or shared evaluator projection.
+- Core acceptance invariant: browser normalization reuses the oracle evaluator; safe v2 report includes transcript/DOM failure codes and reviewed evidence references but no raw sensitive content; same-session explainer reload does not recall the Tool; deterministic text-rich-text-rich-text and widget-text-widget order is asserted; unified v2 has a required conversation-interleaving gate; cleanup is unconditional.
+- Dependencies: issues 089, 090, 091, 096, 097, 098
+- Dispatch order: Final executable integration lane before docs/evidence.
+- Ownership: `scripts/verify-interactive-ui-conversation-browser.mjs`; `scripts/verify-interactive-ui-unified-acceptance.mjs`; `scripts/verify-extension-workbench-unit.mjs` if added as the explicit collector; `package.json` for the narrow contract command only.
+- Focused verification: deterministic source/unit collector tests and report-schema checks in Pi; primary runs focused tests, model/browser/live unified gates, and verifies cleanup/evidence paths.
+- Pi binding: unassigned
+- Pi attempts: none
+- Primary attempts: not eligible while Pi retries remain.
+- Current evidence: browser report is v1 and absent from `reportPaths`; the target branch also lacks the planned explicit unit collector script, so this lane must create a bounded allowlist collector rather than broad-scan UI tests.
+- Suspension decision: n/a
+- Resume condition: n/a
+- Continuation decision: Keep live/browser orchestration out of parser and product components.
+- Next action: Dispatch only after all executable dependencies are accepted.
+
+## issue-100: Verify packaged built-in metadata without another hard-coded version constant
+
+- Status: READY
+- Classification: NORMAL
+- Goal / user outcome: Packaged Desktop acceptance verifies the built-in policy version from staged signed metadata instead of drifting behind the source manifest.
+- First-principles root cause: the Electron verifier contains a hand-written built-in version expectation, creating a second mutable source that will diverge when issue-093 moves the package to 1.4.0.
+- Core acceptance invariant: the verifier reads the staged manifest/runtime authority, asserts consistency and required assets, and preserves all CLI, sandbox, Runner, architecture, and package checks; no package or runtime code changes.
+- Dependencies: issue-093
+- Dispatch order: Packaging-only lane after built-in migration acceptance.
+- Ownership: `packages/electron/scripts/verify-packaged-interactive-ui.mjs`.
+- Focused verification: `node --check packages/electron/scripts/verify-packaged-interactive-ui.mjs` plus the script's narrow source/manifest check; primary owns rebuilt packaged acceptance.
+- Pi binding: unassigned
+- Pi attempts: none
+- Primary attempts: not eligible while Pi retries remain.
+- Current evidence: P2 blueprint identifies a stale hard-coded built-in version; current verifier must be inspected at dispatch against issue-093's accepted manifest.
+- Suspension decision: n/a
+- Resume condition: n/a
+- Continuation decision: Keep packaging risk separate from Agent Runtime ownership migration.
+- Next action: Dispatch after issue-093.
+
+## issue-101: Consolidate P2 owning documentation, status, and redacted evidence
+
+- Status: READY
+- Classification: NORMAL
+- Goal / user outcome: Every owning document and roadmap row reflects the actually verified P2 behavior, limitations, and evidence without overstating release/model/platform status.
+- First-principles root cause: the detailed blueprints live outside the integration branch and existing module docs still describe built-in v1.3, universal live Installed Native behavior, and old post-rich/policy contracts.
+- Core acceptance invariant: owning docs describe the accepted seams and exact validation; the two requested blueprint paths remain recorded; P2.x status follows each DoD, not worker prose; evidence is redacted, screenshots individually reviewed, unavailable external gates remain explicit, and P3.6/Workbench snapshot pin stay out of scope.
+- Dependencies: issues 088-100 and OpenCode issue-001
+- Dispatch order: Final primary-owned consolidation after executable acceptance; Pi may prepare module-doc replacements only in a bounded docs lane, while `roadmap.md`, `issues.md`, plan status, and final evidence remain primary-owned.
+- Ownership: `packages/web/server/lib/interactive-ui/DOCUMENTATION.md`; `packages/ui/src/components/chat/message/parts/DOCUMENTATION.md`; `packages/ui/src/components/chat/generative-widget/DOCUMENTATION.md`; `packages/ui/src/components/interactive-ui/DOCUMENTATION.md`; target-branch P2 design/implementation docs if deliberately imported; primary exclusively owns workspace `roadmap.md`, this ledger, and evidence conclusions.
+- Focused verification: markdown/link/final-newline checks, `docs:validate` where applicable, and byte/reference audit against final code/report schemas.
+- Pi binding: unassigned
+- Pi attempts: none
+- Primary attempts: not eligible while Pi retries remain.
+- Current evidence: Root roadmap already records both requested blueprint locations; the active integration branch does not contain those untracked planning files.
+- Suspension decision: n/a
+- Resume condition: n/a
+- Continuation decision: Do not copy or overwrite the user's dirty planning worktree as an implementation shortcut.
+- Next action: Hold until executable lanes settle.
+
+## issue-102: Publish and pin the new OpenCode conversational policy when separately authorized
+
+- Status: OPEN
+- Classification: NON-BLOCKING
+- Goal / user outcome: Managed Desktop/Web eventually consume the accepted OpenCode prompt/Skill through a real immutable fork CLI/SDK release with verified provenance and hashes.
+- First-principles root cause: local OpenCode source changes do not alter the currently pinned published `1.18.10-oc.1`; creating `1.18.16-oc.1`, pushing, publishing, and mutating OpenChamber dependency/CLI locks are external state changes not authorized by this P2 implementation request.
+- Core acceptance invariant: no manifest or lock claims a non-existent package; release uses immutable stable `v1.18.16` provenance, CLI/SDK versions match, all platform hashes verify, and only then may the four SDK aliases, CLI lock, and `bun.lock` change.
+- Dependencies: OpenCode issue-001 and all local P2.1 policy checks
+- Dispatch order: Outside active Pi implementation until the user explicitly authorizes the named release/publish/pin actions.
+- Ownership: no active ownership; future authorized scope is the OpenCode release handoff and OpenChamber SDK/CLI lock files listed in the P2 blueprint.
+- Focused verification: OpenCode compat/type/lint/build/provenance/package checks, published artifact/hash verification, OpenChamber staged CLI self-check, builds, and packaged acceptance.
+- Pi binding: unassigned
+- Pi attempts: none
+- Primary attempts: n/a; external authority cannot be manufactured by a code fix.
+- Current evidence: target OpenChamber pins the actually published `@zunbaran/opencode-sdk@1.18.10-oc.1`; OpenCode source is prepared at stable `v1.18.16` but `1.18.16-oc.1` does not exist publicly.
+- Suspension decision: n/a
+- Resume condition: explicit user authorization to publish the specific OpenCode fork release and then consume its verified artifacts.
+- Continuation decision: Continue local P2 implementation and review; keep P2.1 roadmap status in-progress/open-accept rather than falsely done until this gate is satisfied.
+- Next action: Await explicit external-release authority after local code and review are green.

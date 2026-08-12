@@ -8,6 +8,26 @@ export interface ShowWidgetData {
   widget_code: string;
 }
 
+/**
+ * Parsing mode for `parseAllShowWidgets`.
+ *
+ * - `streaming-permissive` (default): the production render path. Recovers
+ *   partial widgets from truncated JSON so a still-streaming message keeps
+ *   its live preview, and never demands a closing fence.
+ * - `finalized-strict`: for finalized (completed) messages only. Never
+ *   invokes truncated recovery and never coerces `widget_code`/`title`;
+ *   every recognized show-widget marker produces either a valid closed
+ *   widget segment or an explicit `malformed_widget` segment (stable
+ *   `code`). Rejects unclosed fences, truncated/invalid/non-object JSON,
+ *   missing/empty/non-string `widget_code`, and present non-string
+ *   `title`.
+ */
+export type ShowWidgetParseMode = 'streaming-permissive' | 'finalized-strict';
+
+export interface ParseAllShowWidgetsOptions {
+  mode?: ShowWidgetParseMode;
+}
+
 const toShowWidgetData = (value: unknown): ShowWidgetData | null => {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const candidate = value as Record<string, unknown>;
@@ -16,6 +36,43 @@ const toShowWidgetData = (value: unknown): ShowWidgetData | null => {
   return {
     title: candidate.title || undefined,
     widget_code: candidate.widget_code,
+  };
+};
+
+/**
+ * Stable machine-readable failure code for a malformed show-widget block.
+ * `finalized-strict` consumers (privacy-safe transcript evidence) persist
+ * the code instead of any fence body content.
+ */
+export type MalformedWidgetCode =
+  | 'no-json-wrapper'
+  | 'truncated-json'
+  | 'invalid-json'
+  | 'non-object-json'
+  | 'missing-widget-code'
+  | 'non-string-title'
+  | 'unclosed-fence';
+
+type StrictWidgetDataResult =
+  | { ok: true; data: ShowWidgetData }
+  | { ok: false; code: 'non-object-json' | 'missing-widget-code' | 'non-string-title' };
+
+/**
+ * Wire-contract validation shared by both modes. `finalized-strict` never
+ * coerces: a non-object body, a missing/empty/non-string `widget_code`, or a
+ * present non-string `title` is an explicit failure with a stable code.
+ */
+const toStrictShowWidgetData = (value: unknown): StrictWidgetDataResult => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return { ok: false, code: 'non-object-json' };
+  const candidate = value as Record<string, unknown>;
+  if (typeof candidate.widget_code !== 'string' || candidate.widget_code.length === 0) return { ok: false, code: 'missing-widget-code' };
+  if (candidate.title !== undefined && typeof candidate.title !== 'string') return { ok: false, code: 'non-string-title' };
+  return {
+    ok: true,
+    data: {
+      title: candidate.title || undefined,
+      widget_code: candidate.widget_code,
+    },
   };
 };
 
@@ -104,8 +161,11 @@ export type WidgetSegment =
    * mode triggered. `raw` is the original fence body (truncated to
    * 2 KB) so the user can read it inline without hunting through
    * the transcript.
+   *
+   * `code` is a stable machine-readable failure code consumed by
+   * privacy-safe finalized-transcript evidence (never the body).
    */
-  | { type: 'malformed_widget'; reason: string; raw: string };
+  | { type: 'malformed_widget'; code: MalformedWidgetCode; reason: string; raw: string };
 
 /**
  * Fence-format-agnostic widget parser.
@@ -132,6 +192,48 @@ function findJsonEnd(text: string, start: number): number {
   return -1; // unclosed
 }
 
+/** True when a backtick run ending at `runEnd` actually opens the next show-widget fence, so it cannot serve as a closing fence. */
+const isShowWidgetOpenerAfter = (text: string, runEnd: number): boolean => {
+  const rest = text.slice(runEnd, runEnd + 16);
+  return /^`{0,3}show-widget/.test(rest);
+};
+
+/**
+ * Locate the closing fence for a marker opened with `openerCount` backticks:
+ * the next run of exactly `openerCount` backticks (not part of a longer run)
+ * that does not itself open another show-widget fence. Returns -1 when the
+ * fence is unclosed. Only used by `finalized-strict` mode; the streaming
+ * scanner's own trailing-fence handling stays untouched.
+ */
+const findClosingFence = (text: string, from: number, openerCount: number): number => {
+  const run = '`'.repeat(openerCount);
+  let index = from;
+  while (index < text.length) {
+    const at = text.indexOf(run, index);
+    if (at === -1) return -1;
+    const runEnd = at + openerCount;
+    if ((at === 0 || text[at - 1] !== '`')
+      && (runEnd >= text.length || text[runEnd] !== '`')
+      && !isShowWidgetOpenerAfter(text, runEnd)) {
+      return at;
+    }
+    index = at + 1;
+  }
+  return -1;
+};
+
+/** Precise human-readable reason for finalized-strict wire-contract failures. */
+const strictMalformedReason = (code: 'non-object-json' | 'missing-widget-code' | 'non-string-title'): string => {
+  switch (code) {
+    case 'non-object-json':
+      return 'The `show-widget` JSON must be an object wrapper: `{"title":"…","widget_code":"…"}`.';
+    case 'missing-widget-code':
+      return 'The `show-widget` JSON is missing a non-empty string `widget_code`.';
+    case 'non-string-title':
+      return 'The `show-widget` `title` field, when present, must be a string.';
+  }
+};
+
 /** Cap raw fence body before surfacing in a malformed-widget UI segment.
  *  2 KB is enough to recognise what the model produced without
  *  bloating the persisted message JSON if the broken fence was huge. */
@@ -151,13 +253,22 @@ function clipMalformedRaw(raw: string): string {
  *       failure mode: model wrote a raw HTML fence body)
  *    b) JSON parses successfully but is missing `widget_code`
  *    c) malformed/unparseable JSON inside the fence
+ *
+ *  Pass `{ mode: 'finalized-strict' }` to validate finalized messages:
+ *  truncated recovery is never invoked, `widget_code`/`title` are never
+ *  coerced, and an unclosed fence is rejected with a `malformed_widget`
+ *  segment carrying a stable `code`. Both modes share this production
+ *  scanner, segment, and location implementation.
  */
-export function parseAllShowWidgets(text: string): WidgetSegment[] {
+export function parseAllShowWidgets(text: string, options?: ParseAllShowWidgetsOptions): WidgetSegment[] {
+  const mode: ShowWidgetParseMode = options?.mode ?? 'streaming-permissive';
   // Fails closed on oversized input before any expensive trim/regex/parse.
   if (exceedsShowWidgetByteLimit(text)) return [];
   const segments: WidgetSegment[] = [];
-  // Match any backtick(s) + show-widget, capturing the full marker to strip it
-  const markerRegex = /`{1,3}show-widget`{0,3}\s*(?:\n\s*`{3}(?:json)?\s*)?\n?/g;
+  // Match any backtick(s) + show-widget, capturing the full marker to strip it.
+  // The leading backtick run is captured so finalized-strict can require a
+  // closing fence of the same backtick count.
+  const markerRegex = /(`{1,3})show-widget`{0,3}\s*(?:\n\s*`{3}(?:json)?\s*)?\n?/g;
   let lastIndex = 0;
   let match: RegExpExecArray | null;
   let foundAny = false;
@@ -171,6 +282,7 @@ export function parseAllShowWidgets(text: string): WidgetSegment[] {
   };
 
   while ((match = markerRegex.exec(text)) !== null) {
+    const openerCount = (match[1] ?? '```').length;
     const afterMarker = match.index + match[0].length;
     // Find the JSON object start
     const jsonStart = text.indexOf('{', afterMarker);
@@ -185,9 +297,17 @@ export function parseAllShowWidgets(text: string): WidgetSegment[] {
       const raw = text.slice(afterMarker, bodyEnd).trim();
       foundAny = true;
       flushBeforeText(match.index);
+      // finalized-strict distinguishes a non-object JSON value (array,
+      // string literal, or number) from a body that is not JSON at all;
+      // both are rejected, but the stable code differs.
+      const nonObjectJsonNearby = mode === 'finalized-strict'
+        && /^[\s\r\n]*["[0-9-]/.test(text.slice(afterMarker, afterMarker + 64));
       segments.push({
         type: 'malformed_widget',
-        reason: 'No JSON wrapper found inside `show-widget` fence — the body looked like raw HTML / SVG. Widgets must be wrapped as `{"title":"…","widget_code":"…"}` so the runtime can sandbox them.',
+        code: nonObjectJsonNearby ? 'non-object-json' : 'no-json-wrapper',
+        reason: nonObjectJsonNearby
+          ? 'The `show-widget` fence body is a JSON value of the wrong kind: the wire contract requires an object wrapper `{"title":"…","widget_code":"…"}`.'
+          : 'No JSON wrapper found inside `show-widget` fence — the body looked like raw HTML / SVG. Widgets must be wrapped as `{"title":"…","widget_code":"…"}` so the runtime can sandbox them.',
         raw: clipMalformedRaw(raw),
       });
       if (fenceClose !== -1) {
@@ -202,14 +322,29 @@ export function parseAllShowWidgets(text: string): WidgetSegment[] {
 
     const jsonEnd = findJsonEnd(text, jsonStart);
     if (jsonEnd === -1) {
-      // Truncated JSON — try extracting partial widget
-      const partialBody = text.slice(jsonStart);
-      const widget = extractTruncatedWidget(partialBody);
-      if (widget) {
+      if (mode === 'finalized-strict') {
+        // Truncated JSON — finalized messages must never be recovered from
+        // a partial body (that is streaming coercion). Surface an explicit
+        // malformed segment with a stable code instead.
         foundAny = true;
         flushBeforeText(match.index);
-        segments.push({ type: 'widget', data: widget });
+        segments.push({
+          type: 'malformed_widget',
+          code: 'truncated-json',
+          reason: 'The `show-widget` JSON object is truncated (never closed). Finalized messages must contain a complete `{"widget_code":"…"}` wrapper.',
+          raw: clipMalformedRaw(text.slice(afterMarker).trim()),
+        });
         lastIndex = text.length;
+      } else {
+        // Truncated JSON — try extracting partial widget
+        const partialBody = text.slice(jsonStart);
+        const widget = extractTruncatedWidget(partialBody);
+        if (widget) {
+          foundAny = true;
+          flushBeforeText(match.index);
+          segments.push({ type: 'widget', data: widget });
+          lastIndex = text.length;
+        }
       }
       break;
     }
@@ -217,11 +352,36 @@ export function parseAllShowWidgets(text: string): WidgetSegment[] {
     const jsonStr = text.slice(jsonStart, jsonEnd + 1);
     try {
       const json = JSON.parse(jsonStr);
-      const widget = toShowWidgetData(json);
-      if (widget) {
+      const parsed = toStrictShowWidgetData(json);
+      if (parsed.ok) {
+        if (mode === 'finalized-strict') {
+          // A closed JSON object is not enough: the fence itself must be
+          // closed by a matching backtick run. Without it the marker is an
+          // unclosed fence — reject rather than coerce a final widget.
+          const closer = findClosingFence(text, jsonEnd + 1, openerCount);
+          if (closer === -1) {
+            foundAny = true;
+            flushBeforeText(match.index);
+            segments.push({
+              type: 'malformed_widget',
+              code: 'unclosed-fence',
+              reason: 'The `show-widget` fence is not closed: the JSON wrapper is complete but no matching closing backtick fence follows it. Finalized messages must close every fence.',
+              raw: clipMalformedRaw(text.slice(afterMarker).trim()),
+            });
+            lastIndex = jsonEnd + 1;
+            markerRegex.lastIndex = jsonEnd + 1;
+            continue;
+          }
+          foundAny = true;
+          flushBeforeText(match.index);
+          segments.push({ type: 'widget', data: parsed.data });
+          lastIndex = closer + openerCount;
+          markerRegex.lastIndex = lastIndex;
+          continue;
+        }
         foundAny = true;
         flushBeforeText(match.index);
-        segments.push({ type: 'widget', data: widget });
+        segments.push({ type: 'widget', data: parsed.data });
         // Skip past the JSON and any trailing fence/backticks
         let endPos = jsonEnd + 1;
         const trailing = text.slice(endPos, endPos + 10);
@@ -230,16 +390,19 @@ export function parseAllShowWidgets(text: string): WidgetSegment[] {
         lastIndex = endPos;
         markerRegex.lastIndex = endPos;
       } else {
-        // (b) JSON parsed but missing `widget_code` — surface as
-        // malformed_widget. Pre-fix this fell through to the
-        // implicit "no segment pushed" path; the user saw nothing.
+        // (b) JSON parsed but violates the string wire contract — surface
+        // as malformed_widget. Pre-fix this fell through to the implicit
+        // "no segment pushed" path; the user saw nothing.
         const fenceClose = text.indexOf('```', jsonEnd + 1);
         const bodyEnd = fenceClose !== -1 ? fenceClose : text.length;
         foundAny = true;
         flushBeforeText(match.index);
         segments.push({
           type: 'malformed_widget',
-          reason: 'The `show-widget` JSON did not match the required string contract. The minimal shape is `{"title":"…","widget_code":"<escaped HTML>"}`; `title` is optional but must be a string.',
+          code: parsed.code,
+          reason: mode === 'finalized-strict'
+            ? strictMalformedReason(parsed.code)
+            : 'The `show-widget` JSON did not match the required string contract. The minimal shape is `{"title":"…","widget_code":"<escaped HTML>"}`; `title` is optional but must be a string.',
           raw: clipMalformedRaw(text.slice(afterMarker, bodyEnd).trim()),
         });
         lastIndex = fenceClose !== -1 ? fenceClose + 3 : text.length;
@@ -256,6 +419,7 @@ export function parseAllShowWidgets(text: string): WidgetSegment[] {
       const errText = parseErr instanceof Error ? parseErr.message : String(parseErr);
       segments.push({
         type: 'malformed_widget',
+        code: 'invalid-json',
         reason: `The \`show-widget\` JSON failed to parse: ${errText}. Common causes: unescaped quotes inside \`widget_code\`, unescaped newlines, trailing commas.`,
         raw: clipMalformedRaw(text.slice(afterMarker, bodyEnd).trim()),
       });

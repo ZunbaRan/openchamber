@@ -206,3 +206,104 @@ Outro`;
     expect(reads).toBe(LIMIT + 1);
   });
 });
+
+describe('parseAllShowWidgets finalized-strict mode', () => {
+  const strict = (text: string) => parseAllShowWidgets(text, { mode: 'finalized-strict' });
+  const malformedCodes = (text: string): string[] =>
+    strict(text)
+      .filter((segment) => segment.type === 'malformed_widget')
+      .map((segment) => segment.type === 'malformed_widget' ? segment.code : '');
+
+  test('defaults to streaming-permissive', () => {
+    const truncated = '```show-widget\n{"widget_code":"<div>abcdefghij</div>"';
+    expect(parseAllShowWidgets(truncated)).toEqual(parseAllShowWidgets(truncated, { mode: 'streaming-permissive' }));
+    expect(parseAllShowWidgets(truncated).some((segment) => segment.type === 'widget')).toBe(true);
+  });
+
+  test('rejects truncated JSON instead of recovering a partial widget', () => {
+    const truncated = '```show-widget\n{"widget_code":"<div>abcdefghij</div>"';
+    expect(parseAllShowWidgets(truncated).some((segment) => segment.type === 'widget')).toBe(true);
+    const segments = strict(truncated);
+    expect(segments.some((segment) => segment.type === 'widget')).toBe(false);
+    expect(malformedCodes(truncated)).toContain('truncated-json');
+  });
+
+  test('rejects an unclosed fence even when the JSON is complete', () => {
+    const text = '```show-widget\n{"widget_code":"<div>abcdefghij</div>"}';
+    expect(parseAllShowWidgets(text).some((segment) => segment.type === 'widget')).toBe(true);
+    expect(malformedCodes(text)).toContain('unclosed-fence');
+  });
+
+  test('rejects invalid JSON', () => {
+    const text = '```show-widget\n{"widget_code": <div>broken</div>}\n```';
+    expect(malformedCodes(text)).toContain('invalid-json');
+  });
+
+  test('rejects non-object JSON values', () => {
+    for (const body of ['[1,2,3]', '"just a string"', '12345']) {
+      expect(malformedCodes(`\`\`\`show-widget\n${body}\n\`\`\``)).toContain('non-object-json');
+    }
+  });
+
+  test('rejects empty or non-string widget_code', () => {
+    for (const body of ['{"widget_code":""}', '{"widget_code":{"html":"<div>x</div>"}}']) {
+      expect(malformedCodes(`\`\`\`show-widget\n${body}\n\`\`\``)).toContain('missing-widget-code');
+    }
+  });
+
+  test('rejects present non-string title and never coerces it', () => {
+    const text = '```show-widget\n{"title":123,"widget_code":"<div>x</div>"}\n```';
+    expect(malformedCodes(text)).toContain('non-string-title');
+    expect(strict(text).some((segment) => segment.type === 'widget')).toBe(false);
+  });
+
+  test('rejects raw HTML fence bodies with no-json-wrapper', () => {
+    const text = '```show-widget\n<div>not json</div>\n```';
+    expect(malformedCodes(text)).toContain('no-json-wrapper');
+  });
+
+  test('accepts valid multiple closed fences preserving text/widget order', () => {
+    const text = [
+      'intro',
+      '```show-widget\n{"title":"A","widget_code":"<div>a</div>"}\n```',
+      'middle',
+      '```show-widget\n{"title":"B","widget_code":"<div>b</div>"}\n```',
+      'outro',
+    ].join('\n\n');
+    const segments = strict(text);
+    expect(segments.map((segment) => segment.type)).toEqual(['text', 'widget', 'text', 'widget', 'text']);
+    expect(segments.map((segment) => segment.type === 'widget'
+      ? segment.data.title
+      : segment.type === 'text' ? segment.content : segment.code))
+      .toEqual(['intro', 'A', 'middle', 'B', 'outro']);
+  });
+
+  test('requires the closing fence to match the opener backtick count', () => {
+    const mismatched = '``show-widget\n{"widget_code":"<div>x</div>"}\n```';
+    expect(malformedCodes(mismatched)).toContain('unclosed-fence');
+    const single = '`show-widget {"widget_code":"<div>x</div>"}`';
+    expect(strict(single).some((segment) => segment.type === 'widget')).toBe(true);
+  });
+
+  test('never coerces partial title strings from truncated bodies', () => {
+    const truncated = '```show-widget\n{"title":"Hello","widget_code":"<div>abcdefghij';
+    expect(strict(truncated).some((segment) => segment.type === 'widget')).toBe(false);
+    expect(malformedCodes(truncated)).toContain('truncated-json');
+  });
+
+  test('permissive malformed segments carry stable codes too', () => {
+    const text = '```show-widget\n{"title":"x"}\n```';
+    const malformed = parseAllShowWidgets(text).find((segment) => segment.type === 'malformed_widget');
+    expect(malformed?.type).toBe('malformed_widget');
+    if (malformed?.type === 'malformed_widget') {
+      expect(malformed.code).toBe('missing-widget-code');
+      expect(malformed.reason.length).toBeGreaterThan(0);
+      expect(typeof malformed.raw).toBe('string');
+    }
+  });
+
+  test('strict mode still fails closed on oversized input', () => {
+    const big = '```show-widget\n{"widget_code":"' + '<div>x</div>'.repeat(1024 * 100) + '"}';
+    expect(strict(big)).toEqual([]);
+  });
+});

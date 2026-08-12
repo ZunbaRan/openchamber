@@ -125,18 +125,24 @@ const MarkdownChunk: React.FC<{
   onShowPopup,
   chunkKey,
 }) => (
-  <MarkdownRenderer
-    key={chunkKey}
-    content={content}
-    part={part}
-    messageId={messageId}
-    isAnimated={false}
-    isStreaming={isStreaming}
-    disableStreamAnimation={chatRenderMode === 'sorted'}
-    variant={part.type === 'reasoning' ? 'reasoning' : 'assistant'}
-    enableFileReferences={isFinalized}
-    onShowPopup={onShowPopup}
-  />
+  <div
+    className="contents"
+    data-generative-widget-segment="text"
+    data-generative-widget-segment-key={chunkKey}
+  >
+    <MarkdownRenderer
+      key={chunkKey}
+      content={content}
+      part={part}
+      messageId={messageId}
+      isAnimated={false}
+      isStreaming={isStreaming}
+      disableStreamAnimation={chatRenderMode === 'sorted'}
+      variant={part.type === 'reasoning' ? 'reasoning' : 'assistant'}
+      enableFileReferences={isFinalized}
+      onShowPopup={onShowPopup}
+    />
+  </div>
 );
 
 export interface RenderAssistantTextWithWidgetsProps {

@@ -9,7 +9,10 @@ export const MalformedWidgetNotice: React.FC<MalformedWidgetNoticeProps> = ({
   reason,
   raw,
 }) => (
-  <div className="my-2 rounded-lg border border-[var(--status-warning-border)] bg-[var(--status-warning-muted)] p-3 text-sm">
+  <div
+    className="my-2 rounded-lg border border-[var(--status-warning-border)] bg-[var(--status-warning-muted)] p-3 text-sm"
+    data-generative-widget-segment="malformed-widget"
+  >
     <div className="font-medium text-[var(--status-warning-foreground)]">
       Malformed show-widget block
     </div>

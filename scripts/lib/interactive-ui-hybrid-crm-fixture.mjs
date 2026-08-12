@@ -379,7 +379,7 @@ const createToolSource = ({ name, view, summary, artifact }) => `import { tool }
 export default tool({
   description: '${artifact
     ? 'Open the installed Simple CRM HTML Artifact explorer for authoritative customer and pipeline exploration through the Business Gateway.'
-    : `Open the installed Simple CRM ${name.includes('workspace') ? 'native workspace' : 'declarative overview'} with authoritative customer and opportunity data through the Business Gateway.`} Prefer this business Tool over generic interactive_ui or html_artifact. Call it at most once per assistant turn; the successful result is already rendered.',
+    : `Open the installed Simple CRM ${name.includes('workspace') ? 'native workspace' : 'declarative overview'} with authoritative customer and opportunity data through the Business Gateway.`} Prefer this business Tool over generic interactive_ui or html_artifact. Call it at most once per assistant turn or request to prevent duplicate business calls; the successful result is already rendered, so do not render the same request, data, metrics, or table a second time.',
   args: { scope: tool.schema.string().optional() },
   async execute(args) {
     return JSON.stringify({
@@ -442,7 +442,9 @@ description: Open the signed Simple CRM OCIX views for authoritative customer an
 - Use \`simple_crm_open_workspace\` for the richer native workspace or confirmed opportunity updates.
 ${includeArtifact ? '- Use `simple_crm_open_explorer` when the user explicitly requests the installed CRM explorer.' : ''}
 - Never use generic generated UI to invent CRM data.
-- After a Simple CRM Tool returns, do not call a second primary visualization Tool.
+- Call each Simple CRM Tool at most once per assistant turn or request to prevent duplicate business calls.
+- After an authoritative Simple CRM View is rendered, do not render the same request, data, metrics, or table a second time in a generic UI, widget, Artifact, or Markdown.
+- Normal explanatory prose is fine, and only when truly useful a clearly unrelated-focus non-business explanatory visual may follow.
 `, 'utf8'),
     ...(includeArtifact ? [
       fs.writeFile(path.join(artifactDirectory, 'explorer.html'), createArtifactDocument(), 'utf8'),

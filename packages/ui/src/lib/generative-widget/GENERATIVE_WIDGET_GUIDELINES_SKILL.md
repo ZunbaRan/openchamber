@@ -1,33 +1,66 @@
 ---
 name: generative-widget-guidelines
 description: >
-  Load detailed design guidelines for OpenChamber Generative Widgets (show-widget fences).
-  Use BEFORE creating non-trivial visualizations: diagrams, flowcharts, timelines, Chart.js charts,
-  interactive calculators, mockups, or multi-widget narratives. Keywords: 可视化, 图表, 流程图, diagram,
-  chart, flowchart, timeline, widget, show-widget, dashboard, hierarchy.
+  Detailed design + wire guidance for OpenChamber Generative Widgets (show-widget fences).
+  Load AFTER show-widget has already been selected for a visual, before emitting the widget:
+  diagrams, flowcharts, timelines, Chart.js charts, interactive calculators, mockups, and
+  multi-widget narratives. Parity/documentation helper — not the production OpenCode prompt
+  and not a routing policy. Keywords: 可视化, 图表, 流程图, diagram, chart, flowchart, timeline,
+  widget, show-widget, dashboard, hierarchy.
 ---
 
 # Generative Widget Design Guidelines
 
+> **Parity note:** this document is an OpenChamber parity/documentation helper for OpenCode's
+> production show-widget prompt and `generative-widget-guidelines` Skill. It is NOT the
+> production injected prompt and does not become a third routing policy; the production
+> always-on prompt and on-demand Skill remain authoritative.
+
 ## FINAL OUTPUT FORMAT — non-negotiable
 
-The ONLY way to render a widget is a code fence labelled `show-widget` whose body is a JSON object with a `widget_code` string:
+The ONLY way to render a widget is a code fence labelled `show-widget` whose body is a JSON object with string fields `widget_code` and `title`:
 
 ```show-widget
-{"title":"<human-readable title>","widget_code":"<escaped HTML/SVG string>"}
+{"widget_code":"<escaped HTML/SVG string>","title":"<human-readable title>"}
 ```
 
 - Prefer single-quote HTML attributes inside widget_code.
-- Raw ```html fences are NEVER widgets.
+- Raw ```html fences are NEVER widgets; a `show-widget` fence with a non-JSON body is NEVER a widget.
 - Examples below go INSIDE widget_code, not as the wire format.
+- Explanatory prose goes OUTSIDE the fence; multiple widgets use SEPARATE fences with prose between them.
 
 Minimal example:
 ```show-widget
-{"title":"Hello","widget_code":"<div style='padding:8px;font:14px var(--font-sans)'>Hello world</div>"}
+{"widget_code":"<div style='padding:8px;font:14px var(--font-sans)'>Hello world</div>","title":"Hello"}
 ```
 
 
 > **Reading this document:** HTML/SVG/Chart.js snippets below are INTERNAL EXAMPLES for inside `widget_code`. Only the show-widget JSON fence is the wire format.
+
+
+## Visual selection hierarchy
+
+1. Prefer an installed specialized Tool/View for its unique connected/installed capability.
+2. Otherwise prefer Declarative interactive_ui for compact structured charts/diagrams/tables when available.
+3. Use show-widget for small free-form conversational HTML/CSS/SVG and streaming narrative widgets.
+4. Use html_artifact for complex custom canvas/document/simulation artifacts.
+MCP Apps remain outside this four-track numbering.
+
+## Conversational interleaving
+
+- Emit 1-N visuals for genuinely different focuses; preserve generation order.
+- Short prose may appear before, after, and between visuals as bridges.
+- Use one primary visual per focus.
+- Soft target: normally no more than four primary visuals in one answer; exceed only with strong user need — guidance, not a hard gate.
+
+## Dedupe and data labeling
+
+- Never repeat the same business data or conclusion across show-widget, Declarative, installed business Tool/View, and html_artifact. If one track already represents it, use text or a different-focus visual.
+- Label example/simulated/generated data clearly. Installed connected-business data stays governed by its Tool authority.
+
+## Restraint
+
+- Short factual answers and ordinary prose remain prose; show-widget is not a Tool — do not require a widget or force a visual merely because the capability exists.
 
 
 ## Core Design System
@@ -50,6 +83,8 @@ Minimal example:
 - No dark/colored backgrounds on outer containers
 - Typography: weights 400/500 only, sentence case
 - No DOCTYPE/html/head/body
+- No fetch/XHR/WebSocket — sandboxed iframe, no network APIs
+- Accessibility: readable contrast, no black-on-dark text, ≥11px text, aria-labels on controls, human-readable titles
 - CDN allowlist: \`cdnjs.cloudflare.com\`, \`esm.sh\`, \`cdn.jsdelivr.net\`, \`unpkg.com\`. No Tailwind CDN — utilities are built-in.
 
 ### CSS Variables (HTML widgets)
@@ -189,13 +224,13 @@ Two parallel groups. Matching rows. Different fill colors per group. Optional co
 - Clickable nodes: \`onclick="window.__widgetSendMessage('...')"\` on 2-3 key nodes
 
 ### Multi-widget narratives
-For complex topics, output multiple widgets of DIFFERENT types:
+For complex topics, emit multiple visuals for genuinely different focuses — one primary visual per focus, normally no more than four primary visuals in one answer (exceed only with strong user need). Preserve generation order and bridge with short prose:
 1. Overview SVG (e.g. hierarchy)
-2. Text explaining one part
+2. Short prose bridge explaining one part
 3. Detail SVG (e.g. cycle diagram for that part)
 4. Text with quantitative insight
 5. Interactive Chart.js with controls
-Mix types freely.
+Mix types freely, never repeating the same business data or conclusion across visuals or tracks.
 
 
 ## Module map
@@ -205,4 +240,4 @@ Mix types freely.
 - **art** — SVG illustration
 - **diagram** — flowcharts, timelines, hierarchies, cycles
 
-When continuing after this skill, emit only valid `show-widget` JSON fences for visuals.
+When continuing after this skill, emit valid `show-widget` JSON fences for any show-widget visuals you produce.
