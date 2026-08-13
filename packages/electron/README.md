@@ -29,6 +29,7 @@ The preload bridge exposes desktop-only APIs to the web UI through `window.__OPE
 | `scripts/bundle-main.mjs` | Bundles Electron main code into `dist-bundle/main.mjs` for packaging |
 | `scripts/rebuild-native.mjs` | Rebuilds native modules against the Electron runtime |
 | `scripts/package.mjs` | Runs `electron-builder`, with unsigned Windows builds when signing env is missing |
+| `scripts/macos-launchpad-eligibility.mjs` | Verifies the final signed macOS app is a visible `APPL` bundle with stable identity, executable/icon assets, Spotlight application metadata, and a valid signature |
 | `resources/` | Packaged web assets, icons, and macOS entitlements |
 
 ## Development
@@ -81,6 +82,8 @@ That runs, in order:
 Build output goes to `packages/electron/dist`.
 
 macOS builds produce `dmg` and `zip` artifacts. Windows builds produce an NSIS installer. Linux builds produce an AppImage for the native x64 or arm64 host.
+
+After macOS signing, the Electron Builder `afterSign` hook rejects packages that Launchpad cannot legitimately discover: hidden/background bundles, identity or display-name drift, a non-`APPL` package, missing executable/icon assets, incorrect Spotlight type, or an invalid signature. Ad-hoc signing remains valid for local testing but is reported explicitly; release provenance still requires Developer ID signing and notarization.
 
 ## Platform Notes
 
