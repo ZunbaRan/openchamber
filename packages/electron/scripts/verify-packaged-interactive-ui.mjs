@@ -182,6 +182,42 @@ const inspectClipGuard = async (screenshotPath, metrics) => {
   };
 };
 
+const inspectOccludedRunnerRegion = async (screenshotPath, metrics) => {
+  const { data, info } = await sharp(screenshotPath).removeAlpha().raw().toBuffer({ resolveWithObject: true });
+  const scaleX = info.width / metrics.outerWidth;
+  const scaleY = info.height / metrics.outerHeight;
+  const contentLeft = Math.max(0, (metrics.outerWidth - metrics.innerWidth) / 2);
+  const contentTop = Math.max(0, metrics.outerHeight - metrics.innerHeight);
+  const visibleRunner = {
+    left: Math.max(metrics.runner.left, metrics.scroller.left),
+    top: Math.max(metrics.runner.top, metrics.scroller.top),
+    right: Math.min(metrics.runner.right, metrics.scroller.right),
+    bottom: Math.min(metrics.runner.bottom, metrics.scroller.bottom),
+  };
+  const x0 = Math.max(0, Math.floor((contentLeft + visibleRunner.left + 12) * scaleX));
+  const y0 = Math.max(0, Math.floor((contentTop + visibleRunner.top + 12) * scaleY));
+  const x1 = Math.min(info.width, Math.ceil((contentLeft + visibleRunner.right - 12) * scaleX));
+  const y1 = Math.min(info.height, Math.ceil((contentTop + visibleRunner.bottom - 12) * scaleY));
+  let bluePixels = 0;
+  let sampledPixels = 0;
+  for (let y = y0; y < y1; y += 1) {
+    for (let x = x0; x < x1; x += 1) {
+      const offset = (y * info.width + x) * info.channels;
+      const red = data[offset];
+      const green = data[offset + 1];
+      const blue = data[offset + 2];
+      if (red < 35 && green > 75 && green < 140 && blue > 220) bluePixels += 1;
+      sampledPixels += 1;
+    }
+  }
+  return {
+    bluePixels,
+    sampledPixels,
+    blueRatio: sampledPixels > 0 ? bluePixels / sampledPixels : 0,
+    sampleBounds: { x0, y0, x1, y1 },
+  };
+};
+
 const requestJson = async (port, pathname, { method = 'GET', body, timeoutMs = 30_000 } = {}) => {
   const response = await fetch(`http://127.0.0.1:${port}${pathname}`, {
     method,
@@ -306,14 +342,33 @@ const connect = async (target) => {
       runtimeErrors.push(message.params?.exceptionDetails?.text || 'Runtime exception');
     }
     if (message.id && pending.has(message.id)) {
-      pending.get(message.id)(message);
+      const request = pending.get(message.id);
       pending.delete(message.id);
+      clearTimeout(request.timer);
+      request.resolve(message);
     }
   });
-  const send = (method, params = {}) => new Promise((resolve) => {
+  socket.addEventListener('close', () => {
+    for (const request of pending.values()) {
+      clearTimeout(request.timer);
+      request.reject(new Error('Electron DevTools target closed before replying'));
+    }
+    pending.clear();
+  });
+  const send = (method, params = {}) => new Promise((resolve, reject) => {
     const id = ++requestId;
-    pending.set(id, resolve);
-    socket.send(JSON.stringify({ id, method, params }));
+    const timer = setTimeout(() => {
+      pending.delete(id);
+      reject(new Error(`Timed out waiting for Electron DevTools ${method}`));
+    }, 10_000);
+    pending.set(id, { resolve, reject, timer });
+    try {
+      socket.send(JSON.stringify({ id, method, params }));
+    } catch (error) {
+      clearTimeout(timer);
+      pending.delete(id);
+      reject(error);
+    }
   });
   const evaluate = async (expression) => {
     const reply = await send('Runtime.evaluate', { expression, returnByValue: true });
@@ -489,6 +544,8 @@ let serverPort = 0;
 let failure;
 let clipGuardInspection;
 let clipScreenshotPath;
+let wheelHandoff;
+let nativeSurfaceOcclusion;
 
 try {
   crmApi = await startHybridCrmApi();
@@ -514,10 +571,16 @@ try {
     processExited = true;
   });
 
-  const [{ port, health }, target] = await Promise.all([
-    waitForHealth({ settingsPath, processExited: () => processExited, processOutput: () => processOutput }),
-    waitForDebuggerTarget({ debugPort, processExited: () => processExited, processOutput: () => processOutput }),
-  ]);
+  const { port, health } = await waitForHealth({
+    settingsPath,
+    processExited: () => processExited,
+    processOutput: () => processOutput,
+  });
+  const target = await waitForDebuggerTarget({
+    debugPort,
+    processExited: () => processExited,
+    processOutput: () => processOutput,
+  });
   serverPort = port;
 
   assert.equal(health.runtime, 'desktop');
@@ -606,7 +669,7 @@ try {
   assert.equal(extensions.errors?.length, 0);
   const builtInExtension = extensions.extensions?.find((extension) => extension.id === 'com.openchamber.builtin.interactive-ui');
   assert.notEqual(builtInExtension, undefined, 'built-in Interactive UI runtime must be listed');
-  assert.equal(builtInExtension.version, '1.3.0', 'built-in Interactive UI runtime version');
+  assert.equal(builtInExtension.version, '1.4.0', 'built-in Interactive UI runtime version');
   const agentRuntime = await waitForBuiltInAgentRuntime({ port, directory: temporaryRoot });
 
   browser = await connect(target);
@@ -794,6 +857,142 @@ try {
     true,
     `Clip guard was not visually preserved (${clipGuardInspection.greenRatio.toFixed(3)} green ratio)`,
   );
+  const wheelStart = await browser.evaluate(`document.querySelector('[data-ocix-clip-test-scroller]')?.scrollTop ?? -1`);
+  const wheelTargetsResponse = await fetch(`http://127.0.0.1:${debugPort}/json/list`);
+  const wheelTargets = await wheelTargetsResponse.json();
+  const wheelArtifactTarget = wheelTargets.find((entry) => entry.type === 'page'
+    && /\/api\/interactive-ui\/artifacts\/[a-f0-9]{64}\/document/.test(entry.url || ''));
+  const wheelInnerTarget = wheelTargets.find((entry) => entry.type === 'iframe'
+    && String(entry.url || '').startsWith('data:text/html;base64,'));
+  assert.equal(Boolean(wheelArtifactTarget?.webSocketDebuggerUrl), true, 'wheel handoff requires the native Artifact target');
+  assert.equal(Boolean(wheelInnerTarget?.webSocketDebuggerUrl), true, 'wheel handoff requires the inner Artifact target');
+  const wheelArtifactBrowser = await connect(wheelArtifactTarget);
+  const wheelInnerBrowser = await connect(wheelInnerTarget);
+  try {
+    await wheelArtifactBrowser.evaluate(`(() => {
+      window.__packagedWheelBrokerMessages = [];
+      addEventListener('message', event => {
+        if (String(event.data?.source || '').includes('artifact') && String(event.data?.type || '').includes('wheel')) {
+          window.__packagedWheelBrokerMessages.push(event.data);
+        }
+      });
+    })()`);
+    await wheelInnerBrowser.evaluate(`(() => {
+      window.__packagedWheelEvents = [];
+      addEventListener('wheel', event => {
+        const entry = { deltaX: event.deltaX, deltaY: event.deltaY, deltaMode: event.deltaMode, trusted: event.isTrusted };
+        setTimeout(() => window.__packagedWheelEvents.push({ ...entry, defaultPrevented: event.defaultPrevented }), 0);
+      }, { capture: true, passive: true });
+    })()`);
+    const wheelPoint = await browser.evaluate(`(() => {
+      const scroller = document.querySelector('[data-ocix-clip-test-scroller]');
+      const runner = document.querySelector('[data-ocix-artifact-backend="desktop-runner"]');
+      if (!(scroller instanceof HTMLElement) || !(runner instanceof HTMLElement)) return null;
+      const scroll = scroller.getBoundingClientRect();
+      const surface = runner.getBoundingClientRect();
+      const left = Math.max(scroll.left, surface.left);
+      const top = Math.max(scroll.top, surface.top);
+      const right = Math.min(scroll.right, surface.right);
+      const bottom = Math.min(scroll.bottom, surface.bottom);
+      const contentLeft = Math.max(0, (window.outerWidth - window.innerWidth) / 2);
+      const contentTop = Math.max(0, window.outerHeight - window.innerHeight);
+      return {
+        x: window.screenX + contentLeft + left + Math.max(8, (right - left) / 2),
+        y: window.screenY + contentTop + top + Math.max(8, (bottom - top) / 2),
+      };
+    })()`);
+    assert.notEqual(wheelPoint, null, 'native Artifact wheel point must be measurable');
+    const manualWheelAcceptance = process.env.OPENCHAMBER_MANUAL_WHEEL_ACCEPTANCE === '1';
+    if (manualWheelAcceptance) {
+      const readyPath = path.join(outputDirectory, 'manual-wheel-ready.json');
+      const continuePath = path.join(outputDirectory, 'manual-wheel-continue');
+      await fs.writeFile(readyPath, `${JSON.stringify({ appPath, wheelPoint }, null, 2)}\n`);
+      const deadline = Date.now() + 120_000;
+      while (Date.now() < deadline) {
+        try {
+          await fs.access(continuePath);
+          break;
+        } catch {
+          await delay(100);
+        }
+      }
+      await fs.access(continuePath);
+    } else {
+      const wheelReply = await wheelArtifactBrowser.send('Input.dispatchMouseEvent', {
+        type: 'mouseWheel',
+        x: 40,
+        y: 40,
+        deltaX: 0,
+        deltaY: 120,
+      });
+      assert.equal(Boolean(wheelReply.error), false, wheelReply.error?.message || 'native Artifact wheel dispatch failed');
+    }
+    await delay(750);
+    const wheelEnd = await browser.evaluate(`document.querySelector('[data-ocix-clip-test-scroller]')?.scrollTop ?? -1`);
+    const brokerMessages = await wheelArtifactBrowser.evaluate('window.__packagedWheelBrokerMessages || []');
+    const innerEvents = await wheelInnerBrowser.evaluate('window.__packagedWheelEvents || []');
+    wheelHandoff = {
+      mode: manualWheelAcceptance ? 'native-gui' : 'devtools-boundary',
+      start: wheelStart,
+      end: wheelEnd,
+      ownerScrolled: manualWheelAcceptance ? wheelEnd > wheelStart : null,
+      brokerMessages,
+      innerEvents,
+    };
+    assert.equal(innerEvents.some((event) => event.trusted === true && event.defaultPrevented === true), true,
+      `inner Artifact did not report a trusted boundary wheel (${JSON.stringify(innerEvents)})`);
+    assert.equal(brokerMessages.some((message) => message.source === 'openchamber-artifact-broker-internal'
+      && message.type === 'wheel-boundary'), true,
+    `Artifact broker did not relay its boundary wheel (${JSON.stringify(brokerMessages)})`);
+    if (manualWheelAcceptance) {
+      assert.equal(wheelEnd > wheelStart, true, 'native GUI wheel over the Artifact must scroll the owner surface');
+    } else {
+      assert.equal(wheelEnd, wheelStart, 'DevTools wheel must not bypass the native-event correlation gate');
+      await browser.evaluate(`(() => {
+        const scroller = document.querySelector('[data-ocix-clip-test-scroller]');
+        if (scroller instanceof HTMLElement) scroller.scrollTop = 420;
+      })()`);
+      await delay(500);
+    }
+  } finally {
+    wheelInnerBrowser.socket.close();
+    wheelArtifactBrowser.socket.close();
+  }
+  const occlusionMetrics = await browser.evaluate(`(() => {
+    const scroller = document.querySelector('[data-ocix-clip-test-scroller]');
+    const runner = document.querySelector('[data-ocix-artifact-backend="desktop-runner"]');
+    if (!(scroller instanceof HTMLElement) || !(runner instanceof HTMLElement)) return null;
+    const toJSON = (rect) => ({ left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom, width: rect.width, height: rect.height });
+    return {
+      innerWidth: window.innerWidth,
+      innerHeight: window.innerHeight,
+      outerWidth: window.outerWidth,
+      outerHeight: window.outerHeight,
+      scroller: toJSON(scroller.getBoundingClientRect()),
+      runner: toJSON(runner.getBoundingClientRect()),
+    };
+  })()`);
+  assert.notEqual(occlusionMetrics, null);
+  await browser.evaluate(`(() => {
+    const occluder = document.createElement('div');
+    occluder.id = 'packaged-native-surface-occluder';
+    occluder.dataset.ocNativeSurfaceOccluder = 'true';
+    Object.assign(occluder.style, {
+      position: 'fixed', inset: '0', zIndex: '2147483647', background: '#0066ff', pointerEvents: 'none',
+    });
+    document.body.append(occluder);
+  })()`);
+  await delay(500);
+  const occlusionScreenshotPath = path.join(outputDirectory, 'scripts-artifact-native-surface-occlusion-packaged-macos.png');
+  await captureMacWindow({ pid: appProcess.pid, outputPath: occlusionScreenshotPath });
+  nativeSurfaceOcclusion = await inspectOccludedRunnerRegion(occlusionScreenshotPath, occlusionMetrics);
+  assert.equal(
+    nativeSurfaceOcclusion.blueRatio > 0.9,
+    true,
+    `Native Runner remained above a full-window surface occluder (${nativeSurfaceOcclusion.blueRatio.toFixed(3)} blue ratio)`,
+  );
+  await browser.evaluate(`document.getElementById('packaged-native-surface-occluder')?.remove()`);
+  await delay(500);
   await browser.evaluate(`document.querySelector('[data-ocix-artifact-action="stop"]')?.click()`);
   await waitFor(browser, `document.querySelector('[data-ocix-artifact-state="stopped"]') !== null`, 'packaged Scripts Artifact forced stop');
 
@@ -882,7 +1081,7 @@ try {
   assert.equal(restartedExtensions.errors?.length, 0);
   const restartedBuiltInExtension = restartedExtensions.extensions?.find((extension) => extension.id === 'com.openchamber.builtin.interactive-ui');
   assert.notEqual(restartedBuiltInExtension, undefined, 'built-in Interactive UI runtime must be listed after app restart');
-  assert.equal(restartedBuiltInExtension.version, '1.3.0', 'built-in Interactive UI runtime version after app restart');
+  assert.equal(restartedBuiltInExtension.version, '1.4.0', 'built-in Interactive UI runtime version after app restart');
   assert.equal(restartedManager.extensions.some((extension) => extension.id === HYBRID_CRM_FIXTURE.extensionId
     && extension.enabled === true), true);
   await waitForBuiltInAgentRuntime({ port: restartPort, directory: temporaryRoot });
@@ -931,6 +1130,8 @@ try {
       scriptsMode: capabilities.scriptsMode,
       scriptsRunner: `${scriptsRunner.backend}:ready-then-stopped`,
       scriptsRunnerScrollClip: clipGuardInspection,
+      scriptsRunnerWheelHandoff: wheelHandoff,
+      scriptsRunnerNativeSurfaceOcclusion: nativeSurfaceOcclusion,
       cspRevision: capabilities.cspRevision,
       appRestart: 'ready-with-same-content-id',
       installed: {
@@ -940,7 +1141,7 @@ try {
         appRestart: 'ready',
       },
     },
-    screenshots: [screenshotPath, clipScreenshotPath, installedScreenshotPath],
+    screenshots: [screenshotPath, clipScreenshotPath, occlusionScreenshotPath, installedScreenshotPath],
     runtimeErrors: browser.runtimeErrors.length,
   };
   await fs.writeFile(reportPath, `${JSON.stringify(report, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });

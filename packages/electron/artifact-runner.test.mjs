@@ -85,6 +85,10 @@ const createHarness = () => {
     },
   };
   const owner = {
+    webContents: {
+      sentInputEvents: [],
+      sendInputEvent(event) { this.sentInputEvents.push(event); },
+    },
     contentView: {
       children: [],
       addChildView(view) {
@@ -256,6 +260,59 @@ test('clips the native view and offsets the full-size broker iframe without refl
   assert.equal(view.visible, false);
   assert.equal(harness.manager.handleLayoutApplied(view.webContents, { revision: 2 }), true);
   assert.equal(view.visible, false);
+});
+
+test('hands a boundary wheel reported by the Artifact broker back to the owner renderer at the native view coordinates', async () => {
+  const harness = createHarness();
+  const url = `http://127.0.0.1:47832/api/interactive-ui/artifacts/${'9'.repeat(64)}/document`;
+  await harness.manager.start(harness.owner, {
+    url,
+    bounds: { x: 240, y: 100, width: 900, height: 900 },
+    clipBounds: { x: 240, y: 180, width: 900, height: 620 },
+  });
+  const view = harness.owner.contentView.children[0];
+  harness.manager.handleLayoutApplied(view.webContents, { revision: 1 });
+  view.webContents.emit('before-mouse-event', {}, {
+    type: 'mouseWheel',
+    x: 14,
+    y: 22,
+  });
+  assert.equal(harness.manager.handleWheelBoundary(view.webContents, {
+    deltaX: 0,
+    deltaY: 48,
+    deltaMode: 0,
+    shiftKey: true,
+  }), true);
+
+  assert.deepEqual(harness.owner.webContents.sentInputEvents, [{
+    type: 'mouseWheel',
+    x: 254,
+    y: 202,
+    deltaX: 0,
+    deltaY: 48,
+    hasPreciseScrollingDeltas: true,
+    modifiers: ['shift'],
+  }]);
+});
+
+test('requires a recent native wheel and keeps boundary handoff out of Artifact popouts', async () => {
+  const harness = createHarness();
+  const url = `http://127.0.0.1:47832/api/interactive-ui/artifacts/${'8'.repeat(64)}/document`;
+  const state = await harness.manager.start(harness.owner, {
+    url,
+    bounds: { x: 20, y: 40, width: 640, height: 360 },
+  });
+  const view = harness.owner.contentView.children[0];
+  harness.manager.handleLayoutApplied(view.webContents, { revision: 1 });
+  assert.equal(harness.manager.handleWheelBoundary(view.webContents, { deltaY: 30, deltaMode: 0 }), false);
+  assert.equal(harness.owner.webContents.sentInputEvents.length, 0);
+
+  await harness.manager.popout(state.id);
+  view.webContents.emit('before-mouse-event', {}, {
+    type: 'mouseWheel', x: 10, y: 10,
+  });
+  assert.equal(harness.manager.handleWheelBoundary(view.webContents, { deltaY: 30, deltaMode: 0 }), false);
+  assert.equal(harness.owner.webContents.sentInputEvents.length, 0);
 });
 
 test('enforces memory and sustained CPU limits in the main process', async () => {

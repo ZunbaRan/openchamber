@@ -149,6 +149,8 @@ describe('HTML Artifact store', () => {
     expect(document.html).toContain('openchamberArtifact');
     expect(document.html).toContain('artifact.heartbeat');
     expect(document.html).toContain('artifact.resize');
+    expect(document.html).toContain('openchamber-artifact-internal');
+    expect(document.html).toContain('wheel-boundary');
   });
 
   test('reports the enabled Scripts Artifact as supported in the managed Desktop runtime', async () => {

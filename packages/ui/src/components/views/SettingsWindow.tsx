@@ -37,6 +37,7 @@ export const SettingsWindow: React.FC<SettingsWindowProps> = ({ open, onOpenChan
     >
       <Dialog.Portal>
         <Dialog.Backdrop
+          data-oc-native-surface-occluder="true"
           className={cn(
             'oc-glass-backdrop fixed inset-0 z-50 bg-black/25 dark:bg-black/40',
             'transition-opacity duration-150 ease-out',

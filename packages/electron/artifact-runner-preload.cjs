@@ -58,11 +58,36 @@ const byteLength = (value) => {
   }
 };
 
+const normalizeBoundaryWheel = (value) => {
+  if (!value || typeof value !== 'object'
+    || value.source !== 'openchamber-artifact-broker-internal'
+    || value.type !== 'wheel-boundary') return null;
+  const deltaX = Number(value.deltaX ?? 0);
+  const deltaY = Number(value.deltaY ?? 0);
+  const deltaMode = Math.trunc(Number(value.deltaMode ?? 0));
+  if (!Number.isFinite(deltaX) || !Number.isFinite(deltaY)
+    || (deltaX === 0 && deltaY === 0) || ![0, 1, 2].includes(deltaMode)) return null;
+  return {
+    deltaX,
+    deltaY,
+    deltaMode,
+    shiftKey: value.shiftKey === true,
+    ctrlKey: value.ctrlKey === true,
+    altKey: value.altKey === true,
+    metaKey: value.metaKey === true,
+  };
+};
+
 // This preload deliberately exposes nothing to the main world. It is a narrow
 // transport between the broker document's postMessage channel and Electron's
 // main-process runner manager.
 addEventListener('message', (event) => {
   if (event.source !== window || !event.data || typeof event.data !== 'object') return;
+  const boundaryWheel = normalizeBoundaryWheel(event.data);
+  if (boundaryWheel) {
+    ipcRenderer.send('openchamber:artifact-runner-wheel-boundary', boundaryWheel);
+    return;
+  }
   const source = event.data.source;
   if (source !== 'openchamber-artifact' && source !== 'openchamber-artifact-broker') return;
   if (byteLength(event.data) > 65_536) return;
