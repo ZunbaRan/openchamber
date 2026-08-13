@@ -131,6 +131,8 @@ describe('HTML Artifact routes', () => {
     expect(document.headers['content-security-policy']).not.toContain('navigate-to');
     expect(document.text).toContain('data-ocix-artifact-broker');
     expect(document.text).toContain('broker.navigationBlocked');
+    expect(document.text).toContain('openchamber-artifact-broker-internal');
+    expect(document.text).toContain('wheel-boundary');
     const encodedArtifact = document.text.match(/data:text\/html;base64,([A-Za-z0-9+/=]+)/)?.[1];
     expect(encodedArtifact).toBeTruthy();
     const innerDocument = Buffer.from(encodedArtifact, 'base64').toString('utf8');

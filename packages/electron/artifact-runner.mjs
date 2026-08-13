@@ -89,6 +89,27 @@ const serializedBytes = (value) => {
   }
 };
 
+const normalizeBoundaryWheel = (value, pageSize) => {
+  const rawX = Number(value?.deltaX ?? 0);
+  const rawY = Number(value?.deltaY ?? 0);
+  const deltaMode = Math.trunc(Number(value?.deltaMode ?? 0));
+  if (!Number.isFinite(rawX) || !Number.isFinite(rawY)
+    || (rawX === 0 && rawY === 0) || ![0, 1, 2].includes(deltaMode)) return null;
+  const scale = deltaMode === 1 ? 16 : deltaMode === 2 ? Math.max(1, pageSize) : 1;
+  const modifiers = [
+    value?.shiftKey === true ? 'shift' : null,
+    value?.ctrlKey === true ? 'control' : null,
+    value?.altKey === true ? 'alt' : null,
+    value?.metaKey === true ? 'meta' : null,
+  ].filter(Boolean);
+  return {
+    deltaX: clamp(rawX * scale, -1_200, 1_200),
+    deltaY: clamp(rawY * scale, -1_200, 1_200),
+    hasPreciseScrollingDeltas: deltaMode === 0,
+    ...(modifiers.length > 0 ? { modifiers } : {}),
+  };
+};
+
 export const createArtifactRunnerManager = ({
   BrowserWindow,
   WebContentsView,
@@ -233,6 +254,7 @@ export const createArtifactRunnerManager = ({
       layoutRevision: 0,
       pendingGeometry: null,
       committedGeometry: null,
+      pendingNativeWheel: null,
       loadedNotified: false,
     };
     runners.set(id, runner);
@@ -248,7 +270,21 @@ export const createArtifactRunnerManager = ({
     });
     runner.webContents.on('will-attach-webview', (event) => event.preventDefault());
     runner.webContents.on('before-input-event', () => { runner.userActiveUntil = now() + 1_500; });
-    runner.webContents.on('before-mouse-event', () => { runner.userActiveUntil = now() + 1_500; });
+    runner.webContents.on('before-mouse-event', (_event, mouse) => {
+      runner.userActiveUntil = now() + 1_500;
+      if (mouse?.type !== 'mouseWheel' || runner.popoutWindow) return;
+      const x = Number(mouse.x);
+      const y = Number(mouse.y);
+      if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+      // Electron's before-mouse-event exposes WebMouseEvent coordinates but
+      // omits WebMouseWheelEvent deltas. Remember the native gesture here and
+      // pair it with the trusted broker's boundary report below.
+      runner.pendingNativeWheel = {
+        x: Math.trunc(x),
+        y: Math.trunc(y),
+        expiresAt: now() + 500,
+      };
+    });
     runner.webContents.on('render-process-gone', (_event, details) => stop(id, details?.reason === 'killed' ? 'stopped' : 'crashed'));
     runner.webContents.on('did-fail-load', (_event, _code, _description, failedUrl, isMainFrame) => {
       if (isMainFrame && failedUrl === url) stop(id, 'load-failed');
@@ -463,6 +499,31 @@ export const createArtifactRunnerManager = ({
     return true;
   };
 
+  const handleWheelBoundary = (sender, value) => {
+    const id = runnerByWebContentsId.get(sender?.id);
+    const runner = id ? runners.get(id) : null;
+    if (!runner || sender !== runner.webContents || runner.popoutWindow) return false;
+    const pending = runner.pendingNativeWheel;
+    runner.pendingNativeWheel = null;
+    const viewBounds = runner.committedGeometry?.viewBounds;
+    const ownerWebContents = runner.eventOwner?.webContents;
+    if (!pending || now() > pending.expiresAt || !viewBounds
+      || !ownerWebContents || ownerWebContents.isDestroyed?.()) return false;
+    const wheel = normalizeBoundaryWheel(value, viewBounds.height);
+    if (!wheel) return false;
+    try {
+      ownerWebContents.sendInputEvent({
+        type: 'mouseWheel',
+        x: viewBounds.x + clamp(pending.x, 0, viewBounds.width - 1),
+        y: viewBounds.y + clamp(pending.y, 0, viewBounds.height - 1),
+        ...wheel,
+      });
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
   const stopForOwner = (owner, reason = 'owner-closed') => {
     for (const runner of Array.from(runners.values())) {
       if (runner.eventOwner === owner) stop(runner.id, reason);
@@ -506,6 +567,7 @@ export const createArtifactRunnerManager = ({
     stop,
     stopForOwner,
     handleRendererMessage,
+    handleWheelBoundary,
     handleLayoutApplied,
     monitor,
     dispose,

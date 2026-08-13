@@ -6118,6 +6118,10 @@ ipcMain.on("openchamber:artifact-runner-message", (event, message) => {
   artifactRunnerManager.handleRendererMessage(event.sender, message);
 });
 
+ipcMain.on("openchamber:artifact-runner-wheel-boundary", (event, detail) => {
+  artifactRunnerManager.handleWheelBoundary(event.sender, detail);
+});
+
 ipcMain.on("openchamber:artifact-runner-layout-applied", (event, detail) => {
   artifactRunnerManager.handleLayoutApplied(event.sender, detail);
 });
