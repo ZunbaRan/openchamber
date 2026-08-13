@@ -19,6 +19,7 @@ The preload bridge exposes desktop-only APIs to the web UI through `window.__OPE
 | File | Purpose |
 |------|---------|
 | `main.mjs` | Electron main process, app lifecycle, windows, menus, deep links, native IPC handlers, updates, local server startup |
+| `macos-launch-services-registration.mjs` | One-shot, version-and-path-scoped LaunchServices self-registration for packaged apps installed under system or user Applications |
 | `startup-url-selection.mjs` | Pure bundled/HMR startup probe and loopback connection-limit policy |
 | `preload.mjs` | Safe bridge from the rendered UI to Electron IPC |
 | `ssh-manager.mjs` | SSH host import, connection lifecycle, tunnel/port forwarding helpers |
@@ -108,6 +109,8 @@ A loopback-only updater fixture is available for contributor QA of N-to-N+1 AppI
 The package supports macOS, Windows, and Linux desktop features. Linux AppImage builds include in-app window controls, auto-update, system tray (right-click Show / Hide / Close), and launch-at-login (XDG autostart). Opening files in installed apps, installed-app discovery, and FreeDesktop icon lookup (including the default file manager) work on macOS, Windows, and Linux.
 
 The macOS menu bar item is enabled by default and can be disabled in General settings. The setting applies after restart; while disabled, Desktop does not create the native tray controller or start the renderer subscriptions, polling, quota refresh, or IPC updates that feed it.
+
+On packaged macOS first launch, Desktop force-refreshes its own LaunchServices record once per version and installation path when running from `/Applications` or the current user's `Applications` directory. A successful registration is recorded under user data; failure remains retryable. This self-heal never runs from a mounted DMG or development build and never resets LaunchServices, Launchpad, or Dock state.
 
 ## Bundled OpenCode CLI
 

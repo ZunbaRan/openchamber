@@ -55,6 +55,7 @@ import {
   createDesktopBinarySaveController,
   isDesktopBinarySaveCommand,
 } from "./desktop-binary-save.mjs";
+import { ensureMacosLaunchServicesRegistration } from "./macos-launch-services-registration.mjs";
 
 const execFileAsync = promisify(execFile);
 
@@ -6515,6 +6516,28 @@ app
       argv: process.argv,
       isBackgroundStart,
       loginItemSettings,
+    });
+    void ensureMacosLaunchServicesRegistration({
+      platform: process.platform,
+      isPackaged: app.isPackaged,
+      execPath: process.execPath,
+      version: APP_VERSION,
+      userDataPath: app.getPath("userData"),
+      homeDirectory: os.homedir(),
+    }).then((result) => {
+      if (result.status === "registered") {
+        log.info("[electron] refreshed macOS LaunchServices registration");
+      } else if (result.status === "failed") {
+        log.warn(
+          "[electron] macOS LaunchServices registration failed; it will retry on the next launch",
+          { exitCode: result.exitCode },
+        );
+      }
+    }).catch((error) => {
+      log.warn(
+        "[electron] macOS LaunchServices registration could not be persisted; it will retry on the next launch",
+        { name: error instanceof Error ? error.name : "UnknownError" },
+      );
     });
     nativeTheme.themeSource = readThemeSource();
     registerPackagedUiProtocol();
