@@ -24,6 +24,20 @@ export interface ArtifactRunnerVisibilityInput {
   blockingNativeSurfaceOccluder: boolean;
 }
 
+export interface ArtifactBoundaryScrollCandidate {
+  scrollLeft: number;
+  scrollTop: number;
+  readonly scrollWidth: number;
+  readonly scrollHeight: number;
+  readonly clientWidth: number;
+  readonly clientHeight: number;
+}
+
+export interface ArtifactBoundaryWheel {
+  deltaX: number;
+  deltaY: number;
+}
+
 const finite = (value: number, fallback = 0): number => Number.isFinite(value) ? value : fallback;
 
 export const resolveArtifactRunnerVisibility = ({
@@ -79,4 +93,38 @@ export const resolveArtifactRunnerGeometry = (
     },
     visible: clipWidth > 0 && clipHeight > 0,
   };
+};
+
+const canScrollBy = (position: number, viewport: number, extent: number, delta: number): boolean => {
+  if (!Number.isFinite(delta) || delta === 0 || extent <= viewport) return false;
+  return delta < 0 ? position > 0 : position < extent - viewport;
+};
+
+export const scrollArtifactBoundaryCandidates = (
+  candidates: readonly ArtifactBoundaryScrollCandidate[],
+  wheel: ArtifactBoundaryWheel,
+): boolean => {
+  const deltaX = Number(wheel.deltaX);
+  const deltaY = Number(wheel.deltaY);
+  if ((!Number.isFinite(deltaX) || deltaX === 0) && (!Number.isFinite(deltaY) || deltaY === 0)) return false;
+
+  for (const candidate of candidates) {
+    const moveX = canScrollBy(
+      candidate.scrollLeft,
+      candidate.clientWidth,
+      candidate.scrollWidth,
+      deltaX,
+    ) ? deltaX : 0;
+    const moveY = canScrollBy(
+      candidate.scrollTop,
+      candidate.clientHeight,
+      candidate.scrollHeight,
+      deltaY,
+    ) ? deltaY : 0;
+    if (moveX === 0 && moveY === 0) continue;
+    candidate.scrollLeft = Math.max(0, Math.min(candidate.scrollWidth - candidate.clientWidth, candidate.scrollLeft + moveX));
+    candidate.scrollTop = Math.max(0, Math.min(candidate.scrollHeight - candidate.clientHeight, candidate.scrollTop + moveY));
+    return true;
+  }
+  return false;
 };

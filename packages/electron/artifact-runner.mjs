@@ -148,7 +148,13 @@ export const createArtifactRunnerManager = ({
   const stageGeometry = (runner, geometry) => {
     runner.pendingGeometry = geometry;
     runner.layoutRevision += 1;
-    runner.view.setVisible(false);
+    // A scroll changes the native View bounds and the broker offset every
+    // frame. Keep an already committed surface visible while that layout is
+    // acknowledged; hiding it here produced a black flash on every frame.
+    // First paint and explicit/offscreen occlusion still remain fail-closed.
+    if (!runner.committedGeometry || !runner.requestedVisible || !geometry.visible) {
+      runner.view.setVisible(false);
+    }
     runner.webContents.send('openchamber:artifact-runner-layout', {
       ...geometry.contentLayout,
       revision: runner.layoutRevision,
@@ -270,20 +276,22 @@ export const createArtifactRunnerManager = ({
     });
     runner.webContents.on('will-attach-webview', (event) => event.preventDefault());
     runner.webContents.on('before-input-event', () => { runner.userActiveUntil = now() + 1_500; });
+    const rememberNativeWheel = () => {
+      if (runner.popoutWindow) return;
+      runner.pendingNativeWheel = { expiresAt: now() + 500 };
+    };
     runner.webContents.on('before-mouse-event', (_event, mouse) => {
       runner.userActiveUntil = now() + 1_500;
       if (mouse?.type !== 'mouseWheel' || runner.popoutWindow) return;
-      const x = Number(mouse.x);
-      const y = Number(mouse.y);
-      if (!Number.isFinite(x) || !Number.isFinite(y)) return;
-      // Electron's before-mouse-event exposes WebMouseEvent coordinates but
-      // omits WebMouseWheelEvent deltas. Remember the native gesture here and
-      // pair it with the trusted broker's boundary report below.
-      runner.pendingNativeWheel = {
-        x: Math.trunc(x),
-        y: Math.trunc(y),
-        expiresAt: now() + 500,
-      };
+      rememberNativeWheel();
+    });
+    runner.webContents.on('input-event', (_event, input) => {
+      if (input?.type !== 'mouseWheel' && input?.type !== 'gestureScrollUpdate') return;
+      runner.userActiveUntil = now() + 1_500;
+      // Trackpads reach Chromium as gestureScrollUpdate and are not guaranteed
+      // to produce before-mouse-event. The renderer's trusted boundary report
+      // supplies the delta while this native signal supplies user provenance.
+      rememberNativeWheel();
     });
     runner.webContents.on('render-process-gone', (_event, details) => stop(id, details?.reason === 'killed' ? 'stopped' : 'crashed'));
     runner.webContents.on('did-fail-load', (_event, _code, _description, failedUrl, isMainFrame) => {
@@ -506,22 +514,14 @@ export const createArtifactRunnerManager = ({
     const pending = runner.pendingNativeWheel;
     runner.pendingNativeWheel = null;
     const viewBounds = runner.committedGeometry?.viewBounds;
-    const ownerWebContents = runner.eventOwner?.webContents;
-    if (!pending || now() > pending.expiresAt || !viewBounds
-      || !ownerWebContents || ownerWebContents.isDestroyed?.()) return false;
+    if (!pending || now() > pending.expiresAt || !viewBounds) return false;
     const wheel = normalizeBoundaryWheel(value, viewBounds.height);
     if (!wheel) return false;
-    try {
-      ownerWebContents.sendInputEvent({
-        type: 'mouseWheel',
-        x: viewBounds.x + clamp(pending.x, 0, viewBounds.width - 1),
-        y: viewBounds.y + clamp(pending.y, 0, viewBounds.height - 1),
-        ...wheel,
-      });
-      return true;
-    } catch {
-      return false;
-    }
+    notify(runner, 'wheel-boundary', {
+      deltaX: wheel.deltaX,
+      deltaY: wheel.deltaY,
+    });
+    return true;
   };
 
   const stopForOwner = (owner, reason = 'owner-closed') => {

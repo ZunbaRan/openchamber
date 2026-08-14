@@ -43,9 +43,15 @@ const createHarness = () => {
     getOSProcessId() { return this.osPid; }
   }
   class MockWebContentsView {
-    constructor(options) { this.options = options; this.webContents = new MockWebContents(); this.visible = false; }
-    setBounds(bounds) { this.bounds = bounds; }
-    setVisible(value) { this.visible = value; }
+    constructor(options) {
+      this.options = options;
+      this.webContents = new MockWebContents();
+      this.visible = false;
+      this.boundsHistory = [];
+      this.visibilityHistory = [];
+    }
+    setBounds(bounds) { this.bounds = bounds; this.boundsHistory.push(bounds); }
+    setVisible(value) { this.visible = value; this.visibilityHistory.push(value); }
   }
   class MockBrowserWindow extends EventEmitter {
     constructor(options) {
@@ -262,21 +268,43 @@ test('clips the native view and offsets the full-size broker iframe without refl
   assert.equal(view.visible, false);
 });
 
-test('hands a boundary wheel reported by the Artifact broker back to the owner renderer at the native view coordinates', async () => {
+test('keeps a committed native view visible while scroll geometry waits for its layout acknowledgement', async () => {
   const harness = createHarness();
-  const url = `http://127.0.0.1:47832/api/interactive-ui/artifacts/${'9'.repeat(64)}/document`;
-  await harness.manager.start(harness.owner, {
+  const url = `http://127.0.0.1:47832/api/interactive-ui/artifacts/${'7'.repeat(64)}/document`;
+  const state = await harness.manager.start(harness.owner, {
     url,
     bounds: { x: 240, y: 100, width: 900, height: 900 },
     clipBounds: { x: 240, y: 180, width: 900, height: 620 },
   });
   const view = harness.owner.contentView.children[0];
   harness.manager.handleLayoutApplied(view.webContents, { revision: 1 });
-  view.webContents.emit('before-mouse-event', {}, {
-    type: 'mouseWheel',
-    x: 14,
-    y: 22,
+  assert.equal(view.visible, true);
+  const visibilityCalls = view.visibilityHistory.length;
+
+  harness.manager.update(state.id, {
+    bounds: { x: 240, y: 80, width: 900, height: 900 },
+    clipBounds: { x: 240, y: 180, width: 900, height: 620 },
+    visible: true,
   });
+
+  assert.equal(view.visible, true);
+  assert.deepEqual(view.visibilityHistory.slice(visibilityCalls), []);
+  assert.equal(harness.manager.handleLayoutApplied(view.webContents, { revision: 2 }), true);
+  assert.equal(view.visible, true);
+  assert.deepEqual(view.bounds, { x: 240, y: 180, width: 900, height: 620 });
+});
+
+test('hands a trusted physical scroll boundary back to the owner renderer without coordinate redispatch', async () => {
+  const harness = createHarness();
+  const url = `http://127.0.0.1:47832/api/interactive-ui/artifacts/${'9'.repeat(64)}/document`;
+  const state = await harness.manager.start(harness.owner, {
+    url,
+    bounds: { x: 240, y: 100, width: 900, height: 900 },
+    clipBounds: { x: 240, y: 180, width: 900, height: 620 },
+  });
+  const view = harness.owner.contentView.children[0];
+  harness.manager.handleLayoutApplied(view.webContents, { revision: 1 });
+  view.webContents.emit('input-event', {}, { type: 'gestureScrollUpdate' });
   assert.equal(harness.manager.handleWheelBoundary(view.webContents, {
     deltaX: 0,
     deltaY: 48,
@@ -284,15 +312,13 @@ test('hands a boundary wheel reported by the Artifact broker back to the owner r
     shiftKey: true,
   }), true);
 
-  assert.deepEqual(harness.owner.webContents.sentInputEvents, [{
-    type: 'mouseWheel',
-    x: 254,
-    y: 202,
+  assert.deepEqual(harness.owner.webContents.sentInputEvents, []);
+  assert.deepEqual(harness.emitted.at(-1), {
+    runnerId: state.id,
+    type: 'wheel-boundary',
     deltaX: 0,
     deltaY: 48,
-    hasPreciseScrollingDeltas: true,
-    modifiers: ['shift'],
-  }]);
+  });
 });
 
 test('requires a recent native wheel and keeps boundary handoff out of Artifact popouts', async () => {

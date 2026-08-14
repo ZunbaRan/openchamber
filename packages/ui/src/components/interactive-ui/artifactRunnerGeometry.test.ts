@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import {
   resolveArtifactRunnerGeometry,
   resolveArtifactRunnerVisibility,
+  scrollArtifactBoundaryCandidates,
 } from './artifactRunnerGeometry';
 
 describe('resolveArtifactRunnerGeometry', () => {
@@ -72,5 +73,45 @@ describe('resolveArtifactRunnerVisibility', () => {
       blockingNativeDialogOpen: false,
       blockingNativeSurfaceOccluder: false,
     })).toBe(true);
+  });
+});
+
+describe('scrollArtifactBoundaryCandidates', () => {
+  const candidate = (overrides: Partial<{
+    scrollLeft: number;
+    scrollTop: number;
+    scrollWidth: number;
+    scrollHeight: number;
+    clientWidth: number;
+    clientHeight: number;
+  }> = {}) => ({
+    scrollLeft: 0,
+    scrollTop: 0,
+    scrollWidth: 600,
+    scrollHeight: 1_600,
+    clientWidth: 600,
+    clientHeight: 600,
+    ...overrides,
+  });
+
+  test('scrolls the nearest owner that can move in the requested direction', () => {
+    const exhaustedInner = candidate({ scrollTop: 1_000 });
+    const conversation = candidate({ scrollTop: 240, scrollHeight: 2_000 });
+
+    expect(scrollArtifactBoundaryCandidates(
+      [exhaustedInner, conversation],
+      { deltaX: 0, deltaY: 48 },
+    )).toBe(true);
+    expect(exhaustedInner.scrollTop).toBe(1_000);
+    expect(conversation.scrollTop).toBe(288);
+  });
+
+  test('does not consume a boundary when no owner can scroll', () => {
+    const owner = candidate({ scrollTop: 0 });
+    expect(scrollArtifactBoundaryCandidates(
+      [owner],
+      { deltaX: 0, deltaY: -40 },
+    )).toBe(false);
+    expect(owner.scrollTop).toBe(0);
   });
 });

@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.18.6] - 2026-08-14
+
+- **Desktop HTML Artifacts:** scrolling with the pointer over a non-scrollable or boundary-reached interactive Artifact now continues through the owning conversation for both mouse wheels and trackpads.
+- **Desktop rendering:** native interactive Artifacts remain visible while scroll-driven geometry updates are acknowledged, removing the repeated hide/show flash without weakening offscreen and modal occlusion.
+- **Packaged acceptance:** the macOS gate now records a real native GUI wheel handoff; the verified owner scroll moved from 80 to 420 with zero runtime errors.
+
 ## [1.18.2] - 2026-08-10
 
 - **Observability panel:** a new panel near to the chat brings the active goal, tasks, subagents, pinned context, MCP servers, and context usage into one live view. The session list also shows how long an agent has been working.

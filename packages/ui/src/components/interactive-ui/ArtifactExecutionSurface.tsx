@@ -4,6 +4,7 @@ import { cn } from '@/lib/utils';
 import {
   resolveArtifactRunnerGeometry,
   resolveArtifactRunnerVisibility,
+  scrollArtifactBoundaryCandidates,
   type ArtifactRunnerClipRegion,
   type ArtifactRunnerGeometry,
   type ArtifactRunnerRect,
@@ -33,17 +34,19 @@ interface ArtifactExecutionSurfaceProps {
 
 type RunnerEvent = {
   runnerId: string;
-  type: 'loaded' | 'message' | 'terminated' | 'popout-opened' | 'popout-closed';
+  type: 'loaded' | 'message' | 'terminated' | 'popout-opened' | 'popout-closed' | 'wheel-boundary';
   message?: unknown;
   userActivated?: boolean;
   reason?: string;
+  deltaX?: number;
+  deltaY?: number;
 };
 
 const asRunnerEvent = (value: unknown): RunnerEvent | null => {
   if (!value || typeof value !== 'object') return null;
   const event = value as Record<string, unknown>;
   if (typeof event.runnerId !== 'string'
-    || !['loaded', 'message', 'terminated', 'popout-opened', 'popout-closed'].includes(String(event.type))) {
+    || !['loaded', 'message', 'terminated', 'popout-opened', 'popout-closed', 'wheel-boundary'].includes(String(event.type))) {
     return null;
   }
   return event as unknown as RunnerEvent;
@@ -71,6 +74,20 @@ const collectClippingAncestors = (element: HTMLElement): HTMLElement[] => {
     if (style.position === 'fixed') break;
   }
   return ancestors;
+};
+
+const scrollArtifactBoundary = (element: HTMLElement, event: RunnerEvent): void => {
+  const candidates = collectClippingAncestors(element).filter((ancestor) => {
+    const style = window.getComputedStyle(ancestor);
+    return style.overflowX === 'auto' || style.overflowX === 'scroll'
+      || style.overflowY === 'auto' || style.overflowY === 'scroll';
+  });
+  const root = document.scrollingElement;
+  if (root instanceof HTMLElement && !candidates.includes(root)) candidates.push(root);
+  scrollArtifactBoundaryCandidates(candidates, {
+    deltaX: Number(event.deltaX) || 0,
+    deltaY: Number(event.deltaY) || 0,
+  });
 };
 
 const measureNativeRunner = (element: HTMLElement): ArtifactRunnerGeometry => {
@@ -217,6 +234,7 @@ export const ArtifactExecutionSurface = React.forwardRef<ArtifactExecutionSurfac
       else if (event.type === 'terminated') onTerminatedRef.current(event.reason || 'terminated');
       else if (event.type === 'popout-opened') onPopoutChangeRef.current?.(true);
       else if (event.type === 'popout-closed') onPopoutChangeRef.current?.(false);
+      else if (event.type === 'wheel-boundary' && elementRef.current) scrollArtifactBoundary(elementRef.current, event);
     };
     void listenDesktopEvent('openchamber:artifact-runner-event', (payload) => {
       const event = asRunnerEvent(payload);
