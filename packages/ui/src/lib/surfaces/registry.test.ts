@@ -15,6 +15,21 @@ const baseOptions = {
 } as const;
 
 describe('getVisibleContextRailSurfaces', () => {
+  test('keeps the App board available from the rail without an existing tab', () => {
+    const appBoard = CONTEXT_SURFACES.find((surface) => String(surface.id) === 'extensions');
+
+    expect(appBoard).toEqual({
+      id: 'extensions',
+      mode: 'extensions',
+      icon: 'apps-2-ai',
+      labelKey: 'workbench.board.title',
+      descriptionKey: 'workbench.board.emptyDescription',
+      availability: 'always',
+      defaultWidthFraction: 1 / 2,
+    });
+    expect(getVisibleContextRailSurfaces(baseOptions).some((surface) => String(surface.id) === 'extensions')).toBe(true);
+  });
+
   test('hides the plan surface while plan mode is disabled', () => {
     const surfaces = getVisibleContextRailSurfaces({ ...baseOptions, planModeEnabled: false });
     expect(surfaces.some((surface) => surface.id === 'plan')).toBe(false);

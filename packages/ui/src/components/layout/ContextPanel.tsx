@@ -2824,8 +2824,7 @@ export const ContextPanel: React.FC = () => {
     (state) => state.closeContextPanelTab,
   );
   const openContextPanelTab = useUIStore((state) => state.openContextPanelTab);
-  const isRightSidebarOpen = useUIStore((state) => state.isRightSidebarOpen);
-  const setRightSidebarOpen = useUIStore((state) => state.setRightSidebarOpen);
+  const closeContextPanel = useUIStore((state) => state.closeContextPanel);
   const toggleContextPanelExpanded = useUIStore(
     (state) => state.toggleContextPanelExpanded,
   );
@@ -2860,7 +2859,7 @@ export const ContextPanel: React.FC = () => {
     tabs.find((tab) => tab.id === panelState?.activeTabId) ??
     tabs[tabs.length - 1] ??
     null;
-  const isOpen = isRightSidebarOpen;
+  const isOpen = Boolean(panelState?.isOpen);
   const isExpanded = Boolean(isOpen && panelState?.expanded);
   const [availablePanelAreaWidth, setAvailablePanelAreaWidth] = React.useState<
     number | null
@@ -3079,8 +3078,9 @@ export const ContextPanel: React.FC = () => {
   }, [isResizing]);
 
   const handleClose = React.useCallback(() => {
-    setRightSidebarOpen(false);
-  }, [setRightSidebarOpen]);
+    if (!directoryKey) return;
+    closeContextPanel(directoryKey);
+  }, [closeContextPanel, directoryKey]);
 
   const openResource = React.useCallback(
     (mode: "files-root" | "git" | "browser" | "terminal" | "extensions") => {
@@ -3105,13 +3105,11 @@ export const ContextPanel: React.FC = () => {
                   ? t("layout.mainTab.terminal")
                   : t("shell.navigation.applications"),
       });
-      setRightSidebarOpen(true);
     },
     [
       createTerminalTab,
       directoryKey,
       openContextPanelTab,
-      setRightSidebarOpen,
       t,
     ],
   );

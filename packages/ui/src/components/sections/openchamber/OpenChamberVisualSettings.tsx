@@ -119,7 +119,12 @@ const MERMAID_RENDERING_OPTIONS: Option<'svg' | 'ascii'>[] = [
     },
 ];
 
-const DEFAULT_PWA_INSTALL_NAME = 'OpenChamber - AI Coding Assistant';
+const DEFAULT_PWA_INSTALL_NAME = 'OpenLoop - AI Coding Assistant';
+const LEGACY_DEFAULT_PWA_INSTALL_NAMES = new Set([
+    'OpenChamber',
+    'OpenChamber - AI Coding Assistant',
+    'OpenChamber - AI Coding Companion',
+]);
 const PWA_ORIENTATION_OPTIONS: Option<'system' | 'portrait' | 'landscape'>[] = [
     {
         id: 'system',
@@ -819,12 +824,18 @@ export const OpenChamberVisualSettings: React.FC<OpenChamberVisualSettingsProps>
                 const settings = await response.json().catch(() => ({}));
                 const raw = typeof settings?.pwaAppName === 'string' ? settings.pwaAppName : '';
                 const normalized = raw.trim().replace(/\s+/g, ' ').slice(0, 64);
+                const resolvedName = LEGACY_DEFAULT_PWA_INSTALL_NAMES.has(normalized)
+                    ? DEFAULT_PWA_INSTALL_NAME
+                    : normalized;
+                if (normalized && resolvedName !== normalized) {
+                    await updateDesktopSettings({ pwaAppName: resolvedName });
+                }
                 const orientation = normalizePwaOrientation(settings?.pwaOrientation);
                 const nextMobileKeyboardMode = normalizeMobileKeyboardMode(settings?.mobileKeyboardMode);
 
                 if (!cancelled) {
                     if (showPwaInstallNameSetting) {
-                        setPwaInstallName(normalized || DEFAULT_PWA_INSTALL_NAME);
+                        setPwaInstallName(resolvedName || DEFAULT_PWA_INSTALL_NAME);
                     }
                     if (showPwaOrientationSetting) {
                         setPwaOrientation(orientation);

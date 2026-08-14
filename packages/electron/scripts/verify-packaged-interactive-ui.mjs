@@ -251,9 +251,9 @@ const resolvePackagedApp = async () => {
   const configured = process.env.OPENCHAMBER_PACKAGED_APP?.trim();
   const candidates = [
     configured,
-    path.join(electronRoot, 'dist', 'mac-arm64', 'OpenChamber.app'),
-    path.join(electronRoot, 'dist', 'mac', 'OpenChamber.app'),
-    path.join(electronRoot, 'dist', 'mac-universal', 'OpenChamber.app'),
+    path.join(electronRoot, 'dist', 'mac-arm64', 'OpenLoop.app'),
+    path.join(electronRoot, 'dist', 'mac', 'OpenLoop.app'),
+    path.join(electronRoot, 'dist', 'mac-universal', 'OpenLoop.app'),
   ].filter(Boolean);
   for (const candidate of candidates) {
     try {
@@ -263,7 +263,7 @@ const resolvePackagedApp = async () => {
       // Try the next known electron-builder output directory.
     }
   }
-  throw new Error('Packaged OpenChamber.app not found; build an unpacked macOS app or set OPENCHAMBER_PACKAGED_APP');
+  throw new Error('Packaged OpenLoop.app not found; build an unpacked macOS app or set OPENCHAMBER_PACKAGED_APP');
 };
 
 const readJson = async (filePath) => {
@@ -477,7 +477,7 @@ if (process.platform !== 'darwin') {
 }
 
 const appPath = await resolvePackagedApp();
-const executablePath = path.join(appPath, 'Contents', 'MacOS', 'OpenChamber');
+const executablePath = path.join(appPath, 'Contents', 'MacOS', 'OpenLoop');
 const expectedBundledBinary = path.join(appPath, 'Contents', 'Resources', 'opencode-cli', 'opencode');
 await fs.access(executablePath);
 await fs.access(expectedBundledBinary);

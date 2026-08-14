@@ -506,7 +506,7 @@ class OpencodeService {
   async getDistributionCapabilities(signal?: AbortSignal): Promise<OpenCodeDistributionCapabilities> {
     const sdk = this.client as OpencodeClient & OpenCodeMcpAppSdk;
     if (typeof sdk.global?.capabilities !== 'function') {
-      throw new Error('The selected OpenCode CLI does not expose OpenChamber distribution capabilities');
+      throw new Error('The selected OpenCode CLI does not expose OpenLoop distribution capabilities');
     }
     return unwrapSdkData(
       await sdk.global.capabilities({ signal }),

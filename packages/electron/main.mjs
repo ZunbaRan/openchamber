@@ -111,15 +111,16 @@ const shouldStartInBackground = (
   );
 };
 
-// Set the product name early so electron-log derives its log directory as
-// ~/Library/Logs/OpenChamber/ (not ~/Library/Logs/@openchamber/electron/).
-app.setName("OpenChamber");
+// Show the new product name while preserving the legacy user-data namespace.
+// Existing installs must keep settings, sessions, credentials, and window state.
+app.setName("OpenLoop");
 if (process.platform === "linux") {
   app.setDesktopName("openchamber.desktop");
 }
-if (isDev) {
-  app.setPath("userData", path.join(app.getPath("appData"), "OpenChamber Dev"));
-}
+app.setPath(
+  "userData",
+  path.join(app.getPath("appData"), isDev ? "OpenChamber Dev" : "OpenChamber"),
+);
 app.setAppUserModelId(APP_USER_MODEL_ID);
 app.commandLine.appendSwitch("proxy-bypass-list", "<-loopback>");
 
@@ -355,7 +356,7 @@ const quitConfirmationMessage = () => {
   if (reasons.length === 0) {
     return "Background processes (sidecar, SSH sessions) will be stopped.";
   }
-  return `OpenChamber detected ${reasons.join(", ")}. Quitting now will stop sidecar/background processes and may interrupt pending work.`;
+  return `OpenLoop detected ${reasons.join(", ")}. Quitting now will stop sidecar/background processes and may interrupt pending work.`;
 };
 
 const shutdownBackgroundServices = () => {
@@ -472,8 +473,8 @@ const requestQuitWithConfirmation = async () => {
   try {
     const result = await dialog.showMessageBox({
       type: "warning",
-      title: "Quit OpenChamber?",
-      message: "Quit OpenChamber?",
+      title: "Quit OpenLoop?",
+      message: "Quit OpenLoop?",
       detail: quitConfirmationMessage(),
       buttons: ["Quit", "Cancel"],
       defaultId: 1,
@@ -637,7 +638,7 @@ const writeSettingsRoot = async (root) =>
 
 // Stable per-install identifier for this desktop, persisted in settings. Used as
 // the client dedupe key on remote hosts so re-authenticating (e.g. after a login
-// session expires) reuses the same "OpenChamber Desktop" record instead of
+// session expires) reuses the same "OpenLoop Desktop" record instead of
 // piling up a new one each time. Different desktops get different ids.
 // Display-only device metadata shown in a server's device list ("macOS",
 // app version). Never used for auth decisions.
@@ -1420,7 +1421,7 @@ const maybeShowNativeNotification = (rawInput) => {
   const title =
     typeof payload.title === "string" && payload.title.trim()
       ? payload.title.trim()
-      : "OpenChamber";
+      : "OpenLoop";
   const body = typeof payload.body === "string" ? payload.body : "";
   const sessionId =
     typeof payload.sessionId === "string" && payload.sessionId.trim()
@@ -1994,46 +1995,9 @@ const buildStartupSplashHtml = () => {
   </head>
   <body>
     <div class="stack">
-      <svg width="120" height="120" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="OpenChamber loading icon">
-        <path d="M50 50 L8.432 26 L8.432 74 L50 98 Z" fill="var(--splash-face-fill)" stroke="var(--splash-stroke)" stroke-width="2" stroke-linejoin="round"/>
-        <path d="M50 50 L39.608 44 L39.608 56 L50 62 Z" fill="var(--splash-cell-fill)" opacity="0.2"/>
-        <path d="M39.608 44 L29.216 38 L29.216 50 L39.608 56 Z" fill="var(--splash-cell-fill)" opacity="0.45"/>
-        <path d="M29.216 38 L18.824 32 L18.824 44 L29.216 50 Z" fill="var(--splash-cell-fill)" opacity="0.15"/>
-        <path d="M18.824 32 L8.432 26 L8.432 38 L18.824 44 Z" fill="var(--splash-cell-fill)" opacity="0.55"/>
-        <path d="M50 62 L39.608 56 L39.608 68 L50 74 Z" fill="var(--splash-cell-fill)" opacity="0.35"/>
-        <path d="M39.608 56 L29.216 50 L29.216 62 L39.608 68 Z" fill="var(--splash-cell-fill)" opacity="0.1"/>
-        <path d="M29.216 50 L18.824 44 L18.824 56 L29.216 62 Z" fill="var(--splash-cell-fill)" opacity="0.5"/>
-        <path d="M18.824 44 L8.432 38 L8.432 50 L18.824 56 Z" fill="var(--splash-cell-fill)" opacity="0.25"/>
-        <path d="M50 74 L39.608 68 L39.608 80 L50 86 Z" fill="var(--splash-cell-fill)" opacity="0.4"/>
-        <path d="M39.608 68 L29.216 62 L29.216 74 L39.608 80 Z" fill="var(--splash-cell-fill)" opacity="0.3"/>
-        <path d="M29.216 62 L18.824 56 L18.824 68 L29.216 74 Z" fill="var(--splash-cell-fill)" opacity="0.45"/>
-        <path d="M18.824 56 L8.432 50 L8.432 62 L18.824 68 Z" fill="var(--splash-cell-fill)" opacity="0.15"/>
-        <path d="M50 86 L39.608 80 L39.608 92 L50 98 Z" fill="var(--splash-cell-fill)" opacity="0.55"/>
-        <path d="M39.608 80 L29.216 74 L29.216 86 L39.608 92 Z" fill="var(--splash-cell-fill)" opacity="0.2"/>
-        <path d="M29.216 74 L18.824 68 L18.824 80 L29.216 86 Z" fill="var(--splash-cell-fill)" opacity="0.35"/>
-        <path d="M18.824 68 L8.432 62 L8.432 74 L18.824 80 Z" fill="var(--splash-cell-fill)" opacity="0.1"/>
-        <path d="M50 50 L91.568 26 L91.568 74 L50 98 Z" fill="var(--splash-face-fill)" stroke="var(--splash-stroke)" stroke-width="2" stroke-linejoin="round"/>
-        <path d="M50 50 L60.392 44 L60.392 56 L50 62 Z" fill="var(--splash-cell-fill)" opacity="0.3"/>
-        <path d="M60.392 44 L70.784 38 L70.784 50 L60.392 56 Z" fill="var(--splash-cell-fill)" opacity="0.15"/>
-        <path d="M70.784 38 L81.176 32 L81.176 44 L70.784 50 Z" fill="var(--splash-cell-fill)" opacity="0.45"/>
-        <path d="M81.176 32 L91.568 26 L91.568 38 L81.176 44 Z" fill="var(--splash-cell-fill)" opacity="0.25"/>
-        <path d="M50 62 L60.392 56 L60.392 68 L50 74 Z" fill="var(--splash-cell-fill)" opacity="0.5"/>
-        <path d="M60.392 56 L70.784 50 L70.784 62 L60.392 68 Z" fill="var(--splash-cell-fill)" opacity="0.35"/>
-        <path d="M70.784 50 L81.176 44 L81.176 56 L70.784 62 Z" fill="var(--splash-cell-fill)" opacity="0.1"/>
-        <path d="M81.176 44 L91.568 38 L91.568 50 L81.176 56 Z" fill="var(--splash-cell-fill)" opacity="0.4"/>
-        <path d="M50 74 L60.392 68 L60.392 80 L50 86 Z" fill="var(--splash-cell-fill)" opacity="0.2"/>
-        <path d="M60.392 68 L70.784 62 L70.784 74 L60.392 80 Z" fill="var(--splash-cell-fill)" opacity="0.55"/>
-        <path d="M70.784 62 L81.176 56 L81.176 68 L70.784 74 Z" fill="var(--splash-cell-fill)" opacity="0.3"/>
-        <path d="M81.176 56 L91.568 50 L91.568 62 L81.176 68 Z" fill="var(--splash-cell-fill)" opacity="0.15"/>
-        <path d="M50 86 L60.392 80 L60.392 92 L50 98 Z" fill="var(--splash-cell-fill)" opacity="0.45"/>
-        <path d="M60.392 80 L70.784 74 L70.784 86 L60.392 92 Z" fill="var(--splash-cell-fill)" opacity="0.25"/>
-        <path d="M70.784 74 L81.176 68 L81.176 80 L70.784 86 Z" fill="var(--splash-cell-fill)" opacity="0.4"/>
-        <path d="M81.176 68 L91.568 62 L91.568 74 L81.176 80 Z" fill="var(--splash-cell-fill)" opacity="0.2"/>
-        <path d="M50 2 L8.432 26 L50 50 L91.568 26 Z" fill="none" stroke="var(--splash-stroke)" stroke-width="2" stroke-linejoin="round"/>
-        <g transform="matrix(0.866, 0.5, -0.866, 0.5, 50, 26) scale(0.75)">
-          <path fill-rule="evenodd" clip-rule="evenodd" d="M-16 -20 L16 -20 L16 20 L-16 20 Z M-8 -12 L-8 12 L8 12 L8 -12 Z" fill="var(--splash-logo-fill)"/>
-          <path d="M-8 -4 L8 -4 L8 12 L-8 12 Z" fill="var(--splash-logo-fill)" fill-opacity="0.4"/>
-        </g>
+      <svg width="120" height="120" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="OpenLoop loading icon">
+        <path d="M18.8 3.5C10.4 1.5 3.2 7.2 3.2 16.2C3.2 24.7 9.9 30.4 18 29.4C25.5 28.5 30.1 22.4 29.2 14.7C28.8 11.6 27.4 8.5 27 7C25.9 7.4 24.8 8.5 25.3 10.3C27.4 17.4 24.3 23.5 18 24.6C11.6 25.7 7.5 21.4 7.7 15.9C8 10.5 12.4 6.8 17.8 7.4C20.1 7.7 21.4 7 21.7 5.8C21.9 4.7 20.8 3.8 18.8 3.5Z" fill="var(--splash-face-fill)" stroke="var(--splash-stroke)" stroke-width="0.9" stroke-linejoin="round"/>
+        <path d="M8.4 10.7C10.6 6.9 14.7 5.2 18.2 5.9" fill="none" stroke="var(--splash-stroke)" stroke-opacity="0.45" stroke-width="0.8" stroke-linecap="round"/>
       </svg>
     </div>
   </body>
@@ -2133,7 +2097,7 @@ const loginRemoteAndIssueClientToken = async ({
         password: candidatePassword,
         trustDevice: trustDevice === true,
         issueClientToken: true,
-        clientLabel: "OpenChamber Desktop",
+        clientLabel: "OpenLoop Desktop",
         ...clientIdentity,
       }),
     },
@@ -2167,7 +2131,7 @@ const loginRemoteAndIssueClientToken = async ({
         Cookie: cookie,
       },
       body: JSON.stringify({
-        label: "OpenChamber Desktop",
+        label: "OpenLoop Desktop",
         ...clientIdentity,
       }),
     },
@@ -2337,7 +2301,7 @@ const parseConnectPairingDeepLinkPayload = (raw) => {
       label:
         typeof payload.label === "string" && payload.label.trim()
           ? payload.label.trim()
-          : "OpenChamber",
+          : "OpenLoop",
       fingerprint:
         typeof payload.fingerprint === "string" && payload.fingerprint.trim()
           ? payload.fingerprint.trim()
@@ -2425,9 +2389,9 @@ const redeemConnectPairingDeepLink = async (payload, serverUrl) => {
       body: JSON.stringify({
         pairingId: payload.pairingId,
         secret: payload.secret,
-        clientLabel: "OpenChamber Desktop",
+        clientLabel: "OpenLoop Desktop",
         clientKind: "desktop",
-        deviceName: "OpenChamber Desktop",
+        deviceName: "OpenLoop Desktop",
         ...desktopDeviceMetadata(),
         dedupeKey: `desktop:${await getOrCreateDesktopInstallId()}`,
       }),
@@ -2504,7 +2468,7 @@ const confirmConnectDeepLink = async (payload) => {
   }
   const options = {
     type: "warning",
-    title: "Connect to OpenChamber server?",
+    title: "Connect to OpenLoop server?",
     message: `Connect to "${payload.label}"?`,
     detail:
       `This will add ${payload.serverUrl} as a remote instance and route this app's activity ` +
@@ -2767,7 +2731,7 @@ const createBrowserWindow = ({
   const autoHidesNativeMenuBar = process.platform !== "darwin";
   const windowIconPath = getWindowIconPath();
   const options = {
-    title: "OpenChamber",
+    title: "OpenLoop",
     ...(Number.isFinite(restoredBounds?.x) && Number.isFinite(restoredBounds?.y)
       ? { x: restoredBounds.x, y: restoredBounds.y }
       : {}),
@@ -2993,7 +2957,7 @@ const createBrowserWindow = ({
           return {
             action: "allow",
             overrideBrowserWindowOptions: {
-              title: "OpenChamber Workbench",
+              title: "OpenLoop Workbench",
               width: 960,
               height: 720,
               minWidth: 640,
@@ -3326,7 +3290,7 @@ const createMiniChatWindow = async ({
     process.platform !== "darwin" ||
     readSettingsRoot().desktopMacMenuBarEnabled !== false;
   const browserWindow = new BrowserWindow({
-    title: "OpenChamber Mini Chat",
+    title: "OpenLoop Mini Chat",
     width: MINI_CHAT_WINDOW_WIDTH,
     height: MINI_CHAT_WINDOW_HEIGHT,
     minWidth: MINI_CHAT_MIN_WINDOW_WIDTH,
@@ -5254,7 +5218,7 @@ const handleInvoke = async (browserWindow, command, args = {}) => {
         try {
           if (!app.isInApplicationsFolder()) {
             throw new Error(
-              "Desktop update requires OpenChamber.app to be installed in /Applications",
+              "Desktop update requires OpenLoop.app to be installed in /Applications",
             );
           }
         } catch (error) {
@@ -5601,7 +5565,7 @@ const buildMacMenu = () => {
     {
       label: app.name,
       submenu: [
-        { label: "About OpenChamber", click: () => dispatchAction("about") },
+        { label: "About OpenLoop", click: () => dispatchAction("about") },
         ...(desktopUpdatesEnabled
           ? [
               {
@@ -5792,9 +5756,9 @@ const buildAutoHiddenMenu = () => {
 
   return Menu.buildFromTemplate([
     {
-      label: "OpenChamber",
+      label: "OpenLoop",
       submenu: [
-        { label: "About OpenChamber", click: () => dispatchAction("about") },
+        { label: "About OpenLoop", click: () => dispatchAction("about") },
         ...(desktopUpdatesEnabled
           ? [
               {

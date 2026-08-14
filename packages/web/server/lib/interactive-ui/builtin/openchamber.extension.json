@@ -1,8 +1,8 @@
 {
   "$schema": "openchamber://extension/v1",
   "id": "com.openchamber.builtin.interactive-ui",
-  "name": "OpenChamber Interactive UI",
-  "version": "1.3.0",
+  "name": "OpenLoop Interactive UI",
+  "version": "1.4.0",
   "agentRouting": {
     "domain": "visualization",
     "intents": [

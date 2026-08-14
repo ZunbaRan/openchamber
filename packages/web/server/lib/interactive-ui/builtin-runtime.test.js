@@ -72,7 +72,7 @@ describe('production built-in Interactive UI Agent Runtime package', () => {
     const manifest = await readBuiltInManifest(builtIn);
 
     expect(builtIn.extensionId).toBe('com.openchamber.builtin.interactive-ui');
-    expect(builtIn.version).toBe('1.3.0');
+    expect(builtIn.version).toBe('1.4.0');
     expect(manifest).toMatchObject({
       id: builtIn.extensionId,
       version: builtIn.version,
@@ -88,6 +88,20 @@ describe('production built-in Interactive UI Agent Runtime package', () => {
       'tools/html_artifact.ts',
       'tools/interactive_ui.ts',
     ]);
+    expect(builtIn.legacyAssets).toEqual({
+      'tools/interactive_ui.ts': [
+        'sha256-OVpVCjBXc07o+1jmasgEcCDv6dO2g/u5qbq3wvYh60I=',
+        'sha256-HFJwueb/YNiaG3r3t7SDxH2VybeEncdGMUVH76eZqVE=',
+      ],
+      'tools/html_artifact.ts': [
+        'sha256-qYjbXXuIuKnaEnVacSjJW/UMWbbVQmu7I8GylkZKfF8=',
+        'sha256-lJzup0d7/3QS35dl3bCqAGi98njIKPMlooFMR2C8NUw=',
+      ],
+      'skills/interactive-ui-visualization/SKILL.md': [
+        'sha256-CkOULVhwq+zP4EUVRS0tuAKg0qJBXBWlOrJuHp08vGo=',
+        'sha256-1M6V0sYIEawsTqyOwAmrqZDeLl54BsOArq/GQ248xpg=',
+      ],
+    });
 
     const configDirectory = await createConfig();
     const result = await reconcileOpenCodeAgentRuntime({
@@ -176,6 +190,86 @@ describe('production built-in Interactive UI Agent Runtime package', () => {
       await expect(fs.stat(path.join(configDirectory, ...target.split('/')))).rejects.toMatchObject({ code: 'ENOENT' });
     }
     await expect(fs.stat(ownershipPath)).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it('adopts only an exact allowlisted legacy asset, stays idempotent, and rolls back to its original bytes', async () => {
+    const versionsDirectory = await createConfig('ocix-builtin-legacy-versions-');
+    const configDirectory = await createConfig('ocix-builtin-legacy-config-');
+    const extensionId = 'com.openchamber.builtin.legacy-fixture';
+    const version = '1.4.0';
+    const oldContent = Buffer.from('export default { policy: "1.3.0" };\n');
+    const newContent = Buffer.from('export default { policy: "1.4.0" };\n');
+    const rootDirectory = path.join(versionsDirectory, extensionId, version);
+    await fs.mkdir(path.join(rootDirectory, 'agent-runtime', 'tools'), { recursive: true });
+    await fs.writeFile(path.join(rootDirectory, 'agent-runtime', 'tools', 'legacy_fixture.ts'), newContent);
+    const target = path.join(configDirectory, 'tools', 'legacy_fixture.ts');
+    await fs.mkdir(path.dirname(target), { recursive: true });
+    await fs.writeFile(target, oldContent);
+
+    const builtInRuntime = {
+      extensionId,
+      version,
+      rootDirectory,
+      legacyAssets: { 'tools/legacy_fixture.ts': [digest(oldContent)] },
+      agentRuntime: {
+        tools: [{ name: 'legacy_fixture', entry: 'agent-runtime/tools/legacy_fixture.ts' }],
+        skills: [],
+      },
+    };
+    const first = await reconcileOpenCodeAgentRuntime({
+      state: { extensions: {} },
+      configDirectory,
+      versionsDirectory,
+      builtInRuntime,
+    });
+    expect(first.changed).toBe(true);
+    expect(await fs.readFile(target)).toEqual(newContent);
+
+    const second = await reconcileOpenCodeAgentRuntime({
+      state: { extensions: {} },
+      previousAssets: first.assets,
+      configDirectory,
+      versionsDirectory,
+      builtInRuntime,
+    });
+    expect(second.changed).toBe(false);
+
+    await first.rollback();
+    expect(await fs.readFile(target)).toEqual(oldContent);
+  });
+
+  it('does not adopt arbitrary same-name bytes through a legacy allowlist', async () => {
+    const versionsDirectory = await createConfig('ocix-builtin-custom-versions-');
+    const configDirectory = await createConfig('ocix-builtin-custom-config-');
+    const extensionId = 'com.openchamber.builtin.custom-fixture';
+    const version = '1.4.0';
+    const rootDirectory = path.join(versionsDirectory, extensionId, version);
+    const desiredContent = Buffer.from('export default { policy: "managed" };\n');
+    const legacyContent = Buffer.from('export default { policy: "legacy" };\n');
+    const userContent = Buffer.from('export default { policy: "user-owned" };\n');
+    await fs.mkdir(path.join(rootDirectory, 'agent-runtime', 'tools'), { recursive: true });
+    await fs.writeFile(path.join(rootDirectory, 'agent-runtime', 'tools', 'custom_fixture.ts'), desiredContent);
+    const target = path.join(configDirectory, 'tools', 'custom_fixture.ts');
+    await fs.mkdir(path.dirname(target), { recursive: true });
+    await fs.writeFile(target, userContent);
+
+    await expect(reconcileOpenCodeAgentRuntime({
+      state: { extensions: {} },
+      configDirectory,
+      versionsDirectory,
+      builtInRuntime: {
+        extensionId,
+        version,
+        rootDirectory,
+        legacyAssets: { 'tools/custom_fixture.ts': [digest(legacyContent)] },
+        agentRuntime: {
+          tools: [{ name: 'custom_fixture', entry: 'agent-runtime/tools/custom_fixture.ts' }],
+          skills: [],
+        },
+      },
+    })).rejects.toMatchObject({ code: 'agent_tool_conflict', status: 409 });
+    expect(await fs.readFile(target)).toEqual(userContent);
+    await expect(fs.stat(path.join(configDirectory, 'openchamber'))).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
   it('migrates exact 1.17.1 ownership records with one record version and no asset versions', async () => {

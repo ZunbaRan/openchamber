@@ -64,7 +64,7 @@ export const registerOpenCodeRoutes = (app, dependencies) => {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${escapeHtml(title)} — OpenChamber</title>
+<title>${escapeHtml(title)} — OpenLoop</title>
 <style>
   :root { color-scheme: light dark; }
   body { margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center;
@@ -81,7 +81,7 @@ export const registerOpenCodeRoutes = (app, dependencies) => {
 <main>
 <h1>${escapeHtml(title)}</h1>
 <p>${escapeHtml(message)}</p>
-${desktopReturn ? `<a class="return" href="openchamber://focus/mcp-auth">Return to OpenChamber</a>
+${desktopReturn ? `<a class="return" href="openchamber://focus/mcp-auth">Return to OpenLoop</a>
 <script>window.location.href = 'openchamber://focus/mcp-auth';</script>` : ''}
 </main>
 </body>
@@ -239,8 +239,8 @@ ${desktopReturn ? `<a class="return" href="openchamber://focus/mcp-auth">Return 
             ? 'OPENCODE_UPGRADE_MANAGED_BY_OPENCHAMBER'
             : 'OPENCODE_UPGRADE_UNSUPPORTED',
           error: capability.reason === 'bundled'
-            ? 'OpenCode is bundled with OpenChamber Desktop and updates with the app.'
-            : 'This OpenCode runtime cannot be upgraded by OpenChamber.',
+            ? 'OpenCode is bundled with OpenLoop Desktop and updates with the app.'
+            : 'This OpenCode runtime cannot be upgraded by OpenLoop.',
         });
       }
       if (openCodeUpgradePromise) {
@@ -560,7 +560,7 @@ ${desktopReturn ? `<a class="return" href="openchamber://focus/mcp-auth">Return 
     if (!context?.name) {
       return finish(400, {
         title: 'Authorization Failed',
-        message: 'This authorization session has expired or is unknown to the running app. Return to OpenChamber and click Authorize again.',
+        message: 'This authorization session has expired or is unknown to the running app. Return to OpenLoop and click Authorize again.',
       });
     }
 
@@ -581,7 +581,7 @@ ${desktopReturn ? `<a class="return" href="openchamber://focus/mcp-auth">Return 
       }
       return finish(200, {
         title: 'Authorization Complete',
-        message: 'You can close this tab and return to OpenChamber.',
+        message: 'You can close this tab and return to OpenLoop.',
       });
     } catch (error) {
       return finish(502, {

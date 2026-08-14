@@ -156,7 +156,7 @@ const buildModeLayout = (mode: Exclude<GalleryMode, 'components'>): Record<strin
 };
 
 export default tool({
-  description: '仅当用户明确要求查看 OpenChamber Interactive UI 组件库、组件 Gallery 或开发验收样例时使用。返回一张对话流内的只读组件画廊；不要为普通可视化任务自动选择本 Tool。Use only when the user explicitly asks for the OpenChamber Interactive UI component gallery or a developer acceptance sample; never select it for ordinary visualization.',
+  description: '仅当用户明确要求查看 OpenLoop Interactive UI 组件库、组件 Gallery 或开发验收样例时使用。返回一张对话流内的只读组件画廊；不要为普通可视化任务自动选择本 Tool。Use only when the user explicitly asks for the OpenLoop Interactive UI component gallery or a developer acceptance sample; never select it for ordinary visualization.',
   args: {
     mode: tool.schema.enum(['components', 'dashboard-hero', 'master-detail', 'report']).optional().describe('画廊内容：components（默认组件集）；dashboard-hero / master-detail / report（Style v2 构图模式演示）'),
   },
@@ -281,7 +281,7 @@ export default tool({
               items: [
                 { title: 'Agent composes a layout', description: 'Only allowlisted fields are accepted', status: 'completed' },
                 { title: 'Host sanitizes untrusted data', description: 'Executable channels are removed', status: 'completed' },
-                { title: 'Conversation renders the View', description: 'Theme and locale come from OpenChamber', status: 'active' },
+                { title: 'Conversation renders the View', description: 'Theme and locale come from OpenLoop', status: 'active' },
               ],
             },
           ],
@@ -313,7 +313,7 @@ export default tool({
               title: 'Runtime boundary',
               nodes: [
                 { id: 'agent', label: 'Agent', detail: 'Selects a governed Tool' },
-                { id: 'host', label: 'OpenChamber', detail: 'Owns rendering and policy' },
+                { id: 'host', label: 'OpenLoop', detail: 'Owns rendering and policy' },
                 { id: 'gateway', label: 'Business Gateway', detail: 'Injects credentials server-side' },
                 { id: 'system', label: 'Business API', detail: 'Owns permissions' },
               ],
@@ -333,7 +333,7 @@ export default tool({
       view: 'com.openchamber.builtin.interactive-ui.gallery',
       schemaVersion: 1,
       mode: 'snapshot',
-      summary: 'OpenChamber Interactive UI component gallery',
+      summary: 'OpenLoop Interactive UI component gallery',
       context: { title: 'Interactive UI Component Gallery' },
       data: { layout },
       updatedAt: new Date().toISOString(),

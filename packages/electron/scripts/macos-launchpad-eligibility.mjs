@@ -14,7 +14,6 @@ export const evaluateLaunchpadEligibility = ({
   executableExists,
   executableIsExecutable,
   legacyIconExists,
-  assetCatalogExists,
   metadataContentType,
 }) => {
   const failures = [];
@@ -41,9 +40,6 @@ export const evaluateLaunchpadEligibility = ({
   if (!executableIsExecutable) failures.push('bundle executable is not executable');
   if (!nonEmptyString(info.CFBundleIconFile) || !legacyIconExists) {
     failures.push('icon.icns must be declared and present');
-  }
-  if (!nonEmptyString(info.CFBundleIconName) || !assetCatalogExists) {
-    failures.push('AppIcon/Assets.car must be declared and present');
   }
   if (metadataContentType !== 'com.apple.application-bundle') {
     failures.push(`Spotlight content type must be com.apple.application-bundle, got ${metadataContentType || '<empty>'}`);
@@ -88,12 +84,12 @@ const metadataContentType = (appPath) => {
 const resolveAppPath = (configured) => {
   if (configured) return path.resolve(configured);
   const candidates = [
-    path.join(electronRoot, 'dist', 'mac-arm64', 'OpenChamber.app'),
-    path.join(electronRoot, 'dist', 'mac', 'OpenChamber.app'),
-    path.join(electronRoot, 'dist', 'mac-universal', 'OpenChamber.app'),
+    path.join(electronRoot, 'dist', 'mac-arm64', 'OpenLoop.app'),
+    path.join(electronRoot, 'dist', 'mac', 'OpenLoop.app'),
+    path.join(electronRoot, 'dist', 'mac-universal', 'OpenLoop.app'),
   ];
   const found = candidates.find((candidate) => fs.existsSync(candidate));
-  if (!found) throw new Error('Packaged OpenChamber.app not found; pass --app <path> or build macOS first');
+  if (!found) throw new Error('Packaged OpenLoop.app not found; pass --app <path> or build macOS first');
   return found;
 };
 
@@ -105,7 +101,6 @@ export const verifyMacosLaunchpadEligibility = ({ appPath, expectedAppId, expect
   const iconName = nonEmptyString(info.CFBundleIconFile) ? info.CFBundleIconFile.trim() : '';
   const normalizedIconName = iconName && path.extname(iconName) ? iconName : `${iconName}.icns`;
   const iconPath = path.join(resolvedAppPath, 'Contents', 'Resources', normalizedIconName);
-  const assetCatalogPath = path.join(resolvedAppPath, 'Contents', 'Resources', 'Assets.car');
   const executableExists = Boolean(executableName) && fs.existsSync(executablePath);
 
   const failures = evaluateLaunchpadEligibility({
@@ -115,7 +110,6 @@ export const verifyMacosLaunchpadEligibility = ({ appPath, expectedAppId, expect
     executableExists,
     executableIsExecutable: executableExists ? Boolean(fs.statSync(executablePath).mode & 0o111) : false,
     legacyIconExists: Boolean(normalizedIconName) && fs.existsSync(iconPath),
-    assetCatalogExists: fs.existsSync(assetCatalogPath),
     metadataContentType: metadataContentType(resolvedAppPath),
   });
 

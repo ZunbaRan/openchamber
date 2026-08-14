@@ -156,7 +156,7 @@ const PopoutSurface: React.FC = () => {
       </main>
     );
   }
-  document.title = surface?.title || 'OpenChamber Extension Workbench';
+  document.title = surface?.title || 'OpenLoop Extension Workbench';
   return (
     <main className="h-full overflow-auto bg-background p-4 text-foreground">
       {interactiveEnvelope ? (

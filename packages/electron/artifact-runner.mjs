@@ -396,7 +396,7 @@ export const createArtifactRunnerManager = ({
   };
 
   const popout = async (id, {
-    title = 'OpenChamber Artifact',
+    title = 'OpenLoop Artifact',
     width = 960,
     height = 720,
   } = {}) => {
@@ -417,7 +417,7 @@ export const createArtifactRunnerManager = ({
       minWidth: 420,
       minHeight: 280,
       show: true,
-      title: String(title || 'OpenChamber Artifact').slice(0, 160),
+      title: String(title || 'OpenLoop Artifact').slice(0, 160),
       backgroundColor: '#111111',
       autoHideMenuBar: true,
       webPreferences: {

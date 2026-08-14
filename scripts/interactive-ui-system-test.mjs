@@ -77,13 +77,22 @@ try {
 
   const registry = await readJson(await fetch(`${gateway}/api/interactive-ui/extensions`));
   assert.equal(registry.response.status, 200);
-  assert.equal(registry.payload.extensions.length, 3);
+  assert.equal(registry.payload.extensions.length, 4);
   const salesExtension = registry.payload.extensions.find((extension) => extension.id === 'com.openchamber.demo.sales');
   const crmExtension = registry.payload.extensions.find((extension) => extension.id === 'com.openchamber.demo.crm');
   const visualizationExtension = registry.payload.extensions.find((extension) => extension.id === 'com.openchamber.builtin.interactive-ui');
+  const explainerExtension = registry.payload.extensions.find((extension) => extension.id === 'com.openchamber.demo.snapshot-explainer');
   assert.equal(salesExtension.views.length, 2);
   assert.equal(crmExtension.views.length, 1);
   assert.equal(visualizationExtension.views.length, 2);
+  assert.equal(explainerExtension.views.length, 1);
+  assert.equal(explainerExtension.views[0].runtime, 'native');
+  assert.deepEqual(explainerExtension.views[0].tools, ['ocix_explain_trust_pipeline']);
+  assert.deepEqual(explainerExtension.agentRouting, {
+    domain: 'ocix-training',
+    intents: ['ocix-training.trust.explain', 'ocix-training.replay.explain'],
+    dataAuthority: 'generated',
+  });
   assert.equal(JSON.stringify(registry.payload).includes(token), false, 'connector token must never reach the client registry');
   assert.equal(JSON.stringify(registry.payload).includes(mock.url), false, 'connector base URL must remain server-side');
 
@@ -96,15 +105,30 @@ try {
 
   const capabilities = await readJson(await fetch(`${gateway}/api/interactive-ui/capabilities`));
   assert.equal(capabilities.response.status, 200);
-  assert.equal(capabilities.payload.extensions.length, 3);
+  assert.equal(capabilities.payload.extensions.length, 4);
   assert.match(capabilities.payload.revision, /^sha256-/);
   assert.equal(capabilities.payload.extensions.find((extension) => extension.id === 'com.openchamber.demo.crm')
     .tools.some((tool) => tool.name === 'crm_open_dashboard' && tool.priority === 90), true);
-  assert.match(capabilities.payload.system, /matching installed business tool/);
+  const explainerCapability = capabilities.payload.extensions
+    .find((extension) => extension.id === 'com.openchamber.demo.snapshot-explainer');
+  assert.equal(explainerCapability.dataAuthority, 'generated');
+  assert.deepEqual(explainerCapability.connection, { required: false, configured: true, expired: false, status: 'not-required' });
+  assert.deepEqual(explainerCapability.tools, [{
+    name: 'ocix_explain_trust_pipeline',
+    surfaces: ['com.openchamber.demo.snapshot-explainer.ocix-trust'],
+    forms: ['interactive-ui'],
+    intents: ['ocix-training.replay.explain', 'ocix-training.trust.explain'],
+    priority: 60,
+    operation: 'read',
+    dataAuthority: 'generated',
+  }]);
+  assert.match(capabilities.payload.system, /matching installed connected-business-system Tool/);
   assert.equal(capabilities.payload.system.includes(token), false, 'routing prompt must not contain connector tokens');
   assert.equal(capabilities.payload.system.includes(mock.url), false, 'routing prompt must not contain connector URLs');
   assert.equal(capabilities.payload.system.includes('打开 CRM 工作台'), false, 'developer examples must not enter the routing prompt');
+  assert.equal(capabilities.payload.system.includes('解释 OCIX 信任模型'), false, 'explainer developer examples must not enter the routing prompt');
   assert.match(capabilities.payload.system, /html_artifact/);
+  assert.match(capabilities.payload.system, /tool=ocix_explain_trust_pipeline forms=interactive-ui priority=60 operation=read/);
 
   const artifactCapabilities = await readJson(await fetch(`${gateway}/api/interactive-ui/artifacts/capabilities`));
   assert.deepEqual(artifactCapabilities.payload, {
@@ -206,6 +230,25 @@ try {
   const crmBundle = await fetch(`${gateway}${crm.payload.native.assetPath}`);
   assert.equal(crmBundle.status, 200);
   assert.match(await crmBundle.text(), /com\.openchamber\.demo\.crm\.dashboard/);
+
+  const explainerViewId = 'com.openchamber.demo.snapshot-explainer.ocix-trust';
+  const explainer = await readJson(await fetch(`${gateway}/api/interactive-ui/views/${explainerViewId}?tool=ocix_explain_trust_pipeline`));
+  assert.equal(explainer.response.status, 200);
+  assert.equal(explainer.payload.view.runtime, 'native');
+  assert.equal(explainer.payload.view.displayModes[0], 'inline');
+  assert.match(explainer.payload.native.integrity, /^sha256-/);
+  const explainerBundle = await fetch(`${gateway}${explainer.payload.native.assetPath}`);
+  assert.equal(explainerBundle.status, 200);
+  const explainerSource = await explainerBundle.text();
+  assert.match(explainerSource, /com\.openchamber\.demo\.snapshot-explainer\.ocix-trust/);
+  assert.match(explainerSource, /parseSnapshotExplainerData/);
+
+  const wrongToolOnExplainer = await readJson(await fetch(`${gateway}/api/interactive-ui/views/${explainerViewId}?tool=interactive_ui`));
+  assert.equal(wrongToolOnExplainer.response.status, 403);
+  assert.equal(wrongToolOnExplainer.payload.code, 'tool_view_mismatch');
+  const wrongViewForExplainerTool = await readJson(await fetch(`${gateway}/api/interactive-ui/views/com.openchamber.demo.sales.summary?tool=ocix_explain_trust_pipeline`));
+  assert.equal(wrongViewForExplainerTool.response.status, 403);
+  assert.equal(wrongViewForExplainerTool.payload.code, 'tool_view_mismatch');
 
   const actionContext = {
     extensionId: 'com.openchamber.demo.sales',
@@ -318,6 +361,14 @@ try {
       static: staticArtifact.payload.artifactId,
       interactive: interactiveArtifact.payload.artifactId,
       topology: topologyArtifact.payload.artifactId,
+    },
+    snapshotReplay: {
+      extensionCount: registry.payload.extensions.length,
+      connectorCount: connections.payload.connections.length,
+      explainerView: explainerViewId,
+      explainerTool: 'ocix_explain_trust_pipeline',
+      wrongToolRejected: { code: wrongToolOnExplainer.payload.code, status: wrongToolOnExplainer.response.status },
+      wrongViewRejected: { code: wrongViewForExplainerTool.payload.code, status: wrongViewForExplainerTool.response.status },
     },
     envelope,
   }, null, 2));

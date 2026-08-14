@@ -11,6 +11,7 @@ export type ContextSurfaceId =
   | 'terminal'
   | 'plan'
   | 'notes'
+  | 'extensions'
   | 'context'
   | 'browser'
   | 'preview'
@@ -109,6 +110,15 @@ export const CONTEXT_SURFACES: readonly ContextSurfaceDescriptor[] = [
     mode: 'notes',
     icon: 'sticky-note',
     labelKey: 'contextRail.surface.notes',
+    availability: 'always',
+  },
+  {
+    id: 'extensions',
+    descriptionKey: 'workbench.board.emptyDescription',
+    defaultWidthFraction: 1 / 2,
+    mode: 'extensions',
+    icon: 'apps-2-ai',
+    labelKey: 'workbench.board.title',
     availability: 'always',
   },
   {

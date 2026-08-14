@@ -219,7 +219,7 @@ describe('Interactive UI Agent routing metadata', () => {
 
   it('keeps the bilingual routing corpus aligned with example extension capabilities', async () => {
     const examplesRoot = new URL('../../../../../examples/interactive-ui/', import.meta.url);
-    const manifestNames = ['builtin-visualization', 'acme-crm', 'acme-sales'];
+    const manifestNames = ['builtin-visualization', 'acme-crm', 'acme-sales', 'trusted-snapshot-explainer'];
     const extensions = await Promise.all(manifestNames.map(async (name) => {
       const manifest = JSON.parse(await fs.readFile(new URL(`${name}/openchamber.extension.json`, examplesRoot), 'utf8'));
       return normalizedExtension(manifest);
@@ -232,6 +232,78 @@ describe('Interactive UI Agent routing metadata', () => {
     for (const testCase of corpus.cases) {
       expect(tools.has(testCase.expectedTool), testCase.id).toBe(true);
       expect(tools.get(testCase.expectedTool).intents, testCase.id).toContain(testCase.expectedIntent);
+    }
+  });
+
+  it('binds the installed snapshot explainer as a generated read-only capability and rejects cross-view Tool/View binding', async () => {
+    const examplesRoot = new URL('../../../../../examples/interactive-ui/', import.meta.url);
+    const manifestNames = ['builtin-visualization', 'acme-crm', 'acme-sales', 'trusted-snapshot-explainer'];
+    const extensions = await Promise.all(manifestNames.map(async (name) => {
+      const manifest = JSON.parse(await fs.readFile(new URL(`${name}/openchamber.extension.json`, examplesRoot), 'utf8'));
+      return normalizedExtension(manifest);
+    }));
+    const catalog = buildInteractiveUICapabilityCatalog(extensions);
+    const explainer = catalog.find((extension) => extension.id === 'com.openchamber.demo.snapshot-explainer');
+    expect(explainer).toBeDefined();
+    expect(explainer).toMatchObject({
+      domain: 'ocix-training',
+      dataAuthority: 'generated',
+      connection: { required: false, status: 'not-required' },
+    });
+    const explainerTool = explainer.tools.find((tool) => tool.name === 'ocix_explain_trust_pipeline');
+    expect(explainerTool).toEqual({
+      name: 'ocix_explain_trust_pipeline',
+      surfaces: ['com.openchamber.demo.snapshot-explainer.ocix-trust'],
+      forms: ['interactive-ui'],
+      intents: ['ocix-training.replay.explain', 'ocix-training.trust.explain'],
+      priority: 60,
+      operation: 'read',
+      dataAuthority: 'generated',
+    });
+    for (const extension of catalog) {
+      for (const tool of extension.tools) {
+        if (tool.name === 'ocix_explain_trust_pipeline') continue;
+        expect(tool.surfaces, `${tool.name} must not bind the explainer View`)
+          .not.toContain('com.openchamber.demo.snapshot-explainer.ocix-trust');
+      }
+    }
+    const genericTool = catalog
+      .flatMap((extension) => extension.tools)
+      .find((tool) => tool.name === 'interactive_ui');
+    expect(genericTool.surfaces).not.toContain('com.openchamber.demo.snapshot-explainer.ocix-trust');
+    expect(genericTool.intents).toContain('visualization.process');
+    expect(genericTool.intents).not.toContain('ocix-training.trust.explain');
+    const system = renderInteractiveUIRoutingSystemPrompt(catalog);
+    expect(system).toContain('extension=com.openchamber.demo.snapshot-explainer domain=ocix-training authority=generated connection=not-required');
+    expect(system).toContain('tool=ocix_explain_trust_pipeline forms=interactive-ui priority=60 operation=read intents=ocix-training.replay.explain,ocix-training.trust.explain');
+    expect(system).not.toContain('tool=interactive_ui intents=ocix-training');
+  });
+
+  it('keeps the explicit zh-CN and en installed-explainer routing cases bound to the declared Tool', async () => {
+    const examplesRoot = new URL('../../../../../examples/interactive-ui/', import.meta.url);
+    const manifestNames = ['builtin-visualization', 'acme-crm', 'acme-sales', 'trusted-snapshot-explainer'];
+    const extensions = await Promise.all(manifestNames.map(async (name) => {
+      const manifest = JSON.parse(await fs.readFile(new URL(`${name}/openchamber.extension.json`, examplesRoot), 'utf8'));
+      return normalizedExtension(manifest);
+    }));
+    const tools = new Map(buildInteractiveUICapabilityCatalog(extensions)
+      .flatMap((entry) => entry.tools)
+      .map((tool) => [tool.name, tool]));
+    const corpus = JSON.parse(await fs.readFile(new URL('routing-cases.json', examplesRoot), 'utf8'));
+    const explainerCases = corpus.cases.filter((testCase) => testCase.expectedTool === 'ocix_explain_trust_pipeline');
+    expect(explainerCases).toHaveLength(2);
+    expect(explainerCases.map((testCase) => testCase.locale).sort()).toEqual(['en', 'zh-CN']);
+    for (const testCase of explainerCases) {
+      expect(['ocix-training.trust.explain', 'ocix-training.replay.explain']).toContain(testCase.expectedIntent);
+      expect(tools.get(testCase.expectedTool).intents).toContain(testCase.expectedIntent);
+    }
+    const genericCases = corpus.cases.filter((testCase) => testCase.expectedTool === 'interactive_ui');
+    expect(genericCases.map((testCase) => testCase.id)).toEqual([
+      'zh-generic-flow', 'zh-generic-chart', 'zh-generic-table', 'en-generic-flow', 'en-generic-chart',
+    ]);
+    for (const testCase of genericCases) {
+      expect(tools.has(testCase.expectedTool), testCase.id).toBe(true);
+      expect(testCase.expectedIntent).toMatch(/^visualization\./);
     }
   });
 

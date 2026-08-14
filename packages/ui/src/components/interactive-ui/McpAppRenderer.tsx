@@ -2216,7 +2216,7 @@ export const McpAppRenderer = React.forwardRef<McpAppRendererHandle, McpAppRende
     const initialContext = displayContext(displayModeRef.current);
     const bridge = new AppBridge(
       null,
-      { name: 'OpenChamber', version: '1' },
+      { name: 'OpenLoop', version: '1' },
       hostCapabilities,
       {
         hostContext: initialContext.hostContext,
@@ -2751,7 +2751,7 @@ export const McpAppRenderer = React.forwardRef<McpAppRendererHandle, McpAppRende
             <div id={downloadDescriptionId} className="mt-2 text-sm text-muted-foreground">
               This MCP App wants to save <span className="font-medium text-foreground">{pendingDownload.fileName}</span>
               {' '}({formatMcpAppDownloadSize(pendingDownload.bytes.byteLength)}).
-              Your browser will ask where to download it; OpenChamber will not open or execute it.
+              Your browser will ask where to download it; OpenLoop will not open or execute it.
             </div>
             <div className="mt-5 flex justify-end gap-2">
               <Button type="button" variant="outline" autoFocus onClick={() => settleWebDownload(false)}>

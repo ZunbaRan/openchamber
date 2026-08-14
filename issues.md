@@ -1827,7 +1827,7 @@
 
 ## issue-093: Migrate built-in Agent assets to v1.4.0 without adopting user files
 
-- Status: READY
+- Status: RESOLVED
 - Classification: NORMAL
 - Goal / user outcome: Managed installations safely upgrade the three changed built-in assets to v1.4.0 while every user-owned same-name file and malformed ownership state remains fail-closed.
 - First-principles root cause: asset contents are ownership-hashed; changing them without a version bump and exact legacy allowlist makes safe upgrades conflict, while broad adoption would overwrite user content.
@@ -1836,14 +1836,14 @@
 - Dispatch order: Serial security/ownership step after policy-asset acceptance.
 - Ownership: `packages/web/server/lib/interactive-ui/builtin-runtime.js`; `packages/web/server/lib/interactive-ui/builtin/openchamber.extension.json`; `packages/web/server/lib/interactive-ui/builtin-runtime.test.js`; `packages/web/server/lib/interactive-ui/manager.test.js`.
 - Focused verification: `bun test packages/web/server/lib/interactive-ui/builtin-runtime.test.js packages/web/server/lib/interactive-ui/manager.test.js`; success includes exact-old migration, custom-file conflict, retained older hashes, idempotence, rollback, and no outside-path diff.
-- Pi binding: unassigned
-- Pi attempts: none
-- Primary attempts: not eligible while Pi retries remain.
-- Current evidence: Base version is 1.3.0; current asset hashes match the three blueprint values exactly, while `LEGACY_BUILT_IN_ASSETS` contains only earlier shipped hashes.
+- Pi binding: batch `93c60211-4dc5-4af3-9106-b63f92f7a18b`; lane `builtin-v14-migration`; run/session `6f23b6f0-205b-4c55-b81d-c66051d854d9`; worktree `/Users/loloru/.codex/sol-pi-advisor/worktrees/6f23b6f0-205b-4c55-b81d-c66051d854d9`; base `b7d488eb19c11cfe0cc636816899b12e33637681`; revision 2; supervised-local, sandbox not enforced.
+- Pi attempts: correction 1/2 and correction 2/2 both recover provider errors that settled before any file change; revision 2 is the final permitted Pi attempt. Empty diffs and no policy violation were independently recorded for revisions 0-1.
+- Primary attempts: after all two Pi corrections were exhausted by provider errors with empty diffs, the bounded primary path implemented the frozen three-file version/hash/test change; no generic reconcile or Manager production code changed.
+- Current evidence: Built-in runtime and manifest are 1.4.0. The exact current 1.3 hashes were appended after each retained older hash; independent `git show b7d488eb1^:<asset> | shasum -a 256` produced `1c5270...`, `949ceea...`, and `d4ce95...`, exactly the hex encodings of the three blueprint base64 hashes. Focused runtime/Manager validation passes 130/130 tests with 736 assertions, including allowlisted exact-byte adoption behavior, arbitrary same-name conflict, idempotence, rollback restoration, full legacy arrays, manifest/runtime consistency, and existing Manager lifecycle regressions. `git diff --check` passes; `agent-runtime.js` and `manager.js` are unchanged.
 - Suspension decision: n/a
 - Resume condition: n/a
 - Continuation decision: Keep serial because ownership migration is a distinct security risk domain from policy prose.
-- Next action: Dispatch after issue-092 is accepted.
+- Next action: Closed; issue-100 may consume the accepted 1.4.0 manifest/runtime authority once a committed dependency base is available.
 
 ## issue-094: Align example and business Tool policy without weakening same-data dedupe
 
@@ -1887,7 +1887,7 @@
 
 ## issue-096: Integrate the snapshot explainer into discovery, result replay, and deterministic system acceptance
 
-- Status: READY
+- Status: RESOLVED
 - Classification: NORMAL
 - Goal / user outcome: The new explainer is discoverable as one generated/read/no-connection installed capability, binds only its declared Tool/View, and round-trips the same inline snapshot without changing the default generic model demo.
 - First-principles root cause: a self-contained extension proves its internal contract but does not yet prove repository discovery counts, binding failures, routing cases, or existing result-parser replay.
@@ -1896,14 +1896,14 @@
 - Dispatch order: Serial integration step after example and routing policy acceptance.
 - Ownership: `examples/interactive-ui/routing-cases.json`; `packages/ui/src/lib/interactive-ui/result.test.ts`; `scripts/interactive-ui-system-test.mjs`; `packages/web/server/lib/interactive-ui/routing.test.js`.
 - Focused verification: focused result/routing tests and `node scripts/interactive-ui-system-test.mjs`; inspect extension/connector counts and negative binding evidence.
-- Pi binding: unassigned
-- Pi attempts: none
-- Primary attempts: not eligible while Pi retries remain.
-- Current evidence: No explainer appears in current routing cases or system inventory.
+- Pi binding: batch `93c60211-4dc5-4af3-9106-b63f92f7a18b`; lane `explainer-integration`; run/session `7d1c2e5d-1350-4d8f-9b31-bc7997a3d4fc`; worktree `/Users/loloru/.codex/sol-pi-advisor/worktrees/7d1c2e5d-1350-4d8f-9b31-bc7997a3d4fc`; base `b7d488eb19c11cfe0cc636816899b12e33637681`; revision 2; supervised-local, sandbox not enforced.
+- Pi attempts: correction 1/2 and correction 2/2 resumed the completed four-path candidate after provider errors interrupted handoff; policy evidence showed the candidate digest stayed stable with no outside-path or dependency changes. Revision 2 was the final permitted Pi attempt.
+- Primary attempts: after all two Pi corrections were exhausted by provider errors, Primary inspected the stable candidate and integrated the exact four owned paths with `apply_patch`; no product runtime or frozen-corpus file changed.
+- Current evidence: Focused result/routing validation passes 25/25 tests with 240 assertions. Unsandboxed deterministic system acceptance reports `ok: true`, 4 extensions, 2 connectors, the explainer's declared Tool/View binding, and 403 `tool_view_mismatch` for both wrong-Tool and wrong-View attempts. The inline snapshot round-trips nested source data with no `dataRef`; explicit zh-CN/en cases select the explainer while generic RLHF still selects `interactive_ui`. The frozen 17-case corpus and default demo installer are unchanged, and `git diff --check` passes.
 - Suspension decision: n/a
 - Resume condition: n/a
 - Continuation decision: Keep default model demo and frozen unified corpus unchanged.
-- Next action: Dispatch only from an accepted dependency state.
+- Next action: Closed; issue-099 consumes the accepted discovery, replay, and deterministic-system evidence.
 
 ## issue-097: Expose stable DOM evidence for interleaved text, widgets, and rich Tool results
 
@@ -1927,7 +1927,7 @@
 
 ## issue-098: Upgrade model routing acceptance to frozen legacy plus I1-I5 transcript gates
 
-- Status: READY
+- Status: RESOLVED
 - Classification: NORMAL
 - Goal / user outcome: One model run reports the unchanged legacy 17-case thresholds and an independent 5/5 interleaving result with transient-only retries and privacy-safe observations.
 - First-principles root cause: runner v1 flattens only selected completed ToolParts, counts any second route Tool as duplicate, cannot see show-widget/text order, and cleans temporary business state only on the happy-path tail.
@@ -1936,14 +1936,14 @@
 - Dispatch order: Serial runner integration after authoritative policies and oracle are accepted.
 - Ownership: `scripts/verify-interactive-ui-model-routing.mjs`; at most one adjacent deterministic runner test if the current seam needs it.
 - Focused verification: offline oracle/runner unit coverage, source-level retry/privacy/cleanup assertions, and a diagnostic subset that must emit `complete=false`; primary owns live-model full run.
-- Pi binding: unassigned
-- Pi attempts: none
-- Primary attempts: not eligible while Pi retries remain.
-- Current evidence: v1 report and `duplicatePrimaryViewRate` inspect only Tool envelopes; widget fences are invisible.
+- Pi binding: batch `93c60211-4dc5-4af3-9106-b63f92f7a18b`; lane `model-routing-v2`; run/session `1411ac6b-b5bd-4243-a2eb-3759f5ae5e4a`; worktree `/Users/loloru/.codex/sol-pi-advisor/worktrees/1411ac6b-b5bd-4243-a2eb-3759f5ae5e4a`; base `b7d488eb19c11cfe0cc636816899b12e33637681`; revision 2; supervised-local, sandbox not enforced.
+- Pi attempts: correction 1/2 recovered the initial zero-diff provider error; correction 2/2 resumed the completed two-path candidate after another provider error interrupted the handoff. Policy evidence showed no outside-path or dependency changes. Revision 2 was the final permitted Pi attempt.
+- Primary attempts: after both Pi corrections were exhausted, Primary inspected the candidate and boundedly repaired retry classification, bearer/API-key redaction order, I2 synthetic coverage, wrapper/direct evaluation normalization, privacy-safe persisted fields, fixture/business-runtime/session cleanup, temporary API lifetime, execution-error reporting, and strict `complete` computation. No frozen corpus file changed.
+- Current evidence: `bun test scripts/verify-interactive-ui-model-routing.test.mjs` passes 24/24 tests with 148 assertions; `node --check` and `git diff --check` pass. Evidence covers the unchanged 17-case thresholds, frozen I1-I5 oracle at 5/5, no semantic retries, explicit transient-only retries, v2 privacy-safe partial/final reports, diagnostic subsets forced to `complete=false`, all planned-model/both-group/cleanup completion gates, and visible cleanup/execution failures. The live full-model run remains intentionally owned by issue-099; that integrator also owns changing the package command from Node to Bun because the runner now imports the TypeScript oracle.
 - Suspension decision: n/a
 - Resume condition: n/a
 - Continuation decision: Do not alter the frozen corpus or retry semantic failures.
-- Next action: Dispatch from an accepted dependency state.
+- Next action: Closed at the executable/offline contract layer; issue-099 owns package wiring and the live model/browser/unified run.
 
 ## issue-099: Add conversation-browser v2 and unified P2 acceptance gates
 

@@ -9,24 +9,22 @@ import {
 const validInput = (overrides = {}) => ({
   info: {
     CFBundleIdentifier: 'dev.openchamber.desktop',
-    CFBundleDisplayName: 'OpenChamber',
-    CFBundleName: 'OpenChamber',
+    CFBundleDisplayName: 'OpenLoop',
+    CFBundleName: 'OpenLoop',
     CFBundlePackageType: 'APPL',
-    CFBundleExecutable: 'OpenChamber',
+    CFBundleExecutable: 'OpenLoop',
     CFBundleIconFile: 'icon.icns',
-    CFBundleIconName: 'AppIcon',
   },
   expectedAppId: 'dev.openchamber.desktop',
-  expectedProductName: 'OpenChamber',
+  expectedProductName: 'OpenLoop',
   executableExists: true,
   executableIsExecutable: true,
   legacyIconExists: true,
-  assetCatalogExists: true,
   metadataContentType: 'com.apple.application-bundle',
   ...overrides,
 });
 
-test('accepts a foreground APPL bundle with executable and both icon paths', () => {
+test('accepts a foreground APPL bundle with executable and an icns icon', () => {
   assert.deepEqual(evaluateLaunchpadEligibility(validInput()), []);
 });
 
@@ -52,12 +50,10 @@ test('rejects identity, package type, executable, icon, and metadata drift', () 
       CFBundlePackageType: 'BNDL',
       CFBundleExecutable: '',
       CFBundleIconFile: '',
-      CFBundleIconName: '',
     },
     executableExists: false,
     executableIsExecutable: false,
     legacyIconExists: false,
-    assetCatalogExists: false,
     metadataContentType: 'public.folder',
   }));
 
@@ -67,7 +63,6 @@ test('rejects identity, package type, executable, icon, and metadata drift', () 
   assert(failures.some((failure) => failure.includes('CFBundleExecutable')));
   assert(failures.some((failure) => failure.includes('executable is missing')));
   assert(failures.some((failure) => failure.includes('icon.icns')));
-  assert(failures.some((failure) => failure.includes('Assets.car')));
   assert(failures.some((failure) => failure.includes('Spotlight content type')));
 });
 

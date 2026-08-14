@@ -20,6 +20,8 @@
     { "id": "en-generic-chart", "locale": "en", "prompt": "Chart the numbers I supplied", "expectedTool": "interactive_ui", "expectedIntent": "visualization.chart" },
     { "id": "explicit-tool", "locale": "zh-CN", "prompt": "使用 crm_open_dashboard 打开 CRM", "expectedTool": "crm_open_dashboard", "expectedIntent": "crm.overview" },
     { "id": "crm-unconfigured", "locale": "zh-CN", "prompt": "查看 CRM 管道（连接尚未配置）", "expectedTool": "crm_open_dashboard", "expectedIntent": "crm.pipeline.view" },
-    { "id": "crm-no-fake-fallback", "locale": "en", "prompt": "Our CRM is disconnected; still show me what setup is required", "expectedTool": "crm_open_dashboard", "expectedIntent": "crm.overview" }
+    { "id": "crm-no-fake-fallback", "locale": "en", "prompt": "Our CRM is disconnected; still show me what setup is required", "expectedTool": "crm_open_dashboard", "expectedIntent": "crm.overview" },
+    { "id": "zh-explainer-trust", "locale": "zh-CN", "prompt": "解释 OCIX 信任模型", "expectedTool": "ocix_explain_trust_pipeline", "expectedIntent": "ocix-training.trust.explain" },
+    { "id": "en-explainer-replay", "locale": "en", "prompt": "explain the installed snapshot example", "expectedTool": "ocix_explain_trust_pipeline", "expectedIntent": "ocix-training.replay.explain" }
   ]
 }

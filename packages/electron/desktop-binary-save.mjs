@@ -238,7 +238,7 @@ export const createDesktopBinarySaveController = ({
       const result = await showSaveDialog(browserWindow || undefined, {
         title: "Save untrusted MCP App export",
         message:
-          "OpenChamber will save this MCP App file but will not open or execute it.",
+          "OpenLoop will save this MCP App file but will not open or execute it.",
         defaultPath: defaultFileName,
         filters: [
           { name: `MCP App ${mimeType}`, extensions: [requestedExtension] },
