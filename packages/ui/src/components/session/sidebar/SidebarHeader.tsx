@@ -10,7 +10,6 @@ import {
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
 import { Icon } from "@/components/icon/Icon";
-import { ArrowsMerge } from '@/components/icons/ArrowsMerge';
 import { useSessionDisplayStore } from '@/stores/useSessionDisplayStore';
 import { useI18n } from '@/lib/i18n';
 
@@ -121,7 +120,7 @@ export function SidebarHeader(props: Props): React.ReactNode {
                   aria-label={t('sessions.sidebar.header.actions.newMultiRun')}
                   disabled={!canOpenMultiRun}
                 >
-                  <ArrowsMerge className={headerActionIconClass} />
+                  <Icon name="arrows-merge" className={headerActionIconClass} />
                 </button>
               </TooltipTrigger>
               <TooltipContent side="bottom" sideOffset={4}><p>{t('sessions.sidebar.header.actions.newMultiRun')}</p></TooltipContent>

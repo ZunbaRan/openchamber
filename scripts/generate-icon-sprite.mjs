@@ -17,10 +17,105 @@ const repoRoot = resolve(__dirname, "..")
 const remixPath = resolve(repoRoot, "node_modules/@remixicon/react/index.mjs")
 const outPath = resolve(repoRoot, "packages/ui/src/components/icon/sprite.ts")
 
+const roundedStrokeIcon = (content) =>
+  `<g fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">${content}</g>`
+
+// OpenLoop owns the high-visibility navigation glyphs below. Their semantic
+// names stay identical to the Remixicon-backed contract, so components and
+// upstream additions keep using <Icon name="..."> while the generator swaps
+// in the softer rounded geometry. Unlisted icons continue to use Remixicon.
 const customIconData = new Map([
   [
     "openchamber",
-    `<polygon points="12 2.5 3.5 7.4 3.5 17.2 12 22.1 20.5 17.2 20.5 7.4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><polyline points="3.5 7.4 12 12.3 20.5 7.4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><line x1="12" y1="12.3" x2="12" y2="22.1" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="m12 5.5 3.7 2.1L12 9.7 8.3 7.6 12 5.5Zm0 1.5-1 .6 1 .6 1-.6-1-.6Z" fill="currentColor" fill-rule="evenodd"/>`,
+      `<polygon points="12 2.5 3.5 7.4 3.5 17.2 12 22.1 20.5 17.2 20.5 7.4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><polyline points="3.5 7.4 12 12.3 20.5 7.4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><line x1="12" y1="12.3" x2="12" y2="22.1" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="m12 5.5 3.7 2.1L12 9.7 8.3 7.6 12 5.5Zm0 1.5-1 .6 1 .6 1-.6-1-.6Z" fill="currentColor" fill-rule="evenodd"/>`,
+  ],
+  [
+    "apps-2-ai",
+    roundedStrokeIcon(`<circle cx="7" cy="7" r="3"/><circle cx="7" cy="17" r="3"/><circle cx="17" cy="17" r="3"/><path d="m16.5 3 .6 1.9 1.9.6-1.9.6-.6 1.9-.6-1.9-1.9-.6 1.9-.6Z"/>`),
+  ],
+  [
+    "archive",
+    roundedStrokeIcon(`<rect x="3" y="4" width="18" height="4.5" rx="1.5"/><path d="M5 8.5v9.8A1.7 1.7 0 0 0 6.7 20h10.6a1.7 1.7 0 0 0 1.7-1.7V8.5M9.5 13h5"/>`),
+  ],
+  [
+    "arrows-merge",
+    roundedStrokeIcon(`<circle cx="6" cy="4.5" r="1.5"/><circle cx="18" cy="4.5" r="1.5"/><circle cx="12" cy="19.5" r="1.5"/><path d="M6 6v3.5c0 3.3 2.7 6 6 6v2.5M18 6v3.5c0 3.3-2.7 6-6 6"/>`),
+  ],
+  [
+    "calendar-schedule",
+    roundedStrokeIcon(`<path d="M4 8h16M7 3v3M17 3v3M6 5h12a2 2 0 0 1 2 2v5.5M10.5 20H6a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2"/><circle cx="16.5" cy="16.5" r="4.5"/><path d="M16.5 14.2v2.6l1.8 1"/>`),
+  ],
+  [
+    "chat-4",
+    roundedStrokeIcon(`<path d="M6.5 18.5 3.5 21v-4.6A7.5 7.5 0 0 1 2.5 12c0-4.7 4.2-8.5 9.5-8.5s9.5 3.8 9.5 8.5-4.2 8.5-9.5 8.5c-2 0-3.9-.6-5.5-2Z"/>`),
+  ],
+  [
+    "chat-new",
+    roundedStrokeIcon(`<path d="M6.5 18.5 3.5 21v-4.6A7.5 7.5 0 0 1 2.5 12c0-4.7 4.2-8.5 9.5-8.5s9.5 3.8 9.5 8.5-4.2 8.5-9.5 8.5c-2 0-3.9-.6-5.5-2Z"/><path d="M12 8v8M8 12h8"/>`),
+  ],
+  [
+    "checkbox-multiple",
+    roundedStrokeIcon(`<rect x="7" y="4" width="13" height="13" rx="2.5"/><path d="M7 8H5.5A2.5 2.5 0 0 0 3 10.5v7A2.5 2.5 0 0 0 5.5 20h7a2.5 2.5 0 0 0 2.5-2.5V17M10.5 10.5l2 2 4-4"/>`),
+  ],
+  [
+    "donut-chart-fill",
+    roundedStrokeIcon(`<circle cx="12" cy="12" r="8.5"/><path d="M12 3.5V12h8.5"/>`),
+  ],
+  [
+    "equalizer-2",
+    roundedStrokeIcon(`<path d="M4 6h5M15 6h5M4 12h9M19 12h1M4 18h2M12 18h8"/><circle cx="12" cy="6" r="2"/><circle cx="16" cy="12" r="2"/><circle cx="9" cy="18" r="2"/>`),
+  ],
+  [
+    "file-text",
+    roundedStrokeIcon(`<path d="M6 3.5h7l5 5v12H6a2 2 0 0 1-2-2v-13a2 2 0 0 1 2-2Z"/><path d="M13 3.5v5h5M8 13h6M8 17h4"/>`),
+  ],
+  [
+    "folder-3",
+    roundedStrokeIcon(`<path d="M3 7.5A2.5 2.5 0 0 1 5.5 5h4l2 2H19a2 2 0 0 1 2 2v8.5a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 17.5Z"/>`),
+  ],
+  [
+    "folder-add",
+    roundedStrokeIcon(`<path d="M3 7.5A2.5 2.5 0 0 1 5.5 5h4l2 2H19a2 2 0 0 1 2 2v8.5a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 17.5Z"/><path d="M15.5 11v6M12.5 14h6"/>`),
+  ],
+  [
+    "git-branch",
+    roundedStrokeIcon(`<circle cx="6" cy="5" r="2"/><circle cx="18" cy="5" r="2"/><circle cx="6" cy="19" r="2"/><path d="M6 7v10M18 7v2a4 4 0 0 1-4 4h-4a4 4 0 0 0-4 4"/>`),
+  ],
+  [
+    "git-pull-request",
+    roundedStrokeIcon(`<circle cx="6" cy="5" r="2"/><circle cx="6" cy="19" r="2"/><circle cx="18" cy="19" r="2"/><path d="M6 7v10M14 5h2a2 2 0 0 1 2 2v10M14 8l-3-3 3-3"/>`),
+  ],
+  [
+    "global",
+    roundedStrokeIcon(`<circle cx="12" cy="12" r="9"/><path d="M3.5 9h17M3.5 15h17M12 3c2.2 2.5 3.3 5.5 3.3 9S14.2 18.5 12 21c-2.2-2.5-3.3-5.5-3.3-9S9.8 5.5 12 3Z"/>`),
+  ],
+  [
+    "layout-left",
+    roundedStrokeIcon(`<rect x="3" y="4" width="18" height="16" rx="2.5"/><path d="M9 4v16"/>`),
+  ],
+  [
+    "layout-right",
+    roundedStrokeIcon(`<rect x="3" y="4" width="18" height="16" rx="2.5"/><path d="M15 4v16"/>`),
+  ],
+  [
+    "route",
+    roundedStrokeIcon(`<circle cx="6" cy="18" r="2.5"/><circle cx="18" cy="6" r="2.5"/><path d="M8.5 18H13a3 3 0 0 0 3-3v-1a3 3 0 0 0-3-3h-2a3 3 0 0 1-3-3V6a3 3 0 0 1 3-3h4.5"/>`),
+  ],
+  [
+    "search",
+    roundedStrokeIcon(`<circle cx="10.5" cy="10.5" r="6.5"/><path d="m15.2 15.2 4.8 4.8"/>`),
+  ],
+  [
+    "server",
+    roundedStrokeIcon(`<rect x="4" y="3.5" width="16" height="7" rx="2"/><rect x="4" y="13.5" width="16" height="7" rx="2"/><path d="M8 7h.01M8 17h.01M12 7h5M12 17h5"/>`),
+  ],
+  [
+    "sticky-note",
+    roundedStrokeIcon(`<path d="M6 3.5h12A2.5 2.5 0 0 1 20.5 6v9.5L16 20H6a2.5 2.5 0 0 1-2.5-2.5V6A2.5 2.5 0 0 1 6 3.5Z"/><path d="M15.5 20v-3a1.5 1.5 0 0 1 1.5-1.5h3.5M8 8h8M8 12h5"/>`),
+  ],
+  [
+    "terminal-box",
+    roundedStrokeIcon(`<rect x="3" y="4" width="18" height="16" rx="2.5"/><path d="m7 9 3 3-3 3M13 15h4"/>`),
   ],
 ])
 
@@ -441,6 +536,11 @@ console.log(`Found ${usedIcons.size} unique remixicon names used in source`)
 // --- Step 4: build sprite data ---
 const iconEntries = []
 for (const iconName of [...usedIcons].sort()) {
+  const spriteName = remixToSpriteName(iconName)
+  if (customIconData.has(spriteName)) {
+    continue
+  }
+
   const varName = nameToVar.get(iconName)
   if (!varName) {
     console.warn(`  ⚠ Unknown icon: ${iconName}`)
