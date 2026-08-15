@@ -5,6 +5,7 @@ import {
   DEFAULT_DESKTOP_WINDOW_CONTROLS_POSITION,
   isBrowserClientRuntime,
   listenDesktopEvent,
+  normalizeDesktopDockIconVariant,
   normalizeDesktopWindowControlsPosition,
   saveDesktopBinaryFile,
 } from './desktop';
@@ -48,5 +49,11 @@ describe('fork desktop adapters', () => {
     expect(normalizeDesktopWindowControlsPosition('left')).toBe('left');
     expect(normalizeDesktopWindowControlsPosition('right')).toBe('right');
     expect(normalizeDesktopWindowControlsPosition('unknown')).toBe(undefined);
+  });
+
+  test('defaults persisted Dock icon values to the ice variant', () => {
+    expect(normalizeDesktopDockIconVariant(undefined)).toBe('ice');
+    expect(normalizeDesktopDockIconVariant('unknown')).toBe('ice');
+    expect(normalizeDesktopDockIconVariant('black')).toBe('black');
   });
 });

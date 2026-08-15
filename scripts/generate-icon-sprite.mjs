@@ -117,6 +117,100 @@ const customIconData = new Map([
     "terminal-box",
     roundedStrokeIcon(`<rect x="3" y="4" width="18" height="16" rx="2.5"/><path d="m7 9 3 3-3 3M13 15h4"/>`),
   ],
+  // Second pass: settings navigation, desktop header, and project tree glyphs
+  // that use different Remixicon semantic names from the first rounded batch.
+  [
+    "ai-generate-2",
+    roundedStrokeIcon(`<rect x="3.5" y="5" width="13" height="15.5" rx="2.5"/><path d="m18.5 2 .7 2.3 2.3.7-2.3.7-.7 2.3-.7-2.3-2.3-.7 2.3-.7Z"/><path d="m11.5 10 .5 1.5 1.5.5-1.5.5-.5 1.5-.5-1.5-1.5-.5 1.5-.5Z"/>`),
+  ],
+  [
+    "bar-chart-2",
+    roundedStrokeIcon(`<path d="M4 20V11M9.3 20V6M14.7 20v-8M20 20V3.5"/>`),
+  ],
+  [
+    "book",
+    roundedStrokeIcon(`<path d="M5.5 3.5h13A2.5 2.5 0 0 1 21 6v14.5H6a3 3 0 0 1-3-3V6a2.5 2.5 0 0 1 2.5-2.5Z"/><path d="M6 16.5h15M7.5 7.5h8"/>`),
+  ],
+  [
+    "book-open",
+    roundedStrokeIcon(`<path d="M12 6.5c-1.7-1.8-4.4-2.7-8-2.5v14.5c3.6-.2 6.3.7 8 2.5M12 6.5c1.7-1.8 4.4-2.7 8-2.5v14.5c-3.6-.2-6.3.7-8 2.5M12 6.5V21"/>`),
+  ],
+  [
+    "chat-ai-3",
+    roundedStrokeIcon(`<path d="M6.5 18.5 3.5 21v-4.6A7.5 7.5 0 0 1 2.5 12c0-4.7 4.2-8.5 9.5-8.5 1.2 0 2.4.2 3.4.6M8 11.5h4"/><path d="m18.5 4 .7 2.3 2.3.7-2.3.7-.7 2.3-.7-2.3-2.3-.7 2.3-.7Z"/>`),
+  ],
+  [
+    "chat-history",
+    roundedStrokeIcon(`<path d="M6.5 18.5 3.5 21v-4.6A7.5 7.5 0 0 1 2.5 12c0-4.7 4.2-8.5 9.5-8.5 5.1 0 9.2 3.5 9.5 8"/><circle cx="16.5" cy="16.5" r="4.5"/><path d="M16.5 14v2.8l1.8 1"/>`),
+  ],
+  [
+    "chat-thread",
+    roundedStrokeIcon(`<path d="M7 15.5 3.5 18v-4.2A6.8 6.8 0 0 1 3 11.2C3 7.2 6.6 4 11 4s8 3.2 8 7.2c0 .4 0 .8-.1 1.2"/><path d="M13.5 18.5 16 21v-3.4a5.2 5.2 0 0 0 1.3-3.4c0-2.8-2.4-5.1-5.5-5.1"/>`),
+  ],
+  [
+    "command",
+    roundedStrokeIcon(`<path d="M9 8V5.5A2.5 2.5 0 1 0 6.5 8H9Zm0 0h6m0 0V5.5A2.5 2.5 0 1 1 17.5 8H15Zm0 0v8m0 0h2.5a2.5 2.5 0 1 1-2.5 2.5V16Zm0 0H9m0 0v2.5A2.5 2.5 0 1 1 6.5 16H9Zm0 0V8"/>`),
+  ],
+  [
+    "computer",
+    roundedStrokeIcon(`<rect x="3" y="4" width="18" height="13" rx="2.5"/><path d="M9 21h6M12 17v4"/>`),
+  ],
+  [
+    "folder",
+    roundedStrokeIcon(`<path d="M3 7.5A2.5 2.5 0 0 1 5.5 5h4l2 2H19a2 2 0 0 1 2 2v8.5a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 17.5Z"/>`),
+  ],
+  [
+    "folder-6",
+    roundedStrokeIcon(`<path d="M3 7.5A2.5 2.5 0 0 1 5.5 5h4l2 2H19a2 2 0 0 1 2 2v8.5a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 17.5Z"/><path d="M3.5 10h17"/>`),
+  ],
+  [
+    "folder-open",
+    roundedStrokeIcon(`<path d="M3.5 10V7.5A2.5 2.5 0 0 1 6 5h3.5l2 2H18a2 2 0 0 1 2 2v1"/><path d="M4 10h17l-2.2 8.2a2.4 2.4 0 0 1-2.3 1.8h-11a2.4 2.4 0 0 1-2.3-3Z"/>`),
+  ],
+  [
+    "folders",
+    roundedStrokeIcon(`<path d="M6.5 6V5A2 2 0 0 1 8.5 3h3l2 2H20a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-1"/><path d="M2.5 10A2.5 2.5 0 0 1 5 7.5h3.5l2 2H17a2 2 0 0 1 2 2v7A2.5 2.5 0 0 1 16.5 21H5A2.5 2.5 0 0 1 2.5 18.5Z"/>`),
+  ],
+  [
+    "history",
+    roundedStrokeIcon(`<path d="M4 7.5V3.5M4 7.5h4"/><path d="M4.7 7.1A9 9 0 1 1 3 12"/><path d="M12 7.5V12l3 2"/>`),
+  ],
+  [
+    "home-office",
+    roundedStrokeIcon(`<path d="m3 10 9-7 9 7M5 9v11h14V9"/><path d="M8 20v-6h8v6M9 9h6"/>`),
+  ],
+  [
+    "layout-column",
+    roundedStrokeIcon(`<rect x="3" y="4" width="18" height="16" rx="3"/><path d="M12 4v16"/>`),
+  ],
+  [
+    "list-indefinite",
+    roundedStrokeIcon(`<path d="M13 5h8M13 12h8M13 19h8"/><rect x="3" y="3.5" width="6" height="6" rx="2"/><circle cx="6" cy="18" r="3"/>`),
+  ],
+  [
+    "mic",
+    roundedStrokeIcon(`<rect x="8" y="3" width="8" height="13" rx="4"/><path d="M5 11.5a7 7 0 0 0 14 0M12 18.5V22M8.5 22h7"/>`),
+  ],
+  [
+    "notification-3",
+    roundedStrokeIcon(`<path d="M5 17.5h14l-1.5-2.3V10a5.5 5.5 0 0 0-11 0v5.2ZM9.5 20a2.7 2.7 0 0 0 5 0"/>`),
+  ],
+  [
+    "palette",
+    roundedStrokeIcon(`<path d="M12 3a9 9 0 0 0 0 18h1a2 2 0 0 0 1.4-3.4 2 2 0 0 1 1.4-3.4h1.7A3.5 3.5 0 0 0 21 10.7C21 6.4 17 3 12 3Z"/><circle cx="7.5" cy="11.5" r=".7"/><circle cx="10" cy="7" r=".7"/><circle cx="15" cy="7.5" r=".7"/>`),
+  ],
+  [
+    "picture-in-picture-2",
+    roundedStrokeIcon(`<rect x="3" y="4" width="18" height="16" rx="3"/><rect x="12.5" y="11.5" width="6" height="5" rx="1.5"/><path d="m7 12 4-4M7 8h4v4"/>`),
+  ],
+  [
+    "plug-2",
+    roundedStrokeIcon(`<path d="M8 3v5M16 3v5M6 8h12v2a6 6 0 0 1-5 5.9V21h-2v-5.1A6 6 0 0 1 6 10Z"/>`),
+  ],
+  [
+    "window",
+    roundedStrokeIcon(`<rect x="3" y="4" width="18" height="16" rx="3"/><path d="M3 9h18M7 6.5h.01M10 6.5h.01"/>`),
+  ],
 ])
 
 const source = readFileSync(remixPath, "utf-8")

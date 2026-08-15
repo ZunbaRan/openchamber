@@ -98,6 +98,7 @@ describe('v1.18.1 search preservation', () => {
       ['window controls style', 'sessions.desktop-window-controls-style', baseCtx],
       ['openai-compatible', 'providers.custom', baseCtx],
       ['dock badge', 'appearance.dock-badge', macCtx],
+      ['dock icon', 'appearance.dock-icon', macCtx],
       ['update notifications', 'sessions.opencode-update-notifications', baseCtx],
     ];
     for (const [query, expectedId, ctx] of cases) {
@@ -137,6 +138,9 @@ describe('v1.18.1 search preservation', () => {
 
     expect(buildSettingsSearchResults({ query: 'dock badge', runtimeCtx: macCtx, t, getPageTitle }).some((r) => r.id === 'appearance.dock-badge')).toBe(true);
     expect(buildSettingsSearchResults({ query: 'dock badge', runtimeCtx: linuxCtx, t, getPageTitle }).some((r) => r.id === 'appearance.dock-badge')).toBe(false);
+    expect(buildSettingsSearchResults({ query: 'dock icon', runtimeCtx: macCtx, t, getPageTitle }).some((r) => r.id === 'appearance.dock-icon')).toBe(true);
+    expect(buildSettingsSearchResults({ query: 'dock icon', runtimeCtx: linuxCtx, t, getPageTitle }).some((r) => r.id === 'appearance.dock-icon')).toBe(false);
+    expect(buildSettingsSearchResults({ query: 'dock icon', runtimeCtx: { ...macCtx, isDesktopLocalOrigin: false }, t, getPageTitle }).some((r) => r.id === 'appearance.dock-icon')).toBe(false);
     expect(buildSettingsSearchResults({ query: 'installed app', runtimeCtx: webCtx, t, getPageTitle }).some((r) => r.id === 'appearance.pwa-install-name')).toBe(true);
     expect(buildSettingsSearchResults({ query: 'installed app', runtimeCtx: baseCtx, t, getPageTitle }).some((r) => r.id === 'appearance.pwa-install-name')).toBe(false);
   });

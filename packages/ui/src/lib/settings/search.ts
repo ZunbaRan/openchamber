@@ -132,6 +132,14 @@ const SETTINGS_SEARCH_ITEMS: readonly SettingsSearchItem[] = [
     isAvailable: (ctx) => ctx.isMac,
   },
   {
+    id: 'appearance.dock-icon',
+    page: 'appearance',
+    titleKey: 'settings.openchamber.visual.field.dockIcon',
+    descriptionKey: 'settings.openchamber.visual.field.dockIconHint',
+    keywords: ['dock', 'icon', 'ice', 'blue', 'black', 'macos', 'appearance'],
+    isAvailable: (ctx) => ctx.isDesktopLocalOrigin && ctx.isMac,
+  },
+  {
     id: 'appearance.pwa-install-name',
     page: 'appearance',
     titleKey: 'settings.openchamber.visual.field.installAppName',

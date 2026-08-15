@@ -8,9 +8,9 @@ interface DiffIconProps extends Omit<SVGProps<SVGSVGElement>, 'children'> {
 
 export function DiffViewIcon({ className = 'h-5 w-5' }: { className?: string }) {
   return (
-    <span aria-hidden="true" className={`relative inline-block overflow-hidden rounded-[2px] ${className}`}>
-      <span className="absolute left-[20%] top-[20%] h-[60%] w-[25%] bg-[var(--status-error)]/25" />
-      <span className="absolute right-[20%] top-[20%] h-[60%] w-[25%] bg-[var(--status-success)]/25" />
+    <span aria-hidden="true" className={`relative inline-block overflow-hidden rounded-[3px] ${className}`}>
+      <span className="absolute left-[22%] top-[22%] h-[56%] w-[22%] rounded-full bg-[var(--status-error)]/20" />
+      <span className="absolute right-[22%] top-[22%] h-[56%] w-[22%] rounded-full bg-[var(--status-success)]/20" />
       <Icon name="layout-column" className="absolute inset-0 h-full w-full" />
     </span>
   );

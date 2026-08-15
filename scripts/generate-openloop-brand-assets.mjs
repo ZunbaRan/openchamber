@@ -9,6 +9,7 @@ import sharp from 'sharp';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const source = path.join(root, 'assets/brand/openloop-app-icon.png');
+const blackSource = path.join(root, 'assets/brand/openloop-app-icon-black.png');
 const checkOnly = process.argv.includes('--check');
 const mismatches = [];
 // Keep the entire rounded tile and loop inside the macOS icon safe area. Every
@@ -44,7 +45,7 @@ const renderSquare = async (size) => sharp(source)
   .png({ compressionLevel: 9 })
   .toBuffer();
 
-const renderDesktopIcon = async (size) => {
+const renderDesktopIcon = async (size, inputSource = source) => {
   const inset = Math.max(1, Math.round(size * desktopIconTransparentMargin / desktopIconReferenceSize));
   const contentSize = size - inset * 2;
   const radius = Math.round(contentSize * 0.1875);
@@ -54,7 +55,7 @@ const renderDesktopIcon = async (size) => {
       + '</svg>',
   );
 
-  const content = await sharp(source)
+  const content = await sharp(inputSource)
     .resize(contentSize, contentSize, { fit: 'cover' })
     .ensureAlpha()
     .composite([{ input: mask, blend: 'dest-in' }])
@@ -84,6 +85,15 @@ const desktopPngTargets = [
 for (const [relativePath, size] of desktopPngTargets) {
   await writeGenerated(relativePath, await renderDesktopIcon(size));
 }
+
+await writeGenerated(
+  'packages/electron/resources/icons/dock-icon-ice.png',
+  await renderDesktopIcon(1024, source),
+);
+await writeGenerated(
+  'packages/electron/resources/icons/dock-icon-black.png',
+  await renderDesktopIcon(1024, blackSource),
+);
 
 const pngTargets = [
   ['packages/vscode/assets/app-icon.png', 512],

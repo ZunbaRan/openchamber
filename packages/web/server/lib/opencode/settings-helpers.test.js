@@ -162,6 +162,21 @@ describe('settings helpers', () => {
     });
   });
 
+  it('accepts only supported macOS Dock icon variants', () => {
+    const helpers = createTestHelpers();
+
+    expect(helpers.sanitizeSettingsUpdate({ desktopDockIconVariant: 'ice' })).toEqual({
+      desktopDockIconVariant: 'ice',
+    });
+    expect(helpers.sanitizeSettingsUpdate({ desktopDockIconVariant: 'black' })).toEqual({
+      desktopDockIconVariant: 'black',
+    });
+    expect(helpers.sanitizeSettingsUpdate({ desktopDockIconVariant: 'red' })).toEqual({});
+    expect(helpers.formatSettingsResponse({ desktopDockIconVariant: 'black' })).toMatchObject({
+      desktopDockIconVariant: 'black',
+    });
+  });
+
   it('normalizes desktopWindowControlsPosition and maps legacy auto to right', () => {
     const helpers = createTestHelpers();
 

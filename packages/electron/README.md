@@ -88,7 +88,7 @@ After macOS signing, the Electron Builder `afterSign` hook rejects packages that
 
 ## Platform Notes
 
-Local macOS packaging uses the generated `resources/icons/icon.icns` and does not compile an Icon Composer catalog. Notarized release builds still require the Apple signing/notarization toolchain; running `generate:macos-icon` separately requires full Xcode and `actool`.
+Local macOS packaging uses the generated `resources/icons/icon.icns` and does not compile an Icon Composer catalog. It also bundles `dock-icon-ice.png` and `dock-icon-black.png`: Appearance settings can change the running Dock tile between those variants, with ice blue as the default. Finder, Launchpad, and the installed application bundle continue to use `icon.icns`. Notarized release builds still require the Apple signing/notarization toolchain; running `generate:macos-icon` separately requires full Xcode and `actool`.
 
 Windows packaging needs NSIS support through `electron-builder`. If no Windows signing env is set, `package.mjs` disables code signing and builds an unsigned installer. Windows updates use `latest.yml` for x64 and the `latest-arm64.yml` channel for ARM64 so each installation resolves an architecture-matching installer.
 

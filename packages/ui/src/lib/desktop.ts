@@ -43,6 +43,7 @@ export type DesktopWindowControlsSide = 'left' | 'right';
 export type DesktopWindowControlAction = 'close' | 'minimize' | 'maximize';
 // No fixed-width constant: control width depends on the style (classic vs traffic-lights).
 export type DesktopWindowControlsStyle = 'classic' | 'traffic-lights';
+export type DesktopDockIconVariant = 'ice' | 'black';
 
 export type DesktopSettings = {
   themeId?: string;
@@ -62,6 +63,7 @@ export type DesktopSettings = {
   desktopKeepAwakeEnabled?: boolean;
   desktopMinimizeToTrayEnabled?: boolean;
   desktopMacMenuBarEnabled?: boolean;
+  desktopDockIconVariant?: DesktopDockIconVariant;
   desktopUiPassword?: string;
   projects?: ProjectEntry[];
   activeProjectId?: string;
@@ -369,6 +371,45 @@ type KeepAwakeStatus = {
 type MinimizeToTrayStatus = {
   supported: boolean;
   enabled: boolean;
+};
+
+type DesktopDockIconStatus = {
+  supported: boolean;
+  variant: DesktopDockIconVariant;
+};
+
+export const normalizeDesktopDockIconVariant = (value: unknown): DesktopDockIconVariant => {
+  return value === 'black' ? 'black' : 'ice';
+};
+
+export const getDesktopDockIcon = async (): Promise<DesktopDockIconStatus | null> => {
+  if (!canUseElectronDesktopIPC() || !isDesktopLocalOriginActive() || getElectronPlatform() !== 'darwin') {
+    return null;
+  }
+
+  try {
+    const result = await invokeDesktop<DesktopDockIconStatus>('desktop_get_dock_icon');
+    if (!result || result.supported !== true) return null;
+    return { supported: true, variant: normalizeDesktopDockIconVariant(result.variant) };
+  } catch (error) {
+    console.warn('Failed to get Dock icon status', error);
+    return null;
+  }
+};
+
+export const setDesktopDockIcon = async (variant: DesktopDockIconVariant): Promise<DesktopDockIconStatus | null> => {
+  if (!canUseElectronDesktopIPC() || !isDesktopLocalOriginActive() || getElectronPlatform() !== 'darwin') {
+    return null;
+  }
+
+  try {
+    const result = await invokeDesktop<DesktopDockIconStatus>('desktop_set_dock_icon', { variant });
+    if (!result || result.supported !== true) return null;
+    return { supported: true, variant: normalizeDesktopDockIconVariant(result.variant) };
+  } catch (error) {
+    console.warn('Failed to set Dock icon', error);
+    throw error;
+  }
 };
 
 export const getDesktopLaunchAtLogin = async (): Promise<LaunchAtLoginStatus | null> => {

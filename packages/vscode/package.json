@@ -2,7 +2,7 @@
   "name": "openchamber",
   "displayName": "OpenLoop",
   "description": "%extension.description%",
-  "version": "1.18.8",
+  "version": "1.18.9",
   "publisher": "fedaykindev",
   "private": true,
   "repository": {

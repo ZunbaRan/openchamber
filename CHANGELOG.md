@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.18.9] - 2026-08-15
+
+- **Desktop/macOS:** the running Dock icon now defaults to the ice-blue OpenLoop artwork and can be switched to a black variant from Appearance settings; the choice is persisted and restored on launch.
+- **UI:** a second group of navigation, settings, workspace, history, layout, and media icons now uses softer rounded strokes with more consistent visual weight.
+- **Desktop development:** privileged local IPC now recognizes the exact loopback Vite renderer origin, so native settings can be tested in development without broadening access to remote hosts.
+
 ## [1.18.6] - 2026-08-14
 
 - **Desktop HTML Artifacts:** scrolling with the pointer over a non-scrollable or boundary-reached interactive Artifact now continues through the owning conversation for both mouse wheels and trackpads.

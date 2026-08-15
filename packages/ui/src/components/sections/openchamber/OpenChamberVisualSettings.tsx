@@ -19,15 +19,19 @@ import {
 import { Icon } from "@/components/icon/Icon";
 import {
     isDesktopShell,
+    isDesktopLocalOriginActive,
     isVSCodeRuntime,
     isWebRuntime,
+    getDesktopDockIcon,
+    setDesktopDockIcon,
     usesFramelessElectronChrome,
+    type DesktopDockIconVariant,
     type DesktopWindowControlsPosition,
     type DesktopWindowControlsStyle,
 } from '@/lib/desktop';
 import { useDeviceInfo } from '@/lib/device';
 import { usePwaDetection } from '@/hooks/usePwaDetection';
-import { updateDesktopSettings } from '@/lib/persistence';
+import { reportSettingsSaveState, updateDesktopSettings } from '@/lib/persistence';
 import { CODE_FONT_OPTIONS, DEFAULT_MONO_FONT, DEFAULT_UI_FONT, UI_FONT_OPTIONS, type MonoFontOption, type UiFontOption } from '@/lib/fontOptions';
 import { useI18n, type Locale } from '@/lib/i18n';
 import { useConfigStore } from '@/stores/useConfigStore';
@@ -283,7 +287,12 @@ const normalizeUserMessageRenderingMode = (mode: unknown): 'markdown' | 'plain' 
     return mode === 'markdown' ? 'markdown' : 'plain';
 };
 
-type VisibleSetting = 'sessionAssist' | 'sessionGoal' | 'theme' | 'windowControlsPosition' | 'pwaInstallName' | 'pwaOrientation' | 'mobileKeyboardMode' | 'timeFormat' | 'weekStart' | 'fontSize' | 'terminalFontSize' | 'terminalShell' | 'terminalLoginShell' | 'editorFontSize' | 'spacing' | 'inputBarOffset' | 'mermaidRendering' | 'userMessageRendering' | 'chatRenderMode' | 'messageTransport' | 'activityRenderMode' | 'collapsibleUserMessages' | 'stickyUserHeader' | 'promptNavigatorEnabled' | 'wideChatLayout' | 'codeBlockLineWrap' | 'splitAssistantMessageActions' | 'subagentReadOnlyBanner' | 'diffLayout' | 'mobileStatusBar' | 'dotfiles' | 'fileViewerPreview' | 'reasoning' | 'showToolFileIcons' | 'showTurnChangedFiles' | 'expandedTools' | 'followUpBehavior' | 'terminalQuickKeys' | 'fileEditorKeymap' | 'persistDraft' | 'inputSpellcheck' | 'reportUsage' | 'expandedEditorToolbar' | 'autoSaveEnabled';
+type VisibleSetting = 'sessionAssist' | 'sessionGoal' | 'theme' | 'dockIcon' | 'windowControlsPosition' | 'pwaInstallName' | 'pwaOrientation' | 'mobileKeyboardMode' | 'timeFormat' | 'weekStart' | 'fontSize' | 'terminalFontSize' | 'terminalShell' | 'terminalLoginShell' | 'editorFontSize' | 'spacing' | 'inputBarOffset' | 'mermaidRendering' | 'userMessageRendering' | 'chatRenderMode' | 'messageTransport' | 'activityRenderMode' | 'collapsibleUserMessages' | 'stickyUserHeader' | 'promptNavigatorEnabled' | 'wideChatLayout' | 'codeBlockLineWrap' | 'splitAssistantMessageActions' | 'subagentReadOnlyBanner' | 'diffLayout' | 'mobileStatusBar' | 'dotfiles' | 'fileViewerPreview' | 'reasoning' | 'showToolFileIcons' | 'showTurnChangedFiles' | 'expandedTools' | 'followUpBehavior' | 'terminalQuickKeys' | 'fileEditorKeymap' | 'persistDraft' | 'inputSpellcheck' | 'reportUsage' | 'expandedEditorToolbar' | 'autoSaveEnabled';
+
+const DOCK_ICON_OPTIONS: Array<{ id: DesktopDockIconVariant; labelKey: string }> = [
+    { id: 'ice', labelKey: 'settings.openchamber.visual.option.dockIcon.ice' },
+    { id: 'black', labelKey: 'settings.openchamber.visual.option.dockIcon.black' },
+];
 
 const WINDOW_CONTROLS_POSITION_OPTIONS: Array<{ id: DesktopWindowControlsPosition; labelKey: string }> = [
     { id: 'left', labelKey: 'settings.openchamber.desktopNetwork.option.windowControlsLeft' },
@@ -424,6 +433,11 @@ export const OpenChamberVisualSettings: React.FC<OpenChamberVisualSettingsProps>
     );
     const dockBadgeEnabled = useUIStore(state => state.dockBadgeEnabled);
     const setDockBadgeEnabled = useUIStore(state => state.setDockBadgeEnabled);
+    const dockIconSupported = isDesktopShell() && isDesktopLocalOriginActive() && typeof window !== 'undefined'
+        && (window as unknown as { __OPENCHAMBER_PLATFORM__?: string }).__OPENCHAMBER_PLATFORM__ === 'darwin';
+    const [dockIconVariant, setDockIconVariant] = React.useState<DesktopDockIconVariant>('ice');
+    const [dockIconLoading, setDockIconLoading] = React.useState(dockIconSupported);
+    const [dockIconSaving, setDockIconSaving] = React.useState(false);
     const showWindowControlsPosition = usesFramelessElectronChrome();
     const desktopWindowControlsPosition = useUIStore((state) => state.desktopWindowControlsPosition);
     const setDesktopWindowControlsPosition = useUIStore((state) => state.setDesktopWindowControlsPosition);
@@ -448,6 +462,40 @@ export const OpenChamberVisualSettings: React.FC<OpenChamberVisualSettingsProps>
         setDesktopWindowControlsStyle(value);
         void updateDesktopSettings({ desktopWindowControlsStyle: value });
     }, [setDesktopWindowControlsStyle]);
+
+    React.useEffect(() => {
+        if (!dockIconSupported) return;
+        let cancelled = false;
+        void getDesktopDockIcon()
+            .then((status) => {
+                if (!cancelled && status?.supported) setDockIconVariant(status.variant);
+            })
+            .finally(() => {
+                if (!cancelled) setDockIconLoading(false);
+            });
+        return () => {
+            cancelled = true;
+        };
+    }, [dockIconSupported]);
+
+    const handleDockIconChange = React.useCallback(async (variant: DesktopDockIconVariant) => {
+        if (dockIconLoading || dockIconSaving || variant === dockIconVariant) return;
+        const previous = dockIconVariant;
+        setDockIconVariant(variant);
+        setDockIconSaving(true);
+        reportSettingsSaveState('saving');
+        try {
+            const status = await setDesktopDockIcon(variant);
+            if (!status?.supported) throw new Error('Dock icon switching is unavailable');
+            setDockIconVariant(status.variant);
+            reportSettingsSaveState('saved');
+        } catch {
+            setDockIconVariant(previous);
+            reportSettingsSaveState('error');
+        } finally {
+            setDockIconSaving(false);
+        }
+    }, [dockIconLoading, dockIconSaving, dockIconVariant]);
 
     const shouldAnimateChatPreview = (isSettingsDialogOpen || isMobile || isVSCodeRuntime())
         && (visibleSettings ? visibleSettings.includes('chatRenderMode') : true);
@@ -988,6 +1036,27 @@ export const OpenChamberVisualSettings: React.FC<OpenChamberVisualSettingsProps>
                                             info={t('settings.openchamber.visual.field.dockBadgeHint')}
                                             ariaLabel={t('settings.openchamber.visual.field.dockBadge')}
                                         />
+                                    </SettingsInset>
+                                )}
+
+                                {shouldShow('dockIcon') && dockIconSupported && (
+                                    <SettingsInset>
+                                        <SettingsStackedField
+                                            label={t('settings.openchamber.visual.field.dockIcon')}
+                                            info={t('settings.openchamber.visual.field.dockIconHint')}
+                                            settingsItem="appearance.dock-icon"
+                                        >
+                                            <SettingsChipGroup
+                                                value={dockIconVariant}
+                                                options={DOCK_ICON_OPTIONS.map((option) => ({
+                                                    value: option.id,
+                                                    label: tUnsafe(option.labelKey),
+                                                    disabled: dockIconLoading || dockIconSaving,
+                                                }))}
+                                                onChange={(variant) => void handleDockIconChange(variant)}
+                                                aria-label={t('settings.openchamber.visual.field.dockIconAria')}
+                                            />
+                                        </SettingsStackedField>
                                     </SettingsInset>
                                 )}
                             </SettingsSection>

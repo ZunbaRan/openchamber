@@ -56,6 +56,7 @@ import {
   isDesktopBinarySaveCommand,
 } from "./desktop-binary-save.mjs";
 import { ensureMacosLaunchServicesRegistration } from "./macos-launch-services-registration.mjs";
+import { createDockIconController } from "./dock-icon.mjs";
 
 const execFileAsync = promisify(execFile);
 
@@ -1267,6 +1268,14 @@ const buildLocalUrl = (port) => `http://127.0.0.1:${port}`;
 
 const resourceRoot = () =>
   isDev ? path.join(__dirname, "resources") : process.resourcesPath;
+const dockIconController = createDockIconController({
+  platform: process.platform,
+  dock: app.dock,
+  resourceRoot,
+  readSettingsRoot,
+  mutateSettingsRoot,
+  fileExists: fs.existsSync,
+});
 const resolveWebDistDir = () => path.join(resourceRoot(), "web-dist");
 const shouldUsePackagedUi = () => {
   if (process.env.OPENCHAMBER_ELECTRON_LOAD_SERVER_UI === "1") return false;
@@ -4464,6 +4473,12 @@ const handleInvoke = async (browserWindow, command, args = {}) => {
     case "desktop_get_app_version":
       return APP_VERSION;
 
+    case "desktop_get_dock_icon":
+      return dockIconController.getStatus();
+
+    case "desktop_set_dock_icon":
+      return dockIconController.setVariant(args.variant);
+
     case "desktop_get_launch_at_login": {
       if (process.platform === "linux") {
         return { supported: true, enabled: await readLinuxAutostartEnabled() };
@@ -6018,6 +6033,16 @@ const isLocalSender = (webContents) => {
     if (url.protocol === `${UI_PROTOCOL}:` && url.hostname === "app")
       return true;
     if (url.protocol !== "http:" && url.protocol !== "https:") return false;
+    // In development the renderer and API intentionally run on separate
+    // loopback ports (Vite on 5173, the local API on 3901). Keep the privileged
+    // bridge restricted to the exact configured HMR UI origin; treating only
+    // the API origin as local makes every desktop-only setting fail in dev.
+    if (isDev && url.protocol === "http:") {
+      const hmrUiPort = String(process.env.OPENCHAMBER_HMR_UI_PORT || "5173");
+      const loopbackHost =
+        url.hostname === "127.0.0.1" || url.hostname === "localhost";
+      if (loopbackHost && url.port === hmrUiPort) return true;
+    }
     if (state.localOrigin) {
       try {
         const allowed = new URL(state.localOrigin);
@@ -6508,6 +6533,11 @@ app
       );
     });
     nativeTheme.themeSource = readThemeSource();
+    try {
+      dockIconController.initialize();
+    } catch (error) {
+      log.warn("[electron] failed to apply the persisted Dock icon", error);
+    }
     registerPackagedUiProtocol();
     setupAutoUpdater();
 
