@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.18.10] - 2026-08-15
+
+- **Desktop/macOS:** the black Dock icon no longer contains a pale outer plate, so switching from the default ice-blue icon keeps a clean transparent edge in the Dock.
+- **Branding:** startup and browser empty-state surfaces now use the same OpenLoop product artwork as the packaged application icon instead of a simplified outline approximation.
+- **Interactive HTML Artifacts:** prompt-history previews now occlude native Artifact surfaces correctly, preventing interactive HTML from drawing over the conversation-summary popover.
+- **Settings:** removed external OpenCode CLI path and update controls from the OpenLoop settings UI; desktop builds consistently use the embedded OpenCode fork required by OpenLoop features.
+
 ## [1.18.9] - 2026-08-15
 
 - **Desktop/macOS:** the running Dock icon now defaults to the ice-blue OpenLoop artwork and can be switched to a black variant from Appearance settings; the choice is persisted and restored on launch.

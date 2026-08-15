@@ -617,6 +617,7 @@ export function PromptNavigatorRail({
                     {highlightedPrompt && highlightedIndex !== null ? (
                         <div
                             ref={panelRef}
+                            data-oc-native-surface-occluder="true"
                             className={cn(
                                 'pointer-events-auto absolute right-full top-1/2 z-30 mr-3 -translate-y-1/2',
                                 'w-[min(20rem,calc(100vw-6rem))] overflow-hidden rounded-xl',

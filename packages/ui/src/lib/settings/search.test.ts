@@ -99,7 +99,6 @@ describe('v1.18.1 search preservation', () => {
       ['openai-compatible', 'providers.custom', baseCtx],
       ['dock badge', 'appearance.dock-badge', macCtx],
       ['dock icon', 'appearance.dock-icon', macCtx],
-      ['update notifications', 'sessions.opencode-update-notifications', baseCtx],
     ];
     for (const [query, expectedId, ctx] of cases) {
       const results = buildSettingsSearchResults({
@@ -112,23 +111,18 @@ describe('v1.18.1 search preservation', () => {
     }
   });
 
-  test('keeps the Windows ARM64 gate on update notifications', () => {
-    const armCtx = { ...baseCtx, isWindowsArm64: true };
-    const withArm = buildSettingsSearchResults({
-      query: 'update notifications',
-      runtimeCtx: armCtx,
-      t,
-      getPageTitle,
-    });
-    expect(withArm.some((result) => result.id === 'sessions.opencode-update-notifications')).toBe(false);
+  test('does not surface hidden external CLI controls', () => {
+    const hiddenIds = new Set([
+      'sessions.opencode-binary',
+      'sessions.opencode-update-notifications',
+      'sessions.agent-control-tool',
+    ]);
+    const queries = ['opencode binary', 'update notifications', 'agent control'];
 
-    const withoutArm = buildSettingsSearchResults({
-      query: 'update notifications',
-      runtimeCtx: baseCtx,
-      t,
-      getPageTitle,
-    });
-    expect(withoutArm.some((result) => result.id === 'sessions.opencode-update-notifications')).toBe(true);
+    for (const query of queries) {
+      const results = buildSettingsSearchResults({ query, runtimeCtx: baseCtx, t, getPageTitle });
+      expect(results.some((result) => hiddenIds.has(result.id))).toBe(false);
+    }
   });
 
   test('keeps the dock badge macOS-only rule and the PWA-only install name rule', () => {

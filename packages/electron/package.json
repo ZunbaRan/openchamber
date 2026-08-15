@@ -1,6 +1,6 @@
 {
   "name": "@openchamber/electron",
-  "version": "1.18.9",
+  "version": "1.18.10",
   "private": true,
   "description": "Electron desktop runtime for OpenLoop",
   "author": "OpenLoop",
