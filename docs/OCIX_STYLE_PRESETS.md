@@ -1,9 +1,9 @@
 # OCIX 风格预设系统（Style Presets）
 
-> **状态**：设计规划（**本阶段不实施代码**）  
-> **日期**：2026-08-05  
-> **执行主计划**：[OCIX_DECLARATIVE_NATIVE_STYLE_V2_PLAN.md](./OCIX_DECLARATIVE_NATIVE_STYLE_V2_PLAN.md)（本文替代其 §3 原 Q5 冻结值）  
-> **入口简报**：[OCIX_STYLE_V2_AGENT_BRIEF.md](./OCIX_STYLE_V2_AGENT_BRIEF.md)  
+> **状态**：8 套预设系统与 S1–S5 已实现合入；人工 `8 presets × light/dark` 审图与预设 Golden 子矩阵仍待执行。S6 Native Recharts 是 roadmap P3.5 `later` 条件项，不由本文自动启动。
+> **日期**：2026-08-05（状态回写 2026-08-10）
+> **执行主计划**：[OCIX_DECLARATIVE_NATIVE_STYLE_V2_PLAN.md](./OCIX_DECLARATIVE_NATIVE_STYLE_V2_PLAN.md)（本文替代其 §3 原 Q5 冻结值）
+> **入口简报**：[OCIX_STYLE_V2_AGENT_BRIEF.md](./OCIX_STYLE_V2_AGENT_BRIEF.md)
 > **数据来源**：[VoltAgent/awesome-design-md](https://github.com/VoltAgent/awesome-design-md)（Linear / Claude / Notion / Figma / Vercel / Apple / Binance 的 DESIGN.md）+ 品牌官网与公认品牌知识演绎（Notion / Figma / Apple / Slack 深色；Slack 全套，仓库未收录）
 
 ---
@@ -12,7 +12,7 @@
 
 | ID | 决策 | 内容 |
 |----|------|------|
-| **D-P1** | 生效粒度 | **Host 级用户设置**；扩展可通过 manifest / 开发 skill **推荐**预设，用户始终可自选覆盖；任意时刻全局仅一套生效 |
+| **D-P1** | 生效粒度 | **当前已实现仅为 Host 级用户设置**；任意时刻全局仅一套生效。扩展推荐字段尚未实现，不属于现行 manifest v1 合同 |
 | **D-P2** | 首批范围 | **全量 8 套**：`linear`（默认）/ `vercel` / `notion` / `claude` / `apple` / `figma` / `binance` / `slack` |
 | **D-P3** | 深色缺口 | 官方数据优先；缺失项按品牌哲学**演绎补齐**（Notion / Figma / Apple / Slack），全部进入审图清单（§5） |
 | **D-P4** | 字体统一 | **字阶全局统一 sans，不随预设变化**；Claude 不引 serif；不为单一品牌破坏统一设计 |
@@ -44,15 +44,15 @@
 - 设置 UI：Settings 增加「Interactive UI 风格」选择器，含每套预设的实时缩略预览。
 - 落点：经 RuntimeAPIs 持久化；`.ocix-scope` 挂载 `data-ocix-preset` 属性。
 
-### 2.2 扩展推荐契约（D-P1 细则）
+### 2.2 扩展推荐候选（未实施、非现行合同）
 
-- manifest 可选字段 `style.recommendedPreset: "<presetId>"`：仅作 Extension Manager / 安装审查 UI 的**提示**，**永不自动应用**。
-- 开发 skill `build-openchamber-interactive-extension` 后续批次增补「预设选择建议」一节（本阶段不改 skill）。
-- 用户可忽略任何推荐自行选择；推荐与生效之间没有自动通道。
+- 当前 parser、package validator、Manager UI 与模板均**没有** `style.recommendedPreset`；扩展作者不得在 v1 manifest 中使用或依赖该字段，验收也不得声称已支持。
+- 若未来确有需求，必须另立 roadmap slice，冻结 manifest schema/validator、安装审查 UX、skill 与测试，再由用户授权；候选语义只能是提示且永不自动应用。
+- 在此之前，预设唯一入口是 Host 用户设置 `ocix.stylePreset`；扩展、view 与 Agent 都无推荐或选择通道。
 
 ### 2.3 防彩虹红线（保留）
 
-- view JSON / Generated 通道 / 扩展代码**不得**指定 preset 或 accent；Agent 的样式词汇仍只有 `tone` / `trend` / `emphasis` / `layout.mode`。
+- view JSON / Generated 通道 / 扩展代码**不得**指定 preset 或 accent；Agent 的样式词汇仍只有 `tone` / `trend` / `metric.emphasis` / 根 stack 的 `layoutMode`。
 - Workbench 混排多个扩展时永远同皮；不存在 per-extension 覆盖。
 
 ---

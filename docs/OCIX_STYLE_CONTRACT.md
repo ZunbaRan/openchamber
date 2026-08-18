@@ -1,8 +1,8 @@
 # OCIX Style Contract（风格合同）
 
-> **状态**：v1 冻结（随 Style v2 实现落地）  
-> **日期**：2026-08-06  
-> **适用范围**：Declarative（Installed / Generated）、Trusted Native、HTML Artifact 宿主、Extension Workbench  
+> **状态**：v1 冻结（随 Style v2 实现落地）
+> **日期**：2026-08-06
+> **适用范围**：Declarative（Installed / Generated）、Trusted Native、HTML Artifact 宿主、Extension Workbench
 > **上游文档**：[Style v2 详细规划](./OCIX_DECLARATIVE_NATIVE_STYLE_V2_PLAN.md) · [风格预设系统](./OCIX_STYLE_PRESETS.md) · [Agent 简报](./OCIX_STYLE_V2_AGENT_BRIEF.md)
 
 本文是可验收的视觉合同。数值以 `packages/ui/src/styles/ocix-theme.css`（槽位）与 `packages/ui/src/styles/ocix-presets.css`（预设数据）为准；本文约束语义与禁止项。
@@ -77,7 +77,7 @@
 - 预设 id：`linear`（默认）/ `vercel` / `notion` / `claude` / `apple` / `figma` / `binance` / `slack`，各明暗双板；未知 id 回落 `linear`。
 - 生效面：Host 用户设置 `ocix.stylePreset`（持久化于 ui-store），`.ocix-scope[data-ocix-preset]` 挂载于 InteractiveUIView / HTMLArtifactView / ExtensionWorkbench。
 - 预设只改**色板 / 圆角刻度 / 海拔刻度**三组值；字阶、构图规则、a11y 门禁全局统一。
-- 扩展 manifest `style.recommendedPreset` 仅为 UI 提示，永不自动应用。
+- 当前 manifest v1 **不支持** `style.recommendedPreset`；parser/validator/Manager UI均未实现。扩展推荐仅是未排期候选，须另立 roadmap/schema/UX 授权；现行唯一入口是 Host 用户设置。
 - **HTML Artifact 同步跟随**：宿主把预设解析后的全量 `--ocix-*` 槽位（含 chart-1…8、seq、delta、radius、shadow）注入沙箱文档根部；Artifact 设计指引见内置 skill `html-artifact-design` 与开发者手册 §5.8。Generative Widget（show-widget）是独立路径，**不**消费本 token 体系（2026-08-07 拍板，刻意两套）。
 
 ## 6. 禁止清单

@@ -1,11 +1,12 @@
 # OCIX Declarative / Trusted Native 样式优化 v2 详细规划
 
-> **状态**：**已实现并合入主线**；合并后自动化验收通过，人工视觉矩阵与真实模型对话仍待执行  
-> **日期**：2026-08-05（状态回写 2026-08-07）  
-> **范围**：Declarative 渲染层 + Trusted Native Host UI Kit 的视觉与构图能力；**不**改 Business Gateway / Remote / LDR 后端  
-> **Agent 入口简报（讨论结论 / 推荐冻结）**：[OCIX_STYLE_V2_AGENT_BRIEF.md](./OCIX_STYLE_V2_AGENT_BRIEF.md)  
-> **父文档**：[美化开发指南](./INTERACTIVE_UI_BEAUTIFICATION.md) · [R0 视觉审计](./INTERACTIVE_UI_R0_VISUAL_AUDIT.md) · [执行计划](./INTERACTIVE_UI_BEAUTIFICATION_HTML_ARTIFACT_EXECUTION_PLAN.md) · [开发者手册](./INTERACTIVE_UI_EXTENSION_DEVELOPER_GUIDE.md)  
+> **状态**：**已实现并合入主线**；合并后自动化验收通过，人工视觉矩阵与真实模型对话仍待执行
+> **日期**：2026-08-05（状态回写 2026-08-07）
+> **范围**：Declarative 渲染层 + Trusted Native Host UI Kit 的视觉与构图能力；**不**改 Business Gateway / Remote / LDR 后端
+> **Agent 入口简报（讨论结论 / 推荐冻结）**：[OCIX_STYLE_V2_AGENT_BRIEF.md](./OCIX_STYLE_V2_AGENT_BRIEF.md)
+> **父文档**：[美化开发指南](./INTERACTIVE_UI_BEAUTIFICATION.md) · [R0 视觉审计](./INTERACTIVE_UI_R0_VISUAL_AUDIT.md) · [执行计划](./INTERACTIVE_UI_BEAUTIFICATION_HTML_ARTIFACT_EXECUTION_PLAN.md) · [开发者手册](./INTERACTIVE_UI_EXTENSION_DEVELOPER_GUIDE.md)
 > **输入方案**：用户五层递进提案（Token v2 → 渲染变体 → 构图模式 → Native Kit → 规范与验收）
+> **S6 条件实施蓝图**：[P3_NEXT_WAVE_CAPABILITIES_IMPLEMENTATION_PLAN.md](./P3_NEXT_WAVE_CAPABILITIES_IMPLEMENTATION_PLAN.md) §9、§11.5、§13.5；S6 仍为 roadmap P3.5 `later`、默认不做，PoC 授权不等于产品依赖授权。
 
 ---
 
@@ -34,10 +35,10 @@
 
 ### 1.1 目标
 
-1. 消除 Declarative **单视觉公式**（全部 `OCIX_PANEL` 同款白卡）导致的单调与「一眼假」。  
-2. 补齐 **Token 词汇**，使渲染器与 Native Kit 有可共用的层次语言。  
-3. 用 **构图模式** 把 Agent Generated 从「堆 12 个盒子」升级为「选模式 + 填槽」。  
-4. 扩充 Native Kit，在 **Tailwind 扫描硬约束** 下提高可信扩展的天花板。  
+1. 消除 Declarative **单视觉公式**（全部 `OCIX_PANEL` 同款白卡）导致的单调与「一眼假」。
+2. 补齐 **Token 词汇**，使渲染器与 Native Kit 有可共用的层次语言。
+3. 用 **构图模式** 把 Agent Generated 从「堆 12 个盒子」升级为「选模式 + 填槽」。
+4. 扩充 Native Kit，在 **Tailwind 扫描硬约束** 下提高可信扩展的天花板。
 5. 冻结 **风格合同 + Gallery + Golden** 验收路径，避免再次「改完无参照」。
 
 ### 1.2 非目标（本规划）
@@ -54,16 +55,16 @@
 
 ### 1.3 成功标准（实施后）
 
-- 同一份旧 view JSON **零改动** 即可呈现：hero metric 可辨、次级 quiet、表格密度/行态分层。  
-- Agent 使用 `layout.mode`（或等价）后，对话流首屏 **有且仅有一个视觉焦点**，面板数受 skill 上限约束。  
-- Native 扩展用 Kit 即可完成审批表单（Select/Checkbox/…）与确认 Dialog，**无需**扩展内自定义响应式 class。  
+- 同一份旧 view JSON **零改动** 即可呈现：hero metric 可辨、次级 quiet、表格密度/行态分层。
+- Agent 使用根 stack 的 `layoutMode` 后，对话流首屏 **有且仅有一个视觉焦点**，面板数受 skill 上限约束。
+- Native 扩展用 Kit 即可完成审批表单（Select/Checkbox/…）与确认 Dialog，**无需**扩展内自定义响应式 class。
 - light/dark、关键断点、focus、reduced-motion 有 Style Contract 断言；Gallery 覆盖新 variant/mode。
 
 ---
 
 ## 2. 根因诊断（与代码对齐）
 
-上一轮（2026-07，A 阶段 + R0/R1/R2）解决的是 **「有没有」**：明暗双板、tone/trend、sticky 表头、tooltip、骨架屏、基础 Native Kit。  
+上一轮（2026-07，A 阶段 + R0/R1/R2）解决的是 **「有没有」**：明暗双板、tone/trend、sticky 表头、tooltip、骨架屏、基础 Native Kit。
 「仍然不好看」来自更深结构，且与当前实现一致：
 
 ### 2.1 单一视觉公式
@@ -74,39 +75,39 @@
 const OCIX_PANEL = 'rounded-xl border border-[var(--ocix-border)] bg-[var(--ocix-surface)] p-3';
 ```
 
-metric / 表 / 图 / 列表 / 流程等大量节点共用该常数。层级几乎只剩 `font-medium` vs `font-semibold`。  
+metric / 表 / 图 / 列表 / 流程等大量节点共用该常数。层级几乎只剩 `font-medium` vs `font-semibold`。
 R0 已记 **R0-M01「卡片套卡片、等权边框」**；R1 有所收紧，但 **emphasis tier 仍未成为系统**。
 
 ### 2.2 Token 层偏薄
 
 当前 `packages/ui/src/styles/ocix-theme.css` 实质是：
 
-- 3 级 surface + border  
-- 2 级前景 + selection/focus  
-- primary 一对  
-- 4 组状态色（success/warning/error/info 各 text/bg/border）  
-- **5** 个 categorical chart 色  
-- reduced-motion 兜底  
+- 3 级 surface + border
+- 2 级前景 + selection/focus
+- primary 一对
+- 4 组状态色（success/warning/error/info 各 text/bg/border）
+- **5** 个 categorical chart 色
+- reduced-motion 兜底
 
-**缺失**：圆角刻度、间距刻度、阴影/海拔、字号角色（display）、primary tint/shade、sequential 色、delta 与 success/error 解耦。  
+**缺失**：圆角刻度、间距刻度、阴影/海拔、字号角色（display）、primary tint/shade、sequential 色、delta 与 success/error 解耦。
 说明：`INTERACTIVE_UI_BEAUTIFICATION.md` 实施状态段曾写「已提供密度/圆角/阴影/motion token」——**相对实现偏乐观**；本规划以 **磁盘上的 ocix-theme.css 为准**，并在 L1 真正补齐。
 
 ### 2.3 只有原子、没有构图
 
-Agent 与扩展拿到的是 metric/chart/table 等「砖」；没有 KPI 横带、主从、报告分节等 **预制槽位**。  
+Agent 与扩展拿到的是 metric/chart/table 等「砖」；没有 KPI 横带、主从、报告分节等 **预制槽位**。
 Skill `interactive-ui-visualization` 仍偏 **节点字典 + 触发规则**，不是 **构图指南** → 生成结果易成「平铺盒子堆」。
 
 ### 2.4 Native Kit 天花板
 
-`nativeUIKit` 现约：Button、Card*、Badge、Notice、Skeleton、Separator、Progress、Table*、Tabs*、Input、Textarea、EmptyState。  
+`nativeUIKit` 现约：Button、Card*、Badge、Notice、Skeleton、Separator、Progress、Table*、Tabs*、Input、Textarea、EmptyState。
 
-**缺**：Select / Checkbox / Radio / Switch / Date；Dialog / Sheet / Popover / Tooltip；Stat / DescriptionList / Avatar / Pagination；Stack / Grid / Split 布局原语。  
+**缺**：Select / Checkbox / Radio / Switch / Date；Dialog / Sheet / Popover / Tooltip；Stat / DescriptionList / Avatar / Pagination；Stack / Grid / Split 布局原语。
 
 硬约束（已踩坑）：扩展 bundle 手写 Tailwind class **若不在宿主扫描范围则不生效** → Native 开发者 **事实上只能** Kit + `--ocix-*`；Kit 小 = 天花板低。
 
 ### 2.5 图表
 
-仍为手绘 SVG：可用但粗糙（参考线弱、网格偏重、donut 单系列、图例交互有限）。  
+仍为手绘 SVG：可用但粗糙（参考线弱、网格偏重、donut 单系列、图例交互有限）。
 recharts/shadcn-chart 曾评估后搁置为 **独立依赖评审候选**（见美化文档）。
 
 ---
@@ -121,7 +122,7 @@ recharts/shadcn-chart 曾评估后搁置为 **独立依赖评审候选**（见�
 | **Q2** | 图表路线 | **Declarative：手绘 SVG 加深 (a)**；**Native：后置可选 recharts 模块 (b)，单独评审** | Declarative 零依赖上限中等可接受；Native 本可信，依赖可单入口评审 |
 | **Q3** | Schema 演进 | **允许可选字段小步演进**（全部 optional，缺省 = 现状） | 纯渲染层无法给 Agent 强构图；L3 ROI 依赖弱契约；走 change-discipline |
 | **Q4** | 优先级 | **路线 A：L1 → L2 → L3 先行**；L4 Native Kit 紧随且共享 L1 token | 对话流出现频率最高；L1 是 L4 地基 |
-| **Q5** | 色板哲学 | **风格预设制（2026-08-05 修订）**：8 套策展预设（linear/vercel/notion/claude/apple/figma/binance/slack，各明暗双板），**Host 级用户设置**，扩展仅可推荐；**仍禁止** view 级 `accent: teal\|amber` 与 per-extension 覆盖 | 详见 [OCIX_STYLE_PRESETS.md](./OCIX_STYLE_PRESETS.md)；防彩虹红线保留——任意时刻全局仅一套生效；语义色只用于 success/warning/error/info 与 delta |
+| **Q5** | 色板哲学 | **风格预设制（2026-08-05 修订）**：8 套策展预设（linear/vercel/notion/claude/apple/figma/binance/slack，各明暗双板），当前实现仅为**Host 级用户设置**；扩展推荐尚未实现、非 manifest v1 合同；**仍禁止** view 级 `accent: teal\|amber` 与 per-extension 覆盖 | 详见 [OCIX_STYLE_PRESETS.md](./OCIX_STYLE_PRESETS.md)；防彩虹红线保留——任意时刻全局仅一套生效；语义色只用于 success/warning/error/info 与 delta |
 
 ### 3.1 性能边界澄清（阴影 vs blur）
 
@@ -134,10 +135,10 @@ recharts/shadcn-chart 曾评估后搁置为 **独立依赖评审候选**（见�
 
 ### 3.2 Schema 演进原则（Q3 细则）
 
-1. **仅 optional 字段**；旧 JSON / Generated sanitizer 缺省路径像素级兼容（允许「更好看」但不可破布局语义）。  
-2. 新字段必须进入：**类型**、`interactive_ui` tool schema 描述、**generatedLayout sanitizer 白名单**、Gallery fixture、开发者文档。  
-3. **禁止** 任意 CSS、任意 className、任意 hex。  
-4. 图标仅允许 **Host 图标名枚举**（若引入 `metric.icon`），禁止远程 URL。  
+1. **仅 optional 字段**；旧 JSON / Generated sanitizer 缺省路径像素级兼容（允许「更好看」但不可破布局语义）。
+2. 新字段必须进入：**类型**、`interactive_ui` tool schema 描述、**generatedLayout sanitizer 白名单**、Gallery fixture、开发者文档。
+3. **禁止** 任意 CSS、任意 className、任意 hex。
+4. 图标仅允许 **Host 图标名枚举**（若引入 `metric.icon`），禁止远程 URL。
 5. 契约变更走 `openchamber-change-discipline` + 既有 Interactive UI 测试入口。
 
 ---
@@ -149,7 +150,7 @@ L1 Token v2          ── 地基（无 JSON 变更）
     ↓
 L2 渲染层变体        ── 默认按节点类型自动 emphasis；可选 schema 微调
     ↓
-L3 构图模式          ── 可选 layout.mode + skill 构图指南（Agent 最大杠杆）
+L3 构图模式          ── 可选根 stack `layoutMode` + skill 构图指南（Agent 最大杠杆）
     ↓
 L4 Native Kit 扩充   ── 表单 / 浮层 / 数据展示 / 布局原语（共享 L1）
     ↓
@@ -183,8 +184,8 @@ L5 规范与验收        ── Style Contract + Gallery + Golden 扩充
 
 ### 5.1 文件与挂载
 
-- **唯一源**：`packages/ui/src/styles/ocix-theme.css`（经 `packages/ui/src/index.css` `@import`）  
-- 作用域：`.ocix-scope`；dark：`.dark .ocix-scope` / `[data-theme='dark'] .ocix-scope`  
+- **唯一源**：`packages/ui/src/styles/ocix-theme.css`（经 `packages/ui/src/index.css` `@import`）
+- 作用域：`.ocix-scope`；dark：`.dark .ocix-scope` / `[data-theme='dark'] .ocix-scope`
 - **宿主主题**：用户自定义 accent **仍不**驱动 OCIX 业务面（保持独立固定板）
 
 ### 5.2 提案变量表
@@ -219,12 +220,12 @@ L5 规范与验收        ── Style Contract + Gallery + Golden 扩充
 
 ### 5.4 L1 验收
 
-- [ ] light/dark 变量齐全，无未定义引用  
-- [ ] 对比度：foreground / muted / axis 级文本通过既有 a11y 门禁（**8 预设 × 明暗各跑一次**）  
-- [ ] focus-ring 在 elevation 面板上仍清晰  
-- [ ] reduced-motion 块仍生效  
-- [ ] 无新增 blur/backdrop-filter  
-- [ ] 8×2 预设数值表落地（`ocix-presets.css`），未知 preset id 回落 `linear`  
+- [ ] light/dark 变量齐全，无未定义引用
+- [ ] 对比度：foreground / muted / axis 级文本通过既有 a11y 门禁（**8 预设 × 明暗各跑一次**）
+- [ ] focus-ring 在 elevation 面板上仍清晰
+- [ ] reduced-motion 块仍生效
+- [ ] 无新增 blur/backdrop-filter
+- [ ] 8×2 预设数值表落地（`ocix-presets.css`），未知 preset id 回落 `linear`
 - [ ] `linear` 默认预设数值对齐后 Golden 一次性刷新（走 `:update` 门禁，非静默漂移）
 
 **预估**：1–2 人日（槽位）+ 2–3 人日（8 套数值表与明暗演绎审图迭代）。
@@ -245,8 +246,8 @@ L5 规范与验收        ── Style Contract + Gallery + Golden 扩充
 
 **默认规则（无 schema 时）：**
 
-1. 顶层 `metric-grid` 的 items → 第一项 **hero**，其余 **standard**（或全部 standard 若 items≥5，避免满屏 hero）。  
-2. `section` 默认 quiet；仅 `variant=bordered` 或独立语义块 standard。  
+1. 顶层 `metric-grid` 的 items → 第一项 **hero**，其余 **standard**（或全部 standard 若 items≥5，避免满屏 hero）。
+2. `section` 默认 quiet；仅 `variant=bordered` 或独立语义块 standard。
 3. 嵌套在 standard 内的子节点默认 quiet，防止卡片套卡片（延续 R0-M01）。
 
 **可选 schema（Q3）：**
@@ -264,14 +265,14 @@ L5 规范与验收        ── Style Contract + Gallery + Golden 扩充
 }
 ```
 
-`panel.variant` / `emphasis` 枚举：`hero | standard | quiet`（命名实施时二选一，全仓统一）。
+已实现合同只使用 metric 节点的 `emphasis: "hero" | "standard" | "quiet"`；不存在 `panel.variant` 候选或第二套命名。
 
 ### 6.2 表格
 
-- 数字列：`tabular-nums` + 右对齐（已有则加固）  
-- **行状态底**：整行 tint（success/warning/error 的 background 极淡），不仅 badge  
-- **密度**：`density: comfortable | compact`（optional）；compact 减小 py  
-- sticky header 保持；hover 行用 surface-muted，不用强阴影  
+- 数字列：`tabular-nums` + 右对齐（已有则加固）
+- **行状态底**：整行 tint（success/warning/error 的 background 极淡），不仅 badge
+- **密度**：`density: comfortable | compact`（optional）；compact 减小 py
+- sticky header 保持；hover 行用 surface-muted，不用强阴影
 
 ### 6.3 图表（Declarative SVG 加深，Q2-a）
 
@@ -286,10 +287,10 @@ L5 规范与验收        ── Style Contract + Gallery + Golden 扩充
 
 ### 6.4 L2 验收
 
-- [ ] 旧 fixture / 旧扩展 JSON 无 schema 变更即可肉眼层级改善  
-- [ ] `DeclarativeInteractiveView` 单测 + 组件测不回归  
-- [ ] 390px 下 hero 不撑破；无页面级横向滚动  
-- [ ] 异量纲拆图规则保持（R0-H05）  
+- [ ] 旧 fixture / 旧扩展 JSON 无 schema 变更即可肉眼层级改善
+- [ ] `DeclarativeInteractiveView` 单测 + 组件测不回归
+- [ ] 390px 下 hero 不撑破；无页面级横向滚动
+- [ ] 异量纲拆图规则保持（R0-H05）
 
 **预估**：2–4 人日（含图表加深取子集则可切分）。
 
@@ -299,8 +300,8 @@ L5 规范与验收        ── Style Contract + Gallery + Golden 扩充
 
 ### 7.1 为什么需要 schema
 
-仅靠 skill 提示「请少堆盒子」**约束力弱**（R0 已见模型重复调用与烂布局）。  
-可选 `layout.mode` 把自由度收到 **槽位**，仍兼容缺省「自由 stack」。
+仅靠 skill 提示「请少堆盒子」**约束力弱**（R0 已见模型重复调用与烂布局）。
+可选根 stack `layoutMode` 把自由度收到 **槽位**，仍兼容缺省「自由 stack」。
 
 ### 7.2 模式定义（v1 冻结三个）
 
@@ -311,55 +312,68 @@ L5 规范与验收        ── Style Contract + Gallery + Golden 扩充
 | **`report`** | `title` + `summary`（callout）+ `sections[]`（有序分节） | 长说明、复盘、审计摘要 |
 | **缺省 / 省略** | 现状：sections + widgets 自由堆叠 | 兼容全部存量 |
 
-JSON 形态（示意，实施时对齐 tool schema）：
+已实现 JSON 形态（根 stack 的 `layoutMode` + 约定 section `id`）：
 
 ```json
 {
-  "presentation": "stack",
-  "layout": {
-    "mode": "dashboard-hero",
-    "kpis": [ { "type": "metric", "label": "…", "value": 1 } ],
-    "main": { "type": "chart", "…": "…" },
-    "aside": { "type": "list", "…": "…" }
-  }
+  "type": "stack",
+  "layoutMode": "dashboard-hero",
+  "children": [
+    {
+      "type": "section",
+      "id": "kpis",
+      "children": [
+        { "type": "metric", "label": "销售额", "value": 1280000, "emphasis": "hero" }
+      ]
+    },
+    {
+      "type": "section",
+      "id": "main",
+      "children": [
+        { "type": "chart", "variant": "bar", "xKey": "label", "series": [], "data": [] }
+      ]
+    },
+    {
+      "type": "section",
+      "id": "aside",
+      "children": [
+        { "type": "list", "items": [] }
+      ]
+    }
+  ]
 }
 ```
 
-或挂在现有 sections 之上的 **元字段**（二选一，实施 L3 时定一种，禁止两套并行）：
-
-- **方案 α**：`view.layoutMode` + 约定 section id（`kpi` / `main` / `aside`）  
-- **方案 β**：专用 `layout: { mode, slots }` 节点  
-
-**规划推荐 α**：改动面小，易映射现有 `sections[]`，skill 好教。
+已选择并实现原方案 α：`layoutMode` 只出现在根 stack；其直接 section children 以 `kpis/main/aside`、`master/detail` 或 `summary` 标识槽位。不存在 `layout: {mode, slots}` 节点、`view.layoutMode` 包装层或第二套并行 schema。
 
 ### 7.3 构图硬规则（写入 skill + 可选 validator）
 
-1. **单屏视觉焦点只能有一个**（一个 hero 区或一个 main 图）。  
-2. **单 View 面板上限**：建议 KPI≤4、主区图表≤2、表格≤1 大表 + 细节表折叠。  
-3. **结论优先**：report 必须先 summary callout。  
-4. **不兼容量纲不共轴**（保持现规则）。  
-5. **勿为单句答案建 dashboard**。  
+1. **单屏视觉焦点只能有一个**（一个 hero 区或一个 main 图）。
+2. **单 View 面板上限**：建议 KPI≤4、主区图表≤2、表格≤1 大表 + 细节表折叠。
+3. **结论优先**：report 必须先 summary callout。
+4. **不兼容量纲不共轴**（保持现规则）。
+5. **勿为单句答案建 dashboard**。
 
 ### 7.4 Skill 升级
 
 文件：
 
-- `packages/web/server/lib/interactive-ui/builtin/agent-runtime/skills/interactive-ui-visualization/SKILL.md`  
-- 示例/runtime 副本保持同步  
+- `packages/web/server/lib/interactive-ui/builtin/agent-runtime/skills/interactive-ui-visualization/SKILL.md`
+- 示例/runtime 副本保持同步
 
 从 **节点字典** 升级为：
 
-1. 何时用 mode vs 自由堆叠  
-2. 三模式槽位表 + do/don't  
-3. 密度与焦点  
-4. 与业务 Tool / 已有 View 不重复（保持现有路由纪律）  
+1. 何时用 mode vs 自由堆叠
+2. 三模式槽位表 + do/don't
+3. 密度与焦点
+4. 与业务 Tool / 已有 View 不重复（保持现有路由纪律）
 
 ### 7.5 L3 验收
 
-- [ ] 无 `layout.mode` 的路径与今日行为一致  
-- [ ] Gallery 增加三模式示例  
-- [ ] Skill 变更后 routing/model 相关测不回归  
-- [ ] sanitizer 拒绝未知 mode / 超限槽位  
+- [x] 无 `layoutMode` 的路径保持自由 stack 行为
+- [ ] Gallery 增加三模式示例
+- [ ] Skill 变更后 routing/model 相关测不回归
+- [ ] sanitizer 拒绝未知 mode / 超限槽位
 
 **预估**：3–5 人日（含 schema/tool/skill/sanitizer）。
 
@@ -380,23 +394,23 @@ Date 控件：N1 后置评估（复杂度高；可用 Input + 业务格式先顶
 
 ### 8.2 实现约束
 
-1. **只** 通过 `nativeUIKit` / `activationHost.ui` 导出；扩展 **禁止** 依赖未扫描 Tailwind 任意 class。  
-2. 全部消费 `--ocix-*`；不跟宿主用户 accent。  
-3. 优先 **包装** 宿主已有 `@/components/ui/*`（Radix 等），再涂 OCIX token，避免第二套无障碍实现。  
-4. 每个组件 = **活规范**：Story/Gallery 一节 + 开发者手册一节。  
-5. 浮层 z-index / portal 必须在 `.ocix-scope` 与对话/Workbench 层级下可测，避免被 Composer 挡住（关联 R0-M04 意识）。  
+1. **只** 通过 `nativeUIKit` / `activationHost.ui` 导出；扩展 **禁止** 依赖未扫描 Tailwind 任意 class。
+2. 全部消费 `--ocix-*`；不跟宿主用户 accent。
+3. 优先 **包装** 宿主已有 `@/components/ui/*`（Radix 等），再涂 OCIX token，避免第二套无障碍实现。
+4. 每个组件 = **活规范**：Story/Gallery 一节 + 开发者手册一节。
+5. 浮层 z-index / portal 必须在 `.ocix-scope` 与对话/Workbench 层级下可测，避免被 Composer 挡住（关联 R0-M04 意识）。
 
 ### 8.3 recharts（Q2-b，可选后置）
 
-- **不** 进入 Declarative 默认路径。  
-- 若做：仅 `nativeUIKit.Chart`（或 `Charts.*`）可选模块；**单独** bundle/性能/许可证评审；默认示例扩展可不依赖。  
+- **不** 进入 Declarative 默认路径。
+- 若做：仅提供有界、optional 的 `nativeUIKit.Chart` 单入口；Recharts 为 Host 私有懒加载实现，禁止 `Charts.*` 或 raw library ABI；**单独** bundle/性能/许可证评审；默认示例扩展不依赖。
 
 ### 8.4 L4 验收
 
-- [ ] `NativeUIKit.test.tsx` 覆盖新组件 a11y 基本角色  
-- [ ] Acme CRM/Sales 至少一处改用新表单/Dialog（证明可迁移）  
-- [ ] 扩展模板与 developer guide 更新  
-- [ ] 打包后 Tailwind 扫描仍包含 Kit 源路径  
+- [ ] `NativeUIKit.test.tsx` 覆盖新组件 a11y 基本角色
+- [ ] Acme CRM/Sales 至少一处改用新表单/Dialog（证明可迁移）
+- [ ] 扩展模板与 developer guide 更新
+- [ ] 打包后 Tailwind 扫描仍包含 Kit 源路径
 
 **预估**：N1+N2 约 4–6 人日；N3+N4 约 3–5 人日。
 
@@ -408,24 +422,24 @@ Date 控件：N1 后置评估（复杂度高；可用 Input + 业务格式先顶
 
 建议目录：
 
-1. Token 清单（变量名、语义、light/dark 样例）  
-2. Emphasis / variant 词汇表  
-3. Layout mode 槽位与上限  
-4. 对比度、focus、reduced-motion、触控最小尺寸  
-5. 明暗对等规则（同一结构两边都有层级）  
-6. **禁止** 清单（任意色、blur、远程字体图等）  
-7. Native Kit 使用义务（扩展样式通道）  
+1. Token 清单（变量名、语义、light/dark 样例）
+2. Emphasis / variant 词汇表
+3. Layout mode 槽位与上限
+4. 对比度、focus、reduced-motion、触控最小尺寸
+5. 明暗对等规则（同一结构两边都有层级）
+6. **禁止** 清单（任意色、blur、远程字体图等）
+7. Native Kit 使用义务（扩展样式通道）
 
 ### 9.2 Gallery
 
-- `interactive_ui_gallery` 扩为 **视觉规范展示间**  
-- 覆盖：token 色板条、三 tier 面板、三 layout mode、表格密度、图表加深、（L4 后）Native 嵌入示例说明  
+- `interactive_ui_gallery` 扩为 **视觉规范展示间**
+- 覆盖：token 色板条、三 tier 面板、三 layout mode、表格密度、图表加深、（L4 后）Native 嵌入示例说明
 
 ### 9.3 Golden
 
-- 现有约 54 场景 / 62 张：变体扩充后 **按门禁再生成**，禁止静默漂移  
-- 命令源：`package.json` 中 `test:interactive-ui-visual` 等既有脚本  
-- 策略：L1/L2 合并一次 Golden 刷新；L3 加 mode 场景；L4 加 Native 场景  
+- 现有约 54 场景 / 62 张：变体扩充后 **按门禁再生成**，禁止静默漂移
+- 命令源：`package.json` 中 `test:interactive-ui-visual` 等既有脚本
+- 策略：L1/L2 合并一次 Golden 刷新；L3 加 mode 场景；L4 加 Native 场景
 
 ### 9.4 与旧文档关系
 
@@ -442,27 +456,27 @@ Date 控件：N1 后置评估（复杂度高；可用 Input + 业务格式先顶
 
 ### 10.1 Agent（Generated Declarative）
 
-1. 优先判断是否已有业务 View；有则 **停止** 再生成。  
-2. 需要看板时 **先选 layout mode**，再填槽；不要先堆 12 个 metric。  
-3. 单焦点；KPI≤4；异量纲拆图。  
-4. 示例/估算数据必须标注。  
-5. 最终 prose 一句结论，不重复 View 内数字。  
+1. 优先判断是否已有业务 View；有则 **停止** 再生成。
+2. 需要看板时 **先选 layout mode**，再填槽；不要先堆 12 个 metric。
+3. 单焦点；KPI≤4；异量纲拆图。
+4. 示例/估算数据必须标注。
+5. 最终 prose 一句结论，不重复 View 内数字。
 6. 样式 **只** 通过节点语义（tone/trend/emphasis/mode），禁止幻想 className。
 
 ### 10.2 Trusted Native 扩展作者
 
-1. **只用** `host.ui` / Kit + `--ocix-*`。  
-2. 表单与确认走 Kit；不要手写第三套按钮。  
-3. 布局用 Stack/Grid/Split（L4 后）；不要依赖扩展内 `md:grid-cols-2` 等未扫描类。  
-4. 失败/陈旧统一 Notice tone。  
-5. 枚举值做 locale 映射（R0-M03）。  
+1. **只用** `host.ui` / Kit + `--ocix-*`。
+2. 表单与确认走 Kit；不要手写第三套按钮。
+3. 布局用 Stack/Grid/Split（L4 后）；不要依赖扩展内 `md:grid-cols-2` 等未扫描类。
+4. 失败/陈旧统一 Notice tone。
+5. 枚举值做 locale 映射（R0-M03）。
 
 ### 10.3 明确禁止
 
-- 任意 hex/rgb 进 Declarative JSON  
-- 远程图片/字体作装饰（Declarative）  
-- 为「好看」升级为 HTML Artifact 且绕过业务 Tool  
-- 多 accent 彩虹看板  
+- 任意 hex/rgb 进 Declarative JSON
+- 远程图片/字体作装饰（Declarative）
+- 为「好看」升级为 HTML Artifact 且绕过业务 Tool
+- 多 accent 彩虹看板
 
 ---
 
@@ -481,7 +495,7 @@ Date 控件：N1 后置评估（复杂度高；可用 Input + 业务格式先顶
 
 ### 11.1 推荐默认授权顺序
 
-**S0 → S1 → S2 → S3 → S5（最小闭环，对话流立刻变好看）**  
+**S0 → S1 → S2 → S3 → S5（最小闭环，对话流立刻变好看）**
 然后 **S4a → S4b**；S6 仅当 Native 业务明确要复杂图。
 
 ### 11.2 风险
@@ -532,20 +546,20 @@ Date 控件：N1 后置评估（复杂度高；可用 Input + 业务格式先顶
 
 **本阶段（文档）：**
 
-- [x] 根因与现状代码对齐  
-- [x] Q1–Q5 规划冻结建议  
-- [x] L1–L5 详细设计  
-- [x] 分批 S0–S6 与验收  
-- [x] Agent / Native 开发规范摘要  
+- [x] 根因与现状代码对齐
+- [x] Q1–Q5 规划冻结建议
+- [x] L1–L5 详细设计
+- [x] 分批 S0–S6 与验收
+- [x] Agent / Native 开发规范摘要
 
 **规划阶段未授权不做：**
 
-- 改 `ocix-theme.css` / 渲染器 / Kit / skill / golden  
+- 改 `ocix-theme.css` / 渲染器 / Kit / skill / golden
 
 **规划阶段建议（历史记录）：**
 
-1. **只确认 Q1–Q5 / O1–O5**（若与本文不一致则改本文），或  
-2. **授权 S1（Token v2）** 开始实现，或  
+1. **只确认 Q1–Q5 / O1–O5**（若与本文不一致则改本文），或
+2. **授权 S1（Token v2）** 开始实现，或
 3. **先出 Style Contract 骨架 + Token 精确数值表** 再动代码。
 
 ---
@@ -587,10 +601,10 @@ Date 控件：N1 后置评估（复杂度高；可用 Input + 业务格式先顶
 
 ## 15. 交叉链接
 
-- 美化原则与历史 A 阶段：[INTERACTIVE_UI_BEAUTIFICATION.md](./INTERACTIVE_UI_BEAUTIFICATION.md)  
-- R0 缺陷：[INTERACTIVE_UI_R0_VISUAL_AUDIT.md](./INTERACTIVE_UI_R0_VISUAL_AUDIT.md)  
-- 上一代执行门禁：[INTERACTIVE_UI_BEAUTIFICATION_HTML_ARTIFACT_EXECUTION_PLAN.md](./INTERACTIVE_UI_BEAUTIFICATION_HTML_ARTIFACT_EXECUTION_PLAN.md)  
-- 扩展开发：[INTERACTIVE_UI_EXTENSION_DEVELOPER_GUIDE.md](./INTERACTIVE_UI_EXTENSION_DEVELOPER_GUIDE.md)  
-- 双场景后端（正交）：[OCIX_LOCAL_DATA_RUNTIME_PLAN.md](./OCIX_LOCAL_DATA_RUNTIME_PLAN.md) · [OCIX_REMOTE_MODE_DETAILED_PLAN.md](./OCIX_REMOTE_MODE_DETAILED_PLAN.md)  
-- 风格预设系统（Q5 修订后专文）：[OCIX_STYLE_PRESETS.md](./OCIX_STYLE_PRESETS.md)  
-- 开发报告与测试计划（实施证据与人工审查矩阵）：[OCIX_STYLE_V2_DEV_REPORT_AND_TEST_PLAN.md](./OCIX_STYLE_V2_DEV_REPORT_AND_TEST_PLAN.md)  
+- 美化原则与历史 A 阶段：[INTERACTIVE_UI_BEAUTIFICATION.md](./INTERACTIVE_UI_BEAUTIFICATION.md)
+- R0 缺陷：[INTERACTIVE_UI_R0_VISUAL_AUDIT.md](./INTERACTIVE_UI_R0_VISUAL_AUDIT.md)
+- 上一代执行门禁：[INTERACTIVE_UI_BEAUTIFICATION_HTML_ARTIFACT_EXECUTION_PLAN.md](./INTERACTIVE_UI_BEAUTIFICATION_HTML_ARTIFACT_EXECUTION_PLAN.md)
+- 扩展开发：[INTERACTIVE_UI_EXTENSION_DEVELOPER_GUIDE.md](./INTERACTIVE_UI_EXTENSION_DEVELOPER_GUIDE.md)
+- 双场景后端（正交）：[OCIX_LOCAL_DATA_RUNTIME_PLAN.md](./OCIX_LOCAL_DATA_RUNTIME_PLAN.md) · [OCIX_REMOTE_MODE_DETAILED_PLAN.md](./OCIX_REMOTE_MODE_DETAILED_PLAN.md)
+- 风格预设系统（Q5 修订后专文）：[OCIX_STYLE_PRESETS.md](./OCIX_STYLE_PRESETS.md)
+- 开发报告与测试计划（实施证据与人工审查矩阵）：[OCIX_STYLE_V2_DEV_REPORT_AND_TEST_PLAN.md](./OCIX_STYLE_V2_DEV_REPORT_AND_TEST_PLAN.md)

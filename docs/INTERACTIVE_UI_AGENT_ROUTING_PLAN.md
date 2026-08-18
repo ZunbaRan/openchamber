@@ -1,5 +1,7 @@
 # Interactive UI Agent Routing Plan
 
+> **P3.4 条件实施蓝图**：[P3_NEXT_WAVE_CAPABILITIES_IMPLEMENTATION_PLAN.md](./P3_NEXT_WAVE_CAPABILITIES_IMPLEMENTATION_PLAN.md) §8、§11.4、§13.4。Phase 4 当前未触发；必须等 P2 完成后在同一 HEAD 运行带完整 provenance 的冷会话基线，不能用旧 `.tmp` 报告直接开工。
+
 ## 0. 实施状态（2026-07-20）
 
 本计划的 Phase 1–3 平台实现已落地，Phase 0 的固定用例集和脱敏结果日志已落地。Qwen3.7 Plus 是默认平价模型门禁；其他 Provider 作为可选对照，不再因 OpenAI 未配置而把普通开发验收标记为未完成。Phase 4 暂不实施，等真实命中率决定。
@@ -354,12 +356,9 @@ Installed business UI:
 
 ### Phase 4：路由质量增强
 
-仅当 Phase 3 仍不能达到验收指标时实施：
+> **2026-08-10 覆盖说明**：本段旧候选范围由 [`P3_NEXT_WAVE_CAPABILITIES_IMPLEMENTATION_PLAN.md`](./P3_NEXT_WAVE_CAPABILITIES_IMPLEMENTATION_PLAN.md) §8 替代。必须先完成 P2，在同一 HEAD/SDK/catalog 上做三次带 provenance 的冷会话基线；只有同一routing命中/重复失败类别至少 2/3 次重现并低于阈值，再由用户授权最小 slice。单次业务安全不变量违反必须另报缺陷并停止，不自动授权Phase 4 scorer；只有同时满足前述重复routing阈值时才进入本项。
 
-- 轻量 Intent 评分与候选 Tool 预筛选。
-- 多扩展冲突解释和用户选择 UI。
-- 设置页增加只读的“Agent Routing Preview”，展示某扩展声明的意图和 Tool。
-- 增加路由诊断：为什么选择业务 Tool、为什么回退通用 Tool。
+若触发，首版只允许无状态 server lexical scorer + Phase 3 fallback；不自动包含 Choice UI、Routing Preview、第二模型、embedding、Tool 执行或权限修改。Choice UI/额外诊断只有新的失败证据和独立授权后才立项。
 
 ## 10. 主要代码影响面
 
@@ -435,35 +434,35 @@ Installed business UI:
 - Simple CRM 自然语言触发真实扩展，无需用户说出 Tool 名称。
 - Simple CRM 的验收能区分 Tool 选中、View 渲染和真实业务数据加载；业务 API 不可达时不会报告完整闭环成功。
 - 通用 `interactive_ui` 不再把模型构造的业务指标伪装成真实数据。
-- 自动化测试覆盖路由、生命周期、安全和至少两类模型。
+- 自动化测试覆盖路由、生命周期、安全，并以 Qwen3.7 Plus 完整语料作为普通开发模型硬门；第二 Provider 只在用户要求发布研究时作为相同语料的可选对照，不是完成条件。
 
-## 14. 推荐执行顺序
+## 14. 已完成顺序回顾与后续条件
 
 按风险和收益排序：
 
-1. 先完成 Phase 0 + Phase 1，快速消除当前误选。
-2. 再完成 Phase 2，把路由能力正式纳入 OCIX 合同。
-3. 完成 Phase 3 的 OpenCode 注入边界验证与实现，这是平台根因的真正修复。
-4. 依据真实路由指标决定是否需要 Phase 4，不预先引入复杂 Router。
+1. Phase 0 + Phase 1 已完成，用于消除基础误选。
+2. Phase 2 已完成，结构化路由能力已进入 OCIX 合同。
+3. Phase 3 已完成，路由上下文通过正式 system 字段注入。
+4. 当前只剩P2后fresh baseline；依据三次真实路由指标决定是否需要 Phase 4，不预先引入复杂 Router。
 
-## 15. 下一阶段：Business Runtime Readiness
+## 15. 历史候选：Business Runtime Readiness（未排期）
 
-当前最值得优先解决的不是增加更多路由规则，而是让平台准确区分“凭据已配置”“服务当前可达”“View 已挂载”和“真实数据已加载”。建议按以下顺序实施：
+本节保留早期领域内候选，不是仓库 roadmap 的 P0/P1，也不声明“当前最优先”。只有这些方向被写入根 `roadmap.md`、分配正式 ID 并获用户授权后才可实施；当前 Agent不得据此绕过 roadmap 开新主线。
 
-### P0：连接与业务加载状态语义
+### 候选 A：连接与业务加载状态语义
 
 - 将当前容易被理解为实时健康状态的 `Connected` 拆分为受约束状态，例如 `configured`、`reachable`、`unreachable`、`unauthorized`、`unknown`，并显示脱敏的最后检查时间。
 - `configured` 只表示 Secret Store 中存在凭据，不能表示第三方 API 当前可用。
 - View 继续保留明确的 loading / empty / unavailable / unauthorized / ready 状态；上游失败时禁止用零值伪装真实指标。
 - Routing Inspector 增加脱敏的业务加载阶段：`Business request started`、`Business data loaded`、`Business request failed`。不记录 URL、凭据、请求输入或业务响应正文。
 
-### P0：可重复的真实业务闭环验收
+### 候选 B：可重复的真实业务闭环验收
 
 - 为 Interactive UI Demo 增加可选的业务验收启动方式，同时管理 OpenChamber 和 Simple CRM API 的启动、健康检查与停止，避免只启动 Host 导致空壳页面。
 - 增加自动化 E2E：自然语言 → 专用 Tool → Installed View → Business Gateway → 非空数据，并单独覆盖 API 不可达和恢复场景。
 - 读操作校验数据契约；写操作仍必须经过用户确认，并验证第三方系统返回的新 revision。
 
-### P1：跨模型路由基线
+### 候选 C：跨模型路由基线
 
 - 如需跨 Provider 报告，以同一份固定语料补跑 OpenAI 或其他对照组。
 - 汇总各已选模型的业务 Tool 命中率、通用 Tool 命中率和误回退率；不要求特定厂商。

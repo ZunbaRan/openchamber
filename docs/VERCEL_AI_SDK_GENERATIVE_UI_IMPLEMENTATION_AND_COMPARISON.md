@@ -4,6 +4,8 @@
 > 依据：Vercel AI SDK 官方文档与本地 ChatGPT/Codex Desktop 静态调研<br>
 > ChatGPT 证据说明见：[ChatGPT/Codex Desktop 可视化与 Artifact 本地静态调研](./CHATGPT_CODEX_DESKTOP_ARTIFACT_REVERSE_ENGINEERING.md)
 
+> **状态：历史调研快照，不是当前实现合同。** 文中的未来时表述已部分过期：HTML Artifact、MCP Apps 2026 Host 与 Artifact Style v2 token 注入均已实现。当前边界与P3.6门禁以 [AI SDK、Interactive UI 与 MCP Apps](./AI_SDK_INTERACTIVE_UI_AND_MCP_APPS.md) 和 [P3 后续能力实施蓝图](./P3_NEXT_WAVE_CAPABILITIES_IMPLEMENTATION_PLAN.md) 为准。
+
 ## 1. 结论
 
 Vercel AI SDK 的生产推荐路线并不是“模型任意生成 React 页面”。它的稳定模式是：开发者定义 tool schema 和 React 组件，模型选择 tool 并生成参数/结果，应用按类型化 tool part 状态渲染对应组件。
@@ -136,14 +138,14 @@ ChatGPT/Codex 还把 Documents、Presentations、Spreadsheets、Sites 等持久 
 |---|---|---|---|
 | 主消息 runtime | AI SDK `useChat` / UIMessage | 产品内部任务/消息 runtime | OpenCode Session / ToolPart |
 | UI 选择 | 模型选择开发者 tool | Agent 生成 fragment 并引用 | tool 选 View；Generated Declarative 还可组合节点 |
-| UI 实现来源 | 开发者 React | Agent HTML/CSS/SVG/JS | 平台 Declarative、安装式 Native、未来 Artifact |
+| UI 实现来源 | 开发者 React | Agent HTML/CSS/SVG/JS | 平台 Declarative、安装式 Native、已实现 HTML Artifact |
 | 任意新视觉 | 通常需新增组件 | 可以 | Declarative 受限；Artifact 可以 |
 | 真实 API | tool execute / 应用服务端 | inline vis 本身禁止 tools | Installed UI 经 Business Gateway |
 | 同页执行 | 是，应用可信代码 | 否，隔离后视觉内联 | Declarative/Trusted Native 是；Artifact 否 |
 | 历史重放 | UIMessage parts | 线程资源 + 指令 | 严格 Result Envelope + 安装 View |
 | Streaming | AI SDK UI part 流；RSC 可流 React | Host 内部实现 | v1 等待 completed ToolPart |
 | 写操作确认 | 应用自行设计 | 交回 Agent/宿主 | Gateway `permission: ask` 挑战 |
-| 主题一致性 | 应用组件自行实现 | Host 注入 | Declarative/Native 复用主题；Artifact 将注入 |
+| 主题一致性 | 应用组件自行实现 | Host 注入 | Declarative/Native 复用主题；Artifact 已注入完整 Style v2 token |
 | 扩展信任 | 应用代码信任 | 模型代码不信任 | 三层显式信任模型 |
 
 ## 7. OpenChamber 应借鉴的部分
@@ -192,7 +194,7 @@ ChatGPT/Codex 还把 Documents、Presentations、Spreadsheets、Sites 等持久 
 - 不把模型生成的 React/HTML 作为 Trusted Native 动态 import。
 - 不为每个领域名词新增一个平台内置页面。
 - 不让 HTML Artifact 持有业务 token 或直接调用 Gateway action。
-- 不在 MCP Apps 元数据还不能完整到达 OpenChamber 时提前做一个不完整 iframe renderer。
+- MCP Apps 2026 Host 已有独立 metadata/resource/AppBridge 链；不得另做一套不完整 iframe renderer或拿本历史限制否定现状。
 
 ## 10. 参考资料
 

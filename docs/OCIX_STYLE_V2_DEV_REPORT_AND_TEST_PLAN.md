@@ -1,8 +1,8 @@
 # OCIX Style v2 开发报告与测试计划
 
-> **状态**：**已实现并合入主线**；自动化验收通过，人工视觉审查、真实模型对话与预设 Golden 子矩阵待执行  
-> **日期**：2026-08-06（合入状态回写 2026-08-07）  
-> **历史实施分支**：`openchamber-style-v2/` · `feat/ocix-style-v2`（实现 `2fdb7ae3`；合并 `4132bcef`；收尾 `3929ebbb`；worktree/分支已清理）  
+> **状态**：**已实现并合入主线**；自动化验收通过，人工视觉审查、真实模型对话与预设 Golden 子矩阵待执行
+> **日期**：2026-08-06（合入状态回写 2026-08-07）
+> **历史实施分支**：`openchamber-style-v2/` · `feat/ocix-style-v2`（实现 `2fdb7ae3`；合并 `4132bcef`；收尾 `3929ebbb`；worktree/分支已清理）
 > **上游文档**：[详细规划](./OCIX_DECLARATIVE_NATIVE_STYLE_V2_PLAN.md)（§14.1 实施状态）· [风格预设](./OCIX_STYLE_PRESETS.md) · [风格合同](./OCIX_STYLE_CONTRACT.md) · [Agent 简报](./OCIX_STYLE_V2_AGENT_BRIEF.md)
 
 ---
@@ -11,7 +11,7 @@
 
 ## 1. 背景与目标
 
-上一轮美化（2026-07）解决了「有没有」，本次 Style v2 解决「好看且有层级」：单一视觉公式（全部节点同款 `OCIX_PANEL` 白卡）、Token 层偏薄、只有原子没有构图、Native Kit 天花板低四个结构性根因。按五层递进一次落地（用户授权不分阶段），并按 2026-08-05 设计方向拍板引入 **8 套品牌风格预设**（Host 级，扩展可推荐，防彩虹红线保留）。
+上一轮美化（2026-07）解决了「有没有」，本次 Style v2 解决「好看且有层级」：单一视觉公式（全部节点同款 `OCIX_PANEL` 白卡）、Token 层偏薄、只有原子没有构图、Native Kit 天花板低四个结构性根因。按五层递进一次落地（用户授权不分阶段），并按 2026-08-05 设计方向拍板引入 **8 套品牌风格预设**（当前实现为 Host 级；扩展推荐未实现、非现行 manifest v1 合同；防彩虹红线保留）。
 
 ## 2. 交付明细
 
@@ -72,7 +72,7 @@
 
 | 决策 | 落实 |
 |------|------|
-| Q5 预设制 | 8 套 Host 级预设；view/扩展/Agent 无权选择；`recommendedPreset` 仅提示 |
+| Q5 预设制 | 8 套 Host 级预设已实现；view/扩展/Agent 无权选择；`recommendedPreset` 尚未实现，须另立 roadmap/schema/UX 项 |
 | D-P4 字阶统一 | 预设只改色板/圆角/海拔；无 serif、无 17px 正文特例 |
 | 阴影边界 | 仅 token 化静态 box-shadow；dark 下所有预设 `shadow-*: none`（阶梯分层） |
 | Q2 图表 | Declarative 保持手绘 SVG 加深；Native recharts（S6）未做，留独立评审 |

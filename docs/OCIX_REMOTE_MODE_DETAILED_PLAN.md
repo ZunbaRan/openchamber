@@ -1,10 +1,10 @@
 # OCIX Remote 模式详细规划
 
 > **状态**：**R1–R3 已实现并合入；R4 指引、三类参考服务、自动化与本机验收包已完成，待用户实机验收**
-> **日期**：2026-08-05（状态回写 2026-08-07）  
-> **父文档**：[OCIX 双场景愿景](./OCIX_DUAL_PATH_HOSTED_AND_DEV_SERVER_PLAN.md)（场景 A 主路径展开）  
-> **范围**：第三方 **Remote** 连接、信任、Manifest、懒加载、TTL 缓存、health/update、re-consent  
-> **Host / 自研 API 基座**：场景 B 已另文拍板 **better-sqlite3 + Hono 内嵌**，见 [OCIX_LOCAL_DATA_RUNTIME_PLAN.md](./OCIX_LOCAL_DATA_RUNTIME_PLAN.md)（与本文 Remote 正交，仍处于规划态）
+> **日期**：2026-08-05（状态回写 2026-08-07）
+> **父文档**：[OCIX 双场景愿景](./OCIX_DUAL_PATH_HOSTED_AND_DEV_SERVER_PLAN.md)（场景 A 主路径展开）
+> **范围**：第三方 **Remote** 连接、信任、Manifest、懒加载、TTL 缓存、health/update、re-consent
+> **Host / 自研 API 基座**：场景 B 的当前唯一合同是 **better-sqlite3 + existing Gateway direct adapter**，见 [P3详细蓝图](./P3_NEXT_WAVE_CAPABILITIES_IMPLEMENTATION_PLAN.md#5-p31local-data-runtime) 与 [Local Data决策入口](./OCIX_LOCAL_DATA_RUNTIME_PLAN.md)（与本文 Remote 正交、仍未获实施授权；Hono不属于P3.1）
 
 ---
 
@@ -39,16 +39,16 @@ OpenChamber OCIX 已具备较完整的 **Local / Hosted 技术栈**：
 
 父文档 [OCIX_DUAL_PATH…](./OCIX_DUAL_PATH_HOSTED_AND_DEV_SERVER_PLAN.md) 已定：
 
-- **场景 A（第三方）** 默认 **Remote Hosted**，不是默认发全量包  
-- **场景 B（自研）** Local / Dev Hosted + 未来 Server 开发  
-- 协议不另起「裸 connect」平行标准  
+- **场景 A（第三方）** 默认 **Remote Hosted**，不是默认发全量包
+- **场景 B（自研）** Local / Dev Hosted + 未来 Server 开发
+- 协议不另起「裸 connect」平行标准
 
 ### 1.2 问题：为什么还要单独规划 Remote
 
 | 痛点 | 说明 |
 |------|------|
 | **分发心智** | 企业 SaaS 期望「给 URL + Key 就能用」，而不是发 zip / 教用户装包 |
-| **热更** | UI/脚本应在服务端演进；不应要求终端用户反复装 `.ocix` |
+| **热更** | Signed Manifest、Surface/icon资源与能力metadata可在服务端演进；不应要求终端用户反复装 `.ocix` |
 | **与现网 Hosted 的差距** | 现有 Hosted 仍偏「薄包文件 + 有界落地缓存」；产品目标是 **零文件 UX + 懒加载 + TTL** |
 | **信任叙事易混** | Access Key 常被误当成「代码也安全」；必须拆成 **业务身份** vs **内容签名** |
 | **权限叙事易激** | 「天花板钉死」易被理解成永不扩权；应改为 **granted + re-consent（像更新协议）** |
@@ -56,29 +56,29 @@ OpenChamber OCIX 已具备较完整的 **Local / Hosted 技术栈**：
 
 ### 1.3 决策（已拍板）
 
-1. **第三方默认 Remote**：URL + Key + 首次指纹/权限确认。  
-2. **`connect` 只处理签名 Manifest + 信任绑定**，不预拉全部 UI。  
-3. **UI 与请求脚本按需拉取**，校验 path 级 `sha256`。  
-4. **TTL 短缓存**（UI + 请求脚本 + 已接受 Manifest 元数据/本体按策略），过期清理；**不做**第三方永久全量镜像。  
-5. **权限 = granted + re-consent**：可抬高，禁止静默扩大；`nativeCode` 0→1 同机制、更重策略。  
-6. **更新 = 分类自动**：权限未扩大可静默切换 accepted Manifest；扩大/换钥必须确认。  
-7. **流量不是优化一等公民**；瓶颈假设在 Agent 思考。  
+1. **第三方默认 Remote**：URL + Key + 首次指纹/权限确认。
+2. **`connect` 只处理签名 Manifest + 信任绑定**，不预拉全部 UI。
+3. **Surface/icon等signed资源按需拉取**，校验path级`sha256`；Agent Tool由Host根据已验surface/tool/routing metadata生成受管shim，不下载任意Tool/Skill脚本。
+4. **TTL 短缓存**（Surface/icon资源 + 已接受 Manifest 元数据/本体按策略），过期清理；**不做**第三方永久全量镜像。
+5. **权限 = granted + re-consent**：可抬高，禁止静默扩大；`nativeCode` 0→1 同机制、更重策略。
+6. **更新 = 分类自动**：权限未扩大可静默切换 accepted Manifest；扩大/换钥必须确认。
+7. **流量不是优化一等公民**；瓶颈假设在 Agent 思考。
 8. **业务 Host / API 基座** 本阶段只定理念，**不设计具体底层 API、不实施**。
 
 ### 1.4 后果（接受与不接受）
 
 **接受：**
 
-- 首次打开某 Surface 可能多一次资源下载（相对 Local 全量）。  
-- 缓存过期 + 离线 → 该 Surface/脚本不可用（信任态仍在，需网络刷新）。  
-- 厂商必须维护 **可签名的 Manifest 发布流水线** 与稳定资源 URL/hash。  
+- 首次打开某 Surface 可能多一次资源下载（相对 Local 全量）。
+- 缓存过期 + 离线 → 对应Surface资源不可用（信任态与Host受管Tool metadata仍在，需网络刷新）。
+- 厂商必须维护 **可签名的 Manifest 发布流水线** 与稳定资源 URL/hash。
 - 产品文案要教会「连接应用」≠「代码无害」。
 
 **不接受：**
 
-- 用 Key 代替包/Manifest 签名。  
-- 静默扩大权限或静默启用 Hosted Native。  
-- 无 hash 的裸 CDN 加载 Native 进主页面。  
+- 用 Key 代替包/Manifest 签名。
+- 静默扩大权限或静默启用 Hosted Native。
+- 无 hash 的裸 CDN 加载 Native 进主页面。
 - 把 Remote 做成第三套与 Hosted 无关的协议（应是 Hosted 的产品主路径形态）。
 
 ### 1.5 成功时的世界（结果）
@@ -96,14 +96,14 @@ Agent：通过已注册 Tool 打开 Surface / 调业务；失败可解释（Key/
 
 ### 2.1 本规划范围内（Remote 协议与产品合同）
 
-- Remote 用户旅程与配置负担  
-- `connect` / `health` / `update_check` / `update_apply` 语义  
-- 签名 Manifest、指纹、granted、re-consent  
-- 资源懒加载、TTL 缓存键与失效  
-- 与 Declarative / Native / Artifact 在 **加载路径** 上的差异（不重写三种 runtime 本身）  
-- 请求脚本 / Tool·Skill 材料的远程完整性规则（概念层）  
-- 错误码与可观察性要求  
-- 相对现有 Hosted 薄包的迁移方向  
+- Remote 用户旅程与配置负担
+- `connect` / `health` / `update_check` / `update_apply` 语义
+- 签名 Manifest、指纹、granted、re-consent
+- 资源懒加载、TTL 缓存键与失效
+- 与 Declarative / Native / Artifact 在 **加载路径** 上的差异（不重写三种 runtime 本身）
+- Host从已验surface/tool/routing metadata生成受管Agent Tool shim的边界；Remote不下发任意OpenCode Tool/Skill文件
+- 错误码与可观察性要求
+- 相对现有 Hosted 薄包的迁移方向
 - Phase 状态、维护边界与剩余验收清单
 
 ### 2.2 本规划非范围（本阶段不做）
@@ -144,7 +144,7 @@ Agent：通过已注册 Tool 打开 Surface / 调业务；失败可解释（Key/
 | | 文案 |
 |--|------|
 | **对外** | 只需应用地址和访问密钥；首次核对发布者指纹与权限；以后权限变多时像更新协议一样再确认；日常自动保持可用。 |
-| **对内** | URL+Key → Manifest 验签 + 信任绑定；打开时懒加载 UI/脚本 + hash + TTL；health/update；Gateway 仍是业务唯一出口。 |
+| **对内** | URL+Key → Manifest验签+信任绑定；打开时懒加载Surface/icon+hash+TTL；Host从metadata生成Tool shim；health/update；Gateway仍是业务唯一出口。 |
 
 ### 3.3 用户旅程
 
@@ -169,9 +169,10 @@ Agent：通过已注册 Tool 打开 Surface / 调业务；失败可解释（Key/
     → 渲染 Declarative / Artifact /（若允许）Native
     → 业务读写走 Gateway（确认写不变）
 
-【日常 · 需要请求脚本 / Tool 材料】
-  与 UI 相同：按 Manifest 索引懒加载 + hash + TTL
-  受管 Tool 名 ⊆ granted.agentToolNames
+【日常 · Agent Tool】
+  Host读取已验Manifest中的surface/tool/routing metadata
+    → 生成受管Tool shim并保持Tool名⊆granted.agentToolNames
+    → business调用仍走Gateway；不下载/执行远程OpenCode Tool或Skill文件
 
 【权限变多】
   新 Manifest candidate 有 expansion
@@ -220,7 +221,7 @@ Agent：通过已注册 Tool 打开 Surface / 调业务；失败可解释（Key/
 | 链 | 证明 | 不得证明 |
 |----|------|----------|
 | **签名 / 指纹** | 内容发布者与完整性 | 业务 API 授权 |
-| **Access Key** | 业务系统授权调用 | UI/脚本未被篡改 |
+| **Access Key** | 业务系统授权调用 | Surface资源或Host-generated shim未被篡改 |
 
 禁止：Key 代替签名；盲信响应体里的 fingerprint 字符串。
 
@@ -239,7 +240,7 @@ Agent：通过已注册 Tool 打开 Surface / 调业务；失败可解释（Key/
 
 | 术语 | 定义 |
 |------|------|
-| **appEntryUrl** | 用户配置的应用入口；可解析为 connect 端点或直接 Manifest URL（实现可选归一） |
+| **appEntryUrl** | 用户配置的 **Signed Hosted Manifest URL**；现行R1–R3直接fetch/verify该文档，不存在厂商自定义connect握手端点 |
 | **Signed Manifest** | 厂商签名的 Hosted Manifest 文档（与现 `HostedOcixManifestV1` 内核对齐） |
 | **resource** | Manifest `resources[]` 一项：`path, url, mimeType, sha256` |
 | **fingerprint** | 由验签用发布者公钥材料 **本地派生** 的稳定摘要 |
@@ -262,7 +263,7 @@ accessKey          // 或后续 setup code → issued-key 流（可沿用 Connec
 #### 处理步骤（合同）
 
 ```text
-1. 解析入口 → 获取 Signed Manifest 字节
+1. 将`appEntryUrl`作为Manifest URL直接获取Signed Manifest字节；不解析第二种握手response
 2. 验签（Ed25519 等，canonical payload）
    失败 → 拒绝，不写信任，Key 不用于「证明包合法」
 3. 校验 schema / 身份字段 / resources 索引合法性
@@ -281,10 +282,10 @@ accessKey          // 或后续 setup code → issued-key 流（可沿用 Connec
 
 #### 确认 UI 最低信息
 
-- 应用显示名、extensionId、version  
-- 发布者指纹（可复制）  
-- 权限摘要：origins、actions、tools、clipboard/popups、**是否含同页 Native**  
-- 风险句：Key 只用于业务；内容由签名保证  
+- 应用显示名、extensionId、version
+- 发布者指纹（可复制）
+- 权限摘要：origins、actions、tools、clipboard/popups、**是否含同页 Native**
+- 风险句：Key 只用于业务；内容由签名保证
 
 #### 输出状态
 
@@ -324,7 +325,7 @@ connectorBinding            // 元数据，无明文 Key
 
 | 探针 | 目的 |
 |------|------|
-| **入口探针** | Manifest/connect 端点可达 |
+| **入口探针** | Signed Manifest URL 可达且仍能进入同一验签链 |
 | **业务探针** | Connector `test`（如 `GET /health`）+ 服务端注 Key |
 
 ### 5.4 `update_check` / `update_apply`
@@ -378,15 +379,15 @@ required（厂商标强制，如安全回滚）
 
 #### 与「拉资源」的关系
 
-- `update_apply` **默认只切换 accepted Manifest 合同**，不要求立刻下载所有 path。  
-- 下次打开/需要脚本时按 **新 hash** 拉取；缓存键含 sha256，旧字节不会误用。
+- `update_apply` **默认只切换 accepted Manifest 合同**，不要求立刻下载所有 path。
+- 下次打开Surface/icon时按**新hash**拉取；缓存键含sha256，旧字节不会误用。Host受管Tool shim按新verified metadata reconcile，不拉任意脚本。
 
 ### 5.5 资源懒加载
 
 #### 触发
 
-- 渲染某 `view` / `artifact`  
-- 需要某 Agent Tool / Skill / 请求脚本文件  
+- 渲染某 `view` / `artifact`
+- 需要已验Manifest allowlist中的Surface/icon资源
 - 显式「刷新此 Surface」
 
 #### 步骤
@@ -408,8 +409,8 @@ required（厂商标强制，如安全回滚）
 
 #### 失败
 
-- hash/MIME/origin 失败 → **不用**该字节、不写入有效缓存  
-- 可重试；可提示「扩展资源校验失败」  
+- hash/MIME/origin 失败 → **不用**该字节、不写入有效缓存
+- 可重试；可提示「扩展资源校验失败」
 - **禁止**回退到「未校验的任意 URL 内容」
 
 ### 5.6 TTL 短缓存（拍板细节）
@@ -419,14 +420,14 @@ required（厂商标强制，如安全回滚）
 | 类别 | 示例 |
 |------|------|
 | UI | Declarative JSON、Native ESM、Artifact HTML/CSS/资产 |
-| 请求脚本 | Manifest 列出的 Tool/Skill/脚本及配套声明材料 |
+| Agent能力metadata | 随Signed Manifest验签/更新；Host据此生成受管Tool shim，不作为远程脚本resource执行 |
 | 合同 | 已接受 Manifest 本体（或等价元数据 + 按需再拉） |
 
 #### 不缓存什么（持久层）
 
-- Access Key / setup code  
-- 业务 API 响应体（Gateway 另议，非本缓存）  
-- 未通过校验的脏字节  
+- Access Key / setup code
+- 业务 API 响应体（Gateway 另议，非本缓存）
+- 未通过校验的脏字节
 
 #### 键与失效
 
@@ -451,8 +452,8 @@ required（厂商标强制，如安全回滚）
 
 #### 性能立场
 
-- 不为抠流量牺牲正确性。  
-- 假设用户体感瓶颈在 **Agent 思考**。  
+- 不为抠流量牺牲正确性。
+- 假设用户体感瓶颈在 **Agent 思考**。
 - TTL 的价值：同会话重复打开、Workbench 多 tile、脚本二次加载。
 
 ### 5.7 granted 与 re-consent
@@ -473,17 +474,17 @@ nativeCode
 
 #### expansion 规则（集合差）
 
-- 列表类：candidate 中多出的元素  
-- 布尔类：false→true（含 `nativeCode`）  
-- reduced：可静默（能力变少）  
+- 列表类：candidate 中多出的元素
+- 布尔类：false→true（含 `nativeCode`）
+- reduced：可静默（能力变少）
 
 #### re-consent UI（协议更新感）
 
 必须展示：
 
-- 应用名、新旧 version（若有）  
-- **新增**权限 diff（人话 + 技术 id）  
-- 若含 `nativeCode`：单独风险段「将允许在 OpenChamber 主界面运行该扩展代码」  
+- 应用名、新旧 version（若有）
+- **新增**权限 diff（人话 + 技术 id）
+- 若含 `nativeCode`：单独风险段「将允许在 OpenChamber 主界面运行该扩展代码」
 - 同意 / 拒绝；拒绝后旧版能力仍可用（除非 `required` 失败进入 blocked）
 
 #### 同意后
@@ -609,15 +610,15 @@ User/Agent          OC Host                 Vendor
 
 ## 10. 安全不变量（清单）
 
-1. 内容信任只来自 **验签 + hash**，不来自 Key。  
-2. 指纹只来自 **本地派生**，不来自远端明文字段。  
-3. 业务调用只经 **Gateway**；UI/脚本不得持有业务 token。  
-4. 任何时刻生效的权限 ≤ **granted**。  
-5. expansion 与换钥 **禁止静默**。  
-6. Native 加载 ⇒ `granted.nativeCode` 且 trust 模式正确。  
-7. 资源 URL：HTTPS（loopback 例外）；无嵌套凭证；origin ⊆ granted。  
-8. TTL 缓存不得把未校验字节标为有效。  
-9. 卸载/断开清除该扩展缓存与（按策略）凭据。  
+1. 内容信任只来自 **验签 + hash**，不来自 Key。
+2. 指纹只来自 **本地派生**，不来自远端明文字段。
+3. 业务调用只经 **Gateway**；Remote UI与Host-generated shim不得持有业务token。
+4. 任何时刻生效的权限 ≤ **granted**。
+5. expansion 与换钥 **禁止静默**。
+6. Native 加载 ⇒ `granted.nativeCode` 且 trust 模式正确。
+7. 资源 URL：HTTPS（loopback 例外）；无嵌套凭证；origin ⊆ granted。
+8. TTL 缓存不得把未校验字节标为有效。
+9. 卸载/断开清除该扩展缓存与（按策略）凭据。
 10. health=reachable 不提升权限。
 
 ---
@@ -639,33 +640,33 @@ User/Agent          OC Host                 Vendor
 
 ## 12. 业务 Host / API 基座——理念与场景 B 选型指针
 
-> **场景 A（第三方 Remote）**：业务 API 在厂商侧；本文只定内容信任与 connect。  
-> **场景 B（自研 Host-local）**：内嵌底座选型与隔离见 **[OCIX_LOCAL_DATA_RUNTIME_PLAN.md](./OCIX_LOCAL_DATA_RUNTIME_PLAN.md)**（**better-sqlite3 + Hono**）。  
+> **场景 A（第三方 Remote）**：业务 API 在厂商侧；本文只定内容信任与 connect。
+> **场景 B（自研 Host-local）**：内嵌底座选型与隔离见 **[P3详细蓝图](./P3_NEXT_WAVE_CAPABILITIES_IMPLEMENTATION_PLAN.md#5-p31local-data-runtime)** 与 **[OCIX_LOCAL_DATA_RUNTIME_PLAN.md](./OCIX_LOCAL_DATA_RUNTIME_PLAN.md)**（**better-sqlite3 + existing Gateway direct adapter**；未获实施授权）。
 > Remote R1–R3 已实施；Local Data Runtime 仍为 **规划态不实施**，直至其 Phase 获得授权。
 
 ### 12.1 理念（与 Remote 的衔接；场景 A/B 共用）
 
 | # | 理念 | 含义 |
 |---|------|------|
-| H1 | **UI 与业务分离** | Remote 拉的是签名 UI/脚本；业务数据与写操作不经由「资源 CDN 自由 fetch」 |
+| H1 | **UI 与业务分离** | Remote只拉signed Surface/icon资源；Host从verified metadata生成shim，业务数据与写操作不经由「资源 CDN 自由 fetch」 |
 | H2 | **密钥不进前端** | Access Key 仅服务端/Host 保管；注入发生在 Gateway 出站 |
 | H3 | **声明式动作边界** | 可调用的业务能力是 Manifest/扩展声明的 action 集合，且 ⊆ granted |
 | H4 | **确认式高风险写** | 写操作可要求用户确认；客户端布尔「已确认」无效 |
 | H5 | **厂商拥有业务授权** | 第三方 RBAC 在厂商系统；自研 LDR 为项目本地库，不做企业权限中心 |
 | H6 | **Remote 不改变上述边界** | Remote 只解决「内容分发与信任」；自研数据面是另一条 connector |
 
-### 12.2 场景 B 已拍板（详见 Local Data 规划）
+### 12.2 场景 B 当前决策指针（唯一细节见P3蓝图）
 
-- 存储：**better-sqlite3**  
-- API：**Hono**（薄路由；业务在 action handler）  
-- 部署：OpenChamber **同进程内嵌**  
-- 隔离：**projectId × extensionId** 独立 sqlite + 路由前缀  
+- 存储：**better-sqlite3**；部署在 OpenChamber server同进程。
+- 调用：既有 Business Gateway在policy/confirmation后 direct `LocalDataRuntime.invoke(request)`；无Hono、无listener、无LDR route prefix。
+- 隔离：server-derived `projectKey(v2 canonical scope incarnation) × extensionId` 独立SQLite；publisher/key fingerprint只进meta做接管校验。
+- 状态：P3.1仍未获实施授权；未来Hono只可能是独立ADR + 新roadmap slice + 第二真实transport consumer + 依赖评审 + 用户授权，不是P3.1选项。
 
 ### 12.3 后续实现者的边界
 
-- 不借 Remote 规划之机重写 Gateway 内核  
-- 不新增「资源脚本直连业务 API」旁路  
-- 不借 Remote 维护或验收之机实施未经授权的 LDR / Dev Hosted 代码  
+- 不借 Remote 规划之机重写 Gateway 内核
+- 不新增「资源脚本直连业务 API」旁路
+- 不借 Remote 维护或验收之机实施未经授权的 LDR / Dev Hosted 代码
 
 ---
 
@@ -688,26 +689,26 @@ User/Agent          OC Host                 Vendor
 
 ### Phase R0 — 规划冻结（已完成）
 
-- [x] 详细文档  
-- [x] 实现所需产品、安全与工程合同冻结  
+- [x] 详细文档
+- [x] 实现所需产品、安全与工程合同冻结
 - [x] R1–R3 所需开放问题收口；余项继续由 §16 维护
 
 ### Phase R1 — 信任与向导（已完成）
 
-- [x] URL+Key 向导  
-- [x] connect = Manifest 验签 + 指纹 + granted  
-- [x] re-consent UI  
-- [x] 信任态持久化  
+- [x] URL+Key 向导
+- [x] connect = Manifest 验签 + 指纹 + granted
+- [x] re-consent UI
+- [x] 信任态持久化
 
 ### Phase R2 — 懒加载与 TTL（已完成）
 
-- [x] 按需资源与脚本  
-- [x] hash 校验与缓存键  
-- [x] 过期清理与卸载清理  
+- [x] 按需资源与脚本
+- [x] hash 校验与缓存键
+- [x] 过期清理与卸载清理
 
 ### Phase R3 — health/update 矩阵（已完成）
 
-- [x] 触发时机、TTL 合并、required、诊断  
+- [x] 触发时机、TTL 合并、required、诊断
 
 ### Phase R4 — 第三方文档、参考服务与实机验收（待用户验收）
 
@@ -715,7 +716,8 @@ User/Agent          OC Host                 Vendor
 - [x] 提供 Declarative / Trusted Native / HTML Artifact、不同品牌色的参考 Remote 服务
 - [x] 清洁工作树打包本机客户端，并复验成品内 OpenCode prompt/skill
 - [x] 编写供用户执行的测试文档：工作区根 `extension/USER_ACCEPTANCE_TEST.md`
-- [ ] 用户完成真实客户端 × 参考服务验收并记录结果  
+- [ ] **便利性改进（不阻塞本轮实机验收）**：在工作区根 `extension/` 增加 `npm run connect:openchamber`，自动读取 `.runtime/connect-info/*.json`，通过 OpenChamber 正式的 `remote/inspect` → `remote/connect` API 批量连接参考服务；必须使用 inspect 返回的精确 Manifest hash 与发布者 fingerprint、支持幂等重复执行、不在 stdout/stderr/URL/日志中输出 Access Key，且不得直接修改 `installations.json`、`trust.json` 或 `connection-secrets.json`
+- [ ] 用户完成真实客户端 × 参考服务验收并记录结果
 
 **依赖 Host API 基座的工作单列 Hx，不阻塞 R0；R1–R3 可在现有 Gateway 上演进。**
 
@@ -727,31 +729,31 @@ R1–R3 合同项已由自动化测试覆盖；下列勾选表示代码与自动
 
 ### 15.1 功能
 
-- [x] 仅 URL+Key 完成首次连接并出现指纹+权限确认  
-- [x] 无 `.ocix` 文件时仍有可查询信任态  
-- [x] connect 后磁盘上 **无** 强制全量 UI 树  
-- [x] 首次打开 Surface 才拉对应 UI；脚本同规则  
-- [x] TTL 命中不再请求；过期后清理并重拉  
-- [x] 权限未扩大时可自动接受新 Manifest  
-- [x] 权限扩大 re-consent：同意抬高 granted，拒绝保持旧合同  
-- [x] nativeCode 扩大强提示 / 策略可拒  
-- [x] health 失败时业务 Tool 不装成功  
+- [x] 仅 URL+Key 完成首次连接并出现指纹+权限确认
+- [x] 无 `.ocix` 文件时仍有可查询信任态
+- [x] connect 后磁盘上 **无** 强制全量 UI 树
+- [x] 首次打开Surface才拉对应UI/icon；Host Tool shim由verified metadata生成，任意Remote脚本下载为零
+- [x] TTL 命中不再请求；过期后清理并重拉
+- [x] 权限未扩大时可自动接受新 Manifest
+- [x] 权限扩大 re-consent：同意抬高 granted，拒绝保持旧合同
+- [x] nativeCode 扩大强提示 / 策略可拒
+- [x] health 失败时业务 Tool 不装成功
 
 ### 15.2 安全
 
-- [x] 验签失败永不信任  
-- [x] 指纹本地派生  
-- [x] Key 不进前端/日志  
-- [x] hash 失败不用脏资源  
-- [x] granted 外 action/origin 被拒  
-- [x] 无 granted.nativeCode 时 Native 不可加载  
+- [x] 验签失败永不信任
+- [x] 指纹本地派生
+- [x] Key 不进前端/日志
+- [x] hash 失败不用脏资源
+- [x] granted 外 action/origin 被拒
+- [x] 无 granted.nativeCode 时 Native 不可加载
 
 ### 15.3 体验
 
-- [ ] 日常路径零额外配置  
-- [ ] re-consent 文案可读（协议更新感）  
-- [ ] 错误可行动（换 Key / 检查网络 / 待确认权限）  
-- [ ] 三类参考 Remote 服务在正式打包客户端中均按预期显示并可操作  
+- [ ] 日常路径零额外配置
+- [ ] re-consent 文案可读（协议更新感）
+- [ ] 错误可行动（换 Key / 检查网络 / 待确认权限）
+- [ ] 三类参考 Remote 服务在正式打包客户端中均按预期显示并可操作
 
 ---
 
@@ -759,13 +761,13 @@ R1–R3 合同项已由自动化测试覆盖；下列勾选表示代码与自动
 
 | # | 问题 | 倾向（若需默认） |
 |---|------|------------------|
-| Q1 | appEntryUrl 是 Manifest URL 还是独立 connect 握手端点？ | 可两者：握手返回 manifest 位置 |
+| Q1（已决，R1） | appEntryUrl 是 Manifest URL 还是独立 connect 握手端点？ | 只接受direct Signed Hosted Manifest URL；`remote/inspect`与`remote/connect`是OpenChamber自身管理API，不是厂商入口协议 |
 | Q2 | `resourceCacheTtlSeconds` 默认 15min 还是 60min？ | 30min 起点 |
 | Q3 | 离线时是否允许「仅未过期 TTL」只读打开？ | 允许，需标记 stale/offline |
 | Q4 | Declarative 打开中是否允许温和热替换？ | 默认否，与 Native 一致「下次打开」 |
 | Q5 | 企业预置指纹白名单是否跳过首次确认？ | 可，仍不跳过扩权 re-consent |
-| Q6 | Tool/Skill 远程材料与 OpenCode 全局目录如何 reconcile？ | 保持「受管文件 + hash」；细节随实施 |
-| Q7 | `required` 更新失败是 blocked 全扩展还是仅新能力？ | 倾向扩展级 blocked 直至成功或回滚策略明确 |
+| Q6（已决，R2） | Tool/Skill 与 OpenCode 全局目录如何reconcile？ | 不下载任意Remote Tool/Skill文件；Host根据已验surface/tool/routing metadata生成受管Tool shim并按hash/revision reconcile |
+| Q7（已决，R3） | `required` 更新失败的阻塞范围 | 整个扩展 fail-closed 为 `remote_update_required_blocked`；旧/新能力都不可执行，直到满足required版本并成功验签/同意，或用户显式安装一个满足合同的已验证版本。不得降级成“只禁新能力” |
 
 Host API 基座问题见 **§12.2**，不在此表强行关闭。
 
@@ -799,9 +801,9 @@ Host API 基座问题见 **§12.2**，不在此表强行关闭。
 
 ## 19. 当前结论与证据
 
-1. **Remote 第三方路径 R1–R3 已实现并合入**：安全连接 `6473dcbb`、懒加载/TTL `459e27ad`、完整生命周期 `999d4761`。  
-2. 合入后的相关 server/runtime/manager 测试 179 项通过、production route 测试 7 项通过，workspace type-check 通过；这些是自动化证据，不替代实机验收。  
-3. R4 仍需以独立参考服务和正式打包客户端完成第三方开发指引、三类 Surface、品牌样式与交互体验验收。  
+1. **Remote 第三方路径 R1–R3 已实现并合入**：安全连接 `6473dcbb`、懒加载/TTL `459e27ad`、完整生命周期 `999d4761`。
+2. 合入后的相关 server/runtime/manager 测试 179 项通过、production route 测试 7 项通过，workspace type-check 通过；这些是自动化证据，不替代实机验收。
+3. R4 仍需以独立参考服务和正式打包客户端完成第三方开发指引、三类 Surface、品牌样式与交互体验验收。
 4. **Host / API 基座、Dev Hosted 与 Local Data Runtime 仍未实现**，继续由独立计划和授权控制。
 
 ---

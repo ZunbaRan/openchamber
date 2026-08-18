@@ -1,8 +1,9 @@
 # OpenChamber Codex-style Shell 测试计划
 
-> 状态：设计冻结，等待新实现验收  
-> 更新：2026-07-26  
+> 状态：**设计冻结；roadmap P3.3 `planned`，尚未获得实现授权**
+> 更新：2026-08-10
 > 设计依据：[OPENCHAMBER_CODEX_SHELL_DESIGN.md](./OPENCHAMBER_CODEX_SHELL_DESIGN.md)
+> 逐文件实施与增量测试蓝图：[P3_NEXT_WAVE_CAPABILITIES_IMPLEMENTATION_PLAN.md](./P3_NEXT_WAVE_CAPABILITIES_IMPLEMENTATION_PLAN.md) §7、§13.3、§15.4
 
 ## 1. 完成定义
 
@@ -23,13 +24,13 @@ bun run build:web
 1. 左侧六项顺序、28px 合同、Applications / Plugins 目标隔离；
 2. 标题点击与 `…` 分流，任务菜单顺序和禁用状态；
 3. Fork 锚定最近完成回答并复用完整配置；
-4. Output Registry 仅接受成功写 Tool，路径去重、计数、删除与排序；
-5. 右侧启动器单例 / 多实例、关闭、聚焦、拖动、项目隔离与迁移；
+4. Output Registry 仅接受live Tool non-completed→completed authority delta，并在同一delta检查completed state attachments；只有`source.type=file`+absolute path+matching `file:` URL进入path registry。data/http/resource/filename-only、assistant/user顶层FilePart、失败/只读Tool、bootstrap/materialization/HTTP reconnect snapshot均不登记。覆盖call内多文件原子去重、计数、删除与排序、outputs=200、seen=2000、2 MiB、确定性淘汰、淘汰seen后history replay不重复、runtime/project/task隔离及后台任务持久化；
+5. 右侧启动器单例 / 多实例、关闭、聚焦、拖动、runtime+project+scope+incarnation 隔离与迁移；至少 root、worktree A、worktree B 三个 scope；删除worktree A后在同路径重建，必须得到新opaque scopeInstanceId，旧Files/Terminal/Browser resource ID均不恢复；network/503 revalidation期间suspended且零attach/create，随后same-ID才resume、different-ID discard；明确422的ephemeral fallback不写durable store且重复focus/pageshow不旋转；
 6. 320–960px clamp、资源类型宽度记忆和 Applications 首次 50%；
 7. 缺少 endpoint 时 Catalog 保留，API 调用被阻止；
 8. user endpoint > env > manifest，清除用户配置后恢复回退；
 9. 保存连接热刷新、headers、测试状态脱敏；
-10. 卸载保留连接数据，显式删除才移除；
+10. 卸载按原子事务清理 credential + tiles；cleanup 或 uninstall 失败时扩展仍保持安装且无 orphan secret；
 11. 所有 locale key 完整且不是英文占位；
 12. mobile 渲染路径不使用新桌面壳层。
 
@@ -42,19 +43,20 @@ bun run build:web
 3. 验证六项行高 28px，项目与任务树间距未被压缩。
 4. Applications 打开 OCIX 管理；Plugins 打开 OpenCode 插件。
 5. 点击标题主体打开任务切换器，点击 `…` 打开任务菜单。
-6. 验证置顶、重命名、归档、继续、计划任务、新窗口。
+6. 验证置顶、重命名、继续、计划任务、新窗口、分隔线后的归档顺序。
 7. 流式输出时继续按钮禁用；完成后使用最新完整回答 Fork。
 8. 验证归档后的跳转和新窗口失败 Toast。
 
 ### Flow B：任务输出摘要
 
-1. 在任务中成功创建、修改、再次修改、删除文本文件，并生成图片。
-2. 同时执行一次失败写入和一次只读文件。
+1. 在任务中成功创建、修改、再次修改、删除文本文件，并让成功Tool生成一个可通过Files打开的本地图片文件。
+2. 同时执行一次失败写入、一次只读文件；让成功Tool completed state携带一个合法local `file:` attachment及data/http/filename-only负例；再加入assistant/user顶层FilePart负例。
 3. 验证默认最近 6 项、展开更多、滚动、收起和重新打开复位。
 4. 验证同路径去重、修改计数、modified / deleted 标记和时间排序。
-5. 验证失败写入、只读文件、缓存和构建产物不出现。
+5. 验证合法completed-Tool local attachment出现；data/http/filename-only、assistant/user顶层FilePart、失败写入、只读文件、缓存和构建产物不出现。
 6. 点击文本文件在 Files 打开；点击二进制文件显示信息和 Finder 入口。
-7. 打开旧任务，确认不回填并显示空状态。
+7. 打开旧任务，确认 bootstrap/history/materialization/reconnect snapshot不回填并显示空状态；同一part replay不重复。
+8. 留在任务A界面，让任务B在后台完成写入/Tool local attachment；切回B确认已持久。切换OpenCode runtime后使用相同directory/session形状，确认不会读写前一runtime registry。
 
 ### Flow C：右侧资源工作区
 
@@ -65,7 +67,7 @@ bun run build:web
 5. 收起右侧栏，确认 Terminal / Browser 仍运行；展开后恢复。
 6. 关闭所有标签回到启动器。
 7. 关闭再打开 Files / Git / Applications，验证回到默认页面。
-8. 在项目 A 打开 Terminal，切到项目 B，再返回 A，验证实例和顺序恢复。
+8. 在同一项目 root、worktree A、worktree B 分别打开不同 Files/Terminal，再跨三个 scope 和项目 B 往返；验证实例/顺序/cwd/PTY identity 完全隔离。随后删除worktree A、让topology刷新、在**同一路径**重建A，确认scopeInstanceId旋转、旧workspace被tombstone且旧PTY/Browser/Files绝不attach/replay；只对未换incarnation的原scope验证现有detach/replay与30分钟idle，不宣称无限后台attach。
 9. 分别调整 Files、Git、Browser、Terminal 宽度并验证各自记忆。
 10. Applications 首次约 50%，调整后记忆；所有类型限制在 320–960px。
 
@@ -84,7 +86,7 @@ bun run build:web
 10. 配置 user endpoint、env 和 manifest 三种值，验证优先级。
 11. 清除 user endpoint，验证回落到 env；再清除 env，验证 manifest。
 12. 禁用、破坏完整性和卸载扩展，逐项验证精确恢复动作。
-13. 卸载后确认连接记录保留；点击“删除连接数据”后才消失。
+13. 卸载成功后确认 credential 与 tiles 同事务清理；模拟 cleanup/uninstall 失败时扩展仍安装，且没有部分清理或 orphan secret。
 14. 验证任何 UI、日志和 Agent 输出都不包含 access key。
 
 ### Flow E：应用看板回归
@@ -130,7 +132,7 @@ bun run build:web
 4. 输出摘要默认 6 项、展开和 Files 跳转通过；
 5. 右侧五类资源、标签 `+`、拖动、多实例和宽度记忆通过；
 6. 收起 / 展开保持 Browser、Terminal 和 App board；
-7. City Ops 未配置、已配置、离线、恢复、卸载保留连接全部通过；
+7. City Ops 未配置、已配置、离线、恢复、卸载原子 cleanup 全部通过；
 8. Interactive UI 与 HTML Artifact 在对话和应用看板都通过；
 9. English / 简体中文、light / dark 各至少完整走一遍；
 10. 重启应用后任务输出、右栏项目状态和连接记录恢复。
@@ -162,7 +164,7 @@ bun run build:web
 - Output Registry 权威性；
 - 右侧资源生命周期与项目隔离；
 - City Ops 无环境变量降级与真实 API 恢复；
-- 连接数据卸载保留与显式删除；
+- 连接 credential / tiles 的卸载原子 cleanup 与失败回滚；
 - English / 简体中文、light / dark；
 - packaged macOS 手动验收与截图。
 

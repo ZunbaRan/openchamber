@@ -1,8 +1,9 @@
 # OpenChamber Codex-style Shell 设计
 
-> 状态：设计冻结，进入实现  
-> 更新：2026-07-26  
+> 状态：**设计冻结；roadmap P3.3 `planned`，尚未获得实现授权**
+> 更新：2026-08-10
 > 配套测试：[OPENCHAMBER_CODEX_SHELL_TEST_PLAN.md](./OPENCHAMBER_CODEX_SHELL_TEST_PLAN.md)
+> 逐文件实施蓝图：[P3_NEXT_WAVE_CAPABILITIES_IMPLEMENTATION_PLAN.md](./P3_NEXT_WAVE_CAPABILITIES_IMPLEMENTATION_PLAN.md) §7、§11.3、§15.4；若旧设计/mock 与蓝图的 current-state audit 冲突，以 roadmap + 当前代码 + 该蓝图为准。
 
 ## 1. 背景与目标
 
@@ -86,10 +87,10 @@ Files、Browser、Terminal 和应用看板。当前问题不是缺少能力，�
 
 1. 置顶 / 取消置顶（立即生效，无确认）；
 2. 重命名（小型 Dialog，Enter 提交、Esc 取消、禁止空标题）；
-3. 归档（复用包含子任务提示的确认流程）；
-4. 从当前任务继续（复用完整 `ForkSessionDialog`）；
-5. 添加计划任务（预填最近用户请求、当前项目、模型与 Agent）；
-6. 在新窗口打开同一任务。
+3. 从当前任务继续（复用完整 `ForkSessionDialog`）；
+4. 添加计划任务（预填最近用户请求、当前项目、模型与 Agent）；
+5. 在新窗口打开同一任务；
+6. 分隔线后的归档（复用包含子任务提示的确认流程）。
 
 归档项位于底部独立分组，使用普通文字颜色。归档成功后打开同项目最近任务，
 没有则回到 Projects。新窗口失败通过 Toast 告知，当前窗口不切换。
@@ -113,16 +114,16 @@ Agent、补充指令、工作树和 Goal 全部沿用现有 Fork Dialog。
 - 删除项不进入默认 6 项，展开后显示 deleted；
 - 二进制文件在 Files 中显示信息并可在 Finder 打开。
 
+Registry 保留硬上限：outputs 200、seen calls 2000、UTF-8 JSON 2 MiB；按详细 P3 蓝图的确定性 LRU/oldest-output 规则淘汰。Observer 只消费 live Tool `non-completed → completed` authority delta（包含该completed state的attachments）；event-cursor durable replay仍按live event处理，但缺previous state时不登记，bootstrap/materialization/HTTP全量reconnect snapshot只建baseline。因此seen call被淘汰后重放旧历史也不得重复登记。
+
 ### 6.1 权威 Output Registry
 
 Output Registry 是任务级元数据，不写入项目目录。只登记：
 
 - 成功完成的 create / edit / write / apply-patch 类 Tool 调用；
-- 用户或 Agent 显式加入任务产物的图片、报告和附件。
+- 同一成功 Tool completed state中，可证明为canonical local file的附件：必须同时有`source.type=file`、absolute `source.path`与指向同一路径的`file:` URL。
 
-它不解析 assistant 自然语言，不把只读文件、缓存、构建目录或失败 Tool 当作
-输出。路径以绝对路径为稳定标识，Tool call ID 用于幂等。旧任务不回填；没有
-Registry 时显示空状态。
+它不解析assistant自然语言，不消费assistant/user顶层FilePart，也不把只读文件、缓存、构建目录、失败Tool、`data:`/`http(s):`/resource附件或`filename`当路径。路径以绝对路径为稳定标识，Tool call ID用于一批metadata files+attachments的原子幂等。旧任务不回填；没有Registry时显示空状态。
 
 ## 7. 统一右侧资源工作区
 
@@ -157,15 +158,15 @@ Registry 时显示空状态。
 
 ### 7.3 标签与生命周期
 
-- 标签支持横向滚动和拖动排序，顺序按项目持久化；
+- 标签支持横向滚动和拖动排序，顺序按 runtime + project + scope + server-owned incarnation 持久化；
 - Browser 标题使用页面标题或域名；
 - Terminal 标题使用工作目录；
 - 重名多实例追加稳定序号；
 - 标签全部关闭后回到启动器；
 - 关闭 Files、Git、Applications 后再次打开，回到各自默认页面；
 - Browser、Terminal 复用现有生命周期和关闭逻辑，不另造运行器；
-- 切换项目时项目 A 的 Terminal 继续后台运行，返回时恢复；
-- 状态按项目 / 工作目录保存，不在项目文件中落盘。
+- 收起同一项目的工作区只隐藏 viewport；切换项目时按现有 controller 语义 detach，服务端对未 attach 且无活动的 session 保留 30 分钟并每 5 分钟清扫；返回项目时在保留期内 attach/replay。若要长期保持 attach，须另做 controller/performance 决策，本文不承诺无限后台运行；
+- 状态按 `runtimeKey + projectId + scopeDirectory + scopeInstanceId` 保存；`scopeDirectory`只来自session ownership的canonical project/worktree hint，真正的`scopeInstanceId`由server shared project-authority按incarnation签发opaque projection，client不得用path/projectId hash伪造。因此同project的root/worktree互不串，同路径worktree删除重建也不能接回旧Files/Terminal/Browser。fresh revalidation的network/503进入suspended并停止attach/create，只有同ID成功才恢复；不同ID丢弃旧resource。只有server明确422不支持authority时才建同activation稳定的随机ephemeral内存workspace，不持久、不恢复backend identity；完整wire与生命周期以P3蓝图§4.4.1/§7.4为准。
 
 ### 7.4 宽度
 
@@ -180,19 +181,21 @@ Registry 时显示空状态。
 左侧 Applications 是管理面，右侧 Applications 是使用面；两者打开同一个连接
 配置 Dialog。
 
-连接记录与 access key 存在同一个 OpenChamber 用户数据 JSON 中，包含：
+连接配置由现有 server-side Connection Secret Store / Gateway 持有。公开给 UI 的 snapshot 只包含：
 
 - connection ID；
 - 名称；
-- endpoint；
-- access key；
-- 可选 headers；
+- 安全规范化的 endpoint；
+- configured / expired 状态；
+- 可选 header **名称**（不含值）；
 - 最近测试状态；
 - 最近测试时间。
 
+access key 和 custom header values 只通过专用写接口进入 server-private store，永不回填 UI，不进入 Workspace/Output/localStorage 或 renderer IPC。
+
 规则：
 
-- endpoint 允许任意 HTTP/HTTPS 地址，不额外弹出远程 HTTP 风险提示；
+- business connector endpoint 按现有 HTTP/HTTPS 规则校验且禁止 URL 内凭据；provisioning 和 Remote manifest/resource 使用更严格 HTTPS/loopback 规则，Configure Dialog 不得混用两类校验；
 - 用户配置优先于环境变量，环境变量优先于 manifest literal；
 - 用户配置保持覆盖，直到用户明确清除；
 - 保存后立即测试并热刷新 Catalog，无需重启；
@@ -201,7 +204,7 @@ Registry 时显示空状态。
 - 未配置显示 Configure；离线显示错误、Retry、Configure，但页面壳仍可见；
 - disabled、missing、incompatible、integrity failure 各显示具体原因及 Enable /
   Reinstall / Remove from board；
-- 卸载扩展默认保留连接数据，另提供“删除连接数据”；
+- 卸载扩展按现有安全事务清理 credential 与 tiles；任一 cleanup/uninstall 失败时保持扩展已安装，避免 orphan secret。数据保留策略若要改变必须另立项；
 - Finder 启动的打包应用不得依赖 Terminal 注入环境变量。
 
 环境变量只作为开发和自动化回退。City Ops 的
@@ -224,12 +227,12 @@ Registry 时显示空状态。
 
 ## 10. 持久化与迁移
 
-- 右侧资源标签、顺序、活动项、宽度和折叠状态按项目持久化；
+- 右侧资源标签、顺序、活动项、宽度和折叠状态按 runtime + project + canonical root/worktree scope + server-owned incarnation 持久化；同路径scope identity旋转时旧live adapters先close/detach并tombstone，绝不迁入新workspace；
 - Output Registry 按任务持久化；
 - 旧壳层状态迁移到新的单例 Files / Git / Applications 标签；
 - 无状态、空状态、损坏状态必须可区分并安全恢复；
 - 任何持久化数据不得包含 Browser 页面凭据、Terminal 输出或业务 API 响应；
-- access key 只存在连接记录中，日志与前端状态必须脱敏。
+- access key 只存在 server-private Secret Store 中；public snapshot、日志与前端状态只显示脱敏状态。
 
 ## 11. 实施顺序
 
@@ -238,6 +241,6 @@ Registry 时显示空状态。
 3. 重构标题区和任务操作菜单；
 4. 实现统一右侧工作区、启动器、标签和持久化；
 5. 实现 Output Registry 与摘要；
-6. 实现连接 endpoint / headers、Catalog 降级和卸载保留策略；
+6. 复用现有连接 endpoint / headers、Catalog 降级与卸载 cleanup transaction，并让管理面/Workbench 共用安全 Dialog；
 7. 补齐所有 locale 与自动化测试；
 8. 打包 DMG，在独立安装环境完成真实扩展和 API 验收。

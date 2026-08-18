@@ -6,19 +6,29 @@ OpenChamber provides shared web, desktop, VS Code, hosted-mobile, and native-mob
 
 This file contains only always-on repository rules and routing. Detailed workflows belong to project skills and module documentation.
 
+## Priority / Roadmap (mandatory)
+
+- The **single source of truth for product and engineering priority** across this monorepo workspace is the workspace-root file **`../roadmap.md`** (path from this repo: parent directory `roadmap.md`).
+- Before choosing what to build next, starting a parallel track, or expanding scope, **read `roadmap.md`**. Detailed designs live under `docs/*_PLAN.md` and related docs; they do **not** override roadmap P0/P1 ordering.
+- If a plan header conflicts with `roadmap.md` or merged git reality, follow **`roadmap.md` + git**, then fix the plan header.
+- Do not promote abandoned or unlisted initiatives into the main line. When a roadmap item is completed or reprioritized, **update `roadmap.md`**.
+- Current focus (see roadmap for definition of done): **P0 — upstream UI realignment with full fork-feature preservation**. Do not start P3+ large features until the user updates the roadmap or P0 is done.
+
 ## Instruction Order
 
 These steps are mandatory. Before editing, you **MUST**:
 
-1. Follow this root guide.
-2. Load every matching project skill and every task-required reference from
+1. Follow this root guide (including **Priority / Roadmap** above).
+2. Consult workspace **`../roadmap.md`** for priority when the task involves scheduling, scope, or multi-workstream choices.
+3. Load every matching project skill and every task-required reference from
    those skills.
-3. Read the nearest `DOCUMENTATION.md` and package `README.md` when present.
-4. Follow local code and test precedent.
+4. Read the nearest `DOCUMENTATION.md` and package `README.md` when present.
+5. Follow local code and test precedent.
 
 If these sources materially conflict, stop and resolve the conflict instead of silently choosing one.
 Do not start editing when a matching skill or required reference has not been
 read. Skill loading is a required part of the task, not optional guidance.
+Roadmap vs detailed plan conflicts: **roadmap wins on priority**; detailed plans win on implementation procedure only after priority is clear.
 
 ## Runtime Boundaries
 
