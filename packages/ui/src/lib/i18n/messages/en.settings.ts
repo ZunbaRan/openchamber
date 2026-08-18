@@ -1893,7 +1893,7 @@ export const settingsDict = {
   'settings.openchamber.visual.field.dockIcon': 'Dock icon',
   'settings.openchamber.visual.field.dockIconHint': 'Choose the icon displayed while OpenLoop is running in the macOS Dock. Finder and Launchpad keep the installed app icon.',
   'settings.openchamber.visual.field.dockIconAria': 'Dock icon style',
-  'settings.openchamber.visual.option.dockIcon.ice': 'Ice blue',
+  'settings.openchamber.visual.option.dockIcon.ice': 'Ice white',
   'settings.openchamber.visual.option.dockIcon.black': 'Black',
   'settings.openchamber.visual.actions.saveAndRestart': 'Save & restart',
   'settings.openchamber.visual.actions.restarting': 'Restarting…',

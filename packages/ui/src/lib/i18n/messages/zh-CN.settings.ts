@@ -1869,7 +1869,7 @@ export const settingsDict = {
   'settings.openchamber.visual.field.dockIcon': 'Dock 图标',
   'settings.openchamber.visual.field.dockIconHint': '选择 OpenLoop 运行时显示在 macOS Dock 中的图标。Finder 和启动台仍保留安装包图标。',
   'settings.openchamber.visual.field.dockIconAria': 'Dock 图标样式',
-  'settings.openchamber.visual.option.dockIcon.ice': '冰蓝',
+  'settings.openchamber.visual.option.dockIcon.ice': '冰白',
   'settings.openchamber.visual.option.dockIcon.black': '黑色',
   'settings.openchamber.visual.actions.saveAndRestart': '保存并重启',
   'settings.openchamber.visual.actions.restarting': '正在重启…',

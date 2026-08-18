@@ -1817,7 +1817,7 @@ export const settingsDict = {
   'settings.openchamber.visual.field.dockIcon': 'Dock-Symbol',
   'settings.openchamber.visual.field.dockIconHint': 'Wähle das Symbol, das während der Ausführung von OpenLoop im macOS-Dock angezeigt wird. Finder und Launchpad behalten das installierte App-Symbol.',
   'settings.openchamber.visual.field.dockIconAria': 'Dock-Symbolstil',
-  'settings.openchamber.visual.option.dockIcon.ice': 'Eisblau',
+  'settings.openchamber.visual.option.dockIcon.ice': 'Eisweiß',
   'settings.openchamber.visual.option.dockIcon.black': 'Schwarz',
   'settings.openchamber.visual.actions.saveAndRestart': 'Speichern & Neustart',
   'settings.openchamber.visual.actions.restarting': 'Neustarten…',

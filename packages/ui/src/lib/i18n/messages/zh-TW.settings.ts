@@ -1773,7 +1773,7 @@
   'settings.openchamber.visual.field.dockIcon': 'Dock 圖示',
   'settings.openchamber.visual.field.dockIconHint': '選擇 OpenLoop 執行時顯示在 macOS Dock 中的圖示。Finder 和啟動台仍保留已安裝的 App 圖示。',
   'settings.openchamber.visual.field.dockIconAria': 'Dock 圖示樣式',
-  'settings.openchamber.visual.option.dockIcon.ice': '冰藍',
+  'settings.openchamber.visual.option.dockIcon.ice': '冰白',
   'settings.openchamber.visual.option.dockIcon.black': '黑色',
   'settings.openchamber.visual.actions.saveAndRestart': '儲存並重新啟動',
   'settings.openchamber.visual.actions.restarting': '正在重新啟動…',

@@ -32,22 +32,22 @@ const createHarness = ({
 };
 
 describe("desktop Dock icon controller", () => {
-  test("defaults missing and malformed settings to the ice icon", () => {
+  test("defaults missing and malformed settings to the black icon", () => {
     assert.equal(normalizeDesktopDockIconVariant(undefined), DEFAULT_DESKTOP_DOCK_ICON_VARIANT);
     assert.equal(normalizeDesktopDockIconVariant("unknown"), DEFAULT_DESKTOP_DOCK_ICON_VARIANT);
 
     const harness = createHarness();
-    assert.deepEqual(harness.controller.initialize(), { supported: true, variant: "ice" });
-    assert.deepEqual(harness.applied, ["/app/resources/icons/dock-icon-ice.png"]);
+    assert.deepEqual(harness.controller.initialize(), { supported: true, variant: "black" });
+    assert.deepEqual(harness.applied, ["/app/resources/icons/dock-icon-black.png"]);
   });
 
-  test("applies and persists the selected black icon", async () => {
+  test("applies and persists the selected ice icon", async () => {
     const harness = createHarness();
-    const status = await harness.controller.setVariant("black");
+    const status = await harness.controller.setVariant("ice");
 
-    assert.deepEqual(status, { supported: true, variant: "black" });
-    assert.equal(harness.settings.desktopDockIconVariant, "black");
-    assert.deepEqual(harness.applied, ["/app/resources/icons/dock-icon-black.png"]);
+    assert.deepEqual(status, { supported: true, variant: "ice" });
+    assert.equal(harness.settings.desktopDockIconVariant, "ice");
+    assert.deepEqual(harness.applied, ["/app/resources/icons/dock-icon-ice.png"]);
   });
 
   test("rejects unsupported variants without changing the icon or settings", async () => {
@@ -69,7 +69,7 @@ describe("desktop Dock icon controller", () => {
 
   test("reports unsupported platforms without mutating settings", async () => {
     const harness = createHarness({ platform: "linux" });
-    assert.deepEqual(await harness.controller.setVariant("black"), { supported: false, variant: "ice" });
+    assert.deepEqual(await harness.controller.setVariant("black"), { supported: false, variant: "black" });
     assert.deepEqual(harness.settings, {});
     assert.deepEqual(harness.applied, []);
   });

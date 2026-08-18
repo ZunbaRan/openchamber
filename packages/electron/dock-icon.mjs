@@ -1,10 +1,10 @@
 import path from "node:path";
 
-export const DEFAULT_DESKTOP_DOCK_ICON_VARIANT = "ice";
+export const DEFAULT_DESKTOP_DOCK_ICON_VARIANT = "black";
 const DESKTOP_DOCK_ICON_VARIANTS = ["ice", "black"];
 
 export const normalizeDesktopDockIconVariant = (value) =>
-  value === "black" ? "black" : DEFAULT_DESKTOP_DOCK_ICON_VARIANT;
+  value === "ice" ? "ice" : DEFAULT_DESKTOP_DOCK_ICON_VARIANT;
 
 const isDesktopDockIconVariant = (value) =>
   DESKTOP_DOCK_ICON_VARIANTS.includes(value);

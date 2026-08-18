@@ -290,8 +290,8 @@ const normalizeUserMessageRenderingMode = (mode: unknown): 'markdown' | 'plain' 
 type VisibleSetting = 'sessionAssist' | 'sessionGoal' | 'theme' | 'dockIcon' | 'windowControlsPosition' | 'pwaInstallName' | 'pwaOrientation' | 'mobileKeyboardMode' | 'timeFormat' | 'weekStart' | 'fontSize' | 'terminalFontSize' | 'terminalShell' | 'terminalLoginShell' | 'editorFontSize' | 'spacing' | 'inputBarOffset' | 'mermaidRendering' | 'userMessageRendering' | 'chatRenderMode' | 'messageTransport' | 'activityRenderMode' | 'collapsibleUserMessages' | 'stickyUserHeader' | 'promptNavigatorEnabled' | 'wideChatLayout' | 'codeBlockLineWrap' | 'splitAssistantMessageActions' | 'subagentReadOnlyBanner' | 'diffLayout' | 'mobileStatusBar' | 'dotfiles' | 'fileViewerPreview' | 'reasoning' | 'showToolFileIcons' | 'showTurnChangedFiles' | 'expandedTools' | 'followUpBehavior' | 'terminalQuickKeys' | 'fileEditorKeymap' | 'persistDraft' | 'inputSpellcheck' | 'reportUsage' | 'expandedEditorToolbar' | 'autoSaveEnabled';
 
 const DOCK_ICON_OPTIONS: Array<{ id: DesktopDockIconVariant; labelKey: string }> = [
-    { id: 'ice', labelKey: 'settings.openchamber.visual.option.dockIcon.ice' },
     { id: 'black', labelKey: 'settings.openchamber.visual.option.dockIcon.black' },
+    { id: 'ice', labelKey: 'settings.openchamber.visual.option.dockIcon.ice' },
 ];
 
 const WINDOW_CONTROLS_POSITION_OPTIONS: Array<{ id: DesktopWindowControlsPosition; labelKey: string }> = [
@@ -435,7 +435,7 @@ export const OpenChamberVisualSettings: React.FC<OpenChamberVisualSettingsProps>
     const setDockBadgeEnabled = useUIStore(state => state.setDockBadgeEnabled);
     const dockIconSupported = isDesktopShell() && isDesktopLocalOriginActive() && typeof window !== 'undefined'
         && (window as unknown as { __OPENCHAMBER_PLATFORM__?: string }).__OPENCHAMBER_PLATFORM__ === 'darwin';
-    const [dockIconVariant, setDockIconVariant] = React.useState<DesktopDockIconVariant>('ice');
+    const [dockIconVariant, setDockIconVariant] = React.useState<DesktopDockIconVariant>('black');
     const [dockIconLoading, setDockIconLoading] = React.useState(dockIconSupported);
     const [dockIconSaving, setDockIconSaving] = React.useState(false);
     const showWindowControlsPosition = usesFramelessElectronChrome();

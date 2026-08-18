@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.18.11] - 2026-08-16
+
+- **Branding:** the black liquid-glass OpenLoop artwork is now the primary app, installer, startup, and default macOS Dock icon; the ice-white artwork remains selectable from Appearance settings.
+
 ## [1.18.10] - 2026-08-15
 
 - **Desktop/macOS:** the black Dock icon no longer contains a pale outer plate, so switching from the default ice-blue icon keeps a clean transparent edge in the Dock.

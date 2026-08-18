@@ -1869,7 +1869,7 @@ export const settingsDict = {
   "settings.openchamber.visual.field.dockIcon": "Піктограма в Dock",
   "settings.openchamber.visual.field.dockIconHint": "Виберіть піктограму, яка відображається в Dock macOS під час роботи OpenLoop. Finder і Launchpad зберігають піктограму встановленої програми.",
   "settings.openchamber.visual.field.dockIconAria": "Стиль піктограми Dock",
-  "settings.openchamber.visual.option.dockIcon.ice": "Крижано-блакитна",
+  "settings.openchamber.visual.option.dockIcon.ice": "Крижано-біла",
   "settings.openchamber.visual.option.dockIcon.black": "Чорна",
   "settings.openchamber.visual.actions.saveAndRestart": "Зберегти та перезапустити",
   "settings.openchamber.visual.actions.restarting": "Перезапуск…",

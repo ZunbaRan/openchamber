@@ -1903,7 +1903,7 @@ export const settingsDict = {
   'settings.openchamber.visual.field.dockIcon': 'Dock アイコン',
   'settings.openchamber.visual.field.dockIconHint': 'OpenLoop の実行中に macOS Dock へ表示するアイコンを選択します。Finder と Launchpad ではインストール済みアプリのアイコンが使用されます。',
   'settings.openchamber.visual.field.dockIconAria': 'Dock アイコンのスタイル',
-  'settings.openchamber.visual.option.dockIcon.ice': 'アイスブルー',
+  'settings.openchamber.visual.option.dockIcon.ice': 'アイスホワイト',
   'settings.openchamber.visual.option.dockIcon.black': 'ブラック',
   'settings.openchamber.visual.actions.saveAndRestart': '保存して再起動',
   'settings.openchamber.visual.actions.restarting': '再起動中...',

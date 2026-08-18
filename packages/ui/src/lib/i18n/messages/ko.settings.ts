@@ -1869,7 +1869,7 @@ export const settingsDict = {
   'settings.openchamber.visual.field.dockIcon': 'Dock 아이콘',
   'settings.openchamber.visual.field.dockIconHint': 'OpenLoop이 실행되는 동안 macOS Dock에 표시할 아이콘을 선택합니다. Finder와 Launchpad에는 설치된 앱 아이콘이 유지됩니다.',
   'settings.openchamber.visual.field.dockIconAria': 'Dock 아이콘 스타일',
-  'settings.openchamber.visual.option.dockIcon.ice': '아이스 블루',
+  'settings.openchamber.visual.option.dockIcon.ice': '아이스 화이트',
   'settings.openchamber.visual.option.dockIcon.black': '블랙',
   'settings.openchamber.visual.actions.saveAndRestart': '저장 후 재시작',
   'settings.openchamber.visual.actions.restarting': '재시작 중…',

@@ -51,9 +51,10 @@ describe('fork desktop adapters', () => {
     expect(normalizeDesktopWindowControlsPosition('unknown')).toBe(undefined);
   });
 
-  test('defaults persisted Dock icon values to the ice variant', () => {
-    expect(normalizeDesktopDockIconVariant(undefined)).toBe('ice');
-    expect(normalizeDesktopDockIconVariant('unknown')).toBe('ice');
+  test('defaults persisted Dock icon values to the black variant', () => {
+    expect(normalizeDesktopDockIconVariant(undefined)).toBe('black');
+    expect(normalizeDesktopDockIconVariant('unknown')).toBe('black');
     expect(normalizeDesktopDockIconVariant('black')).toBe('black');
+    expect(normalizeDesktopDockIconVariant('ice')).toBe('ice');
   });
 });

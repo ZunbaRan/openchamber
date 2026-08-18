@@ -379,7 +379,7 @@ type DesktopDockIconStatus = {
 };
 
 export const normalizeDesktopDockIconVariant = (value: unknown): DesktopDockIconVariant => {
-  return value === 'black' ? 'black' : 'ice';
+  return value === 'ice' ? 'ice' : 'black';
 };
 
 export const getDesktopDockIcon = async (): Promise<DesktopDockIconStatus | null> => {
