@@ -1,0 +1,73 @@
+{
+  "$schema": "openchamber://declarative-view/v1",
+  "id": "com.openchamber.demo.sales.summary",
+  "title": "销售概览（Declarative）",
+  "queries": {
+    "dashboard": {
+      "action": "sales.dashboard.query",
+      "input": {
+        "region": { "$path": "context.region", "fallback": "east" },
+        "period": { "$path": "context.period", "fallback": "2026-07" }
+      }
+    }
+  },
+  "layout": {
+    "type": "stack",
+    "children": [
+      {
+        "type": "metric-grid",
+        "columns": { "default": 3 },
+        "items": [
+          {
+            "label": "销售额",
+            "value": { "$path": "query.dashboard.revenue", "fallback": 0, "format": "currency:CNY" }
+          },
+          {
+            "label": "订单数",
+            "value": { "$path": "query.dashboard.orderCount", "fallback": 0, "format": "number" }
+          },
+          {
+            "label": "完成率",
+            "value": { "$path": "query.dashboard.completionRate", "fallback": 0, "format": "percent" }
+          }
+        ]
+      },
+      {
+        "type": "data-table",
+        "title": "异常订单",
+        "data": { "$path": "query.dashboard.anomalies", "fallback": [] },
+        "rowKey": "id",
+        "columns": [
+          { "key": "id", "label": "订单" },
+          { "key": "customer", "label": "客户" },
+          { "key": "amount", "label": "金额", "format": "currency:CNY" },
+          { "key": "statusLabel", "label": "状态", "render": "status" }
+        ],
+        "rowActions": [
+          {
+            "id": "open-order-detail",
+            "label": "查看详情",
+            "type": "emit",
+            "event": "order.selected",
+            "payload": {
+              "orderId": { "$row": "id" }
+            }
+          },
+          {
+            "id": "approve-order",
+            "label": "批准",
+            "action": "sales.order.approve",
+            "when": {
+              "value": { "$row": "status" },
+              "equals": "pending"
+            },
+            "input": {
+              "orderId": { "$row": "id" },
+              "revision": { "$row": "revision" }
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

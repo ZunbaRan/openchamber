@@ -1,0 +1,45 @@
+{
+  "$schema": "openchamber://extension/v1",
+  "id": "com.openchamber.demo.snapshot-explainer",
+  "name": "Trusted Snapshot Explainer",
+  "version": "1.0.0",
+  "publisher": "OpenChamber",
+  "agentRouting": {
+    "domain": "ocix-training",
+    "intents": [
+      "ocix-training.trust.explain",
+      "ocix-training.replay.explain"
+    ],
+    "examples": {
+      "zh-CN": ["解释 OCIX 信任模型", "讲解已安装快照示例"],
+      "en": ["explain the OCIX trust model", "explain the installed snapshot example"]
+    },
+    "dataAuthority": "generated"
+  },
+  "views": [
+    {
+      "id": "com.openchamber.demo.snapshot-explainer.ocix-trust",
+      "title": "OCIX 信任模型 · 已安装快照",
+      "runtime": "native",
+      "entry": "ui/native/ocix-trust-explainer.mjs",
+      "export": "extension",
+      "tools": ["ocix_explain_trust_pipeline"],
+      "routing": {
+        "intents": [
+          "ocix-training.trust.explain",
+          "ocix-training.replay.explain"
+        ],
+        "priority": 60,
+        "operation": "read"
+      },
+      "displayModes": ["inline"]
+    }
+  ],
+  "permissions": {
+    "network": []
+  },
+  "trust": {
+    "mode": "native-code",
+    "signature": "development"
+  }
+}

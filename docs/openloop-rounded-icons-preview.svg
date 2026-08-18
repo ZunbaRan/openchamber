@@ -1,0 +1,167 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="920" viewBox="0 0 1200 920">
+  <defs>
+    <linearGradient id="page" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0b0c0e"/>
+      <stop offset="1" stop-color="#111318"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="12" stdDeviation="24" flood-color="#000" flood-opacity=".42"/>
+    </filter>
+    <style>
+      .icon { fill: none; stroke: currentColor; stroke-width: 1.75; stroke-linecap: round; stroke-linejoin: round; }
+      .label { fill: #a7abb4; font: 500 13px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      .section { fill: #f4f5f7; font: 650 18px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      .meta { fill: #777d88; font: 500 13px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    </style>
+
+    <symbol id="i-chat-new" viewBox="0 0 24 24">
+      <path class="icon" d="M6.5 18.5 3.5 21v-4.6A7.5 7.5 0 0 1 2.5 12c0-4.7 4.2-8.5 9.5-8.5s9.5 3.8 9.5 8.5-4.2 8.5-9.5 8.5c-2 0-3.9-.6-5.5-2Z"/>
+      <path class="icon" d="M12 8v8M8 12h8"/>
+    </symbol>
+    <symbol id="i-folder-add" viewBox="0 0 24 24">
+      <path class="icon" d="M3 7.5A2.5 2.5 0 0 1 5.5 5h4l2 2H19a2 2 0 0 1 2 2v8.5a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 17.5Z"/>
+      <path class="icon" d="M15.5 11v6M12.5 14h6"/>
+    </symbol>
+    <symbol id="i-calendar-clock" viewBox="0 0 24 24">
+      <path class="icon" d="M4 8h16M7 3v3M17 3v3M6 5h12a2 2 0 0 1 2 2v5.5M10.5 20H6a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2"/>
+      <circle class="icon" cx="16.5" cy="16.5" r="4.5"/>
+      <path class="icon" d="M16.5 14.2v2.6l1.8 1"/>
+    </symbol>
+    <symbol id="i-merge" viewBox="0 0 24 24">
+      <circle class="icon" cx="6" cy="4.5" r="1.5"/>
+      <circle class="icon" cx="18" cy="4.5" r="1.5"/>
+      <circle class="icon" cx="12" cy="19.5" r="1.5"/>
+      <path class="icon" d="M6 6v3.5c0 3.3 2.7 6 6 6v2.5M18 6v3.5c0 3.3-2.7 6-6 6"/>
+    </symbol>
+    <symbol id="i-archive" viewBox="0 0 24 24">
+      <rect class="icon" x="3" y="4" width="18" height="4.5" rx="1.5"/>
+      <path class="icon" d="M5 8.5v9.8A1.7 1.7 0 0 0 6.7 20h10.6a1.7 1.7 0 0 0 1.7-1.7V8.5M9.5 13h5"/>
+    </symbol>
+    <symbol id="i-search" viewBox="0 0 24 24">
+      <circle class="icon" cx="10.5" cy="10.5" r="6.5"/>
+      <path class="icon" d="m15.2 15.2 4.8 4.8"/>
+    </symbol>
+    <symbol id="i-tasks" viewBox="0 0 24 24">
+      <rect class="icon" x="7" y="4" width="13" height="13" rx="2.5"/>
+      <path class="icon" d="M7 8H5.5A2.5 2.5 0 0 0 3 10.5v7A2.5 2.5 0 0 0 5.5 20h7A2.5 2.5 0 0 0 15 17.5V17M10.5 10.5l2 2 4-4"/>
+    </symbol>
+    <symbol id="i-sliders" viewBox="0 0 24 24">
+      <path class="icon" d="M4 6h5M15 6h5M4 12h9M19 12h1M4 18h2M12 18h8"/>
+      <circle class="icon" cx="12" cy="6" r="2"/>
+      <circle class="icon" cx="16" cy="12" r="2"/>
+      <circle class="icon" cx="9" cy="18" r="2"/>
+    </symbol>
+    <symbol id="i-server" viewBox="0 0 24 24">
+      <rect class="icon" x="4" y="3.5" width="16" height="7" rx="2"/>
+      <rect class="icon" x="4" y="13.5" width="16" height="7" rx="2"/>
+      <path class="icon" d="M8 7h.01M8 17h.01M12 7h5M12 17h5"/>
+    </symbol>
+    <symbol id="i-panel" viewBox="0 0 24 24">
+      <rect class="icon" x="3" y="4" width="18" height="16" rx="2.5"/>
+      <path class="icon" d="M15 4v16"/>
+    </symbol>
+    <symbol id="i-branch" viewBox="0 0 24 24">
+      <circle class="icon" cx="6" cy="5" r="2"/>
+      <circle class="icon" cx="18" cy="5" r="2"/>
+      <circle class="icon" cx="6" cy="19" r="2"/>
+      <path class="icon" d="M6 7v10M18 7v2a4 4 0 0 1-4 4h-4a4 4 0 0 0-4 4"/>
+    </symbol>
+    <symbol id="i-pull-request" viewBox="0 0 24 24">
+      <circle class="icon" cx="6" cy="5" r="2"/>
+      <circle class="icon" cx="6" cy="19" r="2"/>
+      <circle class="icon" cx="18" cy="19" r="2"/>
+      <path class="icon" d="M6 7v10M14 5h2a2 2 0 0 1 2 2v10M14 8l-3-3 3-3"/>
+    </symbol>
+    <symbol id="i-note" viewBox="0 0 24 24">
+      <path class="icon" d="M6 3.5h12A2.5 2.5 0 0 1 20.5 6v9.5L16 20H6A2.5 2.5 0 0 1 3.5 17.5V6A2.5 2.5 0 0 1 6 3.5Z"/>
+      <path class="icon" d="M15.5 20v-3a1.5 1.5 0 0 1 1.5-1.5h3.5M8 8h8M8 12h5"/>
+    </symbol>
+    <symbol id="i-terminal" viewBox="0 0 24 24">
+      <rect class="icon" x="3" y="4" width="18" height="16" rx="2.5"/>
+      <path class="icon" d="m7 9 3 3-3 3M13 15h4"/>
+    </symbol>
+    <symbol id="i-file" viewBox="0 0 24 24">
+      <path class="icon" d="M6 3.5h7l5 5v12H6a2 2 0 0 1-2-2v-13a2 2 0 0 1 2-2Z"/>
+      <path class="icon" d="M13 3.5v5h5M8 13h6M8 17h4"/>
+    </symbol>
+    <symbol id="i-apps-ai" viewBox="0 0 24 24">
+      <circle class="icon" cx="7" cy="7" r="3"/>
+      <circle class="icon" cx="7" cy="17" r="3"/>
+      <circle class="icon" cx="17" cy="17" r="3"/>
+      <path class="icon" d="m16.5 3 .6 1.9L19 5.5l-1.9.6-.6 1.9-.6-1.9-1.9-.6 1.9-.6Z"/>
+    </symbol>
+    <symbol id="i-globe" viewBox="0 0 24 24">
+      <circle class="icon" cx="12" cy="12" r="9"/>
+      <path class="icon" d="M3.5 9h17M3.5 15h17M12 3c2.2 2.5 3.3 5.5 3.3 9S14.2 18.5 12 21c-2.2-2.5-3.3-5.5-3.3-9S9.8 5.5 12 3Z"/>
+    </symbol>
+    <symbol id="i-route" viewBox="0 0 24 24">
+      <circle class="icon" cx="6" cy="18" r="2.5"/>
+      <circle class="icon" cx="18" cy="6" r="2.5"/>
+      <path class="icon" d="M8.5 18H13a3 3 0 0 0 3-3v-1a3 3 0 0 0-3-3h-2a3 3 0 0 1-3-3V6a3 3 0 0 1 3-3h4.5"/>
+    </symbol>
+  </defs>
+
+  <rect width="1200" height="920" rx="32" fill="url(#page)"/>
+  <text x="64" y="70" fill="#f8f9fb" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="30" font-weight="700">OpenLoop · Rounded icon study</text>
+  <text x="64" y="101" class="meta">原创矢量草案 · 24×24 grid · 1.75px stroke · round caps &amp; joins</text>
+
+  <g filter="url(#shadow)">
+    <rect x="48" y="136" width="1104" height="240" rx="24" fill="#15171b" stroke="#272a31"/>
+  </g>
+  <text x="76" y="176" class="section">核心操作</text>
+  <text x="76" y="200" class="meta">20px 实际显示尺寸</text>
+
+  <g color="#b9bec7">
+    <g transform="translate(76 226)"><rect width="112" height="112" rx="18" fill="#1c1f24"/><use href="#i-chat-new" x="40" y="24" width="32" height="32"/><text x="56" y="88" text-anchor="middle" class="label">New session</text></g>
+    <g transform="translate(196 226)"><rect width="112" height="112" rx="18" fill="#1c1f24"/><use href="#i-folder-add" x="40" y="24" width="32" height="32"/><text x="56" y="88" text-anchor="middle" class="label">Folder</text></g>
+    <g transform="translate(316 226)"><rect width="112" height="112" rx="18" fill="#1c1f24"/><use href="#i-calendar-clock" x="40" y="24" width="32" height="32"/><text x="56" y="88" text-anchor="middle" class="label">Schedule</text></g>
+    <g transform="translate(436 226)"><rect width="112" height="112" rx="18" fill="#1c1f24"/><use href="#i-merge" x="40" y="24" width="32" height="32"/><text x="56" y="88" text-anchor="middle" class="label">Merge</text></g>
+    <g transform="translate(556 226)"><rect width="112" height="112" rx="18" fill="#1c1f24"/><use href="#i-archive" x="40" y="24" width="32" height="32"/><text x="56" y="88" text-anchor="middle" class="label">Archive</text></g>
+    <g transform="translate(676 226)"><rect width="112" height="112" rx="18" fill="#1c1f24"/><use href="#i-search" x="40" y="24" width="32" height="32"/><text x="56" y="88" text-anchor="middle" class="label">Search</text></g>
+    <g transform="translate(796 226)"><rect width="112" height="112" rx="18" fill="#1c1f24"/><use href="#i-tasks" x="40" y="24" width="32" height="32"/><text x="56" y="88" text-anchor="middle" class="label">Tasks</text></g>
+    <g transform="translate(916 226)"><rect width="112" height="112" rx="18" fill="#1c1f24"/><use href="#i-sliders" x="40" y="24" width="32" height="32"/><text x="56" y="88" text-anchor="middle" class="label">Controls</text></g>
+  </g>
+
+  <g filter="url(#shadow)"><rect x="48" y="404" width="708" height="456" rx="24" fill="#15171b" stroke="#272a31"/></g>
+  <text x="76" y="446" class="section">侧栏环境模拟</text>
+  <text x="76" y="470" class="meta">使用接近产品的 18–20px 图标尺寸</text>
+
+  <rect x="76" y="500" width="652" height="60" rx="14" fill="#1d2026"/>
+  <g color="#d3d7de"><use href="#i-chat-new" x="96" y="518" width="24" height="24"/></g>
+  <text x="136" y="539" fill="#e7e9ed" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="18" font-weight="600">New session</text>
+  <g color="#808690">
+    <use href="#i-folder-add" x="96" y="590" width="24" height="24"/>
+    <use href="#i-calendar-clock" x="142" y="590" width="24" height="24"/>
+    <use href="#i-merge" x="188" y="590" width="24" height="24"/>
+    <use href="#i-archive" x="234" y="590" width="24" height="24"/>
+  </g>
+  <g color="#8d939d"><use href="#i-search" x="646" y="590" width="24" height="24"/><use href="#i-tasks" x="684" y="590" width="24" height="24"/></g>
+  <path d="M76 638H728" stroke="#292c33"/>
+  <text x="96" y="681" fill="#f0f1f3" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="20" font-weight="650">recent</text>
+  <rect x="76" y="704" width="652" height="54" rx="14" fill="#20232a"/>
+  <g color="#a9c7fa"><use href="#i-calendar-clock" x="96" y="719" width="24" height="24"/></g>
+  <text x="136" y="739" fill="#b9d2ff" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="17">Scheduled task setup</text>
+  <text x="96" y="802" class="meta">柔和来自路径几何，而不只是 CSS 圆角。</text>
+
+  <g filter="url(#shadow)"><rect x="784" y="404" width="368" height="456" rx="24" fill="#15171b" stroke="#272a31"/></g>
+  <text x="812" y="446" class="section">右侧工具轨</text>
+  <text x="812" y="470" class="meta">紧凑、低对比、统一视觉重量</text>
+  <rect x="812" y="500" width="312" height="72" rx="16" fill="#1d2026"/>
+  <g color="#e2e4e8"><use href="#i-server" x="832" y="522" width="28" height="28"/></g>
+  <text x="875" y="543" fill="#f1f2f4" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="19" font-weight="650">Local</text>
+
+  <g color="#858b95">
+    <use href="#i-route" x="832" y="610" width="24" height="24"/>
+    <use href="#i-branch" x="886" y="610" width="24" height="24"/>
+    <use href="#i-pull-request" x="940" y="610" width="24" height="24"/>
+    <use href="#i-panel" x="994" y="610" width="24" height="24"/>
+    <use href="#i-note" x="1048" y="610" width="24" height="24"/>
+    <use href="#i-terminal" x="832" y="680" width="24" height="24"/>
+    <use href="#i-file" x="886" y="680" width="24" height="24"/>
+    <use href="#i-apps-ai" x="940" y="680" width="24" height="24"/>
+    <use href="#i-globe" x="994" y="680" width="24" height="24"/>
+  </g>
+  <g color="#b5d3ff"><use href="#i-panel" x="1048" y="680" width="24" height="24"/></g>
+  <text x="812" y="774" class="meta">灰色常态 · 蓝色选中态</text>
+  <text x="812" y="804" class="meta">无填充 · 圆头描边 · 24×24 语义网格</text>
+</svg>

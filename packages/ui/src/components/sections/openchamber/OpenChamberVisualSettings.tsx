@@ -17,10 +17,21 @@ import {
     SelectValue,
 } from '@/components/ui/select';
 import { Icon } from "@/components/icon/Icon";
-import { invokeDesktop, isDesktopShell, isVSCodeRuntime, isWebRuntime } from '@/lib/desktop';
+import {
+    isDesktopShell,
+    isDesktopLocalOriginActive,
+    isVSCodeRuntime,
+    isWebRuntime,
+    getDesktopDockIcon,
+    setDesktopDockIcon,
+    usesFramelessElectronChrome,
+    type DesktopDockIconVariant,
+    type DesktopWindowControlsPosition,
+    type DesktopWindowControlsStyle,
+} from '@/lib/desktop';
 import { useDeviceInfo } from '@/lib/device';
 import { usePwaDetection } from '@/hooks/usePwaDetection';
-import { updateDesktopSettings } from '@/lib/persistence';
+import { reportSettingsSaveState, updateDesktopSettings } from '@/lib/persistence';
 import { CODE_FONT_OPTIONS, DEFAULT_MONO_FONT, DEFAULT_UI_FONT, UI_FONT_OPTIONS, type MonoFontOption, type UiFontOption } from '@/lib/fontOptions';
 import { useI18n, type Locale } from '@/lib/i18n';
 import { useConfigStore } from '@/stores/useConfigStore';
@@ -112,7 +123,12 @@ const MERMAID_RENDERING_OPTIONS: Option<'svg' | 'ascii'>[] = [
     },
 ];
 
-const DEFAULT_PWA_INSTALL_NAME = 'OpenChamber - AI Coding Assistant';
+const DEFAULT_PWA_INSTALL_NAME = 'OpenLoop - AI Coding Assistant';
+const LEGACY_DEFAULT_PWA_INSTALL_NAMES = new Set([
+    'OpenChamber',
+    'OpenChamber - AI Coding Assistant',
+    'OpenChamber - AI Coding Companion',
+]);
 const PWA_ORIENTATION_OPTIONS: Option<'system' | 'portrait' | 'landscape'>[] = [
     {
         id: 'system',
@@ -271,7 +287,22 @@ const normalizeUserMessageRenderingMode = (mode: unknown): 'markdown' | 'plain' 
     return mode === 'markdown' ? 'markdown' : 'plain';
 };
 
-type VisibleSetting = 'sessionAssist' | 'sessionGoal' | 'theme' | 'pwaInstallName' | 'pwaOrientation' | 'mobileKeyboardMode' | 'timeFormat' | 'weekStart' | 'fontSize' | 'terminalFontSize' | 'terminalShell' | 'terminalLoginShell' | 'editorFontSize' | 'spacing' | 'inputBarOffset' | 'mermaidRendering' | 'userMessageRendering' | 'chatRenderMode' | 'messageTransport' | 'activityRenderMode' | 'collapsibleUserMessages' | 'stickyUserHeader' | 'promptNavigatorEnabled' | 'wideChatLayout' | 'codeBlockLineWrap' | 'splitAssistantMessageActions' | 'subagentReadOnlyBanner' | 'diffLayout' | 'mobileStatusBar' | 'dotfiles' | 'fileViewerPreview' | 'reasoning' | 'showToolFileIcons' | 'showTurnChangedFiles' | 'expandedTools' | 'followUpBehavior' | 'terminalQuickKeys' | 'fileEditorKeymap' | 'persistDraft' | 'inputSpellcheck' | 'reportUsage' | 'expandedEditorToolbar';
+type VisibleSetting = 'sessionAssist' | 'sessionGoal' | 'theme' | 'dockIcon' | 'windowControlsPosition' | 'pwaInstallName' | 'pwaOrientation' | 'mobileKeyboardMode' | 'timeFormat' | 'weekStart' | 'fontSize' | 'terminalFontSize' | 'terminalShell' | 'terminalLoginShell' | 'editorFontSize' | 'spacing' | 'inputBarOffset' | 'mermaidRendering' | 'userMessageRendering' | 'chatRenderMode' | 'messageTransport' | 'activityRenderMode' | 'collapsibleUserMessages' | 'stickyUserHeader' | 'promptNavigatorEnabled' | 'wideChatLayout' | 'codeBlockLineWrap' | 'splitAssistantMessageActions' | 'subagentReadOnlyBanner' | 'diffLayout' | 'mobileStatusBar' | 'dotfiles' | 'fileViewerPreview' | 'reasoning' | 'showToolFileIcons' | 'showTurnChangedFiles' | 'expandedTools' | 'followUpBehavior' | 'terminalQuickKeys' | 'fileEditorKeymap' | 'persistDraft' | 'inputSpellcheck' | 'reportUsage' | 'expandedEditorToolbar' | 'autoSaveEnabled';
+
+const DOCK_ICON_OPTIONS: Array<{ id: DesktopDockIconVariant; labelKey: string }> = [
+    { id: 'black', labelKey: 'settings.openchamber.visual.option.dockIcon.black' },
+    { id: 'ice', labelKey: 'settings.openchamber.visual.option.dockIcon.ice' },
+];
+
+const WINDOW_CONTROLS_POSITION_OPTIONS: Array<{ id: DesktopWindowControlsPosition; labelKey: string }> = [
+    { id: 'left', labelKey: 'settings.openchamber.desktopNetwork.option.windowControlsLeft' },
+    { id: 'right', labelKey: 'settings.openchamber.desktopNetwork.option.windowControlsRight' },
+];
+
+const WINDOW_CONTROLS_STYLE_OPTIONS: Array<{ id: DesktopWindowControlsStyle; labelKey: string }> = [
+    { id: 'classic', labelKey: 'settings.openchamber.desktopNetwork.option.windowControlsClassic' },
+    { id: 'traffic-lights', labelKey: 'settings.openchamber.desktopNetwork.option.windowControlsTrafficLights' },
+];
 
 interface OpenChamberVisualSettingsProps {
     /** Which settings to show. If undefined, shows all. */
@@ -312,6 +343,8 @@ export const OpenChamberVisualSettings: React.FC<OpenChamberVisualSettingsProps>
     const setPromptNavigatorEnabled = useUIStore(state => state.setPromptNavigatorEnabled);
     const expandedEditorToolbar = useUIStore(state => state.expandedEditorToolbar);
     const setExpandedEditorToolbar = useUIStore(state => state.setExpandedEditorToolbar);
+    const autoSaveEnabled = useUIStore(state => state.autoSaveEnabled);
+    const setAutoSaveEnabled = useUIStore(state => state.setAutoSaveEnabled);
     const wideChatLayoutEnabled = useUIStore(state => state.wideChatLayoutEnabled);
     const setWideChatLayoutEnabled = useUIStore(state => state.setWideChatLayoutEnabled);
     const codeBlockLineWrap = useUIStore(state => state.codeBlockLineWrap);
@@ -368,6 +401,8 @@ export const OpenChamberVisualSettings: React.FC<OpenChamberVisualSettingsProps>
     const setShowSplitAssistantMessageActions = useUIStore(state => state.setShowSplitAssistantMessageActions);
     const allowPromptingSubagentSessions = useUIStore(state => state.allowPromptingSubagentSessions);
     const setAllowPromptingSubagentSessions = useUIStore(state => state.setAllowPromptingSubagentSessions);
+    const draftStartersVisible = useUIStore(state => state.draftStartersVisible);
+    const setDraftStartersVisible = useUIStore(state => state.setDraftStartersVisible);
     const messageStreamTransport = useConfigStore((state) => state.settingsMessageStreamTransport);
     const setMessageStreamTransport = useConfigStore((state) => state.setSettingsMessageStreamTransport);
     const effectiveMessageStreamTransport = messageStreamTransport;
@@ -388,16 +423,6 @@ export const OpenChamberVisualSettings: React.FC<OpenChamberVisualSettingsProps>
 
     const [themesReloading, setThemesReloading] = React.useState(false);
 
-    // macOS-desktop-only vibrancy toggle. Changing it needs a full relaunch
-    // (vibrancy is a window-creation option), so we persist + restart on save.
-    const macVibrancySupported = React.useMemo(
-        () => isDesktopShell() && typeof window !== 'undefined' && window.__OPENCHAMBER_ELECTRON__?.macVibrancySupported === true,
-        [],
-    );
-    const macVibrancyEnabled = typeof window !== 'undefined' && window.__OPENCHAMBER_ELECTRON__?.macVibrancy === true;
-    const [vibrancyChecked, setVibrancyChecked] = React.useState(macVibrancyEnabled);
-    const [vibrancyRestarting, setVibrancyRestarting] = React.useState(false);
-
     // macOS-desktop-only dock badge that counts chats with unseen activity.
     // The tray sync (mac-only) pumps the count to the main process, so the
     // toggle is offered only where it actually has an effect. No relaunch needed.
@@ -408,6 +433,16 @@ export const OpenChamberVisualSettings: React.FC<OpenChamberVisualSettingsProps>
     );
     const dockBadgeEnabled = useUIStore(state => state.dockBadgeEnabled);
     const setDockBadgeEnabled = useUIStore(state => state.setDockBadgeEnabled);
+    const dockIconSupported = isDesktopShell() && isDesktopLocalOriginActive() && typeof window !== 'undefined'
+        && (window as unknown as { __OPENCHAMBER_PLATFORM__?: string }).__OPENCHAMBER_PLATFORM__ === 'darwin';
+    const [dockIconVariant, setDockIconVariant] = React.useState<DesktopDockIconVariant>('black');
+    const [dockIconLoading, setDockIconLoading] = React.useState(dockIconSupported);
+    const [dockIconSaving, setDockIconSaving] = React.useState(false);
+    const showWindowControlsPosition = usesFramelessElectronChrome();
+    const desktopWindowControlsPosition = useUIStore((state) => state.desktopWindowControlsPosition);
+    const setDesktopWindowControlsPosition = useUIStore((state) => state.setDesktopWindowControlsPosition);
+    const desktopWindowControlsStyle = useUIStore((state) => state.desktopWindowControlsStyle);
+    const setDesktopWindowControlsStyle = useUIStore((state) => state.setDesktopWindowControlsStyle);
     const [chatRenderPreviewTick, setChatRenderPreviewTick] = React.useState(0);
     const reportUsage = useUIStore(state => state.reportUsage);
     const setReportUsage = useUIStore(state => state.setReportUsage);
@@ -417,6 +452,50 @@ export const OpenChamberVisualSettings: React.FC<OpenChamberVisualSettingsProps>
         setReportUsage(enabled);
         void updateDesktopSettings({ reportUsage: enabled });
     }, [setReportUsage]);
+
+    const handleWindowControlsPositionChange = React.useCallback((value: DesktopWindowControlsPosition) => {
+        setDesktopWindowControlsPosition(value);
+        void updateDesktopSettings({ desktopWindowControlsPosition: value });
+    }, [setDesktopWindowControlsPosition]);
+
+    const handleWindowControlsStyleChange = React.useCallback((value: DesktopWindowControlsStyle) => {
+        setDesktopWindowControlsStyle(value);
+        void updateDesktopSettings({ desktopWindowControlsStyle: value });
+    }, [setDesktopWindowControlsStyle]);
+
+    React.useEffect(() => {
+        if (!dockIconSupported) return;
+        let cancelled = false;
+        void getDesktopDockIcon()
+            .then((status) => {
+                if (!cancelled && status?.supported) setDockIconVariant(status.variant);
+            })
+            .finally(() => {
+                if (!cancelled) setDockIconLoading(false);
+            });
+        return () => {
+            cancelled = true;
+        };
+    }, [dockIconSupported]);
+
+    const handleDockIconChange = React.useCallback(async (variant: DesktopDockIconVariant) => {
+        if (dockIconLoading || dockIconSaving || variant === dockIconVariant) return;
+        const previous = dockIconVariant;
+        setDockIconVariant(variant);
+        setDockIconSaving(true);
+        reportSettingsSaveState('saving');
+        try {
+            const status = await setDesktopDockIcon(variant);
+            if (!status?.supported) throw new Error('Dock icon switching is unavailable');
+            setDockIconVariant(status.variant);
+            reportSettingsSaveState('saved');
+        } catch {
+            setDockIconVariant(previous);
+            reportSettingsSaveState('error');
+        } finally {
+            setDockIconSaving(false);
+        }
+    }, [dockIconLoading, dockIconSaving, dockIconVariant]);
 
     const shouldAnimateChatPreview = (isSettingsDialogOpen || isMobile || isVSCodeRuntime())
         && (visibleSettings ? visibleSettings.includes('chatRenderMode') : true);
@@ -478,6 +557,11 @@ export const OpenChamberVisualSettings: React.FC<OpenChamberVisualSettingsProps>
         setPromptNavigatorEnabled(enabled);
         void updateDesktopSettings({ promptNavigatorEnabled: enabled });
     }, [setPromptNavigatorEnabled]);
+
+    const handleDraftStartersVisibleChange = React.useCallback((enabled: boolean) => {
+        setDraftStartersVisible(enabled);
+        void updateDesktopSettings({ draftStartersVisible: enabled });
+    }, [setDraftStartersVisible]);
 
     const handleExpandedEditorToolbarChange = React.useCallback((enabled: boolean) => {
         setExpandedEditorToolbar(enabled);
@@ -596,13 +680,14 @@ export const OpenChamberVisualSettings: React.FC<OpenChamberVisualSettingsProps>
 
     const isVSCode = isVSCodeRuntime();
     const hasThemeSettings = shouldShow('theme') && !isVSCode;
+    const showWindowControlsPositionSetting = shouldShow('windowControlsPosition') && showWindowControlsPosition;
     const hasLocalizationSettings = shouldShow('theme') || shouldShow('timeFormat') || shouldShow('weekStart');
     const showMobileLayoutSetting = isMobile && isWebRuntime() && !isDesktopShell() && !isVSCode;
     const hasAppearanceSettings = isVSCode
         ? hasLocalizationSettings
-        : (shouldShow('theme') || showMobileLayoutSetting || shouldShow('pwaInstallName') || shouldShow('pwaOrientation') || shouldShow('timeFormat') || shouldShow('weekStart'));
+        : (shouldShow('theme') || showWindowControlsPositionSetting || showMobileLayoutSetting || shouldShow('pwaInstallName') || shouldShow('pwaOrientation') || shouldShow('timeFormat') || shouldShow('weekStart'));
     const hasLayoutSettings = shouldShow('fontSize') || shouldShow('terminalFontSize') || shouldShow('editorFontSize') || shouldShow('spacing') || (shouldShow('inputBarOffset') && isMobile);
-    const hasNavigationSettings = (shouldShow('terminalQuickKeys') && !isMobile) || ((shouldShow('terminalShell') || shouldShow('terminalLoginShell')) && !isVSCode) || shouldShow('fileEditorKeymap') || (shouldShow('expandedEditorToolbar') && !isVSCode);
+    const hasNavigationSettings = (shouldShow('terminalQuickKeys') && !isMobile) || ((shouldShow('terminalShell') || shouldShow('terminalLoginShell')) && !isVSCode) || shouldShow('fileEditorKeymap') || shouldShow('autoSaveEnabled') || (shouldShow('expandedEditorToolbar') && !isVSCode);
     const hasBehaviorSettings = shouldShow('mermaidRendering')
         || (shouldShow('sessionGoal') && !isVSCode)
         || shouldShow('userMessageRendering')
@@ -787,12 +872,18 @@ export const OpenChamberVisualSettings: React.FC<OpenChamberVisualSettingsProps>
                 const settings = await response.json().catch(() => ({}));
                 const raw = typeof settings?.pwaAppName === 'string' ? settings.pwaAppName : '';
                 const normalized = raw.trim().replace(/\s+/g, ' ').slice(0, 64);
+                const resolvedName = LEGACY_DEFAULT_PWA_INSTALL_NAMES.has(normalized)
+                    ? DEFAULT_PWA_INSTALL_NAME
+                    : normalized;
+                if (normalized && resolvedName !== normalized) {
+                    await updateDesktopSettings({ pwaAppName: resolvedName });
+                }
                 const orientation = normalizePwaOrientation(settings?.pwaOrientation);
                 const nextMobileKeyboardMode = normalizeMobileKeyboardMode(settings?.mobileKeyboardMode);
 
                 if (!cancelled) {
                     if (showPwaInstallNameSetting) {
-                        setPwaInstallName(normalized || DEFAULT_PWA_INSTALL_NAME);
+                        setPwaInstallName(resolvedName || DEFAULT_PWA_INSTALL_NAME);
                     }
                     if (showPwaOrientationSetting) {
                         setPwaOrientation(orientation);
@@ -936,36 +1027,6 @@ export const OpenChamberVisualSettings: React.FC<OpenChamberVisualSettingsProps>
                                     </div>
                                 </SettingsTwoColumn>
 
-                                {macVibrancySupported && (
-                                    <SettingsInset settingsItem="appearance.window-transparency" className="flex flex-col gap-1.5">
-                                        <SettingsCheckboxRow
-                                            checked={vibrancyChecked}
-                                            onChange={setVibrancyChecked}
-                                            disabled={vibrancyRestarting}
-                                            label={t('settings.openchamber.visual.field.macVibrancy')}
-                                            info={t('settings.openchamber.visual.field.macVibrancyHint')}
-                                            ariaLabel={t('settings.openchamber.visual.field.macVibrancy')}
-                                        />
-                                        {vibrancyChecked !== macVibrancyEnabled && (
-                                            <div className="pl-6">
-                                                <Button
-                                                    variant="outline"
-                                                    size="sm"
-                                                    disabled={vibrancyRestarting}
-                                                    onClick={() => {
-                                                        setVibrancyRestarting(true);
-                                                        void invokeDesktop('desktop_set_vibrancy', { enabled: vibrancyChecked });
-                                                    }}
-                                                >
-                                                    {vibrancyRestarting
-                                                        ? t('settings.openchamber.visual.actions.restarting')
-                                                        : t('settings.openchamber.visual.actions.saveAndRestart')}
-                                                </Button>
-                                            </div>
-                                        )}
-                                    </SettingsInset>
-                                )}
-
                                 {dockBadgeSupported && (
                                     <SettingsInset settingsItem="appearance.dock-badge">
                                         <SettingsCheckboxRow
@@ -977,6 +1038,66 @@ export const OpenChamberVisualSettings: React.FC<OpenChamberVisualSettingsProps>
                                         />
                                     </SettingsInset>
                                 )}
+
+                                {shouldShow('dockIcon') && dockIconSupported && (
+                                    <SettingsInset>
+                                        <SettingsStackedField
+                                            label={t('settings.openchamber.visual.field.dockIcon')}
+                                            info={t('settings.openchamber.visual.field.dockIconHint')}
+                                            settingsItem="appearance.dock-icon"
+                                        >
+                                            <SettingsChipGroup
+                                                value={dockIconVariant}
+                                                options={DOCK_ICON_OPTIONS.map((option) => ({
+                                                    value: option.id,
+                                                    label: tUnsafe(option.labelKey),
+                                                    disabled: dockIconLoading || dockIconSaving,
+                                                }))}
+                                                onChange={(variant) => void handleDockIconChange(variant)}
+                                                aria-label={t('settings.openchamber.visual.field.dockIconAria')}
+                                            />
+                                        </SettingsStackedField>
+                                    </SettingsInset>
+                                )}
+                            </SettingsSection>
+                        )}
+
+                        {showWindowControlsPositionSetting && (
+                            <SettingsSection
+                                title={t('settings.openchamber.desktopNetwork.field.windowControls')}
+                                info={t('settings.openchamber.desktopNetwork.field.windowControlsPositionDescription')}
+                                divider={hasThemeSettings}
+                            >
+                                <SettingsTwoColumn>
+                                    <SettingsStackedField
+                                        label={t('settings.openchamber.desktopNetwork.field.windowControlsPosition')}
+                                        settingsItem="sessions.desktop-window-controls-position"
+                                    >
+                                        <SettingsChipGroup
+                                            value={desktopWindowControlsPosition}
+                                            options={WINDOW_CONTROLS_POSITION_OPTIONS.map((option) => ({
+                                                value: option.id,
+                                                label: tUnsafe(option.labelKey),
+                                            }))}
+                                            onChange={handleWindowControlsPositionChange}
+                                            aria-label={t('settings.openchamber.desktopNetwork.field.windowControlsPositionAria')}
+                                        />
+                                    </SettingsStackedField>
+                                    <SettingsStackedField
+                                        label={t('settings.openchamber.desktopNetwork.field.windowControlsStyle')}
+                                        settingsItem="sessions.desktop-window-controls-style"
+                                    >
+                                        <SettingsChipGroup
+                                            value={desktopWindowControlsStyle}
+                                            options={WINDOW_CONTROLS_STYLE_OPTIONS.map((option) => ({
+                                                value: option.id,
+                                                label: tUnsafe(option.labelKey),
+                                            }))}
+                                            onChange={handleWindowControlsStyleChange}
+                                            aria-label={t('settings.openchamber.desktopNetwork.field.windowControlsStyleAria')}
+                                        />
+                                    </SettingsStackedField>
+                                </SettingsTwoColumn>
                             </SettingsSection>
                         )}
 
@@ -1435,6 +1556,16 @@ export const OpenChamberVisualSettings: React.FC<OpenChamberVisualSettingsProps>
                             </SettingsControlGroup>
                         )}
                         <div className={SETTINGS_OPTION_STACK_CLASS}>
+                            {shouldShow('autoSaveEnabled') && (
+                                <SettingsCheckboxRow
+                                    checked={autoSaveEnabled}
+                                    onChange={setAutoSaveEnabled}
+                                    label={t('settings.openchamber.visual.field.autoSaveEnabled')}
+                                    ariaLabel={t('settings.openchamber.visual.field.autoSaveEnabledAria')}
+                                    info={t('settings.openchamber.visual.field.autoSaveEnabledInfo')}
+                                    settingsItem="appearance.auto-save-enabled"
+                                />
+                            )}
                             {shouldShow('expandedEditorToolbar') && !isVSCode && (
                                 <SettingsCheckboxRow
                                     checked={expandedEditorToolbar}
@@ -1725,12 +1856,18 @@ export const OpenChamberVisualSettings: React.FC<OpenChamberVisualSettingsProps>
                                         />
                                     </SettingsSection>
                                 )}
-                                {(shouldShow('sessionAssist') || shouldShow('subagentReadOnlyBanner')) && (
-                                    <SettingsSection
-                                        title={t('settings.openchamber.visual.section.sessionAssistance')}
-                                        settingsItem="chat.session-assistance"
-                                        contentClassName={SETTINGS_OPTION_STACK_CLASS}
-                                    >
+                                <SettingsSection
+                                    title={t('settings.openchamber.visual.section.sessionAssistance')}
+                                    settingsItem="chat.session-assistance"
+                                    contentClassName={SETTINGS_OPTION_STACK_CLASS}
+                                >
+                                    <SettingsCheckboxRow
+                                        checked={draftStartersVisible}
+                                        onChange={handleDraftStartersVisibleChange}
+                                        label={t('settings.openchamber.visual.field.draftStartersVisible')}
+                                        ariaLabel={t('settings.openchamber.visual.field.draftStartersVisibleAria')}
+                                        settingsItem="chat.draft-starters-visible"
+                                    />
                                         {shouldShow('sessionAssist') && (
                                             <>
                                                 <SettingsCheckboxRow
@@ -1758,8 +1895,7 @@ export const OpenChamberVisualSettings: React.FC<OpenChamberVisualSettingsProps>
                                                 settingsItem="chat.subagent-read-only-banner"
                                             />
                                         )}
-                                    </SettingsSection>
-                                )}
+                                </SettingsSection>
                                 {/* The goal loop runs in the web server — VS Code only renders
                                     goal state, so the settings section is hidden there too. */}
                                 {shouldShow('sessionGoal') && !isVSCode && (

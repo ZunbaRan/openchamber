@@ -7,8 +7,6 @@ export function McpIcon(props: SVGProps<SVGSVGElement>) {
       width="1em"
       height="1em"
       fill="currentColor"
-      stroke="currentColor"
-      strokeWidth="0.5"
       fillRule="evenodd"
       viewBox="-0.5 -0.5 25 25"
       {...props}

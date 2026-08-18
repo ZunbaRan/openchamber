@@ -61,7 +61,7 @@ struct OverviewWidgetView: View {
         VStack(spacing: 16) {
             HStack(spacing: 16) {
                 actionButton(systemImage: "plus", url: WidgetDeepLink.newSession())
-                actionButton(systemImage: "square.stack.3d.up", url: WidgetDeepLink.status())
+                actionButton(systemImage: "list.bullet", url: WidgetDeepLink.status())
             }
             HStack(spacing: 16) {
                 actionButton(systemImage: "server.rack", url: WidgetDeepLink.instances())
@@ -90,7 +90,7 @@ struct OverviewWidget: Widget {
             OverviewWidgetView(entry: entry)
                 .containerBackground(.fill.tertiary, for: .widget)
         }
-        .configurationDisplayName("OpenChamber")
+        .configurationDisplayName("OpenLoop")
         .description("Recent sessions and quick actions.")
         .supportedFamilies([.systemMedium])
     }
@@ -120,7 +120,7 @@ struct QuickActionsWidgetView: View {
 
             // Two round secondary actions.
             HStack(spacing: 10) {
-                quickCircle(systemImage: "square.stack.3d.up", url: WidgetDeepLink.status())
+                quickCircle(systemImage: "list.bullet", url: WidgetDeepLink.status())
                 quickCircle(systemImage: "server.rack", url: WidgetDeepLink.instances())
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -266,7 +266,7 @@ struct LockNewSessionWidget: Widget {
                 .containerBackground(.clear, for: .widget)
         }
         .configurationDisplayName("New Session")
-        .description("Start a new OpenChamber session.")
+        .description("Start a new OpenLoop session.")
         .supportedFamilies([.accessoryCircular])
     }
 }

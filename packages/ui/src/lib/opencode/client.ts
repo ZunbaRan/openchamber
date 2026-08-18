@@ -12,6 +12,8 @@ import type {
   TextPartInput,
   FilePartInput,
 } from "@opencode-ai/sdk/v2";
+import { isAmbiguousTransportFailure, markAmbiguousTransportFailure } from "@/lib/relay/transport-error";
+import { FilesystemError, parseFilesystemErrorReason } from "@/lib/api/files-errors";
 import type { PermissionRequest } from "@/types/permission";
 import type { QuestionRequest } from "@/types/question";
 
@@ -64,6 +66,75 @@ type SdkResult<T> = {
   data?: T;
   error?: unknown;
   response?: { status?: number };
+};
+
+type OpenCodeDistributionCapabilities = {
+  distribution: string;
+  version: string;
+  upstreamVersion: string;
+  upstreamCommit: string;
+  forkCommit: string;
+  apiVersion: string;
+  managedUpdate: boolean;
+  features: {
+    mcpLegacy: boolean;
+    mcp20260728: boolean;
+    mcpApps: boolean;
+    mcpAppToolCall: boolean;
+  };
+};
+
+export type OpenCodeMcpAppResource = {
+  server: string;
+  resourceUri: string;
+  mimeType: string;
+  html: string;
+  sha256: string;
+  meta?: {
+    csp?: {
+      [key: string]: unknown;
+    };
+    permissions?: {
+      [key: string]: unknown;
+    };
+    domain?: string;
+    prefersBorder?: boolean;
+  };
+};
+
+type OpenCodeMcpAppSdk = {
+  global?: {
+    capabilities?: (
+      options?: { signal?: AbortSignal },
+    ) => Promise<SdkResult<OpenCodeDistributionCapabilities>>;
+  };
+  mcp?: {
+    app?: {
+      resource?: (
+        parameters: {
+          directory?: string;
+          sessionID: string;
+          messageID: string;
+          server: string;
+          resourceUri: string;
+          force?: 'true' | 'false';
+        },
+        options?: { signal?: AbortSignal },
+      ) => Promise<SdkResult<OpenCodeMcpAppResource>>;
+      toolCall?: (
+        parameters: {
+          directory?: string;
+          sessionID: string;
+          messageID: string;
+          server: string;
+          resourceUri: string;
+          name: string;
+          arguments?: Record<string, unknown>;
+        },
+        options?: { signal?: AbortSignal },
+      ) => Promise<SdkResult<unknown>>;
+    };
+  };
 };
 
 function unwrapSdkData<T>(result: SdkResult<T>, operation: string): T {
@@ -268,6 +339,12 @@ class OpencodeService {
     this.client = createRuntimeOpencodeClient({ baseUrl: this.baseUrl });
   }
 
+  private assertRuntimeUnchanged(runtimeKey?: string): void {
+    if (runtimeKey && runtimeKey !== getRuntimeKey()) {
+      throw new Error('Message was not sent because the runtime changed.');
+    }
+  }
+
   getBaseUrl(): string {
     return this.baseUrl;
   }
@@ -424,6 +501,172 @@ class OpencodeService {
   // Get the raw API client for direct access
   getApiClient(): OpencodeClient {
     return this.client;
+  }
+
+  async getDistributionCapabilities(signal?: AbortSignal): Promise<OpenCodeDistributionCapabilities> {
+    const sdk = this.client as OpencodeClient & OpenCodeMcpAppSdk;
+    if (typeof sdk.global?.capabilities !== 'function') {
+      throw new Error('The selected OpenCode CLI does not expose OpenLoop distribution capabilities');
+    }
+    return unwrapSdkData(
+      await sdk.global.capabilities({ signal }),
+      'Get OpenCode distribution capabilities',
+    );
+  }
+
+  async getMcpAppResource(input: {
+    directory: string;
+    sessionId: string;
+    messageId: string;
+    partId: string;
+    server: string;
+    resourceUri: string;
+    toolKey: string;
+    force?: boolean;
+    signal?: AbortSignal;
+  }): Promise<OpenCodeMcpAppResource> {
+    const scoped = this.getScopedApiClient(input.directory) as OpencodeClient & OpenCodeMcpAppSdk;
+    if (typeof scoped.mcp?.app?.resource !== 'function') {
+      throw new Error('The selected OpenCode CLI does not support MCP Apps');
+    }
+
+    // Keep the generated method check above as the external-CLI capability
+    // gate, but use the runtime-aware transport for the actual resource read.
+    // The generated SDK request can remain pending across a renderer reload in
+    // desktop/proxied runtimes even though the same verified endpoint is
+    // immediately reachable through runtimeFetch. A permanently pending read
+    // leaves restored MCP Apps as an infinite skeleton. The direct request is
+    // also consistent with the exact ToolPart-bound AppBridge route below.
+    const query = new URLSearchParams({
+      directory: input.directory,
+      sessionID: input.sessionId,
+      messageID: input.messageId,
+      partID: input.partId,
+      server: input.server,
+      resourceUri: input.resourceUri,
+      toolKey: input.toolKey,
+      force: input.force ? 'true' : 'false',
+    });
+    const baseUrl = this.baseUrl.replace(/\/+$/, '');
+    const response = await runtimeFetch(
+      `${baseUrl}/mcp/app/resource?${query.toString()}`,
+      {
+        method: 'GET',
+        headers: { Accept: 'application/json' },
+        signal: input.signal,
+      },
+    );
+    const payload = await response.json().catch(() => undefined) as unknown;
+    if (!response.ok) {
+      const error = new Error(
+        `Load MCP App resource failed (${response.status}): ${formatSdkError(payload ?? response.statusText)}`,
+      ) as Error & { status?: number };
+      error.status = response.status;
+      throw error;
+    }
+    if (!payload || typeof payload !== 'object') {
+      throw new Error('Load MCP App resource failed: empty response');
+    }
+    return payload as OpenCodeMcpAppResource;
+  }
+
+  async callMcpAppTool(input: {
+    directory: string;
+    sessionId: string;
+    messageId: string;
+    partId: string;
+    server: string;
+    resourceUri: string;
+    toolKey: string;
+    name: string;
+    arguments?: Record<string, unknown>;
+    signal?: AbortSignal;
+  }): Promise<unknown> {
+    const scoped = this.getScopedApiClient(input.directory) as OpencodeClient & OpenCodeMcpAppSdk;
+    if (typeof scoped.mcp?.app?.toolCall !== 'function') {
+      throw new Error('The selected OpenCode CLI does not support MCP App tool calls');
+    }
+
+    // SDK gap: the published fork SDK exposes this endpoint but its generated
+    // serializer predates the exact ToolPart binding fields and silently drops
+    // unknown keys. Keep the method check above for external-CLI degradation,
+    // then send the complete body through the same runtime-aware transport.
+    const baseUrl = this.baseUrl.replace(/\/+$/, '');
+    const response = await runtimeFetch(
+      `${baseUrl}/mcp/app/tool-call?directory=${encodeURIComponent(input.directory)}`,
+      {
+        method: 'POST',
+        headers: {
+          Accept: 'application/json',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          sessionID: input.sessionId,
+          messageID: input.messageId,
+          partID: input.partId,
+          server: input.server,
+          resourceUri: input.resourceUri,
+          toolKey: input.toolKey,
+          name: input.name,
+          arguments: input.arguments ?? {},
+        }),
+        signal: input.signal,
+      },
+    );
+    const payload = await response.json().catch(() => undefined) as unknown;
+    if (!response.ok) {
+      const error = new Error(
+        `Call MCP App tool failed (${response.status}): ${formatSdkError(payload ?? response.statusText)}`,
+      ) as Error & { status?: number };
+      error.status = response.status;
+      throw error;
+    }
+    if (payload === undefined || payload === null) {
+      throw new Error('Call MCP App tool failed: empty response');
+    }
+    return payload;
+  }
+
+  async updateMessagePart(input: {
+    directory: string;
+    sessionId: string;
+    messageId: string;
+    partId: string;
+    part: Part;
+    signal?: AbortSignal;
+  }): Promise<Part> {
+    const scoped = this.getScopedApiClient(input.directory);
+    return unwrapSdkData(
+      await scoped.part.update({
+        directory: input.directory,
+        sessionID: input.sessionId,
+        messageID: input.messageId,
+        partID: input.partId,
+        part: input.part,
+      }, { signal: input.signal }),
+      'Update message part',
+    );
+  }
+
+  async getMessagePart(input: {
+    directory: string;
+    sessionId: string;
+    messageId: string;
+    partId: string;
+    signal?: AbortSignal;
+  }): Promise<Part> {
+    const scoped = this.getScopedApiClient(input.directory);
+    const message = unwrapSdkData(
+      await scoped.session.message({
+        directory: input.directory,
+        sessionID: input.sessionId,
+        messageID: input.messageId,
+      }, { signal: input.signal }),
+      'Get session message',
+    );
+    const part = message.parts.find((candidate) => candidate.id === input.partId);
+    if (!part) throw new Error('Get session message part failed: part not found');
+    return part;
   }
 
   // Get system information including home directory
@@ -743,6 +986,7 @@ class OpencodeService {
   }
 
   async sendMessage(params: {
+    runtimeKey?: string;
     id: string;
     providerID: string;
     modelID: string;
@@ -768,6 +1012,8 @@ class OpencodeService {
     };
     directory?: string | null;
   }): Promise<string> {
+    this.assertRuntimeUnchanged(params.runtimeKey);
+
     // Use the optimistic/client-generated ID as the real user message ID so SSE
     // can reconcile the echoed server message in-place.
     const messageId = params.messageId ?? ascendingId("msg");
@@ -851,6 +1097,7 @@ class OpencodeService {
     }
 
     assertProviderCircuitClosed(params.providerID);
+    this.assertRuntimeUnchanged(params.runtimeKey);
 
     let response: Response;
 
@@ -878,7 +1125,13 @@ class OpencodeService {
           // failure) — there is no HTTP response to report. Never fabricate a
           // status: surface it as a transport error so callers treat it like
           // any other network failure instead of a server 500.
-          throw new Error(`Message send transport failure: ${formatSdkError(result.error)}`);
+          // Preserve the transport's "dispatched, outcome unknown" tag through
+          // the wrap: without it the caller cannot tell a lost response from a
+          // send that never reached the server, and re-sends a running prompt.
+          const transportError = new Error(`Message send transport failure: ${formatSdkError(result.error)}`);
+          throw isAmbiguousTransportFailure(result.error)
+            ? markAmbiguousTransportFailure(transportError)
+            : transportError;
         }
         response = new Response(JSON.stringify(result.error), { status });
       } else {
@@ -911,6 +1164,7 @@ class OpencodeService {
   }
 
   async sendCommand(params: {
+    runtimeKey?: string;
     id: string;
     providerID: string;
     modelID: string;
@@ -922,6 +1176,8 @@ class OpencodeService {
     messageId?: string;
     directory?: string | null;
   }): Promise<string> {
+    this.assertRuntimeUnchanged(params.runtimeKey);
+
     const tempMessageId = params.messageId ?? ascendingId("msg");
 
     const parts: FilePartInput[] = [];
@@ -932,6 +1188,7 @@ class OpencodeService {
     }
 
     const requestDirectory = this.normalizeCandidatePath(params.directory ?? null) ?? this.currentDirectory;
+    this.assertRuntimeUnchanged(params.runtimeKey);
 
     const response = await this.client.session.command({
       sessionID: params.id,
@@ -961,6 +1218,7 @@ class OpencodeService {
   }
 
   async shellSession(params: {
+    runtimeKey?: string;
     sessionId: string;
     command: string;
     agent: string;
@@ -968,6 +1226,7 @@ class OpencodeService {
     messageId?: string;
     directory?: string | null;
   }): Promise<{ info: Message; parts: Part[] }> {
+    this.assertRuntimeUnchanged(params.runtimeKey);
     const requestDirectory = this.normalizeCandidatePath(params.directory ?? null) ?? this.currentDirectory;
     const response = await this.client.session.shell({
       sessionID: params.sessionId,
@@ -1183,12 +1442,13 @@ class OpencodeService {
   async fetchPermission(
     sessionID: string,
     requestID: string,
+    directory?: string,
   ): Promise<FetchPermissionResult> {
     try {
-      // The V2 path is session-scoped and does not require a `directory`
-      // parameter. The client-scoped directory (set via setDirectory) is
-      // honored by the underlying SDK client when the call is routed.
-      const response = await this.client.v2.session.permission.get({
+      // The V2 endpoint does not accept a directory parameter. Callers that
+      // reconcile a known project must therefore select its scoped SDK client.
+      const client = directory ? this.getScopedSdkClient(directory) : this.client;
+      const response = await client.v2.session.permission.get({
         sessionID,
         requestID,
       });
@@ -1580,9 +1840,10 @@ class OpencodeService {
     }));
   }
 
-  async listCommandsWithDetails(): Promise<Array<{ name: string; description?: string; agent?: string; model?: string; source?: string; template?: string }>> {
+  async listCommandsWithDetails(directory?: string | null): Promise<Array<{ name: string; description?: string; agent?: string; model?: string; source?: string; template?: string }>> {
+    const requestDirectory = this.normalizeCandidatePath(directory ?? null) ?? this.currentDirectory;
     const response = await this.client.command.list(
-      this.currentDirectory ? { directory: this.currentDirectory } : undefined
+      requestDirectory ? { directory: requestDirectory } : undefined
     );
     const commands = unwrapSdkData(response, 'command.list');
     // Return full command details including template
@@ -1675,7 +1936,7 @@ class OpencodeService {
   // File System Operations
   async createDirectory(
     dirPath: string,
-    options?: { allowOutsideWorkspace?: boolean }
+    options?: { allowOutsideWorkspace?: boolean; asProject?: boolean }
   ): Promise<{ success: boolean; path: string }> {
     const desktopFiles = getDesktopFilesApi();
     if (desktopFiles?.createDirectory) {
@@ -1685,6 +1946,24 @@ class OpencodeService {
         const message = error instanceof Error ? error.message : String(error);
         throw new Error(message || 'Failed to create directory');
       }
+    }
+
+    if (options?.asProject) {
+      const response = await runtimeFetch(`${this.baseUrl}/opencode/directory`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ path: dirPath, create: true }),
+      });
+
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({ error: 'Failed to create project directory' }));
+        throw new Error(error.error || 'Failed to create project directory');
+      }
+
+      const result = await response.json();
+      return { success: true, path: result.path };
     }
 
     const payload = {
@@ -1742,20 +2021,55 @@ class OpencodeService {
     }
 
     const task = (async () => {
-    const desktopFiles = getDesktopFilesApi();
-    if (desktopFiles) {
+      const desktopFiles = getDesktopFilesApi();
       try {
-        const result = await desktopFiles.listDirectory(directoryPath || '', options);
-        if (!result || !Array.isArray(result.entries)) {
-          return [];
+        if (desktopFiles) {
+          const result = await desktopFiles.listDirectory(directoryPath || '', options);
+          if (!result || !Array.isArray(result.entries)) {
+            throw new FilesystemError('Directory listing returned an invalid response', {
+              reason: 'invalid-response',
+            });
+          }
+          const entries = result.entries.map<FilesystemEntry>((entry) => ({
+            name: entry.name,
+            path: normalizeFsPath(entry.path),
+            isDirectory: !!entry.isDirectory,
+            isFile: !entry.isDirectory,
+            isSymbolicLink: false,
+          }));
+          this.listDirectoryCache.set(cacheKey, {
+            entries,
+            expiresAt: Date.now() + FS_LIST_CACHE_TTL_MS,
+          });
+          return entries;
         }
-        const entries = result.entries.map<FilesystemEntry>((entry) => ({
-          name: entry.name,
-          path: normalizeFsPath(entry.path),
-          isDirectory: !!entry.isDirectory,
-          isFile: !entry.isDirectory,
-          isSymbolicLink: false,
-        }));
+
+        const params = new URLSearchParams();
+        if (directoryPath && directoryPath.trim().length > 0) {
+          params.set('path', directoryPath);
+        }
+        if (options?.respectGitignore) {
+          params.set('respectGitignore', 'true');
+        }
+        const query = params.toString();
+        const response = await runtimeFetch(`${this.baseUrl}/fs/list${query ? `?${query}` : ''}`);
+        if (!response.ok) {
+          const error = await response.json().catch(() => ({}));
+          const message = typeof error.error === 'string' ? error.error : 'Failed to list directory';
+          throw new FilesystemError(message, {
+            reason: parseFilesystemErrorReason((error as { reason?: unknown }).reason),
+            status: response.status,
+          });
+        }
+
+        const result = await response.json();
+        if (!result || !Array.isArray(result.entries)) {
+          throw new FilesystemError('Directory listing returned an invalid response', {
+            reason: 'invalid-response',
+          });
+        }
+
+        const entries = result.entries as FilesystemEntry[];
         this.listDirectoryCache.set(cacheKey, {
           entries,
           expiresAt: Date.now() + FS_LIST_CACHE_TTL_MS,
@@ -1765,39 +2079,6 @@ class OpencodeService {
         console.error('Failed to list directory contents:', error);
         throw error;
       }
-    }
-
-    try {
-      const params = new URLSearchParams();
-      if (directoryPath && directoryPath.trim().length > 0) {
-        params.set('path', directoryPath);
-      }
-      if (options?.respectGitignore) {
-        params.set('respectGitignore', 'true');
-      }
-      const query = params.toString();
-      const response = await runtimeFetch(`${this.baseUrl}/fs/list${query ? `?${query}` : ''}`);
-      if (!response.ok) {
-        const error = await response.json().catch(() => ({}));
-        const message = typeof error.error === 'string' ? error.error : 'Failed to list directory';
-        throw new Error(message);
-      }
-
-      const result = await response.json();
-      if (!result || !Array.isArray(result.entries)) {
-        return [];
-      }
-
-      const entries = result.entries as FilesystemEntry[];
-      this.listDirectoryCache.set(cacheKey, {
-        entries,
-        expiresAt: Date.now() + FS_LIST_CACHE_TTL_MS,
-      });
-      return entries;
-    } catch (error) {
-      console.error('Failed to list directory contents:', error);
-      throw error;
-    }
     })();
 
     const trackedTask = task.finally(() => {

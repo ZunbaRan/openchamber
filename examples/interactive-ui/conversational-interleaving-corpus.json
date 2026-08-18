@@ -1,0 +1,126 @@
+{
+  "$schema": "openchamber://conversational-interleaving-corpus/v1",
+  "cases": [
+    {
+      "id": "I1",
+      "locale": "zh-CN",
+      "prompt": "请先用一段文字说明 LLM 强化学习（RLHF）的整体流程，然后用可视化展示各个阶段，最后再用一段文字总结关键结论。",
+      "tools": {
+        "disable": []
+      },
+      "expectation": {
+        "kind": "text-visual-text",
+        "minVisuals": 1,
+        "maxVisuals": 4,
+        "allowedVisuals": [
+          { "runtime": "show-widget", "source": "assistant-text" },
+          { "runtime": "interactive-ui", "source": "agent-generated" }
+        ],
+        "requireMeaningfulText": true,
+        "maxMalformedWidgets": 0
+      }
+    },
+    {
+      "id": "I2",
+      "locale": "zh-CN",
+      "prompt": "请分别生成两个独立的可视化：第一个只展示注意力机制的计算过程，第二个只展示 KV 缓存的复用流程，并在两个可视化之间用一段文字说明两者的关系，最后再用一段文字总结。",
+      "tools": {
+        "disable": []
+      },
+      "expectation": {
+        "kind": "multiple-visuals-with-text-between",
+        "minVisuals": 2,
+        "maxVisuals": 4,
+        "allowedVisuals": [
+          { "runtime": "interactive-ui", "source": "agent-generated" }
+        ],
+        "requireMeaningfulText": true,
+        "maxMalformedWidgets": 0
+      }
+    },
+    {
+      "id": "I3",
+      "locale": "zh-CN",
+      "prompt": "不要调用任何工具。请在同一条助手消息的一个文本片段中，先给出标题为「阶段总览」的组件，接着用一段文字过渡，再给出标题为「奖励闭环」的组件，最后用一段结论文字收尾。",
+      "tools": {
+        "disable": [
+          "interactive_ui",
+          "html_artifact",
+          "simple_crm_open_workspace",
+          "simple_crm_open_overview"
+        ]
+      },
+      "expectation": {
+        "kind": "multiple-widgets-in-one-text-part",
+        "minVisuals": 2,
+        "maxVisuals": 4,
+        "allowedVisuals": [
+          { "runtime": "show-widget", "source": "assistant-text" }
+        ],
+        "forbiddenToolNames": [
+          "interactive_ui",
+          "html_artifact",
+          "simple_crm_open_workspace",
+          "simple_crm_open_overview"
+        ],
+        "expectedWidgetTitlesInOrder": [
+          "阶段总览",
+          "奖励闭环"
+        ],
+        "maxToolVisuals": 0,
+        "requireMeaningfulText": true,
+        "maxMalformedWidgets": 0
+      }
+    },
+    {
+      "id": "I4",
+      "locale": "zh-CN",
+      "prompt": "请调用已安装的 CRM 工作台，只展示一次客户与商机视图，不要用通用可视化工具重新绘制。",
+      "tools": {
+        "disable": [
+          "interactive_ui",
+          "html_artifact"
+        ]
+      },
+      "expectation": {
+        "kind": "single-business-view",
+        "exactVisuals": 1,
+        "allowedVisuals": [
+          { "runtime": "interactive-ui", "source": "installed" },
+          { "runtime": "html-artifact", "source": "installed" }
+        ],
+        "acceptedToolNames": [
+          "simple_crm_open_workspace",
+          "simple_crm_open_overview"
+        ],
+        "forbiddenToolNames": [
+          "interactive_ui",
+          "html_artifact"
+        ],
+        "requireMeaningfulText": true,
+        "maxMalformedWidgets": 0
+      }
+    },
+    {
+      "id": "I5",
+      "locale": "zh-CN",
+      "prompt": "这个页面返回了 HTTP 404，请用一句话解释原因，不需要任何可视化。",
+      "tools": {
+        "disable": [
+          "interactive_ui",
+          "html_artifact"
+        ]
+      },
+      "expectation": {
+        "kind": "no-visual",
+        "exactVisuals": 0,
+        "forbiddenToolNames": [
+          "interactive_ui",
+          "html_artifact"
+        ],
+        "requireMeaningfulText": true,
+        "maxMalformedWidgets": 0
+      }
+    }
+  ]
+}

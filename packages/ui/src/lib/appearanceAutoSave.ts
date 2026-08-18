@@ -7,6 +7,8 @@ import type { TerminalShell } from '@/lib/api/types';
 
 type AppearanceSlice = {
   showReasoningTraces: boolean;
+  workStatusPanelEnabled: boolean;
+  workStatusHiddenSections: string[];
   sessionRecapEnabled: boolean;
   sessionSuggestionEnabled: boolean;
   sessionGoalEnabled: boolean;
@@ -31,6 +33,7 @@ type AppearanceSlice = {
   summaryLength: number;
   maxLastMessageLength: number;
   autoDeleteEnabled: boolean;
+  autoSaveEnabled: boolean;
   autoDeleteAfterDays: number;
   sessionRetentionAction: 'archive' | 'delete';
   fontSize: number;
@@ -59,6 +62,8 @@ export const startAppearanceAutoSave = (): void => {
 
   let previous: AppearanceSlice = {
     showReasoningTraces: useUIStore.getState().showReasoningTraces,
+    workStatusPanelEnabled: useUIStore.getState().workStatusPanelEnabled,
+    workStatusHiddenSections: useUIStore.getState().workStatusHiddenSections,
     sessionRecapEnabled: useUIStore.getState().sessionRecapEnabled,
     sessionSuggestionEnabled: useUIStore.getState().sessionSuggestionEnabled,
     sessionGoalEnabled: useUIStore.getState().sessionGoalEnabled,
@@ -78,6 +83,7 @@ export const startAppearanceAutoSave = (): void => {
     summaryLength: useUIStore.getState().summaryLength,
     maxLastMessageLength: useUIStore.getState().maxLastMessageLength,
     autoDeleteEnabled: useUIStore.getState().autoDeleteEnabled,
+    autoSaveEnabled: useUIStore.getState().autoSaveEnabled,
     autoDeleteAfterDays: useUIStore.getState().autoDeleteAfterDays,
     sessionRetentionAction: useUIStore.getState().sessionRetentionAction,
     fontSize: useUIStore.getState().fontSize,
@@ -98,6 +104,8 @@ export const startAppearanceAutoSave = (): void => {
   useUIStore.subscribe((state) => {
     const current: AppearanceSlice = {
       showReasoningTraces: state.showReasoningTraces,
+      workStatusPanelEnabled: state.workStatusPanelEnabled,
+      workStatusHiddenSections: state.workStatusHiddenSections,
       sessionRecapEnabled: state.sessionRecapEnabled,
       sessionSuggestionEnabled: state.sessionSuggestionEnabled,
       sessionGoalEnabled: state.sessionGoalEnabled,
@@ -117,6 +125,7 @@ export const startAppearanceAutoSave = (): void => {
       summaryLength: state.summaryLength,
       maxLastMessageLength: state.maxLastMessageLength,
       autoDeleteEnabled: state.autoDeleteEnabled,
+      autoSaveEnabled: state.autoSaveEnabled,
       autoDeleteAfterDays: state.autoDeleteAfterDays,
       sessionRetentionAction: state.sessionRetentionAction,
       fontSize: state.fontSize,
@@ -136,6 +145,14 @@ export const startAppearanceAutoSave = (): void => {
 
     const diff: Partial<DesktopSettings> = {};
 
+    if (current.workStatusPanelEnabled !== previous.workStatusPanelEnabled) {
+      diff.workStatusPanelEnabled = current.workStatusPanelEnabled;
+    }
+    // Compared by content: the store hands back a new array on every change,
+    // so an identity check would push a write on unrelated store updates.
+    if (current.workStatusHiddenSections.join('\u0000') !== previous.workStatusHiddenSections.join('\u0000')) {
+      diff.workStatusHiddenSections = current.workStatusHiddenSections;
+    }
     if (current.showReasoningTraces !== previous.showReasoningTraces) {
       diff.showReasoningTraces = current.showReasoningTraces;
     }
@@ -195,6 +212,9 @@ export const startAppearanceAutoSave = (): void => {
     }
     if (current.autoDeleteEnabled !== previous.autoDeleteEnabled) {
       diff.autoDeleteEnabled = current.autoDeleteEnabled;
+    }
+    if (current.autoSaveEnabled !== previous.autoSaveEnabled) {
+      diff.autoSaveEnabled = current.autoSaveEnabled;
     }
     if (current.autoDeleteAfterDays !== previous.autoDeleteAfterDays) {
       diff.autoDeleteAfterDays = current.autoDeleteAfterDays;

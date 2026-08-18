@@ -24,9 +24,69 @@ interface SettingsSearchAvailabilityContext extends SettingsRuntimeContext {
   isMac: boolean;
   // Windows desktop shell — for controls that only render on win32.
   isWindows: boolean;
+  // Linux desktop shell — for controls that only render on linux.
+  isLinux: boolean;
+  // Windows ARM64 — temporary workaround gate (see opencode#19130).
+  isWindowsArm64: boolean;
 }
 
 const SETTINGS_SEARCH_ITEMS: readonly SettingsSearchItem[] = [
+  {
+    id: 'interactive-ui.stylePreset',
+    page: 'interactive-ui.extensions',
+    titleKey: 'settings.interactiveUI.stylePreset.title',
+    descriptionKey: 'settings.interactiveUI.stylePreset.description',
+    keywords: ['ocix', 'style', 'preset', 'theme', 'appearance'],
+    isAvailable: (ctx) => !ctx.isVSCode,
+  },
+  {
+    id: 'interactive-ui.installed',
+    page: 'interactive-ui.extensions',
+    titleKey: 'settings.interactiveUI.installed.title',
+    descriptionKey: 'settings.interactiveUI.installed.description',
+    keywords: ['ocix', 'extension', 'signed package', 'enable', 'rollback'],
+    isAvailable: (ctx) => !ctx.isVSCode,
+  },
+  {
+    id: 'interactive-ui.connections',
+    page: 'interactive-ui.extensions',
+    titleKey: 'settings.interactiveUI.connections.title',
+    descriptionKey: 'settings.interactiveUI.connections.description',
+    keywords: ['connection', 'api key', 'credential', 'authentication', 'business system'],
+    isAvailable: (ctx) => !ctx.isVSCode,
+  },
+  {
+    id: 'interactive-ui.remote',
+    page: 'interactive-ui.extensions',
+    titleKey: 'settings.interactiveUI.remote.title',
+    descriptionKey: 'settings.interactiveUI.remote.description',
+    keywords: ['remote', 'connect', 'manifest url', 'access key', 'signed app', 'fingerprint'],
+    isAvailable: (ctx) => !ctx.isVSCode,
+  },
+  {
+    id: 'interactive-ui.routing-inspector',
+    page: 'interactive-ui.extensions',
+    titleKey: 'settings.interactiveUI.routingInspector.title',
+    descriptionKey: 'settings.interactiveUI.routingInspector.description',
+    keywords: ['routing', 'inspector', 'diagnostics', 'tool selection', 'agent'],
+    isAvailable: (ctx) => !ctx.isVSCode,
+  },
+  {
+    id: 'interactive-ui.publishers',
+    page: 'interactive-ui.extensions',
+    titleKey: 'settings.interactiveUI.publishers.title',
+    descriptionKey: 'settings.interactiveUI.publishers.description',
+    keywords: ['publisher', 'trust', 'ed25519', 'public key', 'signature'],
+    isAvailable: (ctx) => !ctx.isVSCode,
+  },
+  {
+    id: 'interactive-ui.marketplaces',
+    page: 'interactive-ui.extensions',
+    titleKey: 'settings.interactiveUI.marketplaces.title',
+    descriptionKey: 'settings.interactiveUI.marketplaces.description',
+    keywords: ['marketplace', 'catalog', 'install'],
+    isAvailable: (ctx) => !ctx.isVSCode,
+  },
   {
     id: 'appearance.language',
     page: 'appearance',
@@ -62,14 +122,6 @@ const SETTINGS_SEARCH_ITEMS: readonly SettingsSearchItem[] = [
     isAvailable: (ctx) => !ctx.isVSCode,
   },
   {
-    id: 'appearance.window-transparency',
-    page: 'appearance',
-    titleKey: 'settings.openchamber.visual.field.macVibrancy',
-    descriptionKey: 'settings.openchamber.visual.field.macVibrancyHint',
-    keywords: ['transparent', 'transparency', 'vibrancy', 'blur', 'macos', 'opaque'],
-    isAvailable: (ctx) => ctx.isDesktopLocalOrigin,
-  },
-  {
     id: 'appearance.dock-badge',
     page: 'appearance',
     titleKey: 'settings.openchamber.visual.field.dockBadge',
@@ -78,6 +130,14 @@ const SETTINGS_SEARCH_ITEMS: readonly SettingsSearchItem[] = [
     // Exactly matches the render guard in OpenChamberVisualSettings: any darwin
     // Electron shell (isMac already implies isDesktopShell), local or remote host.
     isAvailable: (ctx) => ctx.isMac,
+  },
+  {
+    id: 'appearance.dock-icon',
+    page: 'appearance',
+    titleKey: 'settings.openchamber.visual.field.dockIcon',
+    descriptionKey: 'settings.openchamber.visual.field.dockIconHint',
+    keywords: ['dock', 'icon', 'ice', 'blue', 'black', 'macos', 'appearance'],
+    isAvailable: (ctx) => ctx.isDesktopLocalOrigin && ctx.isMac,
   },
   {
     id: 'appearance.pwa-install-name',
@@ -144,6 +204,13 @@ const SETTINGS_SEARCH_ITEMS: readonly SettingsSearchItem[] = [
     keywords: ['input', 'home bar', 'offset'],
     // Only the mobile composer applies this offset (ChatInput gates on isMobile).
     isAvailable: (ctx) => ctx.isMobile,
+  },
+  {
+    id: 'appearance.auto-save-enabled',
+    page: 'general',
+    titleKey: 'settings.openchamber.visual.field.autoSaveEnabled',
+    descriptionKey: 'settings.openchamber.visual.field.autoSaveEnabledInfo',
+    keywords: ['editor', 'autosave', 'auto-save', 'files', 'save'],
   },
   {
     id: 'appearance.expanded-editor-toolbar',
@@ -274,6 +341,12 @@ const SETTINGS_SEARCH_ITEMS: readonly SettingsSearchItem[] = [
     keywords: ['copy', 'save image', 'read aloud'],
   },
   {
+    id: 'chat.draft-starters-visible',
+    page: 'chat',
+    titleKey: 'settings.openchamber.visual.field.draftStartersVisible',
+    keywords: ['starter', 'starters', 'new session', 'welcome', 'suggestions'],
+  },
+  {
     id: 'chat.subagent-read-only-banner',
     page: 'chat',
     titleKey: 'settings.openchamber.visual.field.allowPromptingSubagentSessions',
@@ -362,6 +435,13 @@ const SETTINGS_SEARCH_ITEMS: readonly SettingsSearchItem[] = [
     keywords: ['small model', 'utility', 'summary', 'recap', 'cheap', 'override'],
   },
   {
+    id: 'sessions.walkthrough-model',
+    page: 'sessions',
+    titleKey: 'settings.openchamber.defaults.walkthroughModel.title',
+    descriptionKey: 'settings.openchamber.defaults.walkthroughModel.description',
+    keywords: ['walkthrough', 'diff', 'review', 'changes', 'structured output', 'model', 'override'],
+  },
+  {
     id: 'sessions.auto-cleanup',
     page: 'sessions',
     titleKey: 'settings.openchamber.sessionRetention.field.enableAutoCleanup',
@@ -385,24 +465,39 @@ const SETTINGS_SEARCH_ITEMS: readonly SettingsSearchItem[] = [
     page: 'general',
     titleKey: 'settings.openchamber.desktopNetwork.field.launchAtLogin',
     descriptionKey: 'settings.openchamber.desktopNetwork.field.launchAtLoginDescription',
-    keywords: ['desktop', 'startup', 'login'],
+    keywords: ['desktop', 'startup', 'login', 'launch', 'background', 'autostart'],
     isAvailable: (ctx) => ctx.isDesktopLocalOrigin,
   },
   {
     id: 'sessions.desktop-window-controls-position',
-    page: 'general',
+    page: 'appearance',
     titleKey: 'settings.openchamber.desktopNetwork.field.windowControlsPosition',
     descriptionKey: 'settings.openchamber.desktopNetwork.field.windowControlsPositionDescription',
     keywords: ['desktop', 'window', 'controls', 'minimize', 'maximize', 'close', 'titlebar', 'linux', 'windows'],
     isAvailable: (ctx) => ctx.isDesktop && (ctx.isWindows || !ctx.isMac),
   },
   {
+    id: 'sessions.desktop-window-controls-style',
+    page: 'appearance',
+    titleKey: 'settings.openchamber.desktopNetwork.field.windowControlsStyle',
+    keywords: ['desktop', 'window', 'controls', 'style', 'traffic', 'lights', 'classic', 'macos', 'titlebar'],
+    isAvailable: (ctx) => ctx.isDesktop && (ctx.isWindows || !ctx.isMac),
+  },
+  {
+    id: 'sessions.desktop-mac-menu-bar',
+    page: 'general',
+    titleKey: 'settings.openchamber.desktopNetwork.field.macMenuBar',
+    descriptionKey: 'settings.openchamber.desktopNetwork.field.macMenuBarDescription',
+    keywords: ['desktop', 'menu bar', 'tray', 'status item', 'macos', 'background'],
+    isAvailable: (ctx) => ctx.isDesktopLocalOrigin && ctx.isMac,
+  },
+  {
     id: 'sessions.desktop-minimize-to-tray',
     page: 'general',
     titleKey: 'settings.openchamber.desktopNetwork.field.minimizeToTray',
     descriptionKey: 'settings.openchamber.desktopNetwork.field.minimizeToTrayDescription',
-    keywords: ['desktop', 'tray', 'system tray', 'minimize', 'close', 'background', 'windows'],
-    isAvailable: (ctx) => ctx.isDesktopLocalOrigin && ctx.isWindows,
+    keywords: ['desktop', 'tray', 'system tray', 'minimize', 'close', 'background', 'windows', 'linux'],
+    isAvailable: (ctx) => ctx.isDesktopLocalOrigin && (ctx.isWindows || ctx.isLinux),
   },
   {
     id: 'sessions.desktop-keep-awake',
@@ -427,20 +522,6 @@ const SETTINGS_SEARCH_ITEMS: readonly SettingsSearchItem[] = [
     descriptionKey: 'settings.openchamber.desktopNetwork.field.allowLanAccessDescription',
     keywords: ['desktop', 'lan', 'network', 'phone', 'tablet'],
     isAvailable: (ctx) => ctx.isDesktopLocalOrigin,
-  },
-  {
-    id: 'sessions.opencode-binary',
-    page: 'general',
-    titleKey: 'settings.openchamber.opencodeCli.field.binaryPath',
-    keywords: ['opencode', 'cli', 'binary', 'path'],
-    isAvailable: (ctx) => !ctx.isVSCode,
-  },
-  {
-    id: 'sessions.opencode-update-notifications',
-    page: 'general',
-    titleKey: 'settings.openchamber.opencodeCli.field.showUpdateNotifications',
-    keywords: ['opencode', 'cli', 'updates'],
-    isAvailable: (ctx) => !ctx.isVSCode,
   },
   {
     id: 'git.github-account',
@@ -531,6 +612,14 @@ const SETTINGS_SEARCH_ITEMS: readonly SettingsSearchItem[] = [
     descriptionKey: 'settings.remoteInstances.direct.description',
     keywords: ['server url', 'connection token', 'import link', 'host switcher', 'additional headers', 'request headers', 'cloudflare access', 'service token'],
     isAvailable: (ctx) => ctx.isDesktop,
+  },
+  {
+    id: 'behavior.system-prompt-optimization',
+    page: 'behavior',
+    titleKey: 'settings.behavior.page.section.systemPromptOptimization',
+    descriptionKey: 'settings.behavior.page.systemPromptOptimization.info',
+    keywords: ['system prompt', 'tokens', 'context', 'optimize', 'minimal'],
+    isAvailable: (ctx) => !ctx.isVSCode,
   },
   {
     id: 'behavior.system-prompt',
@@ -705,6 +794,13 @@ const SETTINGS_SEARCH_ITEMS: readonly SettingsSearchItem[] = [
     page: 'providers',
     titleKey: 'settings.providers.page.connect.title',
     keywords: ['add provider', 'connect provider', 'credentials'],
+  },
+  {
+    id: 'providers.custom',
+    page: 'providers',
+    titleKey: 'settings.providers.page.custom.title',
+    descriptionKey: 'settings.providers.page.custom.description',
+    keywords: ['other', 'custom', 'openai-compatible', 'base url', 'api key'],
   },
   {
     id: 'providers.auth',

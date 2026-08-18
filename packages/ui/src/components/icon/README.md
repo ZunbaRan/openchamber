@@ -1,6 +1,6 @@
 # Icon System
 
-OpenChamber uses an SVG sprite-based icon system for performance. All icons are rendered via a single hidden SVG sprite injected into the DOM, referenced by `<use href="#oc-icon-name"/>`.
+OpenLoop uses an SVG sprite-based icon system for performance. Remixicon glyphs and explicitly registered custom glyphs are rendered via a single hidden SVG sprite injected into the DOM, referenced by `<use href="#oc-icon-name"/>`.
 
 ## Usage
 
@@ -26,10 +26,25 @@ Common suffixes:
 ## Adding a New Icon
 
 1. Import and use it in your code: `<Icon name="new-icon-name" />`
-2. Run `bun run icons:sprite` to regenerate the sprite with the new icon
+2. Run `bun run icons:generate` to regenerate the sprite with the new icon
 3. The script scans `packages/ui/src` for all `RiX` usages and extracts SVG paths
 
 If the icon doesn't exist in the sprite, the script will warn you.
+
+Custom product glyphs are registered in `scripts/generate-icon-sprite.mjs`. They must use the shared `24x24` viewbox and `currentColor` so they match Remixicon sizing and theme behavior.
+
+## OpenLoop Rounded Overrides
+
+High-visibility navigation and toolbar glyphs use OpenLoop-owned rounded SVG
+geometry registered in `customIconData` inside
+`scripts/generate-icon-sprite.mjs`. Overrides retain the existing semantic name,
+so call sites keep using the same `<Icon name="..." />` contract. Any name that
+is not overridden continues to resolve to Remixicon, including new upstream
+icons added later.
+
+Rounded outline glyphs use the shared `24x24` grid, `currentColor`, a `1.75`
+stroke, and round line caps and joins. Do not duplicate this geometry in feature
+components; add or adjust the generator-owned entry and regenerate the sprite.
 
 ## Sizing
 
@@ -51,7 +66,7 @@ const icon: IconName = "arrow-down-s"; // type-checked
 
 ## Architecture
 
-- `sprite.ts` — Auto-generated SVG path data (run `bun run generate-icon-sprite` to regenerate)
+- `sprite.ts` — Auto-generated SVG path data (run `bun run icons:generate` to regenerate)
 - `Icon.tsx` — The `<Icon>` component, injects sprite on first mount
 - `icons.ts` — TypeScript type `IconName`
 

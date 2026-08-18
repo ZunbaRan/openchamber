@@ -1,5 +1,6 @@
 import dgram from 'dgram';
 import os from 'os';
+import { randomInt } from 'node:crypto';
 import { EXIT_CODE, TunnelCliError } from './cli-errors.js';
 import {
   getUnauthenticatedLanErrorMessage,
@@ -107,7 +108,7 @@ async function detectLanIPv4Address() {
 
 
 function formatUnsafePortWarning(port) {
-  return `Port ${port} is browser-unsafe (ERR_UNSAFE_PORT) and is not supported for OpenChamber UI at ${buildLocalUrl(port, '/')}.`;
+  return `Port ${port} is browser-unsafe (ERR_UNSAFE_PORT) and is not supported for OpenLoop UI at ${buildLocalUrl(port, '/')}.`;
 }
 
 function assertSafeBrowserPort(port, { context = 'This action' } = {}) {
@@ -123,6 +124,33 @@ function assertSafeBrowserPort(port, { context = 'This action' } = {}) {
 
 function hasUiPasswordConfigured(password) {
   return typeof password === 'string' && password.trim().length > 0;
+}
+
+// Ambiguous-character-free alphabet so the printed password is easy to type
+// from a phone or another machine. Mirrors the pre-refactor CLI alphabet.
+const UI_PASSWORD_CHARSET = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789';
+
+function generateUiPassword(length = 16) {
+  let password = '';
+  for (let i = 0; i < length; i++) {
+    password += UI_PASSWORD_CHARSET[randomInt(UI_PASSWORD_CHARSET.length)];
+  }
+  return password;
+}
+
+// Resolves the effective UI password for a serve: a configured password wins;
+// an explicit `--ui-password` flag without a value gets a freshly generated
+// password so daemon/foreground serves never silently drop the requested
+// protection. The caller must surface `generated` passwords to the user once
+// and persist them in the instance state file the server-side reads.
+function resolveServeUiPassword({ uiPassword, explicitUiPassword }) {
+  if (hasUiPasswordConfigured(uiPassword)) {
+    return { password: uiPassword, generated: false };
+  }
+  if (explicitUiPassword === true) {
+    return { password: generateUiPassword(), generated: true };
+  }
+  return { password: undefined, generated: false };
 }
 
 function assertAuthenticatedNetworkExposure({ host, uiPassword }) {
@@ -150,5 +178,7 @@ export {
   detectLanIPv4Address,
   assertSafeBrowserPort,
   hasUiPasswordConfigured,
+  generateUiPassword,
+  resolveServeUiPassword,
   assertAuthenticatedNetworkExposure,
 };

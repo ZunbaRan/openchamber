@@ -198,6 +198,59 @@ describe('ui auth client credential seam', () => {
     });
     expect(absoluteServeCalled).toBe(true);
 
+    const nativeExtensionReq = {
+      method: 'GET',
+      path: '/api/interactive-ui/extensions/com.acme.sales/native/com.acme.sales.dashboard',
+      url: `/api/interactive-ui/extensions/com.acme.sales/native/com.acme.sales.dashboard?oc_url_token=${encodeURIComponent(urlToken)}`,
+      headers: {},
+    };
+    const nativeExtensionRes = createResponse();
+    let nativeExtensionCalled = false;
+    await auth.requireAuth(nativeExtensionReq, nativeExtensionRes, () => {
+      nativeExtensionCalled = true;
+    });
+    expect(nativeExtensionCalled).toBe(true);
+
+    const installedArtifactReq = {
+      method: 'GET',
+      path: '/api/interactive-ui/extensions/com.acme.sales/artifacts/com.acme.sales.explorer',
+      url: `/api/interactive-ui/extensions/com.acme.sales/artifacts/com.acme.sales.explorer?oc_url_token=${encodeURIComponent(urlToken)}`,
+      headers: {},
+    };
+    const installedArtifactRes = createResponse();
+    let installedArtifactCalled = false;
+    await auth.requireAuth(installedArtifactReq, installedArtifactRes, () => {
+      installedArtifactCalled = true;
+    });
+    expect(installedArtifactCalled).toBe(true);
+
+    const artifactDocumentReq = {
+      method: 'GET',
+      path: `/api/interactive-ui/artifacts/${'a'.repeat(64)}/document`,
+      url: `/api/interactive-ui/artifacts/${'a'.repeat(64)}/document?oc_url_token=${encodeURIComponent(urlToken)}`,
+      headers: {},
+    };
+    const artifactDocumentRes = createResponse();
+    let artifactDocumentCalled = false;
+    await auth.requireAuth(artifactDocumentReq, artifactDocumentRes, () => {
+      artifactDocumentCalled = true;
+    });
+    expect(artifactDocumentCalled).toBe(true);
+
+    const artifactMetadataReq = {
+      method: 'GET',
+      path: `/api/interactive-ui/artifacts/${'a'.repeat(64)}/metadata`,
+      url: `/api/interactive-ui/artifacts/${'a'.repeat(64)}/metadata?oc_url_token=${encodeURIComponent(urlToken)}`,
+      headers: {},
+    };
+    const artifactMetadataRes = createResponse();
+    let artifactMetadataCalled = false;
+    await auth.requireAuth(artifactMetadataReq, artifactMetadataRes, () => {
+      artifactMetadataCalled = true;
+    });
+    expect(artifactMetadataCalled).toBe(false);
+    expect(artifactMetadataRes.statusCode).toBe(401);
+
     const mountedServeReq = {
       method: 'GET',
       baseUrl: '/api',

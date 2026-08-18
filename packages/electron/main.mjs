@@ -1,39 +1,85 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, net as electronNet, Notification, powerMonitor, powerSaveBlocker, protocol, screen, session, shell, webContents } from 'electron';
-import contextMenu from 'electron-context-menu';
-import log from 'electron-log/main.js';
-import dgram from 'node:dgram';
-import fs from 'node:fs';
-import fsp from 'node:fs/promises';
-import os from 'node:os';
-import path from 'node:path';
-import { execFile, spawn, spawnSync } from 'node:child_process';
-import { fileURLToPath, pathToFileURL } from 'node:url';
-import { promisify } from 'node:util';
-import updaterPkg from 'electron-updater';
-import { ElectronSshManager } from './ssh-manager.mjs';
-import { createTrayController } from './tray.mjs';
-import { resolveManagedOpenCodeCwd } from './opencode-cwd.mjs';
-import { sanitizeRuntimeRequestHeaders } from './runtime-request-headers.mjs';
-import { assertUpdaterCapability } from './updater-capability.mjs';
-import { checkForDesktopUpdate } from './updater-check.mjs';
-import { resolveUpdaterFeed } from './updater-feed.mjs';
-import { mintOutsideFileGrant } from '@openchamber/web/server/lib/fs/routes.js';
+import {
+  app,
+  BrowserWindow,
+  dialog,
+  ipcMain,
+  Menu,
+  nativeTheme,
+  net as electronNet,
+  Notification,
+  powerMonitor,
+  powerSaveBlocker,
+  protocol,
+  screen,
+  session,
+  shell,
+  WebContentsView,
+  webContents,
+} from "electron";
+import contextMenu from "electron-context-menu";
+import log from "electron-log/main.js";
+import dgram from "node:dgram";
+import fs from "node:fs";
+import fsp from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { execFile, spawn, spawnSync } from "node:child_process";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { promisify } from "node:util";
+import updaterPkg from "electron-updater";
+import { ElectronSshManager } from "./ssh-manager.mjs";
+import { createTrayController } from "./tray.mjs";
+import { resolveManagedOpenCodeCwd } from "./opencode-cwd.mjs";
+import { sanitizeRuntimeRequestHeaders } from "./runtime-request-headers.mjs";
+import { assertUpdaterCapability } from "./updater-capability.mjs";
+import { checkForDesktopUpdate } from "./updater-check.mjs";
+import { resolveUpdaterFeed } from "./updater-feed.mjs";
+import {
+  buildLinuxInstalledApps,
+  buildLinuxOpenSpecs,
+  fetchLinuxAppIcons,
+  filterLinuxInstalledApps,
+  readLinuxDesktopEntries,
+} from "./linux-app-discovery.mjs";
+import {
+  readLinuxAutostartEnabled,
+  setLinuxAutostartEnabled,
+} from "./linux-autostart.mjs";
+import {
+  unsupportedAppSpecificOpenError,
+  validateLocalPath,
+} from "./path-open-utils.mjs";
+import { mintOutsideFileGrant } from "@openchamber/web/server/lib/fs/routes.js";
+import { createArtifactRunnerManager } from "./artifact-runner.mjs";
+import {
+  createDesktopBinarySaveController,
+  isDesktopBinarySaveCommand,
+} from "./desktop-binary-save.mjs";
+import { ensureMacosLaunchServicesRegistration } from "./macos-launch-services-registration.mjs";
+import { createDockIconController } from "./dock-icon.mjs";
 
 const execFileAsync = promisify(execFile);
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const isDev = process.env.OPENCHAMBER_ELECTRON_DEV === '1' || !app.isPackaged;
+const isDev = process.env.OPENCHAMBER_ELECTRON_DEV === "1" || !app.isPackaged;
+const updaterE2eBuild =
+  typeof __OPENCHAMBER_UPDATER_E2E_BUILD__ !== "undefined" &&
+  __OPENCHAMBER_UPDATER_E2E_BUILD__ === true;
+const desktopUpdaterFeed = resolveUpdaterFeed({ testBuild: updaterE2eBuild });
+const desktopUpdatesEnabled = app.isPackaged && desktopUpdaterFeed !== null;
 
-const DEEP_LINK_PROTOCOL = 'openchamber';
-const UI_PROTOCOL = 'openchamber-ui';
-const PACKAGED_APP_USER_MODEL_ID = 'dev.openchamber.desktop';
-const DEV_APP_USER_MODEL_ID = 'dev.openchamber.desktop.dev';
-const APP_USER_MODEL_ID = app.isPackaged ? PACKAGED_APP_USER_MODEL_ID : DEV_APP_USER_MODEL_ID;
-const BACKGROUND_START_ARG = '--background';
+const DEEP_LINK_PROTOCOL = "openchamber";
+const UI_PROTOCOL = "openchamber-ui";
+const PACKAGED_APP_USER_MODEL_ID = "dev.openchamber.desktop";
+const DEV_APP_USER_MODEL_ID = "dev.openchamber.desktop.dev";
+const APP_USER_MODEL_ID = app.isPackaged
+  ? PACKAGED_APP_USER_MODEL_ID
+  : DEV_APP_USER_MODEL_ID;
+const BACKGROUND_START_ARG = "--background";
 
 const getLoginItemOptions = () => {
-  if (process.platform === 'win32') {
+  if (process.platform === "win32") {
     return {
       path: process.execPath,
       args: [BACKGROUND_START_ARG],
@@ -44,7 +90,11 @@ const getLoginItemOptions = () => {
 };
 
 const readLoginItemSettings = () => {
-  if (process.platform !== 'darwin' && process.platform !== 'win32') return null;
+  if (process.platform === "linux") {
+    return null;
+  }
+  if (process.platform !== "darwin" && process.platform !== "win32")
+    return null;
   try {
     return app.getLoginItemSettings(getLoginItemOptions());
   } catch {
@@ -52,7 +102,9 @@ const readLoginItemSettings = () => {
   }
 };
 
-const shouldStartInBackground = (loginItemSettings = readLoginItemSettings()) => {
+const shouldStartInBackground = (
+  loginItemSettings = readLoginItemSettings(),
+) => {
   return (
     process.argv.includes(BACKGROUND_START_ARG) ||
     loginItemSettings?.wasOpenedAtLogin === true ||
@@ -60,17 +112,18 @@ const shouldStartInBackground = (loginItemSettings = readLoginItemSettings()) =>
   );
 };
 
-// Set the product name early so electron-log derives its log directory as
-// ~/Library/Logs/OpenChamber/ (not ~/Library/Logs/@openchamber/electron/).
-app.setName('OpenChamber');
-if (process.platform === 'linux') {
-  app.setDesktopName('openchamber.desktop');
+// Show the new product name while preserving the legacy user-data namespace.
+// Existing installs must keep settings, sessions, credentials, and window state.
+app.setName("OpenLoop");
+if (process.platform === "linux") {
+  app.setDesktopName("openchamber.desktop");
 }
-if (isDev) {
-  app.setPath('userData', path.join(app.getPath('appData'), 'OpenChamber Dev'));
-}
+app.setPath(
+  "userData",
+  path.join(app.getPath("appData"), isDev ? "OpenChamber Dev" : "OpenChamber"),
+);
 app.setAppUserModelId(APP_USER_MODEL_ID);
-app.commandLine.appendSwitch('proxy-bypass-list', '<-loopback>');
+app.commandLine.appendSwitch("proxy-bypass-list", "<-loopback>");
 
 protocol.registerSchemesAsPrivileged([
   {
@@ -91,13 +144,12 @@ if (!app.requestSingleInstanceLock()) {
 
 try {
   process.chdir(os.homedir());
-} catch {
-}
+} catch {}
 
 log.initialize();
 log.transports.file.maxSize = 5 * 1024 * 1024;
-log.transports.file.level = 'info';
-log.transports.console.level = isDev ? 'debug' : 'warn';
+log.transports.file.level = "info";
+log.transports.console.level = isDev ? "debug" : "warn";
 
 // The in-process web server runs in this same Node process and uses plain
 // `console.log/warn/error`. Without piping console through electron-log,
@@ -119,11 +171,9 @@ try {
       if (info.isFile() && info.mtimeMs < cutoff) {
         fs.unlinkSync(candidate);
       }
-    } catch {
-    }
+    } catch {}
   }
-} catch {
-}
+} catch {}
 
 try {
   if (!app.isDefaultProtocolClient(DEEP_LINK_PROTOCOL)) {
@@ -131,34 +181,36 @@ try {
   }
 } catch (error) {
   // log.* not yet initialized at this point; fall back to console.
-  console.warn('[electron] failed to register deep-link protocol:', error);
+  console.warn("[electron] failed to register deep-link protocol:", error);
 }
 
 const readAppMetadata = () => {
   const candidates = [
-    path.join(__dirname, 'package.json'),
-    path.join(__dirname, '..', 'package.json'),
-    path.join(app.getAppPath?.() || '', 'package.json'),
+    path.join(__dirname, "package.json"),
+    path.join(__dirname, "..", "package.json"),
+    path.join(app.getAppPath?.() || "", "package.json"),
   ].filter(Boolean);
   for (const candidate of candidates) {
     try {
-      const raw = fs.readFileSync(candidate, 'utf8');
+      const raw = fs.readFileSync(candidate, "utf8");
       const parsed = JSON.parse(raw);
-      if (parsed?.name === '@openchamber/electron' && typeof parsed.version === 'string') {
+      if (
+        parsed?.name === "@openchamber/electron" &&
+        typeof parsed.version === "string"
+      ) {
         return { name: parsed.name, version: parsed.version };
       }
-    } catch {
-    }
+    } catch {}
   }
-  return { name: '@openchamber/electron', version: app.getVersion() };
+  return { name: "@openchamber/electron", version: app.getVersion() };
 };
 
 const APP_METADATA = readAppMetadata();
 const APP_VERSION = APP_METADATA.version;
 
 const DEFAULT_DESKTOP_PORT = 57123;
-const LOOPBACK_BIND_HOST = '127.0.0.1';
-const LAN_BIND_HOST = '0.0.0.0';
+const LOOPBACK_BIND_HOST = "127.0.0.1";
+const LAN_BIND_HOST = "0.0.0.0";
 const MIN_WINDOW_WIDTH = 800;
 const MIN_WINDOW_HEIGHT = 520;
 const MIN_RESTORE_WINDOW_WIDTH = 900;
@@ -168,22 +220,26 @@ const MINI_CHAT_WINDOW_HEIGHT = 760;
 const MINI_CHAT_MIN_WINDOW_WIDTH = 360;
 const MINI_CHAT_MIN_WINDOW_HEIGHT = 480;
 const MAX_CAPTURE_PAGE_RECT_AREA = 4_000_000;
-const LOCAL_HOST_ID = 'local';
-const LOCAL_DESKTOP_CLIENT_KIND = 'desktop-local';
-const LOCAL_DESKTOP_CLIENT_DEDUPE_KEY = 'desktop-local';
+const desktopBinarySaveController = createDesktopBinarySaveController({
+  showSaveDialog: (owner, options) => dialog.showSaveDialog(owner, options),
+});
+const LOCAL_HOST_ID = "local";
+const LOCAL_DESKTOP_CLIENT_KIND = "desktop-local";
+const LOCAL_DESKTOP_CLIENT_DEDUPE_KEY = "desktop-local";
 // Remote hosts get a regular 'desktop' client (NOT 'desktop-local' — that kind
 // grants whole-server device management and must never be issued to a desktop
 // connecting to someone else's server).
-const REMOTE_DESKTOP_CLIENT_KIND = 'desktop';
-const ENV_OVERRIDE_HOST_ID = '__env';
-const CHANGELOG_URL = 'https://raw.githubusercontent.com/openchamber/openchamber/main/CHANGELOG.md';
-const GITHUB_BUG_REPORT_URL = 'https://github.com/openchamber/openchamber/issues/new?template=bug_report.yml';
-const GITHUB_FEATURE_REQUEST_URL = 'https://github.com/openchamber/openchamber/issues/new?template=feature_request.yml';
-const DISCORD_INVITE_URL = 'https://discord.gg/ZYRSdnwwKA';
+const REMOTE_DESKTOP_CLIENT_KIND = "desktop";
+const ENV_OVERRIDE_HOST_ID = "__env";
+const GITHUB_BUG_REPORT_URL =
+  "https://github.com/openchamber/openchamber/issues/new?template=bug_report.yml";
+const GITHUB_FEATURE_REQUEST_URL =
+  "https://github.com/openchamber/openchamber/issues/new?template=feature_request.yml";
+const DISCORD_INVITE_URL = "https://discord.gg/ZYRSdnwwKA";
 const INSTALLED_APPS_CACHE_TTL_SECS = 60 * 60 * 24;
-const INSTALLED_APPS_CACHE_FILE = 'discovered-apps.json';
+const INSTALLED_APPS_CACHE_FILE = "discovered-apps.json";
+const LINUX_DESKTOP_ENTRIES_CACHE_TTL_MS = 30_000;
 const OPENCODE_SHUTDOWN_GRACE_MS = 100;
-
 const { autoUpdater } = updaterPkg;
 
 const state = {
@@ -194,6 +250,7 @@ const state = {
   clientToken: null,
   requestHeaders: {},
   bootOutcome: null,
+  startupResolved: false,
   initScript: null,
   mainWindow: null,
   quitRequested: false,
@@ -213,19 +270,26 @@ const state = {
   sshStatuses: new Map(),
   sshLogs: new Map(),
   trayController: null,
+  trayFocusListener: null,
   lastFocusedWindowId: null,
   keepAwakeBlockerId: null,
 };
 
 const setDesktopKeepAwakeActive = (enabled) => {
   const currentId = state.keepAwakeBlockerId;
-  const isActive = Number.isInteger(currentId) && powerSaveBlocker.isStarted(currentId);
+  const isActive =
+    Number.isInteger(currentId) && powerSaveBlocker.isStarted(currentId);
 
   if (enabled) {
     if (!isActive) {
-      state.keepAwakeBlockerId = powerSaveBlocker.start('prevent-app-suspension');
+      state.keepAwakeBlockerId = powerSaveBlocker.start(
+        "prevent-app-suspension",
+      );
     }
-    return Number.isInteger(state.keepAwakeBlockerId) && powerSaveBlocker.isStarted(state.keepAwakeBlockerId);
+    return (
+      Number.isInteger(state.keepAwakeBlockerId) &&
+      powerSaveBlocker.isStarted(state.keepAwakeBlockerId)
+    );
   }
 
   if (isActive) {
@@ -238,20 +302,24 @@ const setDesktopKeepAwakeActive = (enabled) => {
 const readDesktopKeepAwakeStatus = () => {
   const enabled = readSettingsRoot().desktopKeepAwakeEnabled === true;
   const currentId = state.keepAwakeBlockerId;
-  const active = Number.isInteger(currentId) && powerSaveBlocker.isStarted(currentId);
+  const active =
+    Number.isInteger(currentId) && powerSaveBlocker.isStarted(currentId);
   return { supported: true, enabled, active };
 };
 
 const readDesktopMinimizeToTrayStatus = () => {
-  const supported = process.platform === 'win32';
+  const supported =
+    process.platform === "win32" || process.platform === "linux";
   return {
     supported,
-    enabled: supported && readSettingsRoot().desktopMinimizeToTrayEnabled === true,
+    enabled:
+      supported && readSettingsRoot().desktopMinimizeToTrayEnabled === true,
   };
 };
 
 const shouldHideMainWindowToTray = (browserWindow) => {
-  if (process.platform !== 'win32') return false;
+  if (process.platform !== "win32" && process.platform !== "linux")
+    return false;
   if (!state.trayController) return false;
   if (!browserWindow || browserWindow.isDestroyed()) return false;
   if (browserWindow.__ocMiniChat === true) return false;
@@ -267,25 +335,29 @@ const quitRisk = {
 };
 
 const shouldRequireQuitConfirmation = () =>
-  quitRisk.hasActiveTunnel
-  || quitRisk.hasRunningScheduledTasks
-  || quitRisk.hasEnabledScheduledTasks;
+  quitRisk.hasActiveTunnel ||
+  quitRisk.hasRunningScheduledTasks ||
+  quitRisk.hasEnabledScheduledTasks;
 
 const quitConfirmationMessage = () => {
   const reasons = [];
   if (quitRisk.hasActiveTunnel) {
-    reasons.push('an active tunnel');
+    reasons.push("an active tunnel");
   }
   if (quitRisk.runningScheduledTasksCount > 0) {
-    reasons.push(`${quitRisk.runningScheduledTasksCount} running scheduled task${quitRisk.runningScheduledTasksCount === 1 ? '' : 's'}`);
+    reasons.push(
+      `${quitRisk.runningScheduledTasksCount} running scheduled task${quitRisk.runningScheduledTasksCount === 1 ? "" : "s"}`,
+    );
   }
   if (quitRisk.enabledScheduledTasksCount > 0) {
-    reasons.push(`${quitRisk.enabledScheduledTasksCount} enabled scheduled task${quitRisk.enabledScheduledTasksCount === 1 ? '' : 's'}`);
+    reasons.push(
+      `${quitRisk.enabledScheduledTasksCount} enabled scheduled task${quitRisk.enabledScheduledTasksCount === 1 ? "" : "s"}`,
+    );
   }
   if (reasons.length === 0) {
-    return 'Background processes (sidecar, SSH sessions) will be stopped.';
+    return "Background processes (sidecar, SSH sessions) will be stopped.";
   }
-  return `OpenChamber detected ${reasons.join(', ')}. Quitting now will stop sidecar/background processes and may interrupt pending work.`;
+  return `OpenLoop detected ${reasons.join(", ")}. Quitting now will stop sidecar/background processes and may interrupt pending work.`;
 };
 
 const shutdownBackgroundServices = () => {
@@ -305,11 +377,14 @@ const shutdownSshSessions = async () => {
     return;
   }
 
-  state.sshShutdownPromise = sshManager.shutdownAll().catch((error) => {
-    log.warn('[electron] failed to stop SSH sessions:', error);
-  }).finally(() => {
-    state.sshShutdownPromise = null;
-  });
+  state.sshShutdownPromise = sshManager
+    .shutdownAll()
+    .catch((error) => {
+      log.warn("[electron] failed to stop SSH sessions:", error);
+    })
+    .finally(() => {
+      state.sshShutdownPromise = null;
+    });
 
   await state.sshShutdownPromise;
 };
@@ -323,16 +398,18 @@ const prepareForQuit = ({ installingUpdate = false } = {}) => {
   if (state.trayController) {
     try {
       state.trayController.destroy();
-    } catch {
-    }
+    } catch {}
     state.trayController = null;
+  }
+  if (state.trayFocusListener) {
+    app.removeListener("browser-window-focus", state.trayFocusListener);
+    state.trayFocusListener = null;
   }
 
   if (state.mainWindow && !state.mainWindow.isDestroyed()) {
     try {
       debounceWindowStatePersist(state.mainWindow, true);
-    } catch {
-    }
+    } catch {}
   }
 
   setDesktopKeepAwakeActive(false);
@@ -358,7 +435,7 @@ const performConfirmedQuit = () => {
 // in-process web server's managed OpenCode child. Run the same background
 // teardown the quit path uses (which kills the sidecar), then exit. The startup
 // reaper remains the backstop for an unhandled hard crash (SIGKILL).
-for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
+for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) {
   process.on(signal, () => {
     try {
       shutdownBackgroundServices();
@@ -382,7 +459,9 @@ const requestQuitWithConfirmation = async () => {
   }
   state.quitConfirmationPending = true;
 
-  const windows = BrowserWindow.getAllWindows().filter((window) => !window.isDestroyed());
+  const windows = BrowserWindow.getAllWindows().filter(
+    (window) => !window.isDestroyed(),
+  );
   const visible = windows.find((window) => window.isVisible());
   if (!visible) {
     const hidden = windows.find((window) => !window.isVisible());
@@ -394,11 +473,11 @@ const requestQuitWithConfirmation = async () => {
 
   try {
     const result = await dialog.showMessageBox({
-      type: 'warning',
-      title: 'Quit OpenChamber?',
-      message: 'Quit OpenChamber?',
+      type: "warning",
+      title: "Quit OpenLoop?",
+      message: "Quit OpenLoop?",
       detail: quitConfirmationMessage(),
-      buttons: ['Quit', 'Cancel'],
+      buttons: ["Quit", "Cancel"],
       defaultId: 1,
       cancelId: 1,
     });
@@ -408,30 +487,43 @@ const requestQuitWithConfirmation = async () => {
     }
   } catch (error) {
     state.quitConfirmationPending = false;
-    log.warn('[electron] quit confirmation dialog failed:', error);
+    log.warn("[electron] quit confirmation dialog failed:", error);
   }
 };
 
 const refreshQuitRiskFlags = async () => {
-  if (state.serverHandle && typeof state.serverHandle.getQuitRiskStatus === 'function') {
+  if (
+    state.serverHandle &&
+    typeof state.serverHandle.getQuitRiskStatus === "function"
+  ) {
     try {
       const status = await state.serverHandle.getQuitRiskStatus();
       const scheduled = status?.scheduledTasks;
-      if (scheduled && typeof scheduled === 'object') {
+      if (scheduled && typeof scheduled === "object") {
         const enabledCount = Number(scheduled.enabledScheduledTasksCount ?? 0);
         const runningCount = Number(scheduled.runningScheduledTasksCount ?? 0);
-        quitRisk.enabledScheduledTasksCount = Number.isFinite(enabledCount) ? enabledCount : 0;
-        quitRisk.runningScheduledTasksCount = Number.isFinite(runningCount) ? runningCount : 0;
-        quitRisk.hasEnabledScheduledTasks = Boolean(scheduled.hasEnabledScheduledTasks) || quitRisk.enabledScheduledTasksCount > 0;
-        quitRisk.hasRunningScheduledTasks = Boolean(scheduled.hasRunningScheduledTasks) || quitRisk.runningScheduledTasksCount > 0;
+        quitRisk.enabledScheduledTasksCount = Number.isFinite(enabledCount)
+          ? enabledCount
+          : 0;
+        quitRisk.runningScheduledTasksCount = Number.isFinite(runningCount)
+          ? runningCount
+          : 0;
+        quitRisk.hasEnabledScheduledTasks =
+          Boolean(scheduled.hasEnabledScheduledTasks) ||
+          quitRisk.enabledScheduledTasksCount > 0;
+        quitRisk.hasRunningScheduledTasks =
+          Boolean(scheduled.hasRunningScheduledTasks) ||
+          quitRisk.runningScheduledTasksCount > 0;
       }
       quitRisk.hasActiveTunnel = Boolean(status?.tunnel?.active);
       return;
-    } catch {
-    }
+    } catch {}
   }
 
-  const base = typeof state.sidecarUrl === 'string' ? state.sidecarUrl.trim().replace(/\/$/, '') : '';
+  const base =
+    typeof state.sidecarUrl === "string"
+      ? state.sidecarUrl.trim().replace(/\/$/, "")
+      : "";
   if (!base) return;
 
   const scheduledUrl = `${base}/api/openchamber/scheduled-tasks/status`;
@@ -447,27 +539,41 @@ const refreshQuitRiskFlags = async () => {
     }
   };
 
-  const [scheduled, tunnel] = await Promise.all([fetchJson(scheduledUrl), fetchJson(tunnelUrl)]);
+  const [scheduled, tunnel] = await Promise.all([
+    fetchJson(scheduledUrl),
+    fetchJson(tunnelUrl),
+  ]);
 
-  if (scheduled && typeof scheduled === 'object') {
+  if (scheduled && typeof scheduled === "object") {
     const enabledCount = Number(scheduled.enabledScheduledTasksCount ?? 0);
     const runningCount = Number(scheduled.runningScheduledTasksCount ?? 0);
-    quitRisk.enabledScheduledTasksCount = Number.isFinite(enabledCount) ? enabledCount : 0;
-    quitRisk.runningScheduledTasksCount = Number.isFinite(runningCount) ? runningCount : 0;
-    quitRisk.hasEnabledScheduledTasks = Boolean(scheduled.hasEnabledScheduledTasks) || quitRisk.enabledScheduledTasksCount > 0;
-    quitRisk.hasRunningScheduledTasks = Boolean(scheduled.hasRunningScheduledTasks) || quitRisk.runningScheduledTasksCount > 0;
+    quitRisk.enabledScheduledTasksCount = Number.isFinite(enabledCount)
+      ? enabledCount
+      : 0;
+    quitRisk.runningScheduledTasksCount = Number.isFinite(runningCount)
+      ? runningCount
+      : 0;
+    quitRisk.hasEnabledScheduledTasks =
+      Boolean(scheduled.hasEnabledScheduledTasks) ||
+      quitRisk.enabledScheduledTasksCount > 0;
+    quitRisk.hasRunningScheduledTasks =
+      Boolean(scheduled.hasRunningScheduledTasks) ||
+      quitRisk.runningScheduledTasksCount > 0;
   }
 
-  if (tunnel && typeof tunnel === 'object') {
+  if (tunnel && typeof tunnel === "object") {
     quitRisk.hasActiveTunnel = Boolean(tunnel.active);
   }
 };
 
 const settingsFilePath = () => {
-  if (typeof process.env.OPENCHAMBER_DATA_DIR === 'string' && process.env.OPENCHAMBER_DATA_DIR.trim()) {
-    return path.join(process.env.OPENCHAMBER_DATA_DIR.trim(), 'settings.json');
+  if (
+    typeof process.env.OPENCHAMBER_DATA_DIR === "string" &&
+    process.env.OPENCHAMBER_DATA_DIR.trim()
+  ) {
+    return path.join(process.env.OPENCHAMBER_DATA_DIR.trim(), "settings.json");
   }
-  return path.join(os.homedir(), '.config', 'openchamber', 'settings.json');
+  return path.join(os.homedir(), ".config", "openchamber", "settings.json");
 };
 
 const sshManager = new ElectronSshManager({
@@ -478,29 +584,36 @@ const sshManager = new ElectronSshManager({
 
 const readJsonFile = (filePath) => {
   try {
-    return JSON.parse(fs.readFileSync(filePath, 'utf8'));
+    return JSON.parse(fs.readFileSync(filePath, "utf8"));
   } catch (error) {
-    if (error && error.code === 'ENOENT') return {};
+    if (error && error.code === "ENOENT") return {};
     // Parse errors can happen if a concurrent writer just truncated the file
     // and hasn't finished writing yet. Log loudly so we notice, then return
     // {} as before. Writes are atomic (tmp + rename) so this race is rare.
-    log.warn?.('[electron] failed to read JSON file', filePath, error);
+    log.warn?.("[electron] failed to read JSON file", filePath, error);
     return {};
   }
 };
 
 const writeJsonFile = async (filePath, data) => {
-  await fsp.mkdir(path.dirname(filePath), { recursive: true });
+  const directory = path.dirname(filePath);
+  await fsp.mkdir(directory, { recursive: true, mode: 0o700 });
+  if (process.platform !== "win32") await fsp.chmod(directory, 0o700);
   // Atomic: write to a temp file then rename. Readers never see a partial
   // JSON file that could parse-error and get coerced to {}.
   const tmp = `${filePath}.tmp-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-  await fsp.writeFile(tmp, JSON.stringify(data, null, 2));
+  await fsp.writeFile(tmp, JSON.stringify(data, null, 2), {
+    encoding: "utf8",
+    mode: 0o600,
+  });
+  if (process.platform !== "win32") await fsp.chmod(tmp, 0o600);
   await fsp.rename(tmp, filePath);
+  if (process.platform !== "win32") await fsp.chmod(filePath, 0o600);
 };
 
 const readSettingsRoot = () => {
   const root = readJsonFile(settingsFilePath());
-  return root && typeof root === 'object' && !Array.isArray(root) ? root : {};
+  return root && typeof root === "object" && !Array.isArray(root) ? root : {};
 };
 
 // Serializes read-modify-write of the settings file within this process.
@@ -521,16 +634,17 @@ const mutateSettingsRoot = (mutator) => {
   return next;
 };
 
-const writeSettingsRoot = async (root) => writeJsonFile(settingsFilePath(), root);
+const writeSettingsRoot = async (root) =>
+  writeJsonFile(settingsFilePath(), root);
 
 // Stable per-install identifier for this desktop, persisted in settings. Used as
 // the client dedupe key on remote hosts so re-authenticating (e.g. after a login
-// session expires) reuses the same "OpenChamber Desktop" record instead of
+// session expires) reuses the same "OpenLoop Desktop" record instead of
 // piling up a new one each time. Different desktops get different ids.
 // Display-only device metadata shown in a server's device list ("macOS",
 // app version). Never used for auth decisions.
 const desktopDeviceMetadata = () => {
-  const platformMap = { darwin: 'macos', win32: 'windows', linux: 'linux' };
+  const platformMap = { darwin: "macos", win32: "windows", linux: "linux" };
   const devicePlatform = platformMap[process.platform];
   let appVersion;
   try {
@@ -546,25 +660,29 @@ const desktopDeviceMetadata = () => {
 
 const getOrCreateDesktopInstallId = async () => {
   const existing = readSettingsRoot().desktopInstallId;
-  if (typeof existing === 'string' && existing.trim()) return existing.trim();
+  if (typeof existing === "string" && existing.trim()) return existing.trim();
   const generated = globalThis.crypto.randomUUID();
   await mutateSettingsRoot((root) => {
     // Race guard: keep an id another writer may have already persisted.
-    if (typeof root.desktopInstallId === 'string' && root.desktopInstallId.trim()) return root;
+    if (
+      typeof root.desktopInstallId === "string" &&
+      root.desktopInstallId.trim()
+    )
+      return root;
     root.desktopInstallId = generated;
     return root;
   });
   const after = readSettingsRoot().desktopInstallId;
-  return typeof after === 'string' && after.trim() ? after.trim() : generated;
+  return typeof after === "string" && after.trim() ? after.trim() : generated;
 };
 
 const normalizeHostUrl = (raw) => {
-  const trimmed = typeof raw === 'string' ? raw.trim() : '';
+  const trimmed = typeof raw === "string" ? raw.trim() : "";
   if (!trimmed) return null;
   try {
     const parsed = new URL(trimmed);
-    if (!['http:', 'https:'].includes(parsed.protocol)) return null;
-    parsed.hash = '';
+    if (!["http:", "https:"].includes(parsed.protocol)) return null;
+    parsed.hash = "";
     return parsed.toString();
   } catch {
     return null;
@@ -573,7 +691,7 @@ const normalizeHostUrl = (raw) => {
 
 const sanitizeHostUrlForStorage = (raw) => normalizeHostUrl(raw);
 const sanitizeClientTokenForStorage = (raw) => {
-  const token = typeof raw === 'string' ? raw.trim() : '';
+  const token = typeof raw === "string" ? raw.trim() : "";
   return token.length > 0 ? token : null;
 };
 
@@ -586,48 +704,68 @@ const sameOrigin = (left, right) => {
   }
 };
 
-const shouldUseSameOriginDevProxy = (uiUrl, apiBaseUrl) => (
-  isDev
-  && uiUrl
-  && apiBaseUrl
-  && !shouldUsePackagedUi()
-  && !sameOrigin(uiUrl, apiBaseUrl)
-  && isLocalRuntimeUrl(apiBaseUrl)
-);
+const shouldUseSameOriginDevProxy = (uiUrl, apiBaseUrl) =>
+  isDev &&
+  uiUrl &&
+  apiBaseUrl &&
+  !shouldUsePackagedUi() &&
+  !sameOrigin(uiUrl, apiBaseUrl) &&
+  isLocalRuntimeUrl(apiBaseUrl);
 
 const buildRendererRuntimeConfig = (uiUrl, runtimeConfig = {}) => {
-  const apiBaseUrl = typeof runtimeConfig.apiBaseUrl === 'string' ? runtimeConfig.apiBaseUrl : (state.apiBaseUrl || '');
-  const clientToken = typeof runtimeConfig.clientToken === 'string' ? runtimeConfig.clientToken : (state.clientToken || '');
-  const requestHeaders = sanitizeRuntimeRequestHeaders(runtimeConfig.requestHeaders || state.requestHeaders || {});
+  const apiBaseUrl =
+    typeof runtimeConfig.apiBaseUrl === "string"
+      ? runtimeConfig.apiBaseUrl
+      : state.apiBaseUrl || "";
+  const clientToken =
+    typeof runtimeConfig.clientToken === "string"
+      ? runtimeConfig.clientToken
+      : state.clientToken || "";
+  const requestHeaders = sanitizeRuntimeRequestHeaders(
+    runtimeConfig.requestHeaders || state.requestHeaders || {},
+  );
   // Relay-capable hosts have no injectable HTTP base: the renderer reads this
   // host id, probes the direct leg, and falls back to the E2EE tunnel itself.
-  const relayHostId = typeof runtimeConfig.relayHostId === 'string' ? runtimeConfig.relayHostId : '';
+  const relayHostId =
+    typeof runtimeConfig.relayHostId === "string"
+      ? runtimeConfig.relayHostId
+      : "";
   if (shouldUseSameOriginDevProxy(uiUrl, apiBaseUrl)) {
-    return { apiBaseUrl: '', clientToken: '', requestHeaders: {}, relayHostId };
+    return { apiBaseUrl: "", clientToken: "", requestHeaders: {}, relayHostId };
   }
   return { apiBaseUrl, clientToken, requestHeaders, relayHostId };
 };
 
 const readDesktopLocalClientToken = () => {
-  return sanitizeClientTokenForStorage(readSettingsRoot().desktopLocalClientToken) || '';
+  return (
+    sanitizeClientTokenForStorage(readSettingsRoot().desktopLocalClientToken) ||
+    ""
+  );
 };
 
 const isMachineLocalHostname = (hostname) => {
-  const clean = String(hostname || '').replace(/^\[|\]$/g, '');
+  const clean = String(hostname || "").replace(/^\[|\]$/g, "");
   if (!clean) return false;
-  if (clean === 'localhost' || clean === '127.0.0.1' || clean === '::1' || clean === '0.0.0.0' || clean === '::') {
+  if (
+    clean === "localhost" ||
+    clean === "127.0.0.1" ||
+    clean === "::1" ||
+    clean === "0.0.0.0" ||
+    clean === "::"
+  ) {
     return true;
   }
   try {
     return Object.values(os.networkInterfaces()).some((entries) =>
-      (entries || []).some((entry) => entry?.address === clean));
+      (entries || []).some((entry) => entry?.address === clean),
+    );
   } catch {
     return false;
   }
 };
 
 const isLocalRuntimeUrl = (targetUrl) => {
-  const localUrl = state.sidecarUrl || state.localOrigin || '';
+  const localUrl = state.sidecarUrl || state.localOrigin || "";
   if (!localUrl) return false;
   if (sameOrigin(targetUrl, localUrl)) return true;
   // The embedded server bound to 0.0.0.0 for LAN access is still THIS
@@ -638,8 +776,12 @@ const isLocalRuntimeUrl = (targetUrl) => {
   try {
     const target = new URL(targetUrl);
     const local = new URL(localUrl);
-    const portOf = (url) => url.port || (url.protocol === 'https:' ? '443' : '80');
-    return portOf(target) === portOf(local) && isMachineLocalHostname(target.hostname);
+    const portOf = (url) =>
+      url.port || (url.protocol === "https:" ? "443" : "80");
+    return (
+      portOf(target) === portOf(local) &&
+      isMachineLocalHostname(target.hostname)
+    );
   } catch {
     return false;
   }
@@ -649,17 +791,31 @@ const isLocalRuntimeUrl = (targetUrl) => {
 // { relayUrl (ws/wss), serverId, hostEncPubJwk } descriptor. The relay grant is a
 // one-time pairing artifact and is never persisted.
 const sanitizeHostRelayForStorage = (value) => {
-  if (!value || typeof value !== 'object') return null;
-  const relayUrl = typeof value.relayUrl === 'string' ? value.relayUrl.trim() : '';
-  const serverId = typeof value.serverId === 'string' ? value.serverId.trim() : '';
+  if (!value || typeof value !== "object") return null;
+  const relayUrl =
+    typeof value.relayUrl === "string" ? value.relayUrl.trim() : "";
+  const serverId =
+    typeof value.serverId === "string" ? value.serverId.trim() : "";
   const jwk = value.hostEncPubJwk;
-  if (!relayUrl || !serverId || !jwk || typeof jwk !== 'object' || Array.isArray(jwk)) return null;
+  if (
+    !relayUrl ||
+    !serverId ||
+    !jwk ||
+    typeof jwk !== "object" ||
+    Array.isArray(jwk)
+  )
+    return null;
   // Minimal EC public JWK shape check so a malformed descriptor is rejected at
   // storage time instead of surfacing later as a tunnel handshake failure.
-  if (typeof jwk.kty !== 'string' || typeof jwk.crv !== 'string' || typeof jwk.x !== 'string') return null;
+  if (
+    typeof jwk.kty !== "string" ||
+    typeof jwk.crv !== "string" ||
+    typeof jwk.x !== "string"
+  )
+    return null;
   try {
     const parsed = new URL(relayUrl);
-    if (parsed.protocol !== 'ws:' && parsed.protocol !== 'wss:') return null;
+    if (parsed.protocol !== "ws:" && parsed.protocol !== "wss:") return null;
   } catch {
     return null;
   }
@@ -672,25 +828,46 @@ const sanitizeHostRelayForStorage = (value) => {
 // null for entries that can't be stored (missing id, reserved 'local', or no
 // usable transport at all).
 const buildStoredHostEntry = (entry) => {
-  const id = typeof entry?.id === 'string' ? entry.id.trim() : '';
+  const id = typeof entry?.id === "string" ? entry.id.trim() : "";
   if (!id || id === LOCAL_HOST_ID) return null;
   const clientToken = sanitizeClientTokenForStorage(entry?.clientToken);
   const requestHeaders = sanitizeRuntimeRequestHeaders(entry?.requestHeaders);
-  const headerFields = Object.keys(requestHeaders).length > 0 ? { requestHeaders } : {};
+  const headerFields =
+    Object.keys(requestHeaders).length > 0 ? { requestHeaders } : {};
   const tokenField = clientToken ? { clientToken } : {};
-  const labelRaw = typeof entry?.label === 'string' && entry.label.trim() ? entry.label.trim() : '';
+  const labelRaw =
+    typeof entry?.label === "string" && entry.label.trim()
+      ? entry.label.trim()
+      : "";
 
   const relay = sanitizeHostRelayForStorage(entry?.relay);
   const relayField = relay ? { relay } : {};
   const directUrl = sanitizeHostUrlForStorage(entry?.url);
-  const apiUrl = directUrl ? (sanitizeHostUrlForStorage(entry?.apiUrl) || directUrl) : null;
+  const apiUrl = directUrl
+    ? sanitizeHostUrlForStorage(entry?.apiUrl) || directUrl
+    : null;
 
   if (directUrl) {
-    return { id, label: labelRaw || directUrl, url: directUrl, apiUrl, ...tokenField, ...headerFields, ...relayField };
+    return {
+      id,
+      label: labelRaw || directUrl,
+      url: directUrl,
+      apiUrl,
+      ...tokenField,
+      ...headerFields,
+      ...relayField,
+    };
   }
   if (relay) {
     const url = `relay://${relay.serverId}`;
-    return { id, label: labelRaw || url, url, ...tokenField, ...headerFields, relay };
+    return {
+      id,
+      label: labelRaw || url,
+      url,
+      ...tokenField,
+      ...headerFields,
+      relay,
+    };
   }
   return null;
 };
@@ -698,15 +875,15 @@ const buildStoredHostEntry = (entry) => {
 const readDesktopHostsConfig = () => {
   const root = readSettingsRoot();
   const hostsRaw = Array.isArray(root.desktopHosts) ? root.desktopHosts : [];
-  const hosts = hostsRaw
-    .map(buildStoredHostEntry)
-    .filter(Boolean);
+  const hosts = hostsRaw.map(buildStoredHostEntry).filter(Boolean);
 
   return {
     hosts,
-    defaultHostId: typeof root.desktopDefaultHostId === 'string' && root.desktopDefaultHostId.trim()
-      ? root.desktopDefaultHostId.trim()
-      : null,
+    defaultHostId:
+      typeof root.desktopDefaultHostId === "string" &&
+      root.desktopDefaultHostId.trim()
+        ? root.desktopDefaultHostId.trim()
+        : null,
     initialHostChoiceCompleted: root.desktopInitialHostChoiceCompleted === true,
   };
 };
@@ -714,18 +891,22 @@ const readDesktopHostsConfig = () => {
 const writeDesktopHostsConfig = async (config) => {
   await mutateSettingsRoot((root) => {
     root.desktopHosts = Array.isArray(config?.hosts)
-      ? config.hosts
-          .map(buildStoredHostEntry)
-          .filter(Boolean)
+      ? config.hosts.map(buildStoredHostEntry).filter(Boolean)
       : [];
-    root.desktopDefaultHostId = typeof config?.defaultHostId === 'string' && config.defaultHostId.trim()
-      ? config.defaultHostId.trim()
-      : null;
-    if (typeof config?.initialHostChoiceCompleted === 'boolean') {
-      root.desktopInitialHostChoiceCompleted = config.initialHostChoiceCompleted;
+    root.desktopDefaultHostId =
+      typeof config?.defaultHostId === "string" && config.defaultHostId.trim()
+        ? config.defaultHostId.trim()
+        : null;
+    if (typeof config?.initialHostChoiceCompleted === "boolean") {
+      root.desktopInitialHostChoiceCompleted =
+        config.initialHostChoiceCompleted;
     }
-    if (Object.prototype.hasOwnProperty.call(config || {}, 'localClientToken')) {
-      const localClientToken = sanitizeClientTokenForStorage(config.localClientToken);
+    if (
+      Object.prototype.hasOwnProperty.call(config || {}, "localClientToken")
+    ) {
+      const localClientToken = sanitizeClientTokenForStorage(
+        config.localClientToken,
+      );
       if (localClientToken) {
         root.desktopLocalClientToken = localClientToken;
       } else {
@@ -737,12 +918,18 @@ const writeDesktopHostsConfig = async (config) => {
 
 const readWindowState = () => {
   const stateValue = readSettingsRoot().desktopWindowState;
-  return stateValue && typeof stateValue === 'object' ? stateValue : null;
+  return stateValue && typeof stateValue === "object" ? stateValue : null;
 };
 
 const clampWindowBoundsToVisibleWorkArea = (bounds) => {
-  const width = Math.max(MIN_RESTORE_WINDOW_WIDTH, Math.round(Number(bounds?.width) || 0));
-  const height = Math.max(MIN_RESTORE_WINDOW_HEIGHT, Math.round(Number(bounds?.height) || 0));
+  const width = Math.max(
+    MIN_RESTORE_WINDOW_WIDTH,
+    Math.round(Number(bounds?.width) || 0),
+  );
+  const height = Math.max(
+    MIN_RESTORE_WINDOW_HEIGHT,
+    Math.round(Number(bounds?.height) || 0),
+  );
   const x = Math.round(Number(bounds?.x));
   const y = Math.round(Number(bounds?.y));
 
@@ -751,16 +938,30 @@ const clampWindowBoundsToVisibleWorkArea = (bounds) => {
   }
 
   try {
-    const display = screen.getDisplayMatching({ x, y, width, height }) || screen.getPrimaryDisplay();
+    const display =
+      screen.getDisplayMatching({ x, y, width, height }) ||
+      screen.getPrimaryDisplay();
     const workArea = display.workArea;
-    const clampedWidth = Math.min(width, Math.max(MIN_WINDOW_WIDTH, workArea.width));
-    const clampedHeight = Math.min(height, Math.max(MIN_WINDOW_HEIGHT, workArea.height));
+    const clampedWidth = Math.min(
+      width,
+      Math.max(MIN_WINDOW_WIDTH, workArea.width),
+    );
+    const clampedHeight = Math.min(
+      height,
+      Math.max(MIN_WINDOW_HEIGHT, workArea.height),
+    );
     const maxX = workArea.x + workArea.width - clampedWidth;
     const maxY = workArea.y + workArea.height - clampedHeight;
 
     return {
-      x: clampedWidth >= workArea.width ? workArea.x : Math.min(Math.max(x, workArea.x), maxX),
-      y: clampedHeight >= workArea.height ? workArea.y : Math.min(Math.max(y, workArea.y), maxY),
+      x:
+        clampedWidth >= workArea.width
+          ? workArea.x
+          : Math.min(Math.max(x, workArea.x), maxX),
+      y:
+        clampedHeight >= workArea.height
+          ? workArea.y
+          : Math.min(Math.max(y, workArea.y), maxY),
       width: clampedWidth,
       height: clampedHeight,
     };
@@ -819,7 +1020,7 @@ const debounceWindowStatePersist = (browserWindow, immediate = false) => {
 const buildHealthUrl = (url) => {
   try {
     const parsed = new URL(url);
-    parsed.pathname = `${parsed.pathname.replace(/\/$/, '') || ''}/health`;
+    parsed.pathname = `${parsed.pathname.replace(/\/$/, "") || ""}/health`;
     return parsed.toString();
   } catch {
     return null;
@@ -829,7 +1030,7 @@ const buildHealthUrl = (url) => {
 const buildVersionUrl = (url) => {
   try {
     const parsed = new URL(url);
-    parsed.pathname = `${parsed.pathname.replace(/\/$/, '') || ''}/api/version`;
+    parsed.pathname = `${parsed.pathname.replace(/\/$/, "") || ""}/api/version`;
     return parsed.toString();
   } catch {
     return null;
@@ -838,19 +1039,27 @@ const buildVersionUrl = (url) => {
 
 const classifyVersionPayload = (payload) => {
   const compatibility = payload?.compatibility;
-  if (!payload || payload.status !== 'ok' || !compatibility || typeof compatibility !== 'object') {
-    return 'wrong-service';
+  if (
+    !payload ||
+    payload.status !== "ok" ||
+    !compatibility ||
+    typeof compatibility !== "object"
+  ) {
+    return "wrong-service";
   }
 
-  if (!Array.isArray(compatibility.capabilities) || !compatibility.capabilities.includes('api.runtime-url.v1')) {
-    return 'incompatible';
+  if (
+    !Array.isArray(compatibility.capabilities) ||
+    !compatibility.capabilities.includes("api.runtime-url.v1")
+  ) {
+    return "incompatible";
   }
 
   if (compatibility.apiVersion !== 1 || compatibility.minClientApiVersion > 1) {
-    return 'update-recommended';
+    return "update-recommended";
   }
 
-  return 'ok';
+  return "ok";
 };
 
 const fetchVersionPayload = async (versionUrl, { headers, timeoutMs }) => {
@@ -868,10 +1077,16 @@ const fetchVersionPayload = async (versionUrl, { headers, timeoutMs }) => {
   }
 };
 
-const probeHostWithTimeout = async (url, timeoutMs, clientToken = '', requestHeaders = {}, expectedServerId = '') => {
+const probeHostWithTimeout = async (
+  url,
+  timeoutMs,
+  clientToken = "",
+  requestHeaders = {},
+  expectedServerId = "",
+) => {
   const versionUrl = buildVersionUrl(url);
   if (!versionUrl) {
-    throw new Error('Invalid URL');
+    throw new Error("Invalid URL");
   }
 
   const started = Date.now();
@@ -881,16 +1096,22 @@ const probeHostWithTimeout = async (url, timeoutMs, clientToken = '', requestHea
   // token is never sent to a re-assigned address that now belongs to a
   // different machine. Older servers omit serverId from /health; only an
   // explicit mismatch rejects.
-  if (typeof expectedServerId === 'string' && expectedServerId.trim()) {
+  if (typeof expectedServerId === "string" && expectedServerId.trim()) {
     const healthUrl = buildHealthUrl(url);
     if (healthUrl) {
       try {
-        const response = await fetch(healthUrl, { signal: AbortSignal.timeout(timeoutMs), headers: { Accept: 'application/json' } });
+        const response = await fetch(healthUrl, {
+          signal: AbortSignal.timeout(timeoutMs),
+          headers: { Accept: "application/json" },
+        });
         if (response.ok) {
           const payload = await response.json().catch(() => null);
-          const reported = typeof payload?.serverId === 'string' ? payload.serverId.trim() : '';
+          const reported =
+            typeof payload?.serverId === "string"
+              ? payload.serverId.trim()
+              : "";
           if (reported && reported !== expectedServerId.trim()) {
-            return { status: 'wrong-service', latencyMs: Date.now() - started };
+            return { status: "wrong-service", latencyMs: Date.now() - started };
           }
         }
       } catch {
@@ -900,18 +1121,24 @@ const probeHostWithTimeout = async (url, timeoutMs, clientToken = '', requestHea
   }
 
   try {
-    const headers = { ...sanitizeRuntimeRequestHeaders(requestHeaders), Accept: 'application/json' };
-    const token = typeof clientToken === 'string' ? clientToken.trim() : '';
+    const headers = {
+      ...sanitizeRuntimeRequestHeaders(requestHeaders),
+      Accept: "application/json",
+    };
+    const token = typeof clientToken === "string" ? clientToken.trim() : "";
     if (token) {
       headers.Authorization = `Bearer ${token}`;
     }
-    const response = await fetchVersionPayload(versionUrl, { headers, timeoutMs });
+    const response = await fetchVersionPayload(versionUrl, {
+      headers,
+      timeoutMs,
+    });
     const status = response.status;
     if (status === 401 || status === 403) {
-      return { status: 'auth', latencyMs: Date.now() - started };
+      return { status: "auth", latencyMs: Date.now() - started };
     }
     if (status < 200 || status >= 300) {
-      return { status: 'unreachable', latencyMs: Date.now() - started };
+      return { status: "unreachable", latencyMs: Date.now() - started };
     }
     const payload = await response.json().catch(() => null);
     return {
@@ -919,66 +1146,77 @@ const probeHostWithTimeout = async (url, timeoutMs, clientToken = '', requestHea
       latencyMs: Date.now() - started,
     };
   } catch {
-    return { status: 'unreachable', latencyMs: Date.now() - started };
+    return { status: "unreachable", latencyMs: Date.now() - started };
   }
 };
 
-const resolveStoredClientTokenForUrl = (targetUrl, config = readDesktopHostsConfig()) => {
+const resolveStoredClientTokenForUrl = (
+  targetUrl,
+  config = readDesktopHostsConfig(),
+) => {
   const normalizedTarget = normalizeHostUrl(targetUrl);
-  if (!normalizedTarget) return '';
+  if (!normalizedTarget) return "";
   if (isLocalRuntimeUrl(normalizedTarget)) {
     return readDesktopLocalClientToken();
   }
   for (const host of config.hosts || []) {
-    const hostUrl = normalizeHostUrl(host?.url || '');
-    const apiUrl = normalizeHostUrl(host?.apiUrl || host?.url || '');
+    const hostUrl = normalizeHostUrl(host?.url || "");
+    const apiUrl = normalizeHostUrl(host?.apiUrl || host?.url || "");
     if (normalizedTarget === hostUrl || normalizedTarget === apiUrl) {
       return sanitizeClientTokenForStorage(host?.clientToken);
     }
   }
-  return '';
+  return "";
 };
 
-const waitForHealth = async (url, timeoutMs = 20_000, initialPollMs = 250, maxPollMs = 2000) => {
+const waitForHealth = async (
+  url,
+  timeoutMs = 20_000,
+  initialPollMs = 250,
+  maxPollMs = 2000,
+) => {
   const deadline = Date.now() + timeoutMs;
   let pollMs = initialPollMs;
   while (Date.now() < deadline) {
     try {
-      const response = await fetch(buildHealthUrl(url), { signal: AbortSignal.timeout(Math.min(pollMs * 4, 1500)) });
+      const response = await fetch(buildHealthUrl(url), {
+        signal: AbortSignal.timeout(Math.min(pollMs * 4, 1500)),
+      });
       if (response.ok) {
         return true;
       }
-    } catch {
-    }
+    } catch {}
     await new Promise((resolve) => setTimeout(resolve, pollMs));
     pollMs = Math.min(pollMs * 2, maxPollMs);
   }
   return false;
 };
 
-const pickUnusedPort = async (host = '127.0.0.1') => {
-  const net = await import('node:net');
+const pickUnusedPort = async (host = "127.0.0.1") => {
+  const net = await import("node:net");
   return await new Promise((resolve, reject) => {
     const server = net.createServer();
     server.listen(0, host, () => {
       const address = server.address();
-      const port = typeof address === 'object' && address ? address.port : 0;
+      const port = typeof address === "object" && address ? address.port : 0;
       server.close(() => resolve(port));
     });
-    server.on('error', reject);
+    server.on("error", reject);
   });
 };
 
-const isPortFree = async (port, host = '127.0.0.1') => {
+const isPortFree = async (port, host = "127.0.0.1") => {
   if (!Number.isFinite(port) || port <= 0) return false;
-  const net = await import('node:net');
+  const net = await import("node:net");
   return await new Promise((resolve) => {
     const test = net.createServer();
     const done = (value) => {
-      try { test.close(); } catch {}
+      try {
+        test.close();
+      } catch {}
       resolve(value);
     };
-    test.once('error', () => done(false));
+    test.once("error", () => done(false));
     test.listen(port, host, () => done(true));
   });
 };
@@ -990,18 +1228,22 @@ const isPortFree = async (port, host = '127.0.0.1') => {
 // os.networkInterfaces() if the socket trick fails (e.g. no default route).
 const detectLanIPv4Address = async () => {
   const ip = await new Promise((resolve) => {
-    const socket = dgram.createSocket('udp4');
+    const socket = dgram.createSocket("udp4");
     const finish = (value) => {
-      try { socket.close(); } catch {}
+      try {
+        socket.close();
+      } catch {}
       resolve(value);
     };
-    socket.once('error', () => finish(null));
+    socket.once("error", () => finish(null));
     try {
-      socket.connect(80, '8.8.8.8', (error) => {
+      socket.connect(80, "8.8.8.8", (error) => {
         if (error) return finish(null);
         try {
           const addr = socket.address();
-          finish(addr && typeof addr.address === 'string' ? addr.address : null);
+          finish(
+            addr && typeof addr.address === "string" ? addr.address : null,
+          );
         } catch {
           finish(null);
         }
@@ -1010,11 +1252,11 @@ const detectLanIPv4Address = async () => {
       finish(null);
     }
   });
-  if (ip && ip !== '0.0.0.0' && !ip.startsWith('127.')) return ip;
+  if (ip && ip !== "0.0.0.0" && !ip.startsWith("127.")) return ip;
 
   for (const entries of Object.values(os.networkInterfaces() || {})) {
     for (const entry of entries || []) {
-      if (entry.family === 'IPv4' && !entry.internal && entry.address) {
+      if (entry.family === "IPv4" && !entry.internal && entry.address) {
         return entry.address;
       }
     }
@@ -1024,22 +1266,34 @@ const detectLanIPv4Address = async () => {
 
 const buildLocalUrl = (port) => `http://127.0.0.1:${port}`;
 
-const resourceRoot = () => isDev ? path.join(__dirname, 'resources') : process.resourcesPath;
-const resolveWebDistDir = () => path.join(resourceRoot(), 'web-dist');
+const resourceRoot = () =>
+  isDev ? path.join(__dirname, "resources") : process.resourcesPath;
+const dockIconController = createDockIconController({
+  platform: process.platform,
+  dock: app.dock,
+  resourceRoot,
+  readSettingsRoot,
+  mutateSettingsRoot,
+  fileExists: fs.existsSync,
+});
+const resolveWebDistDir = () => path.join(resourceRoot(), "web-dist");
 const shouldUsePackagedUi = () => {
-  if (process.env.OPENCHAMBER_ELECTRON_LOAD_SERVER_UI === '1') return false;
-  if (process.env.OPENCHAMBER_ELECTRON_USE_BUNDLED_UI === '1') return true;
+  if (process.env.OPENCHAMBER_ELECTRON_LOAD_SERVER_UI === "1") return false;
+  if (process.env.OPENCHAMBER_ELECTRON_USE_BUNDLED_UI === "1") return true;
   return app.isPackaged;
 };
 const packagedUiOrigin = () => `${UI_PROTOCOL}://app`;
-const buildPackagedUiUrl = (pathname = '/index.html') => new URL(pathname, `${packagedUiOrigin()}/`).toString();
+const buildPackagedUiUrl = (pathname = "/index.html") =>
+  new URL(pathname, `${packagedUiOrigin()}/`).toString();
 
 const injectRuntimeConfigIntoHtml = (html) => {
-  const apiBaseUrl = state.apiBaseUrl || state.sidecarUrl || '';
-  const localOrigin = state.localOrigin || state.sidecarUrl || '';
-  const initScript = `<script>if(window.__OPENCHAMBER_LOCAL_ORIGIN__===undefined){window.__OPENCHAMBER_LOCAL_ORIGIN__=${JSON.stringify(localOrigin)};}if(window.__OPENCHAMBER_API_BASE_URL__===undefined){window.__OPENCHAMBER_API_BASE_URL__=${JSON.stringify(apiBaseUrl)};}if(window.__OPENCHAMBER_CLIENT_TOKEN__===undefined&&${JSON.stringify(state.clientToken || '')}){window.__OPENCHAMBER_CLIENT_TOKEN__=${JSON.stringify(state.clientToken || '')};}</script>`;
-  if (html.includes('<head>')) return html.replace('<head>', `<head>${initScript}`);
-  if (html.includes('</head>')) return html.replace('</head>', `${initScript}</head>`);
+  const apiBaseUrl = state.apiBaseUrl || state.sidecarUrl || "";
+  const localOrigin = state.localOrigin || state.sidecarUrl || "";
+  const initScript = `<script>if(window.__OPENCHAMBER_LOCAL_ORIGIN__===undefined){window.__OPENCHAMBER_LOCAL_ORIGIN__=${JSON.stringify(localOrigin)};}if(window.__OPENCHAMBER_API_BASE_URL__===undefined){window.__OPENCHAMBER_API_BASE_URL__=${JSON.stringify(apiBaseUrl)};}if(window.__OPENCHAMBER_CLIENT_TOKEN__===undefined&&${JSON.stringify(state.clientToken || "")}){window.__OPENCHAMBER_CLIENT_TOKEN__=${JSON.stringify(state.clientToken || "")};}</script>`;
+  if (html.includes("<head>"))
+    return html.replace("<head>", `<head>${initScript}`);
+  if (html.includes("</head>"))
+    return html.replace("</head>", `${initScript}</head>`);
   return `${initScript}${html}`;
 };
 
@@ -1047,41 +1301,47 @@ const registerPackagedUiProtocol = () => {
   if (!shouldUsePackagedUi()) return;
   protocol.handle(UI_PROTOCOL, async (request) => {
     const distPath = resolveWebDistDir();
-    let requestedPath = '/index.html';
+    let requestedPath = "/index.html";
     try {
       const url = new URL(request.url);
-      requestedPath = decodeURIComponent(url.pathname || '/index.html');
+      requestedPath = decodeURIComponent(url.pathname || "/index.html");
     } catch {
-      requestedPath = '/index.html';
+      requestedPath = "/index.html";
     }
-    const normalized = path.normalize(requestedPath).replace(/^([/\\])+/, '');
-    const candidate = path.join(distPath, normalized || 'index.html');
+    const normalized = path.normalize(requestedPath).replace(/^([/\\])+/, "");
+    const candidate = path.join(distPath, normalized || "index.html");
     const relative = path.relative(distPath, candidate);
-    const isInsideDist = relative && !relative.startsWith('..') && !path.isAbsolute(relative);
-    const filePath = isInsideDist ? candidate : path.join(distPath, 'index.html');
+    const isInsideDist =
+      relative && !relative.startsWith("..") && !path.isAbsolute(relative);
+    const filePath = isInsideDist
+      ? candidate
+      : path.join(distPath, "index.html");
     try {
       const info = await fsp.stat(filePath);
       if (info.isFile()) {
-        if (filePath.endsWith('.html')) {
-          const html = await fsp.readFile(filePath, 'utf8');
+        if (filePath.endsWith(".html")) {
+          const html = await fsp.readFile(filePath, "utf8");
           const body = injectRuntimeConfigIntoHtml(html);
-          return new Response(body, { headers: { 'Content-Type': 'text/html; charset=utf-8' } });
+          return new Response(body, {
+            headers: { "Content-Type": "text/html; charset=utf-8" },
+          });
         }
         return electronNet.fetch(pathToFileURL(filePath).toString());
       }
-    } catch {
-    }
-    const indexPath = path.join(distPath, 'index.html');
-    const html = await fsp.readFile(indexPath, 'utf8');
+    } catch {}
+    const indexPath = path.join(distPath, "index.html");
+    const html = await fsp.readFile(indexPath, "utf8");
     const body = injectRuntimeConfigIntoHtml(html);
-    return new Response(body, { headers: { 'Content-Type': 'text/html; charset=utf-8' } });
+    return new Response(body, {
+      headers: { "Content-Type": "text/html; charset=utf-8" },
+    });
   });
 };
 
 const normalizeNotificationInput = (raw) => {
-  if (!raw || typeof raw !== 'object') return {};
+  if (!raw || typeof raw !== "object") return {};
   // UI IPC path wraps in { payload: {...} }; sidecar stdout path is flat.
-  if (raw.payload && typeof raw.payload === 'object') {
+  if (raw.payload && typeof raw.payload === "object") {
     return { ...raw, ...raw.payload };
   }
   return raw;
@@ -1093,20 +1353,23 @@ const isAnyWindowFocused = () =>
   );
 
 const focusForegroundWindow = () => {
-  const windows = BrowserWindow.getAllWindows().filter((window) => !window.isDestroyed());
+  const windows = BrowserWindow.getAllWindows().filter(
+    (window) => !window.isDestroyed(),
+  );
   if (windows.length === 0) return;
-  const target = state.mainWindow && !state.mainWindow.isDestroyed()
-    ? state.mainWindow
-    : windows.find((window) => window.isVisible()) || windows[0];
+  const target =
+    state.mainWindow && !state.mainWindow.isDestroyed()
+      ? state.mainWindow
+      : windows.find((window) => window.isVisible()) || windows[0];
   // macOS: bring the app to foreground FIRST. When the window is minimized
   // to the Dock or hidden via Cmd+H, the app is in the background, and
   // subsequent window.show/restore/focus calls won't pull it forward
   // unless app.focus runs first.
-  if (process.platform === 'darwin') app.focus({ steal: true });
+  if (process.platform === "darwin") app.focus({ steal: true });
   if (target.isMinimized()) target.restore();
   target.show();
   target.focus();
-  if (typeof target.moveTop === 'function') target.moveTop();
+  if (typeof target.moveTop === "function") target.moveTop();
 };
 
 // Keep references to live notifications so they aren't garbage-collected
@@ -1118,12 +1381,12 @@ const nativeNotificationClaims = new Map();
 const NATIVE_NOTIFICATION_DEDUPE_TTL_MS = 5000;
 
 const getNativeNotificationClaimKey = (payload) => {
-  const tag = typeof payload?.tag === 'string' ? payload.tag.trim() : '';
+  const tag = typeof payload?.tag === "string" ? payload.tag.trim() : "";
   if (tag) return tag;
   return [payload?.sessionId, payload?.kind, payload?.title, payload?.body]
-    .filter((value) => typeof value === 'string' && value.trim())
+    .filter((value) => typeof value === "string" && value.trim())
     .map((value) => value.trim())
-    .join('|');
+    .join("|");
 };
 
 const claimNativeNotification = (payload) => {
@@ -1148,7 +1411,9 @@ const claimNativeNotification = (payload) => {
 
 const maybeShowNativeNotification = (rawInput) => {
   const payload = normalizeNotificationInput(rawInput);
-  const requireHidden = Boolean(payload.requireHidden ?? payload.require_hidden);
+  const requireHidden = Boolean(
+    payload.requireHidden ?? payload.require_hidden,
+  );
 
   if (requireHidden && isAnyWindowFocused()) {
     return;
@@ -1162,36 +1427,41 @@ const maybeShowNativeNotification = (rawInput) => {
     return;
   }
 
-  const title = typeof payload.title === 'string' && payload.title.trim()
-    ? payload.title.trim()
-    : 'OpenChamber';
-  const body = typeof payload.body === 'string' ? payload.body : '';
-  const sessionId = typeof payload.sessionId === 'string' && payload.sessionId.trim()
-    ? payload.sessionId.trim()
-    : null;
-  const directory = typeof payload.directory === 'string' && payload.directory.trim()
-    ? payload.directory.trim()
-    : null;
+  const title =
+    typeof payload.title === "string" && payload.title.trim()
+      ? payload.title.trim()
+      : "OpenLoop";
+  const body = typeof payload.body === "string" ? payload.body : "";
+  const sessionId =
+    typeof payload.sessionId === "string" && payload.sessionId.trim()
+      ? payload.sessionId.trim()
+      : null;
+  const directory =
+    typeof payload.directory === "string" && payload.directory.trim()
+      ? payload.directory.trim()
+      : null;
 
   const notification = new Notification({
     title,
     body,
     silent: false,
-    ...(process.platform === 'darwin' ? { sound: 'Glass' } : {}),
+    ...(process.platform === "darwin" ? { sound: "Glass" } : {}),
   });
 
   activeNotifications.add(notification);
-  const release = () => { activeNotifications.delete(notification); };
+  const release = () => {
+    activeNotifications.delete(notification);
+  };
 
-  notification.on('click', () => {
+  notification.on("click", () => {
     focusForegroundWindow();
     if (sessionId) {
-      emitToAllWindows('openchamber:open-session', { sessionId, directory });
+      emitToAllWindows("openchamber:open-session", { sessionId, directory });
     }
     release();
   });
-  notification.on('close', release);
-  notification.on('failed', release);
+  notification.on("close", release);
+  notification.on("failed", release);
 
   notification.show();
 };
@@ -1207,14 +1477,14 @@ let shellEnvProbed = false;
 
 const isNushell = (shell) => {
   const name = path.basename(shell).toLowerCase();
-  return name === 'nu' || name === 'nu.exe';
+  return name === "nu" || name === "nu.exe";
 };
 
 const parseShellEnv = (buf) => {
   const result = {};
-  for (const line of buf.toString('utf8').split('\0')) {
+  for (const line of buf.toString("utf8").split("\0")) {
     if (!line) continue;
-    const idx = line.indexOf('=');
+    const idx = line.indexOf("=");
     if (idx <= 0) continue;
     result[line.slice(0, idx)] = line.slice(idx + 1);
   }
@@ -1222,8 +1492,8 @@ const parseShellEnv = (buf) => {
 };
 
 const probeShellEnv = (shell, mode) => {
-  const result = spawnSync(shell, [mode, '-c', 'env -0'], {
-    stdio: ['ignore', 'pipe', 'ignore'],
+  const result = spawnSync(shell, [mode, "-c", "env -0"], {
+    stdio: ["ignore", "pipe", "ignore"],
     timeout: SHELL_ENV_TIMEOUT_MS,
     windowsHide: true,
   });
@@ -1233,35 +1503,44 @@ const probeShellEnv = (shell, mode) => {
 };
 
 const queryWindowsRegistryValue = (key, name) => {
-  const result = spawnSync('reg.exe', ['query', key, '/v', name], {
-    encoding: 'utf8',
+  const result = spawnSync("reg.exe", ["query", key, "/v", name], {
+    encoding: "utf8",
     windowsHide: true,
   });
-  if (result.error || result.status !== 0) return '';
-  const line = String(result.stdout || '')
+  if (result.error || result.status !== 0) return "";
+  const line = String(result.stdout || "")
     .split(/\r?\n/)
     .map((entry) => entry.trim())
     .find((entry) => entry.toLowerCase().startsWith(name.toLowerCase()));
-  if (!line) return '';
+  if (!line) return "";
   const match = line.match(/^\S+\s+REG_\S+\s+(.+)$/);
-  return match?.[1]?.trim() || '';
+  return match?.[1]?.trim() || "";
 };
 
-const expandWindowsEnvRefs = (value) => String(value || '').replace(/%([^%]+)%/g, (_match, key) => process.env[key] || '');
+const expandWindowsEnvRefs = (value) =>
+  String(value || "").replace(
+    /%([^%]+)%/g,
+    (_match, key) => process.env[key] || "",
+  );
 
 const loadWindowsEnv = () => {
-  const machinePath = queryWindowsRegistryValue('HKLM\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment', 'Path');
-  const userPath = queryWindowsRegistryValue('HKCU\\Environment', 'Path');
+  const machinePath = queryWindowsRegistryValue(
+    "HKLM\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment",
+    "Path",
+  );
+  const userPath = queryWindowsRegistryValue("HKCU\\Environment", "Path");
   const homeDir = os.homedir();
-  const localAppData = process.env.LOCALAPPDATA || path.join(homeDir, 'AppData', 'Local');
-  const appData = process.env.APPDATA || path.join(homeDir, 'AppData', 'Roaming');
+  const localAppData =
+    process.env.LOCALAPPDATA || path.join(homeDir, "AppData", "Local");
+  const appData =
+    process.env.APPDATA || path.join(homeDir, "AppData", "Roaming");
   const commonPaths = [
-    path.join(homeDir, '.opencode', 'bin'),
-    path.join(homeDir, '.bun', 'bin'),
-    path.join(homeDir, '.local', 'bin'),
-    path.join(localAppData, 'Programs', 'Microsoft VS Code', 'bin'),
-    path.join(localAppData, 'Programs', 'Cursor', 'resources', 'app', 'bin'),
-    path.join(appData, 'npm'),
+    path.join(homeDir, ".opencode", "bin"),
+    path.join(homeDir, ".bun", "bin"),
+    path.join(homeDir, ".local", "bin"),
+    path.join(localAppData, "Programs", "Microsoft VS Code", "bin"),
+    path.join(localAppData, "Programs", "Cursor", "resources", "app", "bin"),
+    path.join(appData, "npm"),
   ];
   return {
     PATH: [machinePath, userPath, process.env.PATH, ...commonPaths]
@@ -1276,18 +1555,21 @@ const loadWindowsEnv = () => {
 const loadShellEnv = () => {
   if (shellEnvProbed) return cachedShellEnv;
   shellEnvProbed = true;
-  if (process.platform === 'win32') {
+  if (process.platform === "win32") {
     cachedShellEnv = loadWindowsEnv();
     return cachedShellEnv;
   }
-  const shell = process.env.SHELL || '/bin/sh';
+  const shell = process.env.SHELL || "/bin/sh";
   if (isNushell(shell)) return null;
-  cachedShellEnv = probeShellEnv(shell, '-il') || probeShellEnv(shell, '-l');
+  cachedShellEnv = probeShellEnv(shell, "-il") || probeShellEnv(shell, "-l");
   return cachedShellEnv;
 };
 
 // Merge the user's login-shell env (PATH, etc.) into this process before we
-import { pathLooksUserConfigured, mergePathValues } from '@openchamber/web/server/lib/opencode/path-utils.js';
+import {
+  pathLooksUserConfigured,
+  mergePathValues,
+} from "@openchamber/web/server/lib/opencode/path-utils.js";
 
 // import/start the server in-process. The server and its children (opencode
 // CLI, git, etc.) inherit process.env directly now — there is no sidecar
@@ -1297,45 +1579,70 @@ const inheritUserShellEnv = () => {
   if (!shellEnv) return;
 
   const homeDir = os.homedir();
-  const currentPath = process.env.PATH || '';
-  const delimiter = process.platform === 'win32' ? ';' : ':';
-  const currentPathLooksUserConfigured = pathLooksUserConfigured(currentPath, homeDir, delimiter);
+  const currentPath = process.env.PATH || "";
+  const delimiter = process.platform === "win32" ? ";" : ":";
+  const currentPathLooksUserConfigured = pathLooksUserConfigured(
+    currentPath,
+    homeDir,
+    delimiter,
+  );
 
   for (const [key, value] of Object.entries(shellEnv)) {
-    if (key === 'PATH') continue;
-    if (typeof process.env[key] === 'undefined') {
+    if (key === "PATH") continue;
+    if (typeof process.env[key] === "undefined") {
       process.env[key] = value;
     }
   }
 
-  const shellPath = typeof shellEnv.PATH === 'string' ? shellEnv.PATH : '';
-  if ((process.platform === 'win32' || !currentPathLooksUserConfigured) && shellPath) {
+  const shellPath = typeof shellEnv.PATH === "string" ? shellEnv.PATH : "";
+  if (
+    (process.platform === "win32" || !currentPathLooksUserConfigured) &&
+    shellPath
+  ) {
     process.env.PATH = mergePathValues(shellPath, currentPath, delimiter);
   }
+};
+
+const shouldSkipLocalServer = () => {
+  inheritUserShellEnv();
+  return process.env.OPENCHAMBER_SKIP_LOCAL_SERVER === "1";
 };
 
 const spawnLocalServer = async () => {
   inheritUserShellEnv();
 
   const settings = readSettingsRoot();
-  const storedPort = Number.isFinite(settings.desktopLocalPort) ? settings.desktopLocalPort : null;
+  const storedPort = Number.isFinite(settings.desktopLocalPort)
+    ? settings.desktopLocalPort
+    : null;
   // When the user enables "Desktop Network Access" we bind on all interfaces
   // so phones/tablets on the same Wi-Fi can reach the app. UI shows a clear
   // warning and persists the flag via /api/config/settings.
   const lanAccessEnabled = settings.desktopLanAccessEnabled === true;
   setDesktopKeepAwakeActive(settings.desktopKeepAwakeEnabled === true);
-  const desktopUiPassword = typeof settings.desktopUiPassword === 'string' ? settings.desktopUiPassword.trim() : '';
-  const lanAccessBlockedByMissingPassword = lanAccessEnabled && !desktopUiPassword;
-  const effectiveLanAccessEnabled = lanAccessEnabled && !lanAccessBlockedByMissingPassword;
-  const bindHost = effectiveLanAccessEnabled ? LAN_BIND_HOST : LOOPBACK_BIND_HOST;
+  const desktopUiPassword =
+    typeof settings.desktopUiPassword === "string"
+      ? settings.desktopUiPassword.trim()
+      : "";
+  const lanAccessBlockedByMissingPassword =
+    lanAccessEnabled && !desktopUiPassword;
+  const effectiveLanAccessEnabled =
+    lanAccessEnabled && !lanAccessBlockedByMissingPassword;
+  const bindHost = effectiveLanAccessEnabled
+    ? LAN_BIND_HOST
+    : LOOPBACK_BIND_HOST;
   if (lanAccessBlockedByMissingPassword) {
-    log.warn('[desktop] LAN access was requested without a desktop UI password; starting on loopback only.');
+    log.warn(
+      "[desktop] LAN access was requested without a desktop UI password; starting on loopback only.",
+    );
   }
 
   // Probe before starting the server — main() in the server module sets up a
   // lot of global state before binding, and calling it twice after a listen
   // failure would double-wire runtimes. Pick a known-free port in one shot.
-  const candidates = [storedPort, DEFAULT_DESKTOP_PORT].filter((v) => Number.isFinite(v) && v > 0);
+  const candidates = [storedPort, DEFAULT_DESKTOP_PORT].filter(
+    (v) => Number.isFinite(v) && v > 0,
+  );
   let chosenPort = 0;
   for (const candidate of candidates) {
     if (await isPortFree(candidate, bindHost)) {
@@ -1352,31 +1659,35 @@ const spawnLocalServer = async () => {
   // set before the first import. After this point, the same env is used by
   // both the Electron main and the server running inside it.
   process.env.OPENCHAMBER_HOST = bindHost;
-  process.env.OPENCHAMBER_DESKTOP_LAN_ACCESS_ACTIVE = effectiveLanAccessEnabled ? 'true' : 'false';
+  process.env.OPENCHAMBER_DESKTOP_LAN_ACCESS_ACTIVE = effectiveLanAccessEnabled
+    ? "true"
+    : "false";
   if (lanAccessBlockedByMissingPassword) {
-    process.env.OPENCHAMBER_DESKTOP_LAN_ACCESS_BLOCKED_REASON = 'missing-password';
+    process.env.OPENCHAMBER_DESKTOP_LAN_ACCESS_BLOCKED_REASON =
+      "missing-password";
   } else {
     delete process.env.OPENCHAMBER_DESKTOP_LAN_ACCESS_BLOCKED_REASON;
   }
   process.env.OPENCHAMBER_DIST_DIR = resolveWebDistDir();
-  process.env.OPENCHAMBER_RUNTIME = 'desktop';
+  process.env.OPENCHAMBER_RUNTIME = "desktop";
   // OpenCode uses process cwd as a fallback directory; app userData would make
   // packaged desktop look like a separate empty workspace.
   process.env.OPENCHAMBER_OPENCODE_CWD = resolveManagedOpenCodeCwd({
     env: process.env,
     homedir: () => os.homedir(),
   });
-  process.env.OPENCHAMBER_DESKTOP_NOTIFY = 'true';
+  process.env.OPENCHAMBER_DESKTOP_NOTIFY = "true";
   if (desktopUiPassword) {
     process.env.OPENCHAMBER_UI_PASSWORD = desktopUiPassword;
   } else {
     delete process.env.OPENCHAMBER_UI_PASSWORD;
   }
-  process.env.OPENCHAMBER_SKIP_API_COMPRESSION = process.env.OPENCHAMBER_SKIP_API_COMPRESSION || 'true';
-  process.env.NO_PROXY = process.env.NO_PROXY || 'localhost,127.0.0.1';
-  process.env.no_proxy = process.env.no_proxy || 'localhost,127.0.0.1';
+  process.env.OPENCHAMBER_SKIP_API_COMPRESSION =
+    process.env.OPENCHAMBER_SKIP_API_COMPRESSION || "true";
+  process.env.NO_PROXY = process.env.NO_PROXY || "localhost,127.0.0.1";
+  process.env.no_proxy = process.env.no_proxy || "localhost,127.0.0.1";
 
-  const { startWebUiServer } = await import('@openchamber/web/server/index.js');
+  const { startWebUiServer } = await import("@openchamber/web/server/index.js");
 
   const handle = await startWebUiServer({
     port: chosenPort,
@@ -1388,7 +1699,7 @@ const spawnLocalServer = async () => {
     onDesktopNotification: (payload) => maybeShowNativeNotification(payload),
     getIsWindowFocused: isAnyWindowFocused,
     getDesktopRuntimeConfig: () => ({
-      apiBaseUrl: state.apiBaseUrl || '',
+      apiBaseUrl: state.apiBaseUrl || "",
       requestHeaders: sanitizeRuntimeRequestHeaders(state.requestHeaders || {}),
     }),
   });
@@ -1413,10 +1724,11 @@ const launchDetachedOpenCodeKiller = (processInfo) => {
   const hasPid = Number.isFinite(pid) && pid > 0;
   const hasPort = Number.isFinite(port) && port > 0;
   if (!hasPid && !hasPort) return;
-  const normalizedPid = hasPid ? String(Math.trunc(pid)) : '0';
-  const normalizedPort = Number.isFinite(port) && port > 0 ? String(Math.trunc(port)) : '0';
+  const normalizedPid = hasPid ? String(Math.trunc(pid)) : "0";
+  const normalizedPort =
+    Number.isFinite(port) && port > 0 ? String(Math.trunc(port)) : "0";
 
-  if (process.platform === 'win32') {
+  if (process.platform === "win32") {
     if (!hasPid) return;
     const script = `
 $ErrorActionPreference = 'SilentlyContinue'
@@ -1438,36 +1750,44 @@ Stop-ProcessTree $targetPid $false
 Start-Sleep -Milliseconds $graceMs
 Stop-ProcessTree $targetPid $true
 `;
-    const encodedScript = Buffer.from(script, 'utf16le').toString('base64');
-    const powershell = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
-    const child = spawn(powershell, [
-      '-NoLogo',
-      '-NoProfile',
-      '-NonInteractive',
-      '-ExecutionPolicy',
-      'Bypass',
-      '-WindowStyle',
-      'Hidden',
-      '-EncodedCommand',
-      encodedScript,
-    ], {
-      detached: true,
-      stdio: 'ignore',
-      windowsHide: true,
-    });
+    const encodedScript = Buffer.from(script, "utf16le").toString("base64");
+    const powershell = path.join(
+      process.env.SystemRoot || "C:\\Windows",
+      "System32",
+      "WindowsPowerShell",
+      "v1.0",
+      "powershell.exe",
+    );
+    const child = spawn(
+      powershell,
+      [
+        "-NoLogo",
+        "-NoProfile",
+        "-NonInteractive",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-WindowStyle",
+        "Hidden",
+        "-EncodedCommand",
+        encodedScript,
+      ],
+      {
+        detached: true,
+        stdio: "ignore",
+        windowsHide: true,
+      },
+    );
     child.unref();
     return;
   }
 
   if (hasPid) {
     try {
-      process.kill(-pid, 'SIGTERM');
-    } catch {
-    }
+      process.kill(-pid, "SIGTERM");
+    } catch {}
     try {
-      process.kill(pid, 'SIGTERM');
-    } catch {
-    }
+      process.kill(pid, "SIGTERM");
+    } catch {}
   }
 
   const script = [
@@ -1478,12 +1798,23 @@ Stop-ProcessTree $targetPid $true
     'sleep "$grace"',
     'if [ "$pid" -gt 0 ] 2>/dev/null; then kill -KILL "-$pid" 2>/dev/null; kill -KILL "$pid" 2>/dev/null; fi',
     'if [ "$port" -gt 0 ] 2>/dev/null && command -v lsof >/dev/null 2>&1; then for target in $(lsof -tiTCP:"$port" -sTCP:LISTEN 2>/dev/null; lsof -ti ":$port" 2>/dev/null); do [ "$target" = "$$" ] || kill -KILL "$target" 2>/dev/null; done; fi',
-  ].join('; ');
-  const child = spawn('/bin/sh', ['-c', script, 'openchamber-opencode-killer', normalizedPid, normalizedPort, String(OPENCODE_SHUTDOWN_GRACE_MS / 1000)], {
-    detached: true,
-    stdio: 'ignore',
-    windowsHide: true,
-  });
+  ].join("; ");
+  const child = spawn(
+    "/bin/sh",
+    [
+      "-c",
+      script,
+      "openchamber-opencode-killer",
+      normalizedPid,
+      normalizedPort,
+      String(OPENCODE_SHUTDOWN_GRACE_MS / 1000),
+    ],
+    {
+      detached: true,
+      stdio: "ignore",
+      windowsHide: true,
+    },
+  );
   child.unref();
 };
 
@@ -1496,80 +1827,137 @@ const killSidecar = () => {
   try {
     launchDetachedOpenCodeKiller(handle.getOpenCodeProcessInfo?.());
   } catch (error) {
-    log.warn('[electron] failed to launch OpenCode killer:', error);
+    log.warn("[electron] failed to launch OpenCode killer:", error);
   }
 };
 
 const macosMajorVersion = () => {
-  if (process.platform !== 'darwin') return 0;
-  const result = spawnSync('/usr/bin/sw_vers', ['-productVersion'], { encoding: 'utf8' });
-  const raw = (result.stdout || '').trim();
-  const [majorRaw, minorRaw] = raw.split('.');
-  const major = Number.parseInt(majorRaw || '0', 10);
-  const minor = Number.parseInt(minorRaw || '0', 10);
+  if (process.platform !== "darwin") return 0;
+  const result = spawnSync("/usr/bin/sw_vers", ["-productVersion"], {
+    encoding: "utf8",
+  });
+  const raw = (result.stdout || "").trim();
+  const [majorRaw, minorRaw] = raw.split(".");
+  const major = Number.parseInt(majorRaw || "0", 10);
+  const minor = Number.parseInt(minorRaw || "0", 10);
   return major === 10 ? minor : major;
 };
 
-const buildInitScript = (localOrigin, bootOutcome, apiBaseUrl = '', clientToken = '', requestHeaders = {}) => {
-  const home = JSON.stringify(os.homedir() || '');
-  const local = JSON.stringify(localOrigin || '');
-  const apiBase = JSON.stringify(apiBaseUrl || '');
-  const token = JSON.stringify(clientToken || '');
+const buildInitScript = (
+  localOrigin,
+  bootOutcome,
+  apiBaseUrl = "",
+  clientToken = "",
+  requestHeaders = {},
+) => {
+  const home = JSON.stringify(os.homedir() || "");
+  const local = JSON.stringify(localOrigin || "");
+  const apiBase = JSON.stringify(apiBaseUrl || "");
+  const token = JSON.stringify(clientToken || "");
   const headers = JSON.stringify(sanitizeRuntimeRequestHeaders(requestHeaders));
   const packagedOrigin = JSON.stringify(packagedUiOrigin());
   const macVersion = macosMajorVersion();
   const outcome = JSON.stringify(bootOutcome ?? null);
   return [
-    '(function(){',
+    "(function(){",
     `try{var __oc_local=${local};var __oc_api=${apiBase};var __oc_headers=${headers};var __oc_packaged=${packagedOrigin};var __oc_origin=window.location&&window.location.origin||'';var __oc_is_packaged=__oc_origin===__oc_packaged;var __oc_is_local=__oc_local&&__oc_origin===new URL(__oc_local).origin;window.__OPENCHAMBER_MACOS_MAJOR__=${macVersion};window.__OPENCHAMBER_LOCAL_ORIGIN__=__oc_local;window.__OPENCHAMBER_API_BASE_URL__=__oc_api;if(__oc_is_local||__oc_is_packaged){window.__OPENCHAMBER_HOME__=${home};window.__OPENCHAMBER_RUNTIME_HEADERS__=__oc_headers;}if((__oc_is_local||__oc_is_packaged)&&${token}){window.__OPENCHAMBER_CLIENT_TOKEN__=${token};}var __oc_bo=${outcome};if(__oc_bo){window.__OPENCHAMBER_DESKTOP_BOOT_OUTCOME__=__oc_bo;}}catch(_e){}`,
-    '}())',
-  ].join('');
+    "}())",
+  ].join("");
 };
 
-const computeBootOutcome = ({ envTargetUrl, probe, config, localAvailable }) => {
+// Keep per-window init scripts aligned with state. Chooser/onboarding reloads after
+// desktop_hosts_set; if only state.initScript is updated, dom-ready reinjects a stale
+// not-configured outcome and the UI flickers on "Waiting for OpenCode".
+const syncInitScriptToWindows = (initScript = state.initScript) => {
+  if (!initScript) return;
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (!win.isDestroyed()) {
+      win.__ocInitScript = initScript;
+    }
+  }
+};
+
+const computeBootOutcome = ({
+  envTargetUrl,
+  probe,
+  config,
+  localAvailable,
+}) => {
+  const availability = { localAvailable };
   if (envTargetUrl) {
-    const status = probe?.status === 'unreachable'
-      ? 'unreachable'
-      : probe?.status === 'incompatible'
-        ? 'incompatible'
-        : probe?.status === 'wrong-service'
-          ? 'wrong-service'
-          : 'ok';
-    return { target: 'remote', status, hostId: ENV_OVERRIDE_HOST_ID, url: envTargetUrl };
+    const status =
+      probe?.status === "unreachable"
+        ? "unreachable"
+        : probe?.status === "incompatible"
+          ? "incompatible"
+          : probe?.status === "wrong-service"
+            ? "wrong-service"
+            : "ok";
+    return {
+      target: "remote",
+      status,
+      hostId: ENV_OVERRIDE_HOST_ID,
+      url: envTargetUrl,
+      ...availability,
+    };
   }
 
-  const defaultId = config.defaultHostId || '';
+  const defaultId = config.defaultHostId || "";
   if (!defaultId) {
-    return { target: null, status: 'not-configured' };
+    return { target: null, status: "not-configured", ...availability };
   }
 
   if (defaultId === LOCAL_HOST_ID) {
     return localAvailable
-      ? { target: 'local', status: 'ok' }
-      : { target: 'local', status: 'unreachable' };
+      ? { target: "local", status: "ok", ...availability }
+      : { target: "local", status: "unreachable", ...availability };
   }
 
   const host = config.hosts.find((entry) => entry.id === defaultId);
   if (!host) {
-    return { target: 'remote', status: 'missing', hostId: defaultId };
+    return {
+      target: "remote",
+      status: "missing",
+      hostId: defaultId,
+      ...availability,
+    };
   }
 
-  const status = probe?.status === 'unreachable'
-    ? 'unreachable'
-    : probe?.status === 'incompatible'
-      ? 'incompatible'
-      : probe?.status === 'wrong-service'
-        ? 'wrong-service'
-        : 'ok';
-  return { target: 'remote', status, hostId: host.id, url: host.apiUrl || host.url };
+  const status =
+    probe?.status === "unreachable"
+      ? "unreachable"
+      : probe?.status === "incompatible"
+        ? "incompatible"
+        : probe?.status === "wrong-service"
+          ? "wrong-service"
+          : "ok";
+  return {
+    target: "remote",
+    status,
+    hostId: host.id,
+    url: host.apiUrl || host.url,
+    ...availability,
+  };
 };
 
 const buildStartupSplashHtml = () => {
   const settings = readSettingsRoot();
-  const splashBgLight = typeof settings.splashBgLight === 'string' ? settings.splashBgLight.trim() : '#f5f5f4';
-  const splashFgLight = typeof settings.splashFgLight === 'string' ? settings.splashFgLight.trim() : '#1c1917';
-  const splashBgDark = typeof settings.splashBgDark === 'string' ? settings.splashBgDark.trim() : '#0c0a09';
-  const splashFgDark = typeof settings.splashFgDark === 'string' ? settings.splashFgDark.trim() : '#fafaf9';
+  const splashBgLight =
+    typeof settings.splashBgLight === "string"
+      ? settings.splashBgLight.trim()
+      : "#f5f5f4";
+  const splashFgLight =
+    typeof settings.splashFgLight === "string"
+      ? settings.splashFgLight.trim()
+      : "#1c1917";
+  const splashBgDark =
+    typeof settings.splashBgDark === "string"
+      ? settings.splashBgDark.trim()
+      : "#0c0a09";
+  const splashFgDark =
+    typeof settings.splashFgDark === "string"
+      ? settings.splashFgDark.trim()
+      : "#fafaf9";
 
   return `<!doctype html>
   <html>
@@ -1616,46 +2004,9 @@ const buildStartupSplashHtml = () => {
   </head>
   <body>
     <div class="stack">
-      <svg width="120" height="120" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="OpenChamber loading icon">
-        <path d="M50 50 L8.432 26 L8.432 74 L50 98 Z" fill="var(--splash-face-fill)" stroke="var(--splash-stroke)" stroke-width="2" stroke-linejoin="round"/>
-        <path d="M50 50 L39.608 44 L39.608 56 L50 62 Z" fill="var(--splash-cell-fill)" opacity="0.2"/>
-        <path d="M39.608 44 L29.216 38 L29.216 50 L39.608 56 Z" fill="var(--splash-cell-fill)" opacity="0.45"/>
-        <path d="M29.216 38 L18.824 32 L18.824 44 L29.216 50 Z" fill="var(--splash-cell-fill)" opacity="0.15"/>
-        <path d="M18.824 32 L8.432 26 L8.432 38 L18.824 44 Z" fill="var(--splash-cell-fill)" opacity="0.55"/>
-        <path d="M50 62 L39.608 56 L39.608 68 L50 74 Z" fill="var(--splash-cell-fill)" opacity="0.35"/>
-        <path d="M39.608 56 L29.216 50 L29.216 62 L39.608 68 Z" fill="var(--splash-cell-fill)" opacity="0.1"/>
-        <path d="M29.216 50 L18.824 44 L18.824 56 L29.216 62 Z" fill="var(--splash-cell-fill)" opacity="0.5"/>
-        <path d="M18.824 44 L8.432 38 L8.432 50 L18.824 56 Z" fill="var(--splash-cell-fill)" opacity="0.25"/>
-        <path d="M50 74 L39.608 68 L39.608 80 L50 86 Z" fill="var(--splash-cell-fill)" opacity="0.4"/>
-        <path d="M39.608 68 L29.216 62 L29.216 74 L39.608 80 Z" fill="var(--splash-cell-fill)" opacity="0.3"/>
-        <path d="M29.216 62 L18.824 56 L18.824 68 L29.216 74 Z" fill="var(--splash-cell-fill)" opacity="0.45"/>
-        <path d="M18.824 56 L8.432 50 L8.432 62 L18.824 68 Z" fill="var(--splash-cell-fill)" opacity="0.15"/>
-        <path d="M50 86 L39.608 80 L39.608 92 L50 98 Z" fill="var(--splash-cell-fill)" opacity="0.55"/>
-        <path d="M39.608 80 L29.216 74 L29.216 86 L39.608 92 Z" fill="var(--splash-cell-fill)" opacity="0.2"/>
-        <path d="M29.216 74 L18.824 68 L18.824 80 L29.216 86 Z" fill="var(--splash-cell-fill)" opacity="0.35"/>
-        <path d="M18.824 68 L8.432 62 L8.432 74 L18.824 80 Z" fill="var(--splash-cell-fill)" opacity="0.1"/>
-        <path d="M50 50 L91.568 26 L91.568 74 L50 98 Z" fill="var(--splash-face-fill)" stroke="var(--splash-stroke)" stroke-width="2" stroke-linejoin="round"/>
-        <path d="M50 50 L60.392 44 L60.392 56 L50 62 Z" fill="var(--splash-cell-fill)" opacity="0.3"/>
-        <path d="M60.392 44 L70.784 38 L70.784 50 L60.392 56 Z" fill="var(--splash-cell-fill)" opacity="0.15"/>
-        <path d="M70.784 38 L81.176 32 L81.176 44 L70.784 50 Z" fill="var(--splash-cell-fill)" opacity="0.45"/>
-        <path d="M81.176 32 L91.568 26 L91.568 38 L81.176 44 Z" fill="var(--splash-cell-fill)" opacity="0.25"/>
-        <path d="M50 62 L60.392 56 L60.392 68 L50 74 Z" fill="var(--splash-cell-fill)" opacity="0.5"/>
-        <path d="M60.392 56 L70.784 50 L70.784 62 L60.392 68 Z" fill="var(--splash-cell-fill)" opacity="0.35"/>
-        <path d="M70.784 50 L81.176 44 L81.176 56 L70.784 62 Z" fill="var(--splash-cell-fill)" opacity="0.1"/>
-        <path d="M81.176 44 L91.568 38 L91.568 50 L81.176 56 Z" fill="var(--splash-cell-fill)" opacity="0.4"/>
-        <path d="M50 74 L60.392 68 L60.392 80 L50 86 Z" fill="var(--splash-cell-fill)" opacity="0.2"/>
-        <path d="M60.392 68 L70.784 62 L70.784 74 L60.392 80 Z" fill="var(--splash-cell-fill)" opacity="0.55"/>
-        <path d="M70.784 62 L81.176 56 L81.176 68 L70.784 74 Z" fill="var(--splash-cell-fill)" opacity="0.3"/>
-        <path d="M81.176 56 L91.568 50 L91.568 62 L81.176 68 Z" fill="var(--splash-cell-fill)" opacity="0.15"/>
-        <path d="M50 86 L60.392 80 L60.392 92 L50 98 Z" fill="var(--splash-cell-fill)" opacity="0.45"/>
-        <path d="M60.392 80 L70.784 74 L70.784 86 L60.392 92 Z" fill="var(--splash-cell-fill)" opacity="0.25"/>
-        <path d="M70.784 74 L81.176 68 L81.176 80 L70.784 86 Z" fill="var(--splash-cell-fill)" opacity="0.4"/>
-        <path d="M81.176 68 L91.568 62 L91.568 74 L81.176 80 Z" fill="var(--splash-cell-fill)" opacity="0.2"/>
-        <path d="M50 2 L8.432 26 L50 50 L91.568 26 Z" fill="none" stroke="var(--splash-stroke)" stroke-width="2" stroke-linejoin="round"/>
-        <g transform="matrix(0.866, 0.5, -0.866, 0.5, 50, 26) scale(0.75)">
-          <path fill-rule="evenodd" clip-rule="evenodd" d="M-16 -20 L16 -20 L16 20 L-16 20 Z M-8 -12 L-8 12 L8 12 L8 -12 Z" fill="var(--splash-logo-fill)"/>
-          <path d="M-8 -4 L8 -4 L8 12 L-8 12 Z" fill="var(--splash-logo-fill)" fill-opacity="0.4"/>
-        </g>
+      <svg width="120" height="120" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="OpenLoop loading icon">
+        <path d="M18.8 3.5C10.4 1.5 3.2 7.2 3.2 16.2C3.2 24.7 9.9 30.4 18 29.4C25.5 28.5 30.1 22.4 29.2 14.7C28.8 11.6 27.4 8.5 27 7C25.9 7.4 24.8 8.5 25.3 10.3C27.4 17.4 24.3 23.5 18 24.6C11.6 25.7 7.5 21.4 7.7 15.9C8 10.5 12.4 6.8 17.8 7.4C20.1 7.7 21.4 7 21.7 5.8C21.9 4.7 20.8 3.8 18.8 3.5Z" fill="var(--splash-face-fill)" stroke="var(--splash-stroke)" stroke-width="0.9" stroke-linejoin="round"/>
+        <path d="M8.4 10.7C10.6 6.9 14.7 5.2 18.2 5.9" fill="none" stroke="var(--splash-stroke)" stroke-opacity="0.45" stroke-width="0.8" stroke-linecap="round"/>
       </svg>
     </div>
   </body>
@@ -1663,7 +2014,7 @@ const buildStartupSplashHtml = () => {
 };
 
 const isBenignNavigationAbort = (error) => {
-  if (!error || typeof error !== 'object') {
+  if (!error || typeof error !== "object") {
     return false;
   }
 
@@ -1671,11 +2022,15 @@ const isBenignNavigationAbort = (error) => {
     return true;
   }
 
-  const message = typeof error.message === 'string' ? error.message : '';
-  return message.includes('ERR_ABORTED') || message.includes(' (-3) loading ');
+  const message = typeof error.message === "string" ? error.message : "";
+  return message.includes("ERR_ABORTED") || message.includes(" (-3) loading ");
 };
 
-const navigateWindow = async (browserWindow, url, { allowAbort = false } = {}) => {
+const navigateWindow = async (
+  browserWindow,
+  url,
+  { allowAbort = false } = {},
+) => {
   try {
     await browserWindow.loadURL(url);
   } catch (error) {
@@ -1687,55 +2042,84 @@ const navigateWindow = async (browserWindow, url, { allowAbort = false } = {}) =
 };
 
 const extractCookieHeader = (response) => {
-  const getSetCookie = typeof response.headers?.getSetCookie === 'function'
-    ? response.headers.getSetCookie.bind(response.headers)
-    : null;
+  const getSetCookie =
+    typeof response.headers?.getSetCookie === "function"
+      ? response.headers.getSetCookie.bind(response.headers)
+      : null;
   const cookies = getSetCookie ? getSetCookie() : [];
-  const rawCookies = cookies.length > 0
-    ? cookies
-    : String(response.headers?.get?.('set-cookie') || '').split(/,(?=\s*[^;,=]+=[^;,]+)/);
+  const rawCookies =
+    cookies.length > 0
+      ? cookies
+      : String(response.headers?.get?.("set-cookie") || "").split(
+          /,(?=\s*[^;,=]+=[^;,]+)/,
+        );
   return rawCookies
-    .map((cookie) => String(cookie || '').split(';')[0].trim())
+    .map((cookie) =>
+      String(cookie || "")
+        .split(";")[0]
+        .trim(),
+    )
     .filter(Boolean)
-    .join('; ');
+    .join("; ");
 };
 
-const loginRemoteAndIssueClientToken = async ({ url, password, trustDevice, requestHeaders }) => {
-  const baseUrl = normalizeHostUrl(String(url || ''));
-  const candidatePassword = typeof password === 'string' ? password : '';
-  const safeRequestHeaders = sanitizeRuntimeRequestHeaders(requestHeaders || {});
-  if (!baseUrl) throw new Error('Invalid URL');
-  if (!candidatePassword) throw new Error('Password is required');
+const loginRemoteAndIssueClientToken = async ({
+  url,
+  password,
+  trustDevice,
+  requestHeaders,
+}) => {
+  const baseUrl = normalizeHostUrl(String(url || ""));
+  const candidatePassword = typeof password === "string" ? password : "";
+  const safeRequestHeaders = sanitizeRuntimeRequestHeaders(
+    requestHeaders || {},
+  );
+  if (!baseUrl) throw new Error("Invalid URL");
+  if (!candidatePassword) throw new Error("Password is required");
 
   // Stable client identity so re-login reuses the same device record. Local
   // uses the fixed desktop-local identity; remote uses this install's id with a
   // regular 'desktop' kind.
   const clientIdentity = isLocalRuntimeUrl(baseUrl)
-    ? { clientKind: LOCAL_DESKTOP_CLIENT_KIND, dedupeKey: LOCAL_DESKTOP_CLIENT_DEDUPE_KEY, ...desktopDeviceMetadata() }
-    : { clientKind: REMOTE_DESKTOP_CLIENT_KIND, dedupeKey: `desktop:${await getOrCreateDesktopInstallId()}`, ...desktopDeviceMetadata() };
+    ? {
+        clientKind: LOCAL_DESKTOP_CLIENT_KIND,
+        dedupeKey: LOCAL_DESKTOP_CLIENT_DEDUPE_KEY,
+        ...desktopDeviceMetadata(),
+      }
+    : {
+        clientKind: REMOTE_DESKTOP_CLIENT_KIND,
+        dedupeKey: `desktop:${await getOrCreateDesktopInstallId()}`,
+        ...desktopDeviceMetadata(),
+      };
 
-  const loginResponse = await fetch(new URL('/auth/session', `${baseUrl}/`).toString(), {
-    method: 'POST',
-    signal: AbortSignal.timeout(10_000),
-    headers: {
-      ...safeRequestHeaders,
-      Accept: 'application/json',
-      'Content-Type': 'application/json',
+  const loginResponse = await fetch(
+    new URL("/auth/session", `${baseUrl}/`).toString(),
+    {
+      method: "POST",
+      signal: AbortSignal.timeout(10_000),
+      headers: {
+        ...safeRequestHeaders,
+        Accept: "application/json",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        password: candidatePassword,
+        trustDevice: trustDevice === true,
+        issueClientToken: true,
+        clientLabel: "OpenLoop Desktop",
+        ...clientIdentity,
+      }),
     },
-    body: JSON.stringify({
-      password: candidatePassword,
-      trustDevice: trustDevice === true,
-      issueClientToken: true,
-      clientLabel: 'OpenChamber Desktop',
-      ...clientIdentity,
-    }),
-  });
+  );
   if (!loginResponse.ok) {
     return { ok: false, status: loginResponse.status };
   }
 
   const loginPayload = await loginResponse.json().catch(() => null);
-  if (typeof loginPayload?.clientToken === 'string' && loginPayload.clientToken.trim()) {
+  if (
+    typeof loginPayload?.clientToken === "string" &&
+    loginPayload.clientToken.trim()
+  ) {
     return { ok: true, token: loginPayload.clientToken.trim() };
   }
 
@@ -1744,31 +2128,35 @@ const loginRemoteAndIssueClientToken = async ({ url, password, trustDevice, requ
     return { ok: false, status: 401 };
   }
 
-  const tokenResponse = await fetch(new URL('/api/client-auth/clients', `${baseUrl}/`).toString(), {
-    method: 'POST',
-    signal: AbortSignal.timeout(10_000),
-    headers: {
-      ...safeRequestHeaders,
-      Accept: 'application/json',
-      'Content-Type': 'application/json',
-      Cookie: cookie,
+  const tokenResponse = await fetch(
+    new URL("/api/client-auth/clients", `${baseUrl}/`).toString(),
+    {
+      method: "POST",
+      signal: AbortSignal.timeout(10_000),
+      headers: {
+        ...safeRequestHeaders,
+        Accept: "application/json",
+        "Content-Type": "application/json",
+        Cookie: cookie,
+      },
+      body: JSON.stringify({
+        label: "OpenLoop Desktop",
+        ...clientIdentity,
+      }),
     },
-    body: JSON.stringify({
-      label: 'OpenChamber Desktop',
-      ...clientIdentity,
-    }),
-  });
+  );
   if (!tokenResponse.ok) {
     return { ok: false, status: tokenResponse.status };
   }
   const tokenPayload = await tokenResponse.json().catch(() => null);
-  const token = typeof tokenPayload?.token === 'string' ? tokenPayload.token.trim() : '';
+  const token =
+    typeof tokenPayload?.token === "string" ? tokenPayload.token.trim() : "";
   return token ? { ok: true, token } : { ok: false, status: 500 };
 };
 
 const emitToWindow = (browserWindow, event, detail) => {
   if (!browserWindow || browserWindow.isDestroyed()) return;
-  browserWindow.webContents.send('openchamber:emit', { event, detail });
+  browserWindow.webContents.send("openchamber:emit", { event, detail });
 };
 
 const emitToAllWindows = (event, detail) => {
@@ -1776,6 +2164,19 @@ const emitToAllWindows = (event, detail) => {
     emitToWindow(browserWindow, event, detail);
   }
 };
+
+const artifactRunnerManager = createArtifactRunnerManager({
+  BrowserWindow,
+  WebContentsView,
+  session,
+  app,
+  preloadPath: isDev
+    ? path.join(__dirname, "artifact-runner-preload.cjs")
+    : path.join(app.getAppPath(), "artifact-runner-preload.cjs"),
+  emit: (browserWindow, detail) =>
+    emitToWindow(browserWindow, "openchamber:artifact-runner-event", detail),
+  logger: log,
+});
 
 // macOS vibrancy: the native NSVisualEffectView needs a moment to settle after
 // the window is shown/restored. Until then the renderer keeps the sidebar solid
@@ -1785,30 +2186,48 @@ const emitToAllWindows = (event, detail) => {
 // BrowserWindow constructor) because macOS otherwise leaves the material
 // uncomposited on a cold launch until the window gets a state change.
 const applyMacVibrancy = (browserWindow) => {
-  if (process.platform !== 'darwin' || !browserWindow || browserWindow.isDestroyed()) return;
+  if (
+    process.platform !== "darwin" ||
+    !browserWindow ||
+    browserWindow.isDestroyed()
+  )
+    return;
   try {
-    browserWindow.setVibrancy('sidebar');
+    browserWindow.setVibrancy("sidebar");
   } catch {}
 };
 
 const setMacVibrancyReady = (browserWindow, ready) => {
-  if (process.platform !== 'darwin' || !browserWindow || browserWindow.isDestroyed()) return;
-  emitToWindow(browserWindow, 'openchamber:vibrancy-ready', { ready });
+  if (
+    process.platform !== "darwin" ||
+    !browserWindow ||
+    browserWindow.isDestroyed()
+  )
+    return;
+  emitToWindow(browserWindow, "openchamber:vibrancy-ready", { ready });
 };
 
 const scheduleMacVibrancyReady = (browserWindow, delayMs = 160) => {
-  if (process.platform !== 'darwin' || !browserWindow || browserWindow.isDestroyed()) return;
+  if (
+    process.platform !== "darwin" ||
+    !browserWindow ||
+    browserWindow.isDestroyed()
+  )
+    return;
   setMacVibrancyReady(browserWindow, false);
   const timer = setTimeout(() => {
-    if (browserWindow.isDestroyed() || browserWindow.isMinimized() || !browserWindow.isVisible()) return;
+    if (
+      browserWindow.isDestroyed() ||
+      browserWindow.isMinimized() ||
+      !browserWindow.isVisible()
+    )
+      return;
     setMacVibrancyReady(browserWindow, true);
   }, delayMs);
-  if (typeof timer?.unref === 'function') timer.unref();
+  if (typeof timer?.unref === "function") timer.unref();
 };
-
-
 const setTaskbarProgress = (value) => {
-  if (process.platform !== 'win32') return;
+  if (process.platform !== "win32") return;
   for (const browserWindow of BrowserWindow.getAllWindows()) {
     if (!browserWindow.isDestroyed()) {
       browserWindow.setProgressBar(value);
@@ -1819,7 +2238,7 @@ const setTaskbarProgress = (value) => {
 const pendingDeepLinks = [];
 
 const parseDeepLink = (raw) => {
-  if (typeof raw !== 'string') return null;
+  if (typeof raw !== "string") return null;
   const trimmed = raw.trim();
   if (!trimmed) return null;
   try {
@@ -1827,10 +2246,9 @@ const parseDeepLink = (raw) => {
     if (url.protocol !== `${DEEP_LINK_PROTOCOL}:`) return null;
     const type = url.hostname;
     if (!type) return null;
-    const segments = url.pathname.split('/').filter(Boolean);
-    const value = segments.length > 0
-      ? decodeURIComponent(segments.join('/'))
-      : '';
+    const segments = url.pathname.split("/").filter(Boolean);
+    const value =
+      segments.length > 0 ? decodeURIComponent(segments.join("/")) : "";
     return { type, value, raw: trimmed };
   } catch {
     return null;
@@ -1838,9 +2256,9 @@ const parseDeepLink = (raw) => {
 };
 
 const decodeBase64UrlJson = (value) => {
-  if (typeof value !== 'string' || !value.trim()) return null;
+  if (typeof value !== "string" || !value.trim()) return null;
   try {
-    const json = Buffer.from(value.trim(), 'base64url').toString('utf8');
+    const json = Buffer.from(value.trim(), "base64url").toString("utf8");
     return JSON.parse(json);
   } catch {
     return null;
@@ -1848,41 +2266,59 @@ const decodeBase64UrlJson = (value) => {
 };
 
 const parseConnectPairingDeepLinkPayload = (raw) => {
-  if (typeof raw !== 'string') return null;
+  if (typeof raw !== "string") return null;
   try {
     const url = new URL(raw.trim());
-    if (url.protocol !== `${DEEP_LINK_PROTOCOL}:` || url.hostname !== 'connect') return null;
-    if (url.searchParams.get('v') !== '2') return null;
-    const payload = decodeBase64UrlJson(url.searchParams.get('p') || '');
-    if (!payload || payload.v !== 2 || typeof payload !== 'object') return null;
-    const pairingId = typeof payload.pairingId === 'string' ? payload.pairingId.trim() : '';
-    const secret = typeof payload.secret === 'string' ? payload.secret.trim() : '';
+    if (url.protocol !== `${DEEP_LINK_PROTOCOL}:` || url.hostname !== "connect")
+      return null;
+    if (url.searchParams.get("v") !== "2") return null;
+    const payload = decodeBase64UrlJson(url.searchParams.get("p") || "");
+    if (!payload || payload.v !== 2 || typeof payload !== "object") return null;
+    const pairingId =
+      typeof payload.pairingId === "string" ? payload.pairingId.trim() : "";
+    const secret =
+      typeof payload.secret === "string" ? payload.secret.trim() : "";
     if (!pairingId || !secret) return null;
     const candidates = Array.isArray(payload.candidates)
       ? payload.candidates.flatMap((candidate) => {
-        if (!candidate || typeof candidate !== 'object') return [];
-        const type = candidate.type === 'lan' || candidate.type === 'tunnel' || candidate.type === 'relay'
-          ? candidate.type
-          : null;
-        const candidateUrl = normalizeHostUrl(candidate.url || '');
-        if (!type || !candidateUrl) return [];
-        const priority = Number.isFinite(candidate.priority) ? candidate.priority : 100;
-        return [{ type, url: candidateUrl, priority }];
-      })
+          if (!candidate || typeof candidate !== "object") return [];
+          const type =
+            candidate.type === "lan" ||
+            candidate.type === "tunnel" ||
+            candidate.type === "relay"
+              ? candidate.type
+              : null;
+          const candidateUrl = normalizeHostUrl(candidate.url || "");
+          if (!type || !candidateUrl) return [];
+          const priority = Number.isFinite(candidate.priority)
+            ? candidate.priority
+            : 100;
+          return [{ type, url: candidateUrl, priority }];
+        })
       : [];
     if (candidates.length === 0) return null;
-    const expiresAt = typeof payload.expiresAt === 'string' ? payload.expiresAt.trim() : '';
+    const expiresAt =
+      typeof payload.expiresAt === "string" ? payload.expiresAt.trim() : "";
     if (expiresAt) {
       const expiresTime = Date.parse(expiresAt);
-      if (!Number.isFinite(expiresTime) || expiresTime <= Date.now()) return null;
+      if (!Number.isFinite(expiresTime) || expiresTime <= Date.now())
+        return null;
     }
     return {
       pairingId,
       secret,
-      label: typeof payload.label === 'string' && payload.label.trim() ? payload.label.trim() : 'OpenChamber',
-      fingerprint: typeof payload.fingerprint === 'string' && payload.fingerprint.trim() ? payload.fingerprint.trim() : '',
+      label:
+        typeof payload.label === "string" && payload.label.trim()
+          ? payload.label.trim()
+          : "OpenLoop",
+      fingerprint:
+        typeof payload.fingerprint === "string" && payload.fingerprint.trim()
+          ? payload.fingerprint.trim()
+          : "",
       expiresAt: expiresAt || null,
-      candidates: candidates.sort((left, right) => left.priority - right.priority),
+      candidates: candidates.sort(
+        (left, right) => left.priority - right.priority,
+      ),
     };
   } catch {
     return null;
@@ -1895,12 +2331,13 @@ const importConnectDeepLink = async (payload) => {
   if (!serverUrl) return null;
   const config = readDesktopHostsConfig();
   const existing = config.hosts.find((host) => {
-    const hostUrl = normalizeHostUrl(host?.url || '');
-    const apiUrl = normalizeHostUrl(host?.apiUrl || host?.url || '');
+    const hostUrl = normalizeHostUrl(host?.url || "");
+    const apiUrl = normalizeHostUrl(host?.apiUrl || host?.url || "");
     return serverUrl === hostUrl || serverUrl === apiUrl;
   });
 
-  const id = existing?.id || `host-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  const id =
+    existing?.id || `host-${Date.now()}-${Math.random().toString(16).slice(2)}`;
   const importedHost = {
     ...(existing || {}),
     id,
@@ -1910,7 +2347,9 @@ const importConnectDeepLink = async (payload) => {
     clientToken: payload.token,
   };
   const hosts = existing
-    ? config.hosts.map((host) => (host.id === existing.id ? importedHost : host))
+    ? config.hosts.map((host) =>
+        host.id === existing.id ? importedHost : host,
+      )
     : [importedHost, ...config.hosts];
   await writeDesktopHostsConfig({
     ...config,
@@ -1936,29 +2375,43 @@ const requestJsonWithTimeout = async (url, init = {}, timeoutMs = 8000) => {
 const selectPairingCandidateUrl = async (payload) => {
   for (const candidate of payload.candidates || []) {
     try {
-      const health = await requestJsonWithTimeout(`${candidate.url.replace(/\/+$/g, '')}/health`, { method: 'GET' }, 3500);
-      if (health.ok) return candidate.url.replace(/\/+$/g, '');
-    } catch {
-    }
+      const health = await requestJsonWithTimeout(
+        `${candidate.url.replace(/\/+$/g, "")}/health`,
+        { method: "GET" },
+        3500,
+      );
+      if (health.ok) return candidate.url.replace(/\/+$/g, "");
+    } catch {}
   }
   return null;
 };
 
 const redeemConnectPairingDeepLink = async (payload, serverUrl) => {
-  const response = await requestJsonWithTimeout(`${serverUrl.replace(/\/+$/g, '')}/api/client-auth/pairing/redeem`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-    body: JSON.stringify({
-      pairingId: payload.pairingId,
-      secret: payload.secret,
-      clientLabel: 'OpenChamber Desktop',
-      clientKind: 'desktop',
-      deviceName: 'OpenChamber Desktop',
-      ...desktopDeviceMetadata(),
-      dedupeKey: `desktop:${await getOrCreateDesktopInstallId()}`,
-    }),
-  });
-  if (!response.ok || !response.data || typeof response.data.clientToken !== 'string') return null;
+  const response = await requestJsonWithTimeout(
+    `${serverUrl.replace(/\/+$/g, "")}/api/client-auth/pairing/redeem`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      body: JSON.stringify({
+        pairingId: payload.pairingId,
+        secret: payload.secret,
+        clientLabel: "OpenLoop Desktop",
+        clientKind: "desktop",
+        deviceName: "OpenLoop Desktop",
+        ...desktopDeviceMetadata(),
+        dedupeKey: `desktop:${await getOrCreateDesktopInstallId()}`,
+      }),
+    },
+  );
+  if (
+    !response.ok ||
+    !response.data ||
+    typeof response.data.clientToken !== "string"
+  )
+    return null;
   return {
     serverUrl,
     token: sanitizeClientTokenForStorage(response.data.clientToken),
@@ -1967,38 +2420,47 @@ const redeemConnectPairingDeepLink = async (payload, serverUrl) => {
 };
 
 const switchToHostById = async (rawId) => {
-  const id = typeof rawId === 'string' ? rawId.trim() : '';
+  const id = typeof rawId === "string" ? rawId.trim() : "";
   if (!id) return;
   const config = readDesktopHostsConfig();
   let targetUrl = null;
   let apiBaseUrl = null;
-  let clientToken = '';
+  let clientToken = "";
   let requestHeaders = {};
   if (id === LOCAL_HOST_ID) {
-    targetUrl = shouldUsePackagedUi() ? buildPackagedUiUrl('/index.html') : (state.sidecarUrl || state.localOrigin);
+    targetUrl = shouldUsePackagedUi()
+      ? buildPackagedUiUrl("/index.html")
+      : state.sidecarUrl || state.localOrigin;
     apiBaseUrl = state.sidecarUrl;
     clientToken = readDesktopLocalClientToken();
     requestHeaders = {};
   } else {
     const host = config.hosts.find((entry) => entry.id === id);
     if (!host) {
-      log.warn('[electron] deep-link host not found:', id);
+      log.warn("[electron] deep-link host not found:", id);
       return;
     }
-    targetUrl = shouldUsePackagedUi() ? buildPackagedUiUrl('/index.html') : host.url;
+    targetUrl = shouldUsePackagedUi()
+      ? buildPackagedUiUrl("/index.html")
+      : host.url;
     apiBaseUrl = host.apiUrl || host.url;
-    clientToken = host.clientToken || '';
+    clientToken = host.clientToken || "";
     requestHeaders = sanitizeRuntimeRequestHeaders(host.requestHeaders || {});
   }
   if (!targetUrl || !apiBaseUrl) {
-    log.warn('[electron] deep-link host has no target URL:', id);
+    log.warn("[electron] deep-link host has no target URL:", id);
     return;
   }
-  const bootOutcome = id === LOCAL_HOST_ID
-    ? { target: 'local', status: 'ok' }
-    : { target: 'remote', status: 'ok', hostId: id, url: apiBaseUrl };
-  log.info('[electron] switching to host', { id, bootOutcome });
-  await activateMainWindow(targetUrl, state.localOrigin, bootOutcome, { apiBaseUrl, clientToken, requestHeaders });
+  const bootOutcome =
+    id === LOCAL_HOST_ID
+      ? { target: "local", status: "ok" }
+      : { target: "remote", status: "ok", hostId: id, url: apiBaseUrl };
+  log.info("[electron] switching to host", { id, bootOutcome });
+  await activateMainWindow(targetUrl, state.localOrigin, bootOutcome, {
+    apiBaseUrl,
+    clientToken,
+    requestHeaders,
+  });
 };
 
 const confirmConnectDeepLink = async (payload) => {
@@ -2006,19 +2468,21 @@ const confirmConnectDeepLink = async (payload) => {
   // in-app interaction. Importing it stores a client token and points all of
   // this app's API traffic at the given server, so require explicit consent
   // BEFORE writing anything to the hosts config. Never surface the token.
-  const visible = BrowserWindow.getAllWindows().find((window) => !window.isDestroyed() && window.isVisible());
+  const visible = BrowserWindow.getAllWindows().find(
+    (window) => !window.isDestroyed() && window.isVisible(),
+  );
   if (visible) {
     visible.show();
     visible.focus();
   }
   const options = {
-    type: 'warning',
-    title: 'Connect to OpenChamber server?',
+    type: "warning",
+    title: "Connect to OpenLoop server?",
     message: `Connect to "${payload.label}"?`,
     detail:
       `This will add ${payload.serverUrl} as a remote instance and route this app's activity ` +
-      'through it. Only continue if you trust this server and started the connection yourself.',
-    buttons: ['Connect', 'Cancel'],
+      "through it. Only continue if you trust this server and started the connection yourself.",
+    buttons: ["Connect", "Cancel"],
     defaultId: 1,
     cancelId: 1,
   };
@@ -2028,38 +2492,51 @@ const confirmConnectDeepLink = async (payload) => {
       : await dialog.showMessageBox(options);
     return result.response === 0;
   } catch (error) {
-    log.warn('[electron] connect deep-link confirmation failed:', error);
+    log.warn("[electron] connect deep-link confirmation failed:", error);
     return false;
   }
 };
 
 const dispatchDeepLink = (link) => {
   if (!link) return;
-  log.info('[electron] dispatching deep-link', { type: link.type, valueLen: link.value?.length || 0 });
-  if (link.type === 'connect') {
+  log.info("[electron] dispatching deep-link", {
+    type: link.type,
+    valueLen: link.value?.length || 0,
+  });
+  if (link.type === "connect") {
     const pairingPayload = parseConnectPairingDeepLinkPayload(link.raw);
     if (pairingPayload) {
-      const previewUrl = pairingPayload.candidates[0]?.url || pairingPayload.label;
+      const previewUrl =
+        pairingPayload.candidates[0]?.url || pairingPayload.label;
       void confirmConnectDeepLink({
         serverUrl: previewUrl,
-        token: 'pairing-v2',
-        label: pairingPayload.fingerprint ? `${pairingPayload.label} (${pairingPayload.fingerprint})` : pairingPayload.label,
+        token: "pairing-v2",
+        label: pairingPayload.fingerprint
+          ? `${pairingPayload.label} (${pairingPayload.fingerprint})`
+          : pairingPayload.label,
       }).then(async (confirmed) => {
         if (!confirmed) {
-          log.info('[electron] connect pairing deep-link declined by user');
+          log.info("[electron] connect pairing deep-link declined by user");
           return;
         }
         const serverUrl = await selectPairingCandidateUrl(pairingPayload);
         if (!serverUrl) {
-          log.warn('[electron] connect pairing deep-link has no reachable candidate');
+          log.warn(
+            "[electron] connect pairing deep-link has no reachable candidate",
+          );
           return;
         }
-        const importedPayload = await redeemConnectPairingDeepLink(pairingPayload, serverUrl).catch((error) => {
-          log.warn('[electron] connect pairing redeem failed:', error);
+        const importedPayload = await redeemConnectPairingDeepLink(
+          pairingPayload,
+          serverUrl,
+        ).catch((error) => {
+          log.warn("[electron] connect pairing redeem failed:", error);
           return null;
         });
         if (!importedPayload?.token) {
-          log.warn('[electron] connect pairing redeem returned no client token');
+          log.warn(
+            "[electron] connect pairing redeem returned no client token",
+          );
           return;
         }
         const id = await importConnectDeepLink(importedPayload);
@@ -2067,18 +2544,35 @@ const dispatchDeepLink = (link) => {
       });
       return;
     }
-    log.warn('[electron] invalid connect deep-link payload');
+    log.warn("[electron] invalid connect deep-link payload");
     return;
   }
-  if (link.type === 'session' && link.value) {
-    emitToAllWindows('openchamber:open-session', { sessionId: link.value });
+  // Sent by the MCP OAuth callback page after it completes authorization in
+  // the system browser. The work is already done server-side; all this has to
+  // do is bring the app back to the front, since the user's attention is in a
+  // browser tab at that moment.
+  if (link.type === "focus") {
+    const target = state.mainWindow && !state.mainWindow.isDestroyed()
+      ? state.mainWindow
+      : BrowserWindow.getAllWindows().find((window) => !window.isDestroyed());
+    if (target) {
+      if (target.isMinimized()) target.restore();
+      target.show();
+      target.focus();
+    }
+    emitToAllWindows("openchamber:deep-link-focus", { reason: link.value || null });
     return;
   }
-  if (link.type === 'host' && link.value) {
+
+  if (link.type === "session" && link.value) {
+    emitToAllWindows("openchamber:open-session", { sessionId: link.value });
+    return;
+  }
+  if (link.type === "host" && link.value) {
     void switchToHostById(link.value);
     return;
   }
-  log.warn('[electron] unknown deep-link action:', link.type);
+  log.warn("[electron] unknown deep-link action:", link.type);
 };
 
 const flushPendingDeepLinks = () => {
@@ -2088,9 +2582,9 @@ const flushPendingDeepLinks = () => {
 };
 
 const isMainWindowReadyForDeepLink = () =>
-  Boolean(state.mainWindow)
-  && !state.mainWindow.isDestroyed()
-  && !state.mainWindow.webContents.isLoading();
+  Boolean(state.mainWindow) &&
+  !state.mainWindow.isDestroyed() &&
+  !state.mainWindow.webContents.isLoading();
 
 const handleDeepLinks = (urls) => {
   for (const raw of urls) {
@@ -2105,45 +2599,55 @@ const handleDeepLinks = (urls) => {
 };
 
 const extractInitialDeepLinks = () =>
-  process.argv.filter((arg) => typeof arg === 'string' && arg.startsWith(`${DEEP_LINK_PROTOCOL}://`));
+  process.argv.filter(
+    (arg) =>
+      typeof arg === "string" && arg.startsWith(`${DEEP_LINK_PROTOCOL}://`),
+  );
 
 const dispatchDomEventToWindow = (browserWindow, event, detail) => {
   if (!browserWindow || browserWindow.isDestroyed()) return;
 
   const eventLiteral = JSON.stringify(event);
-  const script = detail === undefined
-    ? `window.dispatchEvent(new Event(${eventLiteral}));`
-    : `window.dispatchEvent(new CustomEvent(${eventLiteral}, { detail: ${JSON.stringify(detail)} }));`;
+  const script =
+    detail === undefined
+      ? `window.dispatchEvent(new Event(${eventLiteral}));`
+      : `window.dispatchEvent(new CustomEvent(${eventLiteral}, { detail: ${JSON.stringify(detail)} }));`;
 
-  void browserWindow.webContents.executeJavaScript(script, true).catch(() => {});
+  void browserWindow.webContents
+    .executeJavaScript(script, true)
+    .catch(() => {});
 };
 
 const getMenuTargetWindow = () => {
   const focused = BrowserWindow.getFocusedWindow();
   if (focused && !focused.isDestroyed()) return focused;
-  if (state.mainWindow && !state.mainWindow.isDestroyed()) return state.mainWindow;
+  if (state.mainWindow && !state.mainWindow.isDestroyed())
+    return state.mainWindow;
   const [firstWindow] = BrowserWindow.getAllWindows();
   return firstWindow && !firstWindow.isDestroyed() ? firstWindow : null;
 };
 
 const dispatchMenuAction = (action) => {
   const target = getMenuTargetWindow();
-  emitToWindow(target, 'openchamber:menu-action', action);
-  dispatchDomEventToWindow(target, 'openchamber:menu-action', action);
+  emitToWindow(target, "openchamber:menu-action", action);
+  dispatchDomEventToWindow(target, "openchamber:menu-action", action);
 };
 
 // Mini-chat draft windows are not deduplicated, so this must reach the renderer
 // exactly once — emitToWindow alone (no DOM-event double dispatch). The renderer
 // resolves the active directory/project and opens the window.
 const dispatchOpenMiniChat = (browserWindow) => {
-  const target = browserWindow && !browserWindow.isDestroyed() ? browserWindow : getMenuTargetWindow();
-  if (target) emitToWindow(target, 'openchamber:open-mini-chat');
+  const target =
+    browserWindow && !browserWindow.isDestroyed()
+      ? browserWindow
+      : getMenuTargetWindow();
+  if (target) emitToWindow(target, "openchamber:open-mini-chat");
 };
 
 const dispatchCheckForUpdates = () => {
-  emitToAllWindows('openchamber:check-for-updates');
+  emitToAllWindows("openchamber:check-for-updates");
   for (const browserWindow of BrowserWindow.getAllWindows()) {
-    dispatchDomEventToWindow(browserWindow, 'openchamber:check-for-updates');
+    dispatchDomEventToWindow(browserWindow, "openchamber:check-for-updates");
   }
 };
 
@@ -2167,7 +2671,7 @@ const relaunchFromMenu = () => {
 
 const nextWindowLabel = () => {
   const value = state.windowCounter++;
-  return value === 1 ? 'main' : `main-${value}`;
+  return value === 1 ? "main" : `main-${value}`;
 };
 
 const readThemeSource = () => {
@@ -2175,50 +2679,68 @@ const readThemeSource = () => {
   // themeMode is the user's intent; themeVariant is only the resolved
   // concrete appearance at persist time. When mode === 'system', we must
   // follow the OS even if variant was saved as a specific value.
-  if (settings.themeMode === 'system' || settings.useSystemTheme === true) return 'system';
-  if (settings.themeMode === 'light') return 'light';
-  if (settings.themeMode === 'dark') return 'dark';
-  if (settings.themeVariant === 'light') return 'light';
-  if (settings.themeVariant === 'dark') return 'dark';
-  return 'system';
+  if (settings.themeMode === "system" || settings.useSystemTheme === true)
+    return "system";
+  if (settings.themeMode === "light") return "light";
+  if (settings.themeMode === "dark") return "dark";
+  if (settings.themeVariant === "light") return "light";
+  if (settings.themeVariant === "dark") return "dark";
+  return "system";
 };
 
 const getWindowIconPath = () => {
-  if (process.platform !== 'win32' && process.platform !== 'linux') return undefined;
-  const iconFileName = process.platform === 'linux' ? 'icon.png' : 'icon.ico';
+  if (process.platform !== "win32" && process.platform !== "linux")
+    return undefined;
+  const iconFileName = process.platform === "linux" ? "icon.png" : "icon.ico";
   const iconPath = isDev
-    ? path.join(__dirname, 'resources', 'icons', iconFileName)
-    : path.join(process.resourcesPath, 'icons', iconFileName);
+    ? path.join(__dirname, "resources", "icons", iconFileName)
+    : path.join(process.resourcesPath, "icons", iconFileName);
   return fs.existsSync(iconPath) ? iconPath : undefined;
 };
 
-const canUseTitleBarOverlay = (browserWindow) => (
-  process.platform === 'win32' &&
+const canUseTitleBarOverlay = (browserWindow) =>
+  process.platform === "win32" &&
   Boolean(browserWindow?.__ocTitleBarOverlayEnabled) &&
-  typeof browserWindow.setTitleBarOverlay === 'function' &&
-  !browserWindow.isDestroyed()
-);
+  typeof browserWindow.setTitleBarOverlay === "function" &&
+  !browserWindow.isDestroyed();
 
-const createBrowserWindow = ({ label, restoreGeometry, url, runtimeConfig = {} }) => {
+const createBrowserWindow = ({
+  label,
+  restoreGeometry,
+  url,
+  runtimeConfig = {},
+}) => {
   const saved = restoreGeometry ? readWindowState() : null;
-  const useSaved = saved && typeof saved.width === 'number' && typeof saved.height === 'number';
-  const restoredBounds = useSaved ? clampWindowBoundsToVisibleWorkArea(saved) : null;
-  const desktopLocalOrigin = state.localOrigin || state.sidecarUrl || '';
+  const useSaved =
+    saved &&
+    typeof saved.width === "number" &&
+    typeof saved.height === "number";
+  const restoredBounds = useSaved
+    ? clampWindowBoundsToVisibleWorkArea(saved)
+    : null;
+  const desktopLocalOrigin = state.localOrigin || state.sidecarUrl || "";
   const rendererRuntimeConfig = buildRendererRuntimeConfig(url, runtimeConfig);
   const desktopApiBaseUrl = rendererRuntimeConfig.apiBaseUrl;
   const desktopClientToken = rendererRuntimeConfig.clientToken;
   const desktopRequestHeaders = rendererRuntimeConfig.requestHeaders || {};
-  const desktopHome = os.homedir() || '';
+  const desktopHome = os.homedir() || "";
   const desktopMacosMajor = String(macosMajorVersion());
-  const usesFramelessChrome = process.platform === 'win32' || process.platform === 'linux';
-  const usesCustomTitleBar = process.platform === 'darwin' || usesFramelessChrome;
+  const usesFramelessChrome =
+    process.platform === "win32" || process.platform === "linux";
+  const usesCustomTitleBar =
+    process.platform === "darwin" || usesFramelessChrome;
   // macOS vibrancy, on by default; users can disable it (Appearance settings).
-  const useVibrancy = process.platform === 'darwin' && readSettingsRoot().desktopVibrancy !== false;
+  const useVibrancy =
+    process.platform === "darwin" &&
+    readSettingsRoot().desktopVibrancy !== false;
+  const trayEnabled =
+    process.platform !== "darwin" ||
+    readSettingsRoot().desktopMacMenuBarEnabled !== false;
   const titleBarOverlayEnabled = false;
-  const autoHidesNativeMenuBar = process.platform !== 'darwin';
+  const autoHidesNativeMenuBar = process.platform !== "darwin";
   const windowIconPath = getWindowIconPath();
   const options = {
-    title: 'OpenChamber',
+    title: "OpenLoop",
     ...(Number.isFinite(restoredBounds?.x) && Number.isFinite(restoredBounds?.y)
       ? { x: restoredBounds.x, y: restoredBounds.y }
       : {}),
@@ -2228,7 +2750,7 @@ const createBrowserWindow = ({ label, restoreGeometry, url, runtimeConfig = {} }
     minHeight: MIN_WINDOW_HEIGHT,
     icon: windowIconPath,
     show: false,
-    backgroundColor: useVibrancy ? '#00000000' : '#151313',
+    backgroundColor: useVibrancy ? "#00000000" : "#151313",
     // Vibrancy is applied after the window is shown (see applyMacVibrancy), not
     // here: setting it in the constructor leaves the material uncomposited on a
     // cold launch until a window event. No `transparent: true` either — vibrancy
@@ -2237,9 +2759,10 @@ const createBrowserWindow = ({ label, restoreGeometry, url, runtimeConfig = {} }
     autoHideMenuBar: autoHidesNativeMenuBar,
     // Electron's hiddenInset adds its own extra inset, which leaves the controls
     // visibly lower than the app header. Use a plain hidden title bar instead.
-    titleBarStyle: usesCustomTitleBar ? 'hidden' : 'default',
+    titleBarStyle: usesCustomTitleBar ? "hidden" : "default",
     titleBarOverlay: titleBarOverlayEnabled,
-    trafficLightPosition: process.platform === 'darwin' ? { x: 16, y: 17 } : undefined,
+    trafficLightPosition:
+      process.platform === "darwin" ? { x: 16, y: 17 } : undefined,
     webPreferences: {
       additionalArguments: [
         `--openchamber-local-origin=${desktopLocalOrigin}`,
@@ -2248,11 +2771,15 @@ const createBrowserWindow = ({ label, restoreGeometry, url, runtimeConfig = {} }
         `--openchamber-runtime-headers=${JSON.stringify(desktopRequestHeaders)}`,
         `--openchamber-home=${desktopHome}`,
         `--openchamber-macos-major=${desktopMacosMajor}`,
-        `--openchamber-mac-vibrancy=${useVibrancy ? '1' : '0'}`,
+        `--openchamber-mac-vibrancy=${useVibrancy ? "1" : "0"}`,
+        `--openchamber-desktop-updates-enabled=${desktopUpdatesEnabled ? "1" : "0"}`,
+        `--openchamber-tray-enabled=${trayEnabled ? "1" : "0"}`,
         `--openchamber-boot-outcome=${JSON.stringify(state.bootOutcome || null)}`,
-        `--openchamber-relay-host-id=${rendererRuntimeConfig.relayHostId || ''}`,
+        `--openchamber-relay-host-id=${rendererRuntimeConfig.relayHostId || ""}`,
       ],
-      preload: isDev ? path.join(__dirname, 'preload.mjs') : path.join(app.getAppPath(), 'preload.mjs'),
+      preload: isDev
+        ? path.join(__dirname, "preload.mjs")
+        : path.join(app.getAppPath(), "preload.mjs"),
       backgroundThrottling: false,
       contextIsolation: true,
       nodeIntegration: false,
@@ -2267,18 +2794,28 @@ const createBrowserWindow = ({ label, restoreGeometry, url, runtimeConfig = {} }
 
   const browserWindow = new BrowserWindow(options);
   browserWindow.__ocLabel = label || nextWindowLabel();
-  browserWindow.__ocRuntimeConfig = { apiBaseUrl: desktopApiBaseUrl, clientToken: desktopClientToken, requestHeaders: desktopRequestHeaders };
-  browserWindow.__ocInitScript = buildInitScript(desktopLocalOrigin, state.bootOutcome, desktopApiBaseUrl, desktopClientToken, desktopRequestHeaders);
+  browserWindow.__ocRuntimeConfig = {
+    apiBaseUrl: desktopApiBaseUrl,
+    clientToken: desktopClientToken,
+    requestHeaders: desktopRequestHeaders,
+  };
+  browserWindow.__ocInitScript = buildInitScript(
+    desktopLocalOrigin,
+    state.bootOutcome,
+    desktopApiBaseUrl,
+    desktopClientToken,
+    desktopRequestHeaders,
+  );
   browserWindow.__ocTitleBarOverlayEnabled = titleBarOverlayEnabled;
 
   if (useSaved && saved.maximized) {
     browserWindow.maximize();
   }
 
-  browserWindow.on('focus', () => {
+  browserWindow.on("focus", () => {
     state.focusedWindowIds.add(browserWindow.id);
   });
-  browserWindow.on('blur', () => {
+  browserWindow.on("blur", () => {
     state.focusedWindowIds.delete(browserWindow.id);
   });
 
@@ -2288,7 +2825,7 @@ const createBrowserWindow = ({ label, restoreGeometry, url, runtimeConfig = {} }
   // genie-restore animation. We re-assert button position on 'minimize'
   // (before the snapshot) and 'restore'/'show'/'focus' to cover other
   // transient reset states AppKit puts the buttons in.
-  if (process.platform === 'darwin') {
+  if (process.platform === "darwin") {
     const refreshTrafficLights = () => {
       if (browserWindow.isDestroyed()) return;
       try {
@@ -2296,48 +2833,50 @@ const createBrowserWindow = ({ label, restoreGeometry, url, runtimeConfig = {} }
         browserWindow.setTrafficLightPosition({ x: 16, y: 17 });
       } catch {}
     };
-    browserWindow.on('minimize', () => {
+    browserWindow.on("minimize", () => {
       refreshTrafficLights();
-      setMacVibrancyReady(browserWindow, false);
     });
-    browserWindow.on('restore', () => {
+    browserWindow.on("restore", () => {
       refreshTrafficLights();
       setTimeout(refreshTrafficLights, 250);
-      scheduleMacVibrancyReady(browserWindow, 180);
     });
     // Only suppress vibrancy around the minimize/restore cycle (it flashes raw
     // transparency during the genie animation). A plain show — cold launch from
     // the dock, un-hide — must NOT suppress, or the sidebar gets stuck solid
     // when the post-show `ready` re-enable is skipped while the window is still
     // animating in.
-    browserWindow.on('show', refreshTrafficLights);
-    browserWindow.on('focus', refreshTrafficLights);
+    browserWindow.on("show", refreshTrafficLights);
+    browserWindow.on("focus", refreshTrafficLights);
   }
 
-  browserWindow.on('resize', () => {
-    if (process.platform === 'darwin') {
-      emitToWindow(browserWindow, 'openchamber:window-resized');
+  browserWindow.on("resize", () => {
+    if (process.platform === "darwin") {
+      emitToWindow(browserWindow, "openchamber:window-resized");
     }
     debounceWindowStatePersist(browserWindow, false);
   });
-  browserWindow.on('maximize', () => {
-    emitToWindow(browserWindow, 'openchamber:window-maximized-changed', { maximized: true });
+  browserWindow.on("maximize", () => {
+    emitToWindow(browserWindow, "openchamber:window-maximized-changed", {
+      maximized: true,
+    });
     debounceWindowStatePersist(browserWindow, false);
   });
-  browserWindow.on('unmaximize', () => {
-    emitToWindow(browserWindow, 'openchamber:window-maximized-changed', { maximized: false });
+  browserWindow.on("unmaximize", () => {
+    emitToWindow(browserWindow, "openchamber:window-maximized-changed", {
+      maximized: false,
+    });
     debounceWindowStatePersist(browserWindow, false);
   });
-  browserWindow.on('move', () => {
+  browserWindow.on("move", () => {
     debounceWindowStatePersist(browserWindow, false);
   });
-  browserWindow.on('minimize', (event) => {
+  browserWindow.on("minimize", (event) => {
     if (!shouldHideMainWindowToTray(browserWindow)) return;
     debounceWindowStatePersist(browserWindow, true);
     event.preventDefault();
     browserWindow.hide();
   });
-  browserWindow.on('close', (event) => {
+  browserWindow.on("close", (event) => {
     if (!state.quitRequested && shouldHideMainWindowToTray(browserWindow)) {
       debounceWindowStatePersist(browserWindow, true);
       event.preventDefault();
@@ -2345,7 +2884,7 @@ const createBrowserWindow = ({ label, restoreGeometry, url, runtimeConfig = {} }
       return;
     }
 
-    if (process.platform === 'darwin' && !state.quitRequested) {
+    if (process.platform === "darwin" && !state.quitRequested) {
       const remainingVisible = BrowserWindow.getAllWindows().filter(
         (window) => !window.isDestroyed() && window.isVisible(),
       ).length;
@@ -2360,13 +2899,14 @@ const createBrowserWindow = ({ label, restoreGeometry, url, runtimeConfig = {} }
 
     debounceWindowStatePersist(browserWindow, true);
   });
-  browserWindow.on('closed', () => {
+  browserWindow.on("closed", () => {
+    artifactRunnerManager.stopForOwner(browserWindow);
     state.focusedWindowIds.delete(browserWindow.id);
     if (state.mainWindow && browserWindow.id === state.mainWindow.id) {
       state.mainWindow = null;
     }
     if (BrowserWindow.getAllWindows().length === 0) {
-      if (process.platform !== 'darwin') {
+      if (process.platform !== "darwin") {
         if (state.installingUpdate) {
           app.quit();
         } else {
@@ -2382,27 +2922,30 @@ const createBrowserWindow = ({ label, restoreGeometry, url, runtimeConfig = {} }
   const isAllowedNavigationUrl = (raw) => {
     try {
       const url = new URL(raw);
-      if (url.protocol === 'devtools:') return true;
-      if (url.protocol !== 'http:' && url.protocol !== 'https:') return false;
+      if (url.protocol === "devtools:") return true;
+      // Renderer-driven reloads of the packaged UI surface are reported as a
+      // normal navigation. Keep the privileged scheme restricted to our one
+      // registered host; otherwise first-launch/recovery reloads are blocked
+      // by this guard and the window remains on a stale boot outcome.
+      if (url.protocol === `${UI_PROTOCOL}:` && url.hostname === "app")
+        return true;
+      if (url.protocol !== "http:" && url.protocol !== "https:") return false;
       if (state.localOrigin) {
         try {
           if (new URL(state.localOrigin).origin === url.origin) return true;
-        } catch {
-        }
+        } catch {}
       }
       if (state.sidecarUrl) {
         try {
           if (new URL(state.sidecarUrl).origin === url.origin) return true;
-        } catch {
-        }
+        } catch {}
       }
       const hosts = readDesktopHostsConfig()?.hosts || [];
       for (const entry of hosts) {
-        if (typeof entry?.url !== 'string') continue;
+        if (typeof entry?.url !== "string") continue;
         try {
           if (new URL(entry.url).origin === url.origin) return true;
-        } catch {
-        }
+        } catch {}
       }
       return false;
     } catch {
@@ -2412,42 +2955,93 @@ const createBrowserWindow = ({ label, restoreGeometry, url, runtimeConfig = {} }
 
   browserWindow.webContents.setWindowOpenHandler(({ url }) => {
     if (isAllowedNavigationUrl(url)) {
-      return { action: 'allow' };
+      // `window.open()` does not inherit the opener's preload script. The
+      // Workbench popout renders the same trusted OpenChamber UI and needs the
+      // desktop bridge to launch isolated HTML Artifact runners. Reapply the
+      // exact runtime arguments and security posture used by the owner window
+      // instead of leaving the child with an unprivileged renderer.
+      try {
+        const target = new URL(url);
+        if (target.pathname.endsWith("/workbench-popout.html")) {
+          return {
+            action: "allow",
+            overrideBrowserWindowOptions: {
+              title: "OpenLoop Workbench",
+              width: 960,
+              height: 720,
+              minWidth: 640,
+              minHeight: 480,
+              backgroundColor: useVibrancy ? "#00000000" : "#151313",
+              autoHideMenuBar: process.platform !== "darwin",
+              titleBarStyle: usesCustomTitleBar ? "hidden" : "default",
+              trafficLightPosition:
+                process.platform === "darwin" ? { x: 16, y: 17 } : undefined,
+              webPreferences: {
+                ...options.webPreferences,
+                additionalArguments: [
+                  ...options.webPreferences.additionalArguments,
+                ],
+              },
+            },
+          };
+        }
+      } catch {}
+      return { action: "allow" };
     }
     void shell.openExternal(url).catch(() => {});
-    return { action: 'deny' };
+    return { action: "deny" };
   });
 
-  browserWindow.webContents.on('will-navigate', (event, url) => {
+  browserWindow.webContents.on("will-navigate", (event, url) => {
     if (isAllowedNavigationUrl(url)) return;
     event.preventDefault();
     void shell.openExternal(url).catch(() => {});
   });
+  // Renderer cleanup cannot reliably finish an asynchronous IPC stop once a
+  // full navigation has started. Reclaim every native Artifact View owned by
+  // this window in the main process so a stale WebContentsView can never float
+  // above the next route, settings dialog, or Workbench board.
+  browserWindow.webContents.on(
+    "did-start-navigation",
+    (_event, _url, isInPlace, isMainFrame) => {
+      if (isMainFrame && !isInPlace) {
+        artifactRunnerManager.stopForOwner(browserWindow, "owner-navigated");
+      }
+    },
+  );
 
   browserWindow.webContents.setZoomFactor(1);
-  browserWindow.webContents.on('zoom-changed', () => {
+  browserWindow.webContents.on("zoom-changed", () => {
     browserWindow.webContents.setZoomFactor(1);
   });
 
-  browserWindow.webContents.on('dom-ready', () => {
-    const initScript = browserWindow.__ocInitScript || state.initScript;
+  browserWindow.webContents.on("dom-ready", () => {
+    // Prefer authoritative state script so hosts_set updates survive reloads even if a
+    // window still holds a pre-activation / not-configured __ocInitScript.
+    const initScript = state.initScript || browserWindow.__ocInitScript;
     if (initScript) {
-      void browserWindow.webContents.executeJavaScript(initScript).catch(() => {});
+      browserWindow.__ocInitScript = initScript;
+      void browserWindow.webContents
+        .executeJavaScript(initScript)
+        .catch(() => {});
     }
   });
 
-  browserWindow.webContents.on('did-finish-load', () => {
+  browserWindow.webContents.on("did-finish-load", () => {
     browserWindow.webContents.setZoomFactor(1);
-    if (state.mainWindow && browserWindow.id === state.mainWindow.id && pendingDeepLinks.length > 0) {
+    if (
+      state.mainWindow &&
+      browserWindow.id === state.mainWindow.id &&
+      pendingDeepLinks.length > 0
+    ) {
       const timer = setTimeout(flushPendingDeepLinks, 400);
-      if (typeof timer?.unref === 'function') timer.unref();
+      if (typeof timer?.unref === "function") timer.unref();
     }
   });
 
-  browserWindow.once('ready-to-show', () => {
+  browserWindow.once("ready-to-show", () => {
     browserWindow.show();
     browserWindow.focus();
-    if (useVibrancy) applyMacVibrancy(browserWindow);
   });
 
   if (url) {
@@ -2463,15 +3057,29 @@ const createBrowserWindow = ({ label, restoreGeometry, url, runtimeConfig = {} }
   return browserWindow;
 };
 
-const activateMainWindow = async (url, localOrigin, bootOutcome, runtimeConfig = {}) => {
+const activateMainWindow = async (
+  url,
+  localOrigin,
+  bootOutcome,
+  runtimeConfig = {},
+) => {
+  state.startupResolved = true;
   state.localOrigin = localOrigin;
-  state.apiBaseUrl = typeof runtimeConfig.apiBaseUrl === 'string' ? runtimeConfig.apiBaseUrl : state.apiBaseUrl;
-  state.clientToken = typeof runtimeConfig.clientToken === 'string' ? runtimeConfig.clientToken : '';
-  state.requestHeaders = sanitizeRuntimeRequestHeaders(runtimeConfig.requestHeaders || {});
+  state.apiBaseUrl =
+    typeof runtimeConfig.apiBaseUrl === "string"
+      ? runtimeConfig.apiBaseUrl
+      : state.apiBaseUrl;
+  state.clientToken =
+    typeof runtimeConfig.clientToken === "string"
+      ? runtimeConfig.clientToken
+      : "";
+  state.requestHeaders = sanitizeRuntimeRequestHeaders(
+    runtimeConfig.requestHeaders || {},
+  );
   state.bootOutcome = bootOutcome ?? null;
   const rendererRuntimeConfig = buildRendererRuntimeConfig(url, {
-    apiBaseUrl: state.apiBaseUrl || '',
-    clientToken: state.clientToken || '',
+    apiBaseUrl: state.apiBaseUrl || "",
+    clientToken: state.clientToken || "",
     requestHeaders: state.requestHeaders || {},
   });
   state.initScript = buildInitScript(
@@ -2481,6 +3089,7 @@ const activateMainWindow = async (url, localOrigin, bootOutcome, runtimeConfig =
     rendererRuntimeConfig.clientToken,
     rendererRuntimeConfig.requestHeaders,
   );
+  syncInitScriptToWindows(state.initScript);
 
   const mainWindow = state.mainWindow;
   if (mainWindow && !mainWindow.isDestroyed()) {
@@ -2493,7 +3102,7 @@ const activateMainWindow = async (url, localOrigin, bootOutcome, runtimeConfig =
   }
 
   state.mainWindow = createBrowserWindow({
-    label: 'main',
+    label: "main",
     restoreGeometry: true,
     url,
     runtimeConfig,
@@ -2502,41 +3111,79 @@ const activateMainWindow = async (url, localOrigin, bootOutcome, runtimeConfig =
 };
 
 const openMainWindow = async () => {
-  if (!state.localOrigin) {
-    const { initialUrl, localOrigin, bootOutcome, apiBaseUrl, clientToken, requestHeaders } = await resolveInitialUrl();
-    return activateMainWindow(initialUrl, localOrigin, bootOutcome, { apiBaseUrl, clientToken, requestHeaders });
+  if (!state.startupResolved) {
+    const {
+      initialUrl,
+      localOrigin,
+      bootOutcome,
+      apiBaseUrl,
+      clientToken,
+      requestHeaders,
+    } = await resolveInitialUrl();
+    return activateMainWindow(initialUrl, localOrigin, bootOutcome, {
+      apiBaseUrl,
+      clientToken,
+      requestHeaders,
+    });
   }
 
   const config = readDesktopHostsConfig();
-  const localUiUrl = shouldUsePackagedUi() ? buildPackagedUiUrl('/index.html') : (state.sidecarUrl || state.localOrigin);
-  const host = config.defaultHostId && config.defaultHostId !== LOCAL_HOST_ID
-    ? config.hosts.find((entry) => entry.id === config.defaultHostId)
-    : null;
-  const relayHost = host && host.relay && typeof host.relay === 'object' ? host : null;
+  const localUiUrl = shouldUsePackagedUi()
+    ? buildPackagedUiUrl("/index.html")
+    : state.sidecarUrl || state.localOrigin;
+  const host =
+    config.defaultHostId && config.defaultHostId !== LOCAL_HOST_ID
+      ? config.hosts.find((entry) => entry.id === config.defaultHostId)
+      : null;
+  const relayHost =
+    host && host.relay && typeof host.relay === "object" ? host : null;
   if (relayHost) {
     // Relay hosts have no reachable HTTP base. Boot the LOCAL UI with the local
     // runtime; the renderer re-opens the E2EE tunnel on startup by reading the
     // relay descriptor + token from desktopHosts and calling
     // switchRuntimeEndpoint({ relay }).
-    const localApiBaseUrl = state.sidecarUrl || state.apiBaseUrl || state.localOrigin || '';
-    const localToken = resolveStoredClientTokenForUrl(localApiBaseUrl, config) || state.clientToken || '';
-    return activateMainWindow(localUiUrl, state.localOrigin, state.bootOutcome, {
-      apiBaseUrl: localApiBaseUrl,
-      clientToken: localToken,
-      requestHeaders: {},
-    });
+    const localApiBaseUrl =
+      state.sidecarUrl || state.apiBaseUrl || state.localOrigin || "";
+    const localToken =
+      resolveStoredClientTokenForUrl(localApiBaseUrl, config) ||
+      state.clientToken ||
+      "";
+    return activateMainWindow(
+      localUiUrl,
+      state.localOrigin,
+      state.bootOutcome,
+      {
+        apiBaseUrl: localApiBaseUrl,
+        clientToken: localToken,
+        requestHeaders: {},
+      },
+    );
   }
-  const apiBaseUrl = host?.apiUrl || host?.url || state.sidecarUrl || state.apiBaseUrl || '';
-  const clientToken = host?.clientToken || resolveStoredClientTokenForUrl(apiBaseUrl, config) || state.clientToken || '';
-  const requestHeaders = sanitizeRuntimeRequestHeaders(host?.requestHeaders || {});
-  const targetUrl = host?.url && apiBaseUrl && !state.unreachableHosts.has(apiBaseUrl)
-    ? (shouldUsePackagedUi() ? buildPackagedUiUrl('/index.html') : host.url)
-    : localUiUrl;
-  return activateMainWindow(targetUrl, state.localOrigin, state.bootOutcome, { apiBaseUrl, clientToken, requestHeaders });
+  const apiBaseUrl =
+    host?.apiUrl || host?.url || state.sidecarUrl || state.apiBaseUrl || "";
+  const clientToken =
+    host?.clientToken ||
+    resolveStoredClientTokenForUrl(apiBaseUrl, config) ||
+    state.clientToken ||
+    "";
+  const requestHeaders = sanitizeRuntimeRequestHeaders(
+    host?.requestHeaders || {},
+  );
+  const targetUrl =
+    host?.url && apiBaseUrl && !state.unreachableHosts.has(apiBaseUrl)
+      ? shouldUsePackagedUi()
+        ? buildPackagedUiUrl("/index.html")
+        : host.url
+      : localUiUrl;
+  return activateMainWindow(targetUrl, state.localOrigin, state.bootOutcome, {
+    apiBaseUrl,
+    clientToken,
+    requestHeaders,
+  });
 };
 
 const createAdditionalWindow = async (url, runtimeConfig = {}) => {
-  if (!state.localOrigin) {
+  if (!state.startupResolved || !url) {
     return null;
   }
   const browserWindow = createBrowserWindow({
@@ -2549,47 +3196,83 @@ const createAdditionalWindow = async (url, runtimeConfig = {}) => {
 };
 
 const buildMiniChatUrl = ({ mode, sessionId, directory, projectId }) => {
-  const base = state.localOrigin || state.sidecarUrl;
+  const base = shouldUsePackagedUi()
+    ? buildPackagedUiUrl("/mini-chat.html")
+    : state.localOrigin || state.sidecarUrl;
   if (!base) {
-    throw new Error('Local UI is not available');
+    throw new Error("Local UI is not available");
   }
 
-  const url = new URL(shouldUsePackagedUi() ? buildPackagedUiUrl('/mini-chat.html') : '/mini-chat.html', base);
-  url.searchParams.set('mode', mode === 'session' ? 'session' : 'draft');
-  if (sessionId) url.searchParams.set('sessionId', sessionId);
-  if (directory) url.searchParams.set('directory', directory);
-  if (projectId) url.searchParams.set('projectId', projectId);
+  const url = new URL(shouldUsePackagedUi() ? base : "/mini-chat.html", base);
+  url.searchParams.set("mode", mode === "session" ? "session" : "draft");
+  if (sessionId) url.searchParams.set("sessionId", sessionId);
+  if (directory) url.searchParams.set("directory", directory);
+  if (projectId) url.searchParams.set("projectId", projectId);
   return url.toString();
 };
 
 const miniChatSessionWindowKey = (runtimeConfig, sessionId) => {
-  const runtimeKey = normalizeHostUrl(runtimeConfig?.apiBaseUrl || state.apiBaseUrl || state.localOrigin || state.sidecarUrl || '') || 'local';
+  const runtimeKey =
+    normalizeHostUrl(
+      runtimeConfig?.apiBaseUrl ||
+        state.apiBaseUrl ||
+        state.localOrigin ||
+        state.sidecarUrl ||
+        "",
+    ) || "local";
   return `${runtimeKey}\n${sessionId}`;
 };
 
 const getWindowRuntimeConfig = (browserWindow) => {
   const fallback = {
-    apiBaseUrl: state.apiBaseUrl || state.localOrigin || state.sidecarUrl || '',
-    clientToken: state.clientToken || '',
+    apiBaseUrl: state.apiBaseUrl || state.localOrigin || state.sidecarUrl || "",
+    clientToken: state.clientToken || "",
     requestHeaders: state.requestHeaders || {},
   };
   if (!browserWindow || browserWindow.isDestroyed()) return fallback;
   const config = browserWindow.__ocRuntimeConfig;
   return {
-    apiBaseUrl: typeof config?.apiBaseUrl === 'string' ? config.apiBaseUrl : fallback.apiBaseUrl,
-    clientToken: typeof config?.clientToken === 'string' ? config.clientToken : fallback.clientToken,
-    requestHeaders: sanitizeRuntimeRequestHeaders(config?.requestHeaders || fallback.requestHeaders),
+    apiBaseUrl:
+      typeof config?.apiBaseUrl === "string"
+        ? config.apiBaseUrl
+        : fallback.apiBaseUrl,
+    clientToken:
+      typeof config?.clientToken === "string"
+        ? config.clientToken
+        : fallback.clientToken,
+    requestHeaders: sanitizeRuntimeRequestHeaders(
+      config?.requestHeaders || fallback.requestHeaders,
+    ),
   };
 };
 
-const createMiniChatWindow = async ({ mode, sessionId = '', directory = '', projectId = '', runtimeConfig = {} } = {}) => {
+const createMiniChatWindow = async ({
+  mode,
+  sessionId = "",
+  directory = "",
+  projectId = "",
+  runtimeConfig = {},
+} = {}) => {
   const effectiveRuntimeConfig = {
-    apiBaseUrl: normalizeHostUrl(runtimeConfig.apiBaseUrl || state.apiBaseUrl || state.localOrigin || state.sidecarUrl || ''),
-    clientToken: sanitizeClientTokenForStorage(runtimeConfig.clientToken || state.clientToken || ''),
-    requestHeaders: sanitizeRuntimeRequestHeaders(runtimeConfig.requestHeaders || state.requestHeaders || {}),
+    apiBaseUrl: normalizeHostUrl(
+      runtimeConfig.apiBaseUrl ||
+        state.apiBaseUrl ||
+        state.localOrigin ||
+        state.sidecarUrl ||
+        "",
+    ),
+    clientToken: sanitizeClientTokenForStorage(
+      runtimeConfig.clientToken || state.clientToken || "",
+    ),
+    requestHeaders: sanitizeRuntimeRequestHeaders(
+      runtimeConfig.requestHeaders || state.requestHeaders || {},
+    ),
   };
-  const sessionWindowKey = mode === 'session' && sessionId ? miniChatSessionWindowKey(effectiveRuntimeConfig, sessionId) : '';
-  if (mode === 'session' && sessionId) {
+  const sessionWindowKey =
+    mode === "session" && sessionId
+      ? miniChatSessionWindowKey(effectiveRuntimeConfig, sessionId)
+      : "";
+  if (mode === "session" && sessionId) {
     const existing = state.miniChatWindowsBySession.get(sessionWindowKey);
     if (existing && !existing.isDestroyed()) {
       if (existing.isMinimized()) existing.restore();
@@ -2600,32 +3283,42 @@ const createMiniChatWindow = async ({ mode, sessionId = '', directory = '', proj
     state.miniChatWindowsBySession.delete(sessionWindowKey);
   }
 
-  const desktopLocalOrigin = state.localOrigin || '';
-  const desktopApiBaseUrl = effectiveRuntimeConfig.apiBaseUrl || '';
-  const desktopClientToken = effectiveRuntimeConfig.clientToken || '';
+  const desktopLocalOrigin = state.localOrigin || "";
+  const desktopApiBaseUrl = effectiveRuntimeConfig.apiBaseUrl || "";
+  const desktopClientToken = effectiveRuntimeConfig.clientToken || "";
   const desktopRequestHeaders = effectiveRuntimeConfig.requestHeaders || {};
-  const desktopHome = os.homedir() || '';
+  const desktopHome = os.homedir() || "";
   const desktopMacosMajor = String(macosMajorVersion());
-  const usesFramelessChrome = process.platform === 'win32' || process.platform === 'linux';
+  const usesFramelessChrome =
+    process.platform === "win32" || process.platform === "linux";
   // macOS vibrancy, on by default; users can disable it (Appearance settings).
-  const useVibrancy = process.platform === 'darwin' && readSettingsRoot().desktopVibrancy !== false;
+  const useVibrancy =
+    process.platform === "darwin" &&
+    readSettingsRoot().desktopVibrancy !== false;
+  const trayEnabled =
+    process.platform !== "darwin" ||
+    readSettingsRoot().desktopMacMenuBarEnabled !== false;
   const browserWindow = new BrowserWindow({
-    title: 'OpenChamber Mini Chat',
+    title: "OpenLoop Mini Chat",
     width: MINI_CHAT_WINDOW_WIDTH,
     height: MINI_CHAT_WINDOW_HEIGHT,
     minWidth: MINI_CHAT_MIN_WINDOW_WIDTH,
     minHeight: MINI_CHAT_MIN_WINDOW_HEIGHT,
     icon: getWindowIconPath(),
     show: false,
-    backgroundColor: useVibrancy ? '#00000000' : '#151313',
+    backgroundColor: useVibrancy ? "#00000000" : "#151313",
     // Vibrancy is applied after the window is shown (see applyMacVibrancy), not
     // here: setting it in the constructor leaves the material uncomposited on a
     // cold launch until a window event. No `transparent: true` either — vibrancy
     // alone is enough and composites reliably once applied to a live window.
     frame: usesFramelessChrome ? false : undefined,
-    autoHideMenuBar: process.platform !== 'darwin',
-    titleBarStyle: process.platform === 'darwin' || usesFramelessChrome ? 'hidden' : 'default',
-    trafficLightPosition: process.platform === 'darwin' ? { x: 16, y: 17 } : undefined,
+    autoHideMenuBar: process.platform !== "darwin",
+    titleBarStyle:
+      process.platform === "darwin" || usesFramelessChrome
+        ? "hidden"
+        : "default",
+    trafficLightPosition:
+      process.platform === "darwin" ? { x: 16, y: 17 } : undefined,
     webPreferences: {
       additionalArguments: [
         `--openchamber-local-origin=${desktopLocalOrigin}`,
@@ -2634,8 +3327,12 @@ const createMiniChatWindow = async ({ mode, sessionId = '', directory = '', proj
         `--openchamber-runtime-headers=${JSON.stringify(desktopRequestHeaders)}`,
         `--openchamber-home=${desktopHome}`,
         `--openchamber-macos-major=${desktopMacosMajor}`,
+        `--openchamber-desktop-updates-enabled=${desktopUpdatesEnabled ? "1" : "0"}`,
+        `--openchamber-tray-enabled=${trayEnabled ? "1" : "0"}`,
       ],
-      preload: isDev ? path.join(__dirname, 'preload.mjs') : path.join(app.getAppPath(), 'preload.mjs'),
+      preload: isDev
+        ? path.join(__dirname, "preload.mjs")
+        : path.join(app.getAppPath(), "preload.mjs"),
       backgroundThrottling: false,
       contextIsolation: true,
       nodeIntegration: false,
@@ -2646,7 +3343,13 @@ const createMiniChatWindow = async ({ mode, sessionId = '', directory = '', proj
   });
   browserWindow.__ocLabel = nextWindowLabel();
   browserWindow.__ocRuntimeConfig = effectiveRuntimeConfig;
-  browserWindow.__ocInitScript = buildInitScript(desktopLocalOrigin, state.bootOutcome, desktopApiBaseUrl, desktopClientToken, desktopRequestHeaders);
+  browserWindow.__ocInitScript = buildInitScript(
+    desktopLocalOrigin,
+    state.bootOutcome,
+    desktopApiBaseUrl,
+    desktopClientToken,
+    desktopRequestHeaders,
+  );
   browserWindow.__ocMiniChat = true;
   browserWindow.__ocMiniChatSessionId = sessionWindowKey;
   browserWindow.__ocPinned = false;
@@ -2655,16 +3358,20 @@ const createMiniChatWindow = async ({ mode, sessionId = '', directory = '', proj
     state.miniChatWindowsBySession.set(sessionWindowKey, browserWindow);
   }
 
-  browserWindow.on('closed', () => {
+  browserWindow.on("closed", () => {
     if (browserWindow.__ocMiniChatSessionId) {
-      const existing = state.miniChatWindowsBySession.get(browserWindow.__ocMiniChatSessionId);
+      const existing = state.miniChatWindowsBySession.get(
+        browserWindow.__ocMiniChatSessionId,
+      );
       if (existing?.id === browserWindow.id) {
-        state.miniChatWindowsBySession.delete(browserWindow.__ocMiniChatSessionId);
+        state.miniChatWindowsBySession.delete(
+          browserWindow.__ocMiniChatSessionId,
+        );
       }
     }
   });
 
-  if (process.platform === 'darwin') {
+  if (process.platform === "darwin") {
     const refreshTrafficLights = () => {
       if (browserWindow.isDestroyed()) return;
       try {
@@ -2673,57 +3380,69 @@ const createMiniChatWindow = async ({ mode, sessionId = '', directory = '', proj
       } catch {}
     };
     // Suppress vibrancy only around minimize/restore, never on a plain show.
-    browserWindow.on('show', refreshTrafficLights);
-    browserWindow.on('focus', refreshTrafficLights);
-    browserWindow.on('minimize', () => setMacVibrancyReady(browserWindow, false));
-    browserWindow.on('restore', () => scheduleMacVibrancyReady(browserWindow, 180));
+    browserWindow.on("show", refreshTrafficLights);
+    browserWindow.on("focus", refreshTrafficLights);
+    browserWindow.on("minimize", () =>
+      setMacVibrancyReady(browserWindow, false),
+    );
+    browserWindow.on("restore", () =>
+      scheduleMacVibrancyReady(browserWindow, 180),
+    );
   }
 
-  browserWindow.once('ready-to-show', () => {
+  browserWindow.once("ready-to-show", () => {
     browserWindow.show();
     browserWindow.focus();
-    if (useVibrancy) applyMacVibrancy(browserWindow);
   });
 
   browserWindow.webContents.setWindowOpenHandler(({ url }) => {
     void shell.openExternal(url).catch(() => {});
-    return { action: 'deny' };
+    return { action: "deny" };
   });
-  browserWindow.webContents.on('will-navigate', (event, url) => {
+  browserWindow.webContents.on("will-navigate", (event, url) => {
     try {
       const target = new URL(url);
-      const local = new URL(shouldUsePackagedUi() ? packagedUiOrigin() : (state.localOrigin || state.sidecarUrl || ''));
+      const local = new URL(
+        shouldUsePackagedUi()
+          ? packagedUiOrigin()
+          : state.localOrigin || state.sidecarUrl || "",
+      );
       if (target.origin === local.origin) return;
-    } catch {
-    }
+    } catch {}
     event.preventDefault();
     void shell.openExternal(url).catch(() => {});
   });
-  browserWindow.webContents.on('dom-ready', () => {
-    const initScript = browserWindow.__ocInitScript || state.initScript;
+  browserWindow.webContents.on("dom-ready", () => {
+    const initScript = state.initScript || browserWindow.__ocInitScript;
     if (initScript) {
-      void browserWindow.webContents.executeJavaScript(initScript).catch(() => {});
+      browserWindow.__ocInitScript = initScript;
+      void browserWindow.webContents
+        .executeJavaScript(initScript)
+        .catch(() => {});
     }
   });
 
-  await navigateWindow(browserWindow, buildMiniChatUrl({ mode, sessionId, directory, projectId }));
+  await navigateWindow(
+    browserWindow,
+    buildMiniChatUrl({ mode, sessionId, directory, projectId }),
+  );
   return browserWindow;
 };
 
 const setMiniChatPinned = (browserWindow, pinned) => {
   if (!browserWindow || browserWindow.isDestroyed()) {
-    throw new Error('Window is not available');
+    throw new Error("Window is not available");
   }
   if (browserWindow.__ocMiniChat !== true) {
-    throw new Error('Pinning is only available for Mini Chat windows');
+    throw new Error("Pinning is only available for Mini Chat windows");
   }
   const nextPinned = pinned === true;
   browserWindow.__ocPinned = nextPinned;
   if (nextPinned) {
-    browserWindow.setAlwaysOnTop(true, 'floating');
+    browserWindow.setAlwaysOnTop(true, "floating");
   } else {
     browserWindow.setAlwaysOnTop(false);
-    if (process.platform === 'darwin') {
+    if (process.platform === "darwin") {
       browserWindow.setVisibleOnAllWorkspaces(false);
     }
   }
@@ -2732,73 +3451,115 @@ const setMiniChatPinned = (browserWindow, pinned) => {
 
 const resolveMiniChatRuntimeConfig = (browserWindow, args = {}) => {
   const windowConfig = getWindowRuntimeConfig(browserWindow);
-  const argApiBaseUrl = typeof args.apiBaseUrl === 'string' ? args.apiBaseUrl : '';
-  const targetUrl = normalizeHostUrl(argApiBaseUrl || windowConfig.apiBaseUrl || state.apiBaseUrl || state.localOrigin || state.sidecarUrl || '');
+  const argApiBaseUrl =
+    typeof args.apiBaseUrl === "string" ? args.apiBaseUrl : "";
+  const targetUrl = normalizeHostUrl(
+    argApiBaseUrl ||
+      windowConfig.apiBaseUrl ||
+      state.apiBaseUrl ||
+      state.localOrigin ||
+      state.sidecarUrl ||
+      "",
+  );
   const providedToken = sanitizeClientTokenForStorage(args.clientToken);
-  const storedToken = targetUrl ? resolveStoredClientTokenForUrl(targetUrl) : '';
-  const windowToken = targetUrl && sameOrigin(windowConfig.apiBaseUrl, targetUrl) ? windowConfig.clientToken : '';
-  const windowHeaders = targetUrl && sameOrigin(windowConfig.apiBaseUrl, targetUrl) ? windowConfig.requestHeaders : {};
+  const storedToken = targetUrl
+    ? resolveStoredClientTokenForUrl(targetUrl)
+    : "";
+  const windowToken =
+    targetUrl && sameOrigin(windowConfig.apiBaseUrl, targetUrl)
+      ? windowConfig.clientToken
+      : "";
+  const windowHeaders =
+    targetUrl && sameOrigin(windowConfig.apiBaseUrl, targetUrl)
+      ? windowConfig.requestHeaders
+      : {};
   return {
     apiBaseUrl: targetUrl,
-    clientToken: providedToken || windowToken || storedToken || '',
-    requestHeaders: sanitizeRuntimeRequestHeaders(args.requestHeaders || windowHeaders || {}),
+    clientToken: providedToken || windowToken || storedToken || "",
+    requestHeaders: sanitizeRuntimeRequestHeaders(
+      args.requestHeaders || windowHeaders || {},
+    ),
   };
 };
 
 const resolveInitialUrl = async () => {
-  const hmrApiPort = process.env.OPENCHAMBER_HMR_API_PORT || '3901';
-  const hmrUiPort = process.env.OPENCHAMBER_HMR_UI_PORT || '5173';
+  const hmrApiPort = process.env.OPENCHAMBER_HMR_API_PORT || "3901";
+  const hmrUiPort = process.env.OPENCHAMBER_HMR_UI_PORT || "5173";
   const hmrApiUrl = `http://127.0.0.1:${hmrApiPort}`;
   const hmrUiUrl = `http://127.0.0.1:${hmrUiPort}`;
-  const localUrl = isDev && await waitForHealth(hmrApiUrl, 5_000, 100)
-    ? hmrApiUrl
-    : await spawnLocalServer();
+  const skipLocalServer = shouldSkipLocalServer();
+  const localUrl = skipLocalServer
+    ? null
+    : isDev && (await waitForHealth(hmrApiUrl, 5_000, 100))
+      ? hmrApiUrl
+      : await spawnLocalServer();
 
   const localUiUrl = shouldUsePackagedUi()
-    ? buildPackagedUiUrl('/index.html')
-    : isDev && await waitForHealth(hmrUiUrl, 8_000, 100)
-    ? hmrUiUrl
-    : localUrl;
+    ? buildPackagedUiUrl("/index.html")
+    : isDev && (await waitForHealth(hmrUiUrl, 8_000, 100))
+      ? hmrUiUrl
+      : localUrl;
 
   state.sidecarUrl = localUrl;
   const localAvailable = Boolean(localUrl);
 
-  const localOrigin = new URL(localUrl).origin;
+  const localOrigin = localUrl ? new URL(localUrl).origin : null;
   let initialUrl = localUiUrl;
-  let apiBaseUrl = localUrl;
-  let clientToken = readDesktopLocalClientToken();
+  let apiBaseUrl = localUrl || "";
+  let clientToken = localUrl ? readDesktopLocalClientToken() : "";
   let requestHeaders = {};
   let remoteProbe = null;
 
-  const envTarget = normalizeHostUrl(process.env.OPENCHAMBER_SERVER_URL || '');
+  const envTarget = normalizeHostUrl(process.env.OPENCHAMBER_SERVER_URL || "");
   const config = readDesktopHostsConfig();
   if (envTarget) {
     apiBaseUrl = envTarget;
-    clientToken = '';
+    clientToken = "";
     requestHeaders = {};
     initialUrl = shouldUsePackagedUi() ? localUiUrl : envTarget;
   } else if (config.defaultHostId && config.defaultHostId !== LOCAL_HOST_ID) {
-    const host = config.hosts.find((entry) => entry.id === config.defaultHostId);
+    const host = config.hosts.find(
+      (entry) => entry.id === config.defaultHostId,
+    );
     if (host?.url) {
       apiBaseUrl = host.apiUrl || host.url;
-      clientToken = host.clientToken || '';
+      clientToken = host.clientToken || "";
       requestHeaders = sanitizeRuntimeRequestHeaders(host.requestHeaders || {});
       initialUrl = shouldUsePackagedUi() ? localUiUrl : host.url;
     }
   }
 
   if (apiBaseUrl && apiBaseUrl !== localUrl) {
-    remoteProbe = await probeHostWithTimeout(apiBaseUrl, 2_000, clientToken, requestHeaders);
-    if (remoteProbe.status === 'unreachable') {
-      remoteProbe = await probeHostWithTimeout(apiBaseUrl, 10_000, clientToken, requestHeaders);
+    remoteProbe = await probeHostWithTimeout(
+      apiBaseUrl,
+      2_000,
+      clientToken,
+      requestHeaders,
+    );
+    if (remoteProbe.status === "unreachable") {
+      remoteProbe = await probeHostWithTimeout(
+        apiBaseUrl,
+        10_000,
+        clientToken,
+        requestHeaders,
+      );
     }
-    if (remoteProbe.status === 'unreachable') {
+    if (remoteProbe.status === "unreachable") {
       state.unreachableHosts.add(apiBaseUrl);
-      apiBaseUrl = localUrl;
-      clientToken = readDesktopLocalClientToken();
+      apiBaseUrl = localUrl || "";
+      clientToken = localUrl ? readDesktopLocalClientToken() : "";
       requestHeaders = {};
       initialUrl = localUiUrl;
     }
+  }
+
+  if (!initialUrl && apiBaseUrl && remoteProbe?.status !== "unreachable") {
+    initialUrl = apiBaseUrl;
+  }
+  if (!initialUrl) {
+    throw new Error(
+      "OPENCHAMBER_SKIP_LOCAL_SERVER=1 requires bundled UI, a running desktop HMR UI, or a reachable remote instance.",
+    );
   }
 
   const bootOutcome = computeBootOutcome({
@@ -2808,12 +3569,26 @@ const resolveInitialUrl = async () => {
     localAvailable,
   });
 
-  return { initialUrl, localOrigin, localUiUrl, bootOutcome, apiBaseUrl, clientToken, requestHeaders };
+  return {
+    initialUrl,
+    localOrigin,
+    localUiUrl,
+    bootOutcome,
+    apiBaseUrl,
+    clientToken,
+    requestHeaders,
+  };
 };
 
 const compareSemver = (left, right) => {
-  const a = String(left || '').replace(/^v/, '').split('.').map((value) => Number.parseInt(value || '0', 10));
-  const b = String(right || '').replace(/^v/, '').split('.').map((value) => Number.parseInt(value || '0', 10));
+  const a = String(left || "")
+    .replace(/^v/, "")
+    .split(".")
+    .map((value) => Number.parseInt(value || "0", 10));
+  const b = String(right || "")
+    .replace(/^v/, "")
+    .split(".")
+    .map((value) => Number.parseInt(value || "0", 10));
   const length = Math.max(a.length, b.length);
   for (let index = 0; index < length; index += 1) {
     const diff = (a[index] || 0) - (b[index] || 0);
@@ -2823,7 +3598,9 @@ const compareSemver = (left, right) => {
 };
 
 const setupAutoUpdater = () => {
-  if (!app.isPackaged) {
+  if (!app.isPackaged || !desktopUpdatesEnabled) {
+    state.pendingUpdate = null;
+    log.info("[electron] desktop auto-updates disabled for this build");
     return;
   }
   autoUpdater.autoDownload = false;
@@ -2833,63 +3610,52 @@ const setupAutoUpdater = () => {
   autoUpdater.disableWebInstaller = false;
   autoUpdater.logger = log;
 
-  const testBuild = typeof __OPENCHAMBER_UPDATER_E2E_BUILD__ !== 'undefined'
-    && __OPENCHAMBER_UPDATER_E2E_BUILD__ === true;
-  const feed = resolveUpdaterFeed({ testBuild });
-  autoUpdater.setFeedURL(feed);
-  log.info('[electron] updater feed configured', {
-    provider: feed.provider,
-    target: feed.provider === 'github' ? `${feed.owner}/${feed.repo}` : feed.url,
+  autoUpdater.setFeedURL(desktopUpdaterFeed);
+  log.info("[electron] updater feed configured", {
+    provider: desktopUpdaterFeed.provider,
+    target:
+      desktopUpdaterFeed.provider === "github"
+        ? `${desktopUpdaterFeed.owner}/${desktopUpdaterFeed.repo}`
+        : desktopUpdaterFeed.url,
   });
 
-  autoUpdater.on('download-progress', (progress) => {
+  autoUpdater.on("download-progress", (progress) => {
     const total = Number(progress.total || 0);
     const transferred = Number(progress.transferred || 0);
-    setTaskbarProgress(total > 0 ? Math.max(0, Math.min(1, transferred / total)) : 0.01);
-    emitToAllWindows('openchamber:update-progress', mapUpdaterProgressEvent({
-      event: 'Progress',
-      data: {
-        chunkLength: Math.max(0, Math.round(progress.bytesPerSecond || 0)),
-        downloaded: Math.round(progress.transferred || 0),
-        total: Math.round(progress.total || 0),
-      },
-    }));
+    setTaskbarProgress(
+      total > 0 ? Math.max(0, Math.min(1, transferred / total)) : 0.01,
+    );
+    emitToAllWindows(
+      "openchamber:update-progress",
+      mapUpdaterProgressEvent({
+        event: "Progress",
+        data: {
+          chunkLength: Math.max(0, Math.round(progress.bytesPerSecond || 0)),
+          downloaded: Math.round(progress.transferred || 0),
+          total: Math.round(progress.total || 0),
+        },
+      }),
+    );
   });
 
-  autoUpdater.on('update-downloaded', (info) => {
-    log.info(`[electron] update-downloaded version=${info?.version || 'unknown'}`);
+  autoUpdater.on("update-downloaded", (info) => {
+    log.info(
+      `[electron] update-downloaded version=${info?.version || "unknown"}`,
+    );
     setTaskbarProgress(-1);
     if (state.pendingUpdate) {
       state.pendingUpdate.downloaded = true;
     }
   });
 
-  autoUpdater.on('error', (err) => {
+  autoUpdater.on("error", (err) => {
     setTaskbarProgress(-1);
-    log.error('[electron] autoUpdater error', err);
+    log.error("[electron] autoUpdater error", err);
   });
 };
 
-const parseRelevantChangelogNotes = async (fromVersion, toVersion) => {
-  try {
-    const response = await fetch(CHANGELOG_URL, { signal: AbortSignal.timeout(10_000) });
-    if (!response.ok) return null;
-    const changelog = await response.text();
-    const sections = changelog.split(/^##\s+\[/m).slice(1);
-    const relevant = [];
-    for (const section of sections) {
-      const version = section.split(']')[0];
-      if (compareSemver(version, fromVersion) > 0 && compareSemver(version, toVersion) <= 0) {
-        relevant.push(`## [${section}`.trim());
-      }
-    }
-    return relevant.length > 0 ? relevant.join('\n\n') : null;
-  } catch {
-    return null;
-  }
-};
-
-const buildInstalledAppsCachePath = () => path.join(path.dirname(settingsFilePath()), INSTALLED_APPS_CACHE_FILE);
+const buildInstalledAppsCachePath = () =>
+  path.join(path.dirname(settingsFilePath()), INSTALLED_APPS_CACHE_FILE);
 
 // Async variants. sips + mdfind via spawnSync blocked the Electron main event
 // loop for 2-3s on boot (22 OPEN_IN_APPS × ~200 ms each). Use execFile promises
@@ -2904,41 +3670,54 @@ const pathExists = async (candidate) => {
 };
 
 const resolveAppBundlePath = async (appName) => {
-  if (process.platform !== 'darwin') return null;
-  const bundleName = appName.endsWith('.app') ? appName : `${appName}.app`;
+  if (process.platform !== "darwin") return null;
+  const bundleName = appName.endsWith(".app") ? appName : `${appName}.app`;
   const candidates = [
     `/Applications/${bundleName}`,
     `/System/Applications/${bundleName}`,
     `/System/Applications/Utilities/${bundleName}`,
-    path.join(os.homedir(), 'Applications', bundleName),
+    path.join(os.homedir(), "Applications", bundleName),
   ];
   for (const candidate of candidates) {
     if (await pathExists(candidate)) return candidate;
   }
   try {
-    const { stdout } = await execFileAsync('mdfind', ['-name', bundleName], { encoding: 'utf8' });
-    const first = (stdout || '').split('\n').map((line) => line.trim()).find(Boolean);
+    const { stdout } = await execFileAsync("mdfind", ["-name", bundleName], {
+      encoding: "utf8",
+    });
+    const first = (stdout || "")
+      .split("\n")
+      .map((line) => line.trim())
+      .find(Boolean);
     return first || null;
   } catch {
     return null;
   }
 };
 
-const isAppBundleInstalled = async (appName) => Boolean(await resolveAppBundlePath(appName));
+const isAppBundleInstalled = async (appName) =>
+  Boolean(await resolveAppBundlePath(appName));
 
 const iconToDataUrl = async (iconPath, appName) => {
   if (!iconPath || !(await pathExists(iconPath))) return null;
-  const safeName = String(appName || 'app').replace(/[^a-z0-9]/gi, '_');
-  const tempPath = path.join(os.tmpdir(), `openchamber-icon-${safeName}-${Date.now()}.png`);
+  const safeName = String(appName || "app").replace(/[^a-z0-9]/gi, "_");
+  const tempPath = path.join(
+    os.tmpdir(),
+    `openchamber-icon-${safeName}-${Date.now()}.png`,
+  );
   try {
-    await execFileAsync('sips', ['-s', 'format', 'png', '-Z', '32', iconPath, '--out', tempPath], { stdio: 'ignore' });
+    await execFileAsync(
+      "sips",
+      ["-s", "format", "png", "-Z", "32", iconPath, "--out", tempPath],
+      { stdio: "ignore" },
+    );
   } catch {
     return null;
   }
   if (!(await pathExists(tempPath))) return null;
   try {
     const bytes = await fsp.readFile(tempPath);
-    return `data:image/png;base64,${bytes.toString('base64')}`;
+    return `data:image/png;base64,${bytes.toString("base64")}`;
   } finally {
     await fsp.rm(tempPath, { force: true }).catch(() => {});
   }
@@ -2946,7 +3725,7 @@ const iconToDataUrl = async (iconPath, appName) => {
 
 const resolveAppIconPath = async (appPath) => {
   if (!appPath || !(await pathExists(appPath))) return null;
-  const resourcesPath = path.join(appPath, 'Contents', 'Resources');
+  const resourcesPath = path.join(appPath, "Contents", "Resources");
   if (!(await pathExists(resourcesPath))) return null;
   let entries;
   try {
@@ -2954,33 +3733,117 @@ const resolveAppIconPath = async (appPath) => {
   } catch {
     return null;
   }
-  const icon = entries.find((entry) => entry.toLowerCase().endsWith('.icns'));
+  const icon = entries.find((entry) => entry.toLowerCase().endsWith(".icns"));
   return icon ? path.join(resourcesPath, icon) : null;
 };
 
 const buildInstalledApps = async (apps) => {
   const seen = new Set();
   const names = apps
-    .map((raw) => String(raw || '').trim())
+    .map((raw) => String(raw || "").trim())
     .filter((raw) => raw && !seen.has(raw) && seen.add(raw));
   const results = [];
   for (const name of names) {
     const appPath = await resolveAppBundlePath(name);
     if (!appPath) continue;
-    const iconDataUrl = await iconToDataUrl(await resolveAppIconPath(appPath), name);
+    const iconDataUrl = await iconToDataUrl(
+      await resolveAppIconPath(appPath),
+      name,
+    );
     results.push({ name, iconDataUrl });
   }
   return results;
 };
 
+let linuxDesktopEntriesCache = { expiresAt: 0, entries: null };
+
+const getLinuxDesktopEntries = async () => {
+  const now = Date.now();
+  if (
+    linuxDesktopEntriesCache.entries &&
+    linuxDesktopEntriesCache.expiresAt > now
+  ) {
+    return linuxDesktopEntriesCache.entries;
+  }
+  const entries = await readLinuxDesktopEntries();
+  linuxDesktopEntriesCache = {
+    entries,
+    expiresAt: now + LINUX_DESKTOP_ENTRIES_CACHE_TTL_MS,
+  };
+  return entries;
+};
+
+const buildPlatformInstalledApps = async (apps) => {
+  if (process.platform === "linux") {
+    return buildLinuxInstalledApps(apps);
+  }
+  if (process.platform === "win32") {
+    return buildWindowsInstalledApps(apps);
+  }
+  return buildInstalledApps(apps);
+};
+
+const spawnDetachedLinux = (program, args) =>
+  new Promise((resolve, reject) => {
+    const child = spawn(program, args, {
+      detached: true,
+      stdio: "ignore",
+    });
+    let settled = false;
+    const finish = (callback, value) => {
+      if (settled) return;
+      settled = true;
+      callback(value);
+    };
+    child.once("error", (error) => finish(reject, error));
+    child.once("spawn", () => {
+      child.unref();
+      finish(resolve);
+    });
+  });
+
+const runLinuxSpecChain = async (specs, appName) => {
+  if (!Array.isArray(specs) || specs.length === 0) {
+    throw new Error(`Failed to open in ${appName}: no launch candidates`);
+  }
+
+  const failures = [];
+  for (const spec of specs) {
+    if (spec.kind === "default") {
+      if (spec.targetKind === "file") {
+        shell.showItemInFolder(spec.targetPath);
+        return;
+      }
+      const errorMessage = await shell.openPath(spec.targetPath);
+      if (!errorMessage) return;
+      failures.push(`default opener: ${errorMessage}`);
+      continue;
+    }
+
+    try {
+      await spawnDetachedLinux(spec.program, spec.args);
+      return;
+    } catch (error) {
+      failures.push(
+        `${spec.program}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+  throw new Error(`Failed to open in ${appName}: ${failures.join("; ")}`);
+};
+
 const parseSshConfigImports = () => {
-  const sshConfigPath = path.join(os.homedir(), '.ssh', 'config');
+  const sshConfigPath = path.join(os.homedir(), ".ssh", "config");
   if (!fs.existsSync(sshConfigPath)) return [];
-  const lines = fs.readFileSync(sshConfigPath, 'utf8').split(/\r?\n/);
+  const lines = fs.readFileSync(sshConfigPath, "utf8").split(/\r?\n/);
   const results = [];
   for (const line of lines) {
     const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith('#') || !trimmed.toLowerCase().startsWith('host ')) {
+    if (
+      !trimmed ||
+      trimmed.startsWith("#") ||
+      !trimmed.toLowerCase().startsWith("host ")
+    ) {
       continue;
     }
     const hosts = trimmed.slice(5).trim().split(/\s+/).filter(Boolean);
@@ -2998,11 +3861,17 @@ const parseSshConfigImports = () => {
 
 const readDesktopSshInstances = () => {
   const root = readSettingsRoot();
-  return { instances: Array.isArray(root.desktopSshInstances) ? root.desktopSshInstances : [] };
+  return {
+    instances: Array.isArray(root.desktopSshInstances)
+      ? root.desktopSshInstances
+      : [],
+  };
 };
 
 const writeDesktopSshInstances = async (config) => {
-  const nextInstances = Array.isArray(config?.instances) ? config.instances : [];
+  const nextInstances = Array.isArray(config?.instances)
+    ? config.instances
+    : [];
   await mutateSettingsRoot((root) => {
     root.desktopSshInstances = nextInstances;
   });
@@ -3013,66 +3882,80 @@ const updateHostUrlForSshInstance = async (id, label, localUrl) => {
   const config = readDesktopHostsConfig();
   const nextHosts = config.hosts.filter((entry) => entry.id !== id);
   nextHosts.push({ id, label, url: localUrl });
-  await writeDesktopHostsConfig({ hosts: nextHosts, defaultHostId: config.defaultHostId });
+  await writeDesktopHostsConfig({
+    hosts: nextHosts,
+    defaultHostId: config.defaultHostId,
+  });
 };
 
 const JETBRAINS_APP_IDS = new Set([
-  'pycharm',
-  'intellij',
-  'webstorm',
-  'phpstorm',
-  'rider',
-  'rustrover',
-  'android-studio',
+  "pycharm",
+  "intellij",
+  "webstorm",
+  "phpstorm",
+  "rider",
+  "rustrover",
+  "android-studio",
 ]);
 
 const CLI_BY_APP_ID = {
-  vscode: 'code',
-  cursor: 'cursor',
-  vscodium: 'codium',
-  windsurf: 'windsurf',
-  zed: 'zed',
+  vscode: "code",
+  cursor: "cursor",
+  vscodium: "codium",
+  windsurf: "windsurf",
+  zed: "zed",
 };
 
 const WINDOWS_CLI_BY_APP_ID = {
-  vscode: 'code.cmd',
-  cursor: 'cursor.cmd',
-  vscodium: 'codium.cmd',
-  windsurf: 'windsurf.cmd',
-  zed: 'zed.cmd',
+  vscode: "code.cmd",
+  cursor: "cursor.cmd",
+  vscodium: "codium.cmd",
+  windsurf: "windsurf.cmd",
+  zed: "zed.cmd",
 };
 
 const WINDOWS_APP_EXECUTABLES = {
-  terminal: ['wt.exe', 'WindowsTerminal.exe'],
-  vscode: ['code.exe', 'code.cmd'],
-  cursor: ['cursor.exe', 'cursor.cmd'],
-  vscodium: ['codium.exe', 'codium.cmd'],
-  windsurf: ['windsurf.exe', 'windsurf.cmd'],
-  zed: ['zed.exe', 'zed.cmd'],
-  'visual-studio': ['devenv.exe'],
-  'sublime-text': ['subl.exe', 'sublime_text.exe'],
+  terminal: ["wt.exe", "WindowsTerminal.exe"],
+  vscode: ["code.exe", "code.cmd"],
+  cursor: ["cursor.exe", "cursor.cmd"],
+  vscodium: ["codium.exe", "codium.cmd"],
+  windsurf: ["windsurf.exe", "windsurf.cmd"],
+  zed: ["zed.exe", "zed.cmd"],
+  "visual-studio": ["devenv.exe"],
+  "sublime-text": ["subl.exe", "sublime_text.exe"],
 };
 
 const WINDOWS_APP_ID_BY_NAME = new Map([
-  ['finder', 'finder'],
-  ['file explorer', 'finder'],
-  ['terminal', 'terminal'],
-  ['windows terminal', 'terminal'],
-  ['visual studio code', 'vscode'],
-  ['cursor', 'cursor'],
-  ['vscodium', 'vscodium'],
-  ['windsurf', 'windsurf'],
-  ['zed', 'zed'],
-  ['visual studio', 'visual-studio'],
-  ['sublime text', 'sublime-text'],
+  ["finder", "finder"],
+  ["file explorer", "finder"],
+  ["terminal", "terminal"],
+  ["windows terminal", "terminal"],
+  ["visual studio code", "vscode"],
+  ["cursor", "cursor"],
+  ["vscodium", "vscodium"],
+  ["windsurf", "windsurf"],
+  ["zed", "zed"],
+  ["visual studio", "visual-studio"],
+  ["sublime text", "sublime-text"],
 ]);
 
-const getWindowsAppIdForName = (appName) => WINDOWS_APP_ID_BY_NAME.get(String(appName || '').trim().toLowerCase()) || '';
+const getWindowsAppIdForName = (appName) =>
+  WINDOWS_APP_ID_BY_NAME.get(
+    String(appName || "")
+      .trim()
+      .toLowerCase(),
+  ) || "";
 
 const runWhere = (program) => {
-  const result = spawnSync('where.exe', [program], { encoding: 'utf8', windowsHide: true });
+  const result = spawnSync("where.exe", [program], {
+    encoding: "utf8",
+    windowsHide: true,
+  });
   if (result.error || result.status !== 0) return null;
-  const first = String(result.stdout || '').split(/\r?\n/).map((line) => line.trim()).find(Boolean);
+  const first = String(result.stdout || "")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .find(Boolean);
   return first || null;
 };
 
@@ -3086,16 +3969,22 @@ const findWindowsExecutable = (appId) => {
 
 const resolveWindowsScriptIconExecutable = (scriptPath) => {
   if (!scriptPath || !/\.(?:cmd|bat)$/i.test(scriptPath)) return null;
-  let source = '';
+  let source = "";
   try {
-    source = fs.readFileSync(scriptPath, 'utf8');
+    source = fs.readFileSync(scriptPath, "utf8");
   } catch {
     return null;
   }
   const scriptDir = path.dirname(scriptPath);
-  const matches = [...source.matchAll(/(?:(?:%~dp0|%~dp0\\|%~dp0\/|\.\.\\|\.\.\/|[A-Za-z]:\\|[A-Za-z]:\/)[^"'\r\n]*?\.exe)/gi)];
+  const matches = [
+    ...source.matchAll(
+      /(?:(?:%~dp0|%~dp0\\|%~dp0\/|\.\.\\|\.\.\/|[A-Za-z]:\\|[A-Za-z]:\/)[^"'\r\n]*?\.exe)/gi,
+    ),
+  ];
   for (const match of matches) {
-    const raw = String(match[0] || '').replace(/^%~dp0[\\/]?/i, '').trim();
+    const raw = String(match[0] || "")
+      .replace(/^%~dp0[\\/]?/i, "")
+      .trim();
     const candidate = path.isAbsolute(raw) ? raw : path.resolve(scriptDir, raw);
     if (fs.existsSync(candidate)) return candidate;
   }
@@ -3105,21 +3994,30 @@ const resolveWindowsScriptIconExecutable = (scriptPath) => {
 let windowsTerminalPackagePathCache;
 
 const resolveWindowsTerminalPackagePath = () => {
-  if (windowsTerminalPackagePathCache !== undefined) return windowsTerminalPackagePathCache;
+  if (windowsTerminalPackagePathCache !== undefined)
+    return windowsTerminalPackagePathCache;
 
-  const powershell = runWhere('powershell.exe') || runWhere('pwsh.exe');
+  const powershell = runWhere("powershell.exe") || runWhere("pwsh.exe");
   if (powershell) {
-    const command = '$packages = @(' +
-      'Get-AppxPackage -Name Microsoft.WindowsTerminal -ErrorAction SilentlyContinue;' +
-      'Get-AppxPackage -Name Microsoft.WindowsTerminalPreview -ErrorAction SilentlyContinue' +
-      ') | Where-Object { $_.InstallLocation } | Sort-Object Version -Descending; ' +
-      'if ($packages) { $packages[0].InstallLocation }';
-    const result = spawnSync(powershell, ['-NoProfile', '-NonInteractive', '-Command', command], {
-      encoding: 'utf8',
-      windowsHide: true,
-    });
+    const command =
+      "$packages = @(" +
+      "Get-AppxPackage -Name Microsoft.WindowsTerminal -ErrorAction SilentlyContinue;" +
+      "Get-AppxPackage -Name Microsoft.WindowsTerminalPreview -ErrorAction SilentlyContinue" +
+      ") | Where-Object { $_.InstallLocation } | Sort-Object Version -Descending; " +
+      "if ($packages) { $packages[0].InstallLocation }";
+    const result = spawnSync(
+      powershell,
+      ["-NoProfile", "-NonInteractive", "-Command", command],
+      {
+        encoding: "utf8",
+        windowsHide: true,
+      },
+    );
     if (!result.error && result.status === 0) {
-      const packagePath = String(result.stdout || '').split(/\r?\n/).map((line) => line.trim()).find(Boolean);
+      const packagePath = String(result.stdout || "")
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .find(Boolean);
       if (packagePath && fs.existsSync(packagePath)) {
         windowsTerminalPackagePathCache = packagePath;
         return windowsTerminalPackagePathCache;
@@ -3127,10 +4025,16 @@ const resolveWindowsTerminalPackagePath = () => {
     }
   }
 
-  const programFilesRoots = [process.env.ProgramW6432, process.env.ProgramFiles, 'C:\\Program Files']
-    .filter((value, index, values) => typeof value === 'string' && value && values.indexOf(value) === index);
+  const programFilesRoots = [
+    process.env.ProgramW6432,
+    process.env.ProgramFiles,
+    "C:\\Program Files",
+  ].filter(
+    (value, index, values) =>
+      typeof value === "string" && value && values.indexOf(value) === index,
+  );
   for (const root of programFilesRoots) {
-    const windowsAppsPath = path.join(root, 'WindowsApps');
+    const windowsAppsPath = path.join(root, "WindowsApps");
     let entries = [];
     try {
       entries = fs.readdirSync(windowsAppsPath, { withFileTypes: true });
@@ -3141,10 +4045,16 @@ const resolveWindowsTerminalPackagePath = () => {
     const packageNames = entries
       .filter((entry) => entry.isDirectory())
       .map((entry) => entry.name)
-      .filter((name) => /^Microsoft\.WindowsTerminal(?:Preview)?_.*__8wekyb3d8bbwe$/i.test(name))
+      .filter((name) =>
+        /^Microsoft\.WindowsTerminal(?:Preview)?_.*__8wekyb3d8bbwe$/i.test(
+          name,
+        ),
+      )
       .sort()
       .reverse();
-    const stable = packageNames.find((name) => /^Microsoft\.WindowsTerminal_/i.test(name));
+    const stable = packageNames.find((name) =>
+      /^Microsoft\.WindowsTerminal_/i.test(name),
+    );
     const selected = stable || packageNames[0];
     if (selected) {
       windowsTerminalPackagePathCache = path.join(windowsAppsPath, selected);
@@ -3160,10 +4070,14 @@ const resolveWindowsTerminalIconPath = () => {
   const packagePath = resolveWindowsTerminalPackagePath();
   if (!packagePath) return null;
   const candidates = [
-    path.join(packagePath, 'Images', 'Square44x44Logo.targetsize-96_altform-unplated.png'),
-    path.join(packagePath, 'Images', 'Square44x44Logo.targetsize-96.png'),
-    path.join(packagePath, 'Images', 'StoreLogo.scale-200.png'),
-    path.join(packagePath, 'Images', 'StoreLogo.scale-100.png'),
+    path.join(
+      packagePath,
+      "Images",
+      "Square44x44Logo.targetsize-96_altform-unplated.png",
+    ),
+    path.join(packagePath, "Images", "Square44x44Logo.targetsize-96.png"),
+    path.join(packagePath, "Images", "StoreLogo.scale-200.png"),
+    path.join(packagePath, "Images", "StoreLogo.scale-100.png"),
   ];
   return candidates.find((candidate) => fs.existsSync(candidate)) || null;
 };
@@ -3171,31 +4085,35 @@ const resolveWindowsTerminalIconPath = () => {
 const resolveWindowsTerminalExecutable = () => {
   const packagePath = resolveWindowsTerminalPackagePath();
   if (packagePath) {
-    const executable = path.join(packagePath, 'WindowsTerminal.exe');
+    const executable = path.join(packagePath, "WindowsTerminal.exe");
     if (fs.existsSync(executable)) return executable;
   }
-  return findWindowsExecutable('terminal');
+  return findWindowsExecutable("terminal");
 };
 
 const imageFileToDataUrl = (filePath) => {
   if (!filePath) return null;
   try {
-    return `data:image/png;base64,${fs.readFileSync(filePath).toString('base64')}`;
+    return `data:image/png;base64,${fs.readFileSync(filePath).toString("base64")}`;
   } catch {
     return null;
   }
 };
 
 const resolveWindowsAppIconExecutable = ({ appId, appName }) => {
-  if (appId === 'finder') {
-    const explorerPath = path.join(process.env.SystemRoot || 'C:\\Windows', 'explorer.exe');
-    return fs.existsSync(explorerPath) ? explorerPath : 'explorer.exe';
+  if (appId === "finder") {
+    const explorerPath = path.join(
+      process.env.SystemRoot || "C:\\Windows",
+      "explorer.exe",
+    );
+    return fs.existsSync(explorerPath) ? explorerPath : "explorer.exe";
   }
-  if (appId === 'terminal') {
+  if (appId === "terminal") {
     return resolveWindowsTerminalExecutable();
   }
 
-  const executable = findWindowsExecutable(appId) || findWindowsAppNameExecutable(appName);
+  const executable =
+    findWindowsExecutable(appId) || findWindowsAppNameExecutable(appName);
   if (!executable) return null;
   if (/\.exe$/i.test(executable)) return executable;
   return resolveWindowsScriptIconExecutable(executable) || executable;
@@ -3204,7 +4122,7 @@ const resolveWindowsAppIconExecutable = ({ appId, appName }) => {
 const windowsIconToDataUrl = async (executablePath) => {
   if (!executablePath) return null;
   try {
-    const image = await app.getFileIcon(executablePath, { size: 'normal' });
+    const image = await app.getFileIcon(executablePath, { size: "normal" });
     if (image.isEmpty()) return null;
     return image.toDataURL();
   } catch {
@@ -3213,13 +4131,13 @@ const windowsIconToDataUrl = async (executablePath) => {
 };
 
 const findWindowsAppNameExecutable = (appName) => {
-  const program = `${String(appName || '').trim()}.exe`.replace(/\s+/g, '');
-  return program === '.exe' ? null : runWhere(program);
+  const program = `${String(appName || "").trim()}.exe`.replace(/\s+/g, "");
+  return program === ".exe" ? null : runWhere(program);
 };
 
 const isWindowsAppInstalled = ({ appId, appName }) => {
-  if (appId === 'finder') return true;
-  if (appId === 'terminal') return Boolean(findWindowsExecutable('terminal'));
+  if (appId === "finder") return true;
+  if (appId === "terminal") return Boolean(findWindowsExecutable("terminal"));
   if (findWindowsExecutable(appId)) return true;
   return Boolean(findWindowsAppNameExecutable(appName));
 };
@@ -3227,38 +4145,60 @@ const isWindowsAppInstalled = ({ appId, appName }) => {
 const buildWindowsInstalledApps = async (apps) => {
   const seen = new Set();
   const names = (Array.isArray(apps) ? apps : [])
-    .map((appName) => String(appName || '').trim())
+    .map((appName) => String(appName || "").trim())
     .filter((appName) => appName && !seen.has(appName) && seen.add(appName))
-    .filter((appName) => isWindowsAppInstalled({ appId: getWindowsAppIdForName(appName), appName }));
+    .filter((appName) =>
+      isWindowsAppInstalled({
+        appId: getWindowsAppIdForName(appName),
+        appName,
+      }),
+    );
   const results = [];
   for (const name of names) {
     const appId = getWindowsAppIdForName(name);
-    const executablePath = resolveWindowsAppIconExecutable({ appId, appName: name });
-    const iconDataUrl = appId === 'terminal'
-      ? imageFileToDataUrl(resolveWindowsTerminalIconPath()) || await windowsIconToDataUrl(executablePath)
-      : await windowsIconToDataUrl(executablePath);
+    const executablePath = resolveWindowsAppIconExecutable({
+      appId,
+      appName: name,
+    });
+    const iconDataUrl =
+      appId === "terminal"
+        ? imageFileToDataUrl(resolveWindowsTerminalIconPath()) ||
+          (await windowsIconToDataUrl(executablePath))
+        : await windowsIconToDataUrl(executablePath);
     results.push({ name, iconDataUrl });
   }
   return results;
 };
 
 const buildWindowsOpenProjectSpecs = ({ projectPath, appId, appName }) => {
-  if (appId === 'finder') {
-    return [{ program: 'explorer.exe', args: [projectPath] }];
+  if (appId === "finder") {
+    return [{ program: "explorer.exe", args: [projectPath] }];
   }
-  if (appId === 'terminal') {
+  if (appId === "terminal") {
     const specs = [];
-    const terminal = findWindowsExecutable('terminal');
+    const terminal = findWindowsExecutable("terminal");
     if (terminal) {
-      specs.push({ program: terminal, args: ['-d', projectPath] });
+      specs.push({ program: terminal, args: ["-d", projectPath] });
     }
-    const shell = runWhere('pwsh.exe') || runWhere('powershell.exe');
+    const shell = runWhere("pwsh.exe") || runWhere("powershell.exe");
     if (shell) {
-      specs.push({ program: shell, args: ['-NoExit', '-Command', `Set-Location -LiteralPath ${JSON.stringify(projectPath)}`], shellStart: true });
+      specs.push({
+        program: shell,
+        args: [
+          "-NoExit",
+          "-Command",
+          `Set-Location -LiteralPath ${JSON.stringify(projectPath)}`,
+        ],
+        shellStart: true,
+      });
     }
-    const commandPrompt = process.env.ComSpec || runWhere('cmd.exe');
+    const commandPrompt = process.env.ComSpec || runWhere("cmd.exe");
     if (commandPrompt) {
-      specs.push({ program: commandPrompt, args: ['/k', 'cd', '/d', projectPath], shellStart: true });
+      specs.push({
+        program: commandPrompt,
+        args: ["/k", "cd", "/d", projectPath],
+        shellStart: true,
+      });
     }
     return specs;
   }
@@ -3282,11 +4222,15 @@ const buildWindowsOpenProjectSpecs = ({ projectPath, appId, appName }) => {
 };
 
 const buildWindowsOpenFileSpecs = ({ filePath, appId, appName }) => {
-  if (appId === 'finder') {
-    return [{ program: 'explorer.exe', args: ['/select,', filePath] }];
+  if (appId === "finder") {
+    return [{ program: "explorer.exe", args: ["/select,", filePath] }];
   }
-  if (appId === 'terminal') {
-    return buildWindowsOpenProjectSpecs({ projectPath: path.dirname(filePath), appId, appName });
+  if (appId === "terminal") {
+    return buildWindowsOpenProjectSpecs({
+      projectPath: path.dirname(filePath),
+      appId,
+      appName,
+    });
   }
   const specs = [];
   const cli = WINDOWS_CLI_BY_APP_ID[appId];
@@ -3308,37 +4252,40 @@ const buildWindowsOpenFileSpecs = ({ filePath, appId, appName }) => {
 };
 
 const buildOpenProjectSpecs = ({ projectPath, appId, appName }) => {
-  if (appId === 'finder') {
-    return [{ program: 'open', args: [projectPath] }];
+  if (appId === "finder") {
+    return [{ program: "open", args: [projectPath] }];
   }
 
-  if (appId === 'terminal' || appId === 'iterm2' || appId === 'ghostty') {
-    return [{ program: 'open', args: ['-a', appName, projectPath] }];
+  if (appId === "terminal" || appId === "iterm2" || appId === "ghostty") {
+    return [{ program: "open", args: ["-a", appName, projectPath] }];
   }
 
   const specs = [];
 
   const cli = CLI_BY_APP_ID[appId];
   if (cli) {
-    specs.push({ program: cli, args: ['-n', projectPath] });
+    specs.push({ program: cli, args: ["-n", projectPath] });
   }
 
   if (JETBRAINS_APP_IDS.has(appId)) {
-    specs.push({ program: 'open', args: ['-na', appName, '--args', projectPath] });
+    specs.push({
+      program: "open",
+      args: ["-na", appName, "--args", projectPath],
+    });
   }
 
-  specs.push({ program: 'open', args: ['-a', appName, projectPath] });
+  specs.push({ program: "open", args: ["-a", appName, projectPath] });
   return specs;
 };
 
 const buildOpenFileSpecs = ({ filePath, appId, appName }) => {
-  if (appId === 'finder') {
-    return [{ program: 'open', args: ['-R', filePath] }];
+  if (appId === "finder") {
+    return [{ program: "open", args: ["-R", filePath] }];
   }
 
   const parentDir = path.dirname(filePath);
-  if (appId === 'terminal' || appId === 'iterm2' || appId === 'ghostty') {
-    return [{ program: 'open', args: ['-a', appName, parentDir] }];
+  if (appId === "terminal" || appId === "iterm2" || appId === "ghostty") {
+    return [{ program: "open", args: ["-a", appName, parentDir] }];
   }
 
   const specs = [];
@@ -3348,11 +4295,12 @@ const buildOpenFileSpecs = ({ filePath, appId, appName }) => {
     specs.push({ program: cli, args: [filePath] });
   }
 
-  specs.push({ program: 'open', args: ['-a', appName, filePath] });
+  specs.push({ program: "open", args: ["-a", appName, filePath] });
   return specs;
 };
 
-const quoteWindowsCommandArg = (value) => `"${String(value).replace(/"/g, '""')}"`;
+const quoteWindowsCommandArg = (value) =>
+  `"${String(value).replace(/"/g, '""')}"`;
 
 const resolveWindowsLaunchProgram = (program) => {
   if (path.isAbsolute(program)) {
@@ -3362,30 +4310,47 @@ const resolveWindowsLaunchProgram = (program) => {
 };
 
 const launchWindowsCommandScript = (spec, program) => {
-  const commandLine = ['call', quoteWindowsCommandArg(program), ...spec.args.map(quoteWindowsCommandArg)].join(' ');
-  const child = spawn(process.env.ComSpec || 'cmd.exe', ['/d', '/s', '/c', commandLine], {
-    detached: true,
-    stdio: 'ignore',
-    windowsHide: false,
-    windowsVerbatimArguments: true,
-  });
+  const commandLine = [
+    "call",
+    quoteWindowsCommandArg(program),
+    ...spec.args.map(quoteWindowsCommandArg),
+  ].join(" ");
+  const child = spawn(
+    process.env.ComSpec || "cmd.exe",
+    ["/d", "/s", "/c", commandLine],
+    {
+      detached: true,
+      stdio: "ignore",
+      windowsHide: false,
+      windowsVerbatimArguments: true,
+    },
+  );
   child.unref();
 };
 
 const launchWindowsSpec = (spec) => {
   const program = resolveWindowsLaunchProgram(spec.program);
   if (!program) {
-    throw new Error('program not found');
+    throw new Error("program not found");
   }
 
   if (spec.shellStart) {
-    const commandLine = ['start', '""', quoteWindowsCommandArg(program), ...spec.args.map(quoteWindowsCommandArg)].join(' ');
-    const child = spawn(process.env.ComSpec || 'cmd.exe', ['/d', '/s', '/c', commandLine], {
-      detached: true,
-      stdio: 'ignore',
-      windowsHide: false,
-      windowsVerbatimArguments: true,
-    });
+    const commandLine = [
+      "start",
+      '""',
+      quoteWindowsCommandArg(program),
+      ...spec.args.map(quoteWindowsCommandArg),
+    ].join(" ");
+    const child = spawn(
+      process.env.ComSpec || "cmd.exe",
+      ["/d", "/s", "/c", commandLine],
+      {
+        detached: true,
+        stdio: "ignore",
+        windowsHide: false,
+        windowsVerbatimArguments: true,
+      },
+    );
     child.unref();
     return;
   }
@@ -3397,7 +4362,7 @@ const launchWindowsSpec = (spec) => {
 
   const child = spawn(program, spec.args, {
     detached: true,
-    stdio: 'ignore',
+    stdio: "ignore",
     windowsHide: false,
   });
   child.unref();
@@ -3408,22 +4373,27 @@ const runSpecChain = (specs, appName) => {
     throw new Error(`Failed to open in ${appName}: no launch candidates`);
   }
 
-  if (process.platform === 'win32') {
+  if (process.platform === "win32") {
     const failures = [];
     for (const spec of specs) {
       try {
         launchWindowsSpec(spec);
         return;
       } catch (error) {
-        failures.push(`${spec.program}: ${error instanceof Error ? error.message : String(error)}`);
+        failures.push(
+          `${spec.program}: ${error instanceof Error ? error.message : String(error)}`,
+        );
       }
     }
-    throw new Error(`Failed to open in ${appName}: ${failures.join('; ')}`);
+    throw new Error(`Failed to open in ${appName}: ${failures.join("; ")}`);
   }
 
   const failures = [];
   for (const spec of specs) {
-    const result = spawnSync(spec.program, spec.args, { stdio: 'ignore', windowsHide: true });
+    const result = spawnSync(spec.program, spec.args, {
+      stdio: "ignore",
+      windowsHide: true,
+    });
     if (result.error) {
       failures.push(`${spec.program}: ${result.error.message}`);
       continue;
@@ -3433,52 +4403,124 @@ const runSpecChain = (specs, appName) => {
     }
     failures.push(`${spec.program} exited ${result.status}`);
   }
-  throw new Error(`Failed to open in ${appName}: ${failures.join('; ')}`);
+  throw new Error(`Failed to open in ${appName}: ${failures.join("; ")}`);
 };
 
 const handleInvoke = async (browserWindow, command, args = {}) => {
   switch (command) {
-    case 'desktop_start_window_drag':
+    case "desktop_artifact_runner_start":
+      return artifactRunnerManager.start(browserWindow, {
+        url: args.url,
+        bounds: args.bounds,
+        clipBounds: args.clipBounds,
+        visible: args.visible !== false,
+      });
+
+    case "desktop_artifact_runner_update":
+      return artifactRunnerManager.update(args.runnerId, {
+        bounds: args.bounds,
+        clipBounds: args.clipBounds,
+        visible: args.visible,
+      });
+
+    case "desktop_artifact_runner_post":
+      return artifactRunnerManager.post(args.runnerId, args.message);
+
+    case "desktop_artifact_runner_popout":
+      return artifactRunnerManager.popout(args.runnerId, {
+        title: args.title,
+        width: args.width,
+        height: args.height,
+      });
+
+    case "desktop_artifact_runner_restore":
+      return artifactRunnerManager.restore(args.runnerId);
+
+    case "desktop_artifact_runner_stop":
+      return artifactRunnerManager.stop(args.runnerId, "stopped");
+
+    case "desktop_artifact_runner_status":
+      return artifactRunnerManager.get(args.runnerId);
+
+    case "desktop_start_window_drag":
       return null;
 
-    case 'desktop_is_window_fullscreen':
+    // Used after an MCP authorization finishes in the system browser: the app
+    // raises itself rather than relying on the browser to hand control back.
+    // A browser will not follow a custom-protocol link without a user gesture,
+    // and the completion page has none.
+    case "desktop_focus_window": {
+      const target = browserWindow && !browserWindow.isDestroyed()
+        ? browserWindow
+        : (state.mainWindow && !state.mainWindow.isDestroyed() ? state.mainWindow : null);
+      if (!target) return false;
+      if (target.isMinimized()) target.restore();
+      target.show();
+      target.focus();
+      app.focus?.({ steal: true });
+      return true;
+    }
+
+    case "desktop_is_window_fullscreen":
       return Boolean(browserWindow?.isFullScreen());
 
-    case 'desktop_set_window_title':
-      if (browserWindow && typeof args.title === 'string') {
+    case "desktop_set_window_title":
+      if (browserWindow && typeof args.title === "string") {
         browserWindow.setTitle(args.title);
       }
       return null;
 
-    case 'desktop_get_app_version':
+    case "desktop_get_app_version":
       return APP_VERSION;
 
-    case 'desktop_get_launch_at_login': {
-      if (process.platform !== 'darwin' && process.platform !== 'win32') return { supported: false, enabled: false };
+    case "desktop_get_dock_icon":
+      return dockIconController.getStatus();
+
+    case "desktop_set_dock_icon":
+      return dockIconController.setVariant(args.variant);
+
+    case "desktop_get_launch_at_login": {
+      if (process.platform === "linux") {
+        return { supported: true, enabled: await readLinuxAutostartEnabled() };
+      }
+      if (process.platform !== "darwin" && process.platform !== "win32")
+        return { supported: false, enabled: false };
       const settings = app.getLoginItemSettings(getLoginItemOptions());
       return { supported: true, enabled: settings.openAtLogin === true };
     }
 
-    case 'desktop_set_launch_at_login': {
-      if (process.platform !== 'darwin' && process.platform !== 'win32') return { supported: false, enabled: false };
+    case "desktop_set_launch_at_login": {
+      if (process.platform === "linux") {
+        const enabled = args.enabled === true;
+        return setLinuxAutostartEnabled({
+          enabled,
+          appName: app.getName(),
+          backgroundArg: BACKGROUND_START_ARG,
+        });
+      }
+      if (process.platform !== "darwin" && process.platform !== "win32")
+        return { supported: false, enabled: false };
       const enabled = args.enabled === true;
       const settingsArgs = {
         openAtLogin: enabled,
-        ...(process.platform === 'darwin' ? { openAsHidden: enabled } : {}),
-        ...(process.platform === 'win32' ? getLoginItemOptions() : { args: enabled ? [BACKGROUND_START_ARG] : [] }),
-        ...(process.platform === 'win32' ? { enabled } : {}),
+        ...(process.platform === "darwin" ? { openAsHidden: enabled } : {}),
+        ...(process.platform === "win32"
+          ? getLoginItemOptions()
+          : { args: enabled ? [BACKGROUND_START_ARG] : [] }),
+        ...(process.platform === "win32" ? { enabled } : {}),
       };
       app.setLoginItemSettings(settingsArgs);
       const settings = app.getLoginItemSettings(getLoginItemOptions());
       return { supported: true, enabled: settings.openAtLogin === true };
     }
 
-    case 'desktop_get_minimize_to_tray': {
+    case "desktop_get_minimize_to_tray": {
       return readDesktopMinimizeToTrayStatus();
     }
 
-    case 'desktop_set_minimize_to_tray': {
-      if (process.platform !== 'win32') return { supported: false, enabled: false };
+    case "desktop_set_minimize_to_tray": {
+      if (process.platform !== "win32" && process.platform !== "linux")
+        return { supported: false, enabled: false };
       const enabled = args.enabled === true;
       await mutateSettingsRoot((root) => {
         root.desktopMinimizeToTrayEnabled = enabled;
@@ -3487,11 +4529,11 @@ const handleInvoke = async (browserWindow, command, args = {}) => {
       return readDesktopMinimizeToTrayStatus();
     }
 
-    case 'desktop_get_keep_awake': {
+    case "desktop_get_keep_awake": {
       return readDesktopKeepAwakeStatus();
     }
 
-    case 'desktop_set_keep_awake': {
+    case "desktop_set_keep_awake": {
       const enabled = args.enabled === true;
       await mutateSettingsRoot((root) => {
         root.desktopKeepAwakeEnabled = enabled;
@@ -3500,31 +4542,38 @@ const handleInvoke = async (browserWindow, command, args = {}) => {
       return { supported: true, enabled, active };
     }
 
-    case 'desktop_browser_capture_page': {
-      const wcId = Number.isFinite(args.webContentsId) ? Math.trunc(args.webContentsId) : null;
-      if (wcId === null || wcId < 0) throw new Error('webContentsId is required');
+    case "desktop_browser_capture_page": {
+      const wcId = Number.isFinite(args.webContentsId)
+        ? Math.trunc(args.webContentsId)
+        : null;
+      if (wcId === null || wcId < 0)
+        throw new Error("webContentsId is required");
       const wc = webContents.fromId(wcId);
-      if (!wc || wc.isDestroyed()) throw new Error('WebContents not found');
+      if (!wc || wc.isDestroyed()) throw new Error("WebContents not found");
       const image = await wc.capturePage();
       const buffer = image.toJPEG(82);
       return {
-        mime: 'image/jpeg',
-        base64: buffer.toString('base64'),
+        mime: "image/jpeg",
+        base64: buffer.toString("base64"),
         width: image.getSize().width,
         height: image.getSize().height,
       };
     }
 
-    case 'desktop_capture_page_rect': {
+    case "desktop_capture_page_rect": {
       if (!browserWindow || browserWindow.isDestroyed()) {
-        throw new Error('Window is not available');
+        throw new Error("Window is not available");
       }
 
       const bounds = browserWindow.getContentBounds();
       const x = Number.isFinite(args.x) ? Math.max(0, Math.floor(args.x)) : 0;
       const y = Number.isFinite(args.y) ? Math.max(0, Math.floor(args.y)) : 0;
-      const width = Number.isFinite(args.width) ? Math.max(1, Math.floor(args.width)) : 1;
-      const height = Number.isFinite(args.height) ? Math.max(1, Math.floor(args.height)) : 1;
+      const width = Number.isFinite(args.width)
+        ? Math.max(1, Math.floor(args.width))
+        : 1;
+      const height = Number.isFinite(args.height)
+        ? Math.max(1, Math.floor(args.height))
+        : 1;
       const clampedX = Math.min(x, Math.max(0, bounds.width - 1));
       const clampedY = Math.min(y, Math.max(0, bounds.height - 1));
       const rect = {
@@ -3534,272 +4583,407 @@ const handleInvoke = async (browserWindow, command, args = {}) => {
         height: Math.min(height, Math.max(1, bounds.height - clampedY)),
       };
       if (rect.width * rect.height > MAX_CAPTURE_PAGE_RECT_AREA) {
-        throw new Error('Capture area is too large');
+        throw new Error("Capture area is too large");
       }
 
       const image = await browserWindow.webContents.capturePage(rect);
       const buffer = image.toJPEG(82);
       return {
-        mime: 'image/jpeg',
-        base64: buffer.toString('base64'),
+        mime: "image/jpeg",
+        base64: buffer.toString("base64"),
         width: image.getSize().width,
         height: image.getSize().height,
       };
     }
 
-    case 'desktop_save_markdown_file': {
-      const defaultPath = typeof args.defaultFileName === 'string' ? args.defaultFileName.trim() : '';
+    case "desktop_save_markdown_file": {
+      const defaultPath =
+        typeof args.defaultFileName === "string"
+          ? args.defaultFileName.trim()
+          : "";
       if (!defaultPath) {
-        throw new Error('Default file name is required');
+        throw new Error("Default file name is required");
       }
 
-      const content = typeof args.content === 'string' ? args.content : '';
+      const content = typeof args.content === "string" ? args.content : "";
       const result = await dialog.showSaveDialog(browserWindow || undefined, {
         defaultPath,
-        filters: [{ name: 'Markdown', extensions: ['md'] }],
+        filters: [{ name: "Markdown", extensions: ["md"] }],
       });
       if (result.canceled || !result.filePath) {
         return null;
       }
 
-      await fsp.writeFile(result.filePath, content, 'utf8');
+      await fsp.writeFile(result.filePath, content, "utf8");
       return result.filePath;
     }
 
-    case 'desktop_read_file': {
-      const rawPath = typeof args.path === 'string' ? args.path : '';
-      if (!rawPath) throw new Error('Path is required');
+    case "desktop_read_file": {
+      const rawPath = typeof args.path === "string" ? args.path : "";
+      if (!rawPath) throw new Error("Path is required");
       // Defense in depth behind the IPC origin gate: even our own UI (or a
       // prompt-injected agent) can't read credential stores. Resolve the
       // path, require it under $HOME or tmpdir, and refuse known secret dirs
       // / dotfiles commonly holding keys.
       const filePath = path.resolve(rawPath);
-      const home = os.homedir() || '';
-      const tmp = os.tmpdir() || '';
-      const underHome = home && (filePath === home || filePath.startsWith(home + path.sep));
-      const underTmp = tmp && (filePath === tmp || filePath.startsWith(tmp + path.sep));
+      const home = os.homedir() || "";
+      const tmp = os.tmpdir() || "";
+      const underHome =
+        home && (filePath === home || filePath.startsWith(home + path.sep));
+      const underTmp =
+        tmp && (filePath === tmp || filePath.startsWith(tmp + path.sep));
       if (!underHome && !underTmp) {
-        throw new Error('File is outside the allowed workspace');
+        throw new Error("File is outside the allowed workspace");
       }
-      const DENIED_SEGMENTS = ['.ssh', '.aws', '.gnupg', '.gpg', '.config/gh', '.config/openchamber/credentials'];
-      const relFromHome = underHome ? filePath.slice(home.length + 1) : '';
-      const relNormalized = relFromHome.split(path.sep).join('/');
-      if (DENIED_SEGMENTS.some((segment) => relNormalized === segment || relNormalized.startsWith(`${segment}/`))) {
-        throw new Error('Access to this path is not allowed');
+      const DENIED_SEGMENTS = [
+        ".ssh",
+        ".aws",
+        ".gnupg",
+        ".gpg",
+        ".config/gh",
+        ".config/openchamber/credentials",
+      ];
+      const relFromHome = underHome ? filePath.slice(home.length + 1) : "";
+      const relNormalized = relFromHome.split(path.sep).join("/");
+      if (
+        DENIED_SEGMENTS.some(
+          (segment) =>
+            relNormalized === segment ||
+            relNormalized.startsWith(`${segment}/`),
+        )
+      ) {
+        throw new Error("Access to this path is not allowed");
       }
       const basename = path.basename(filePath).toLowerCase();
-      if (basename === '.env' || basename.startsWith('.env.') || basename.endsWith('.pem') || basename.endsWith('.key')) {
-        throw new Error('Access to this path is not allowed');
+      if (
+        basename === ".env" ||
+        basename.startsWith(".env.") ||
+        basename.endsWith(".pem") ||
+        basename.endsWith(".key")
+      ) {
+        throw new Error("Access to this path is not allowed");
       }
       const stats = await fsp.stat(filePath);
       if (stats.size > 50 * 1024 * 1024) {
-        throw new Error('File is too large. Maximum size is 50MB.');
+        throw new Error("File is too large. Maximum size is 50MB.");
       }
       const bytes = await fsp.readFile(filePath);
       const ext = path.extname(filePath).toLowerCase();
-      const mime = ({
-        '.png': 'image/png',
-        '.jpg': 'image/jpeg',
-        '.jpeg': 'image/jpeg',
-        '.gif': 'image/gif',
-        '.webp': 'image/webp',
-        '.svg': 'image/svg+xml',
-        '.bmp': 'image/bmp',
-        '.ico': 'image/x-icon',
-        '.pdf': 'application/pdf',
-        '.txt': 'text/plain',
-        '.md': 'text/markdown',
-        '.json': 'application/json',
-        '.js': 'text/javascript',
-        '.ts': 'text/typescript',
-        '.tsx': 'text/typescript-jsx',
-        '.jsx': 'text/javascript-jsx',
-        '.html': 'text/html',
-        '.css': 'text/css',
-        '.py': 'text/x-python',
-      })[ext] || 'application/octet-stream';
-      return { mime, base64: bytes.toString('base64'), size: bytes.length };
+      const mime =
+        {
+          ".png": "image/png",
+          ".jpg": "image/jpeg",
+          ".jpeg": "image/jpeg",
+          ".gif": "image/gif",
+          ".webp": "image/webp",
+          ".svg": "image/svg+xml",
+          ".bmp": "image/bmp",
+          ".ico": "image/x-icon",
+          ".pdf": "application/pdf",
+          ".txt": "text/plain",
+          ".md": "text/markdown",
+          ".json": "application/json",
+          ".js": "text/javascript",
+          ".ts": "text/typescript",
+          ".tsx": "text/typescript-jsx",
+          ".jsx": "text/javascript-jsx",
+          ".html": "text/html",
+          ".css": "text/css",
+          ".py": "text/x-python",
+        }[ext] || "application/octet-stream";
+      return { mime, base64: bytes.toString("base64"), size: bytes.length };
     }
 
-    case 'desktop_notify':
+    case "desktop_notify":
       maybeShowNativeNotification(args);
       return null;
 
-    case 'desktop_tray_update':
+    case "desktop_tray_update":
       if (state.trayController) {
         try {
           state.trayController.update(args || {});
         } catch (error) {
-          log.warn('[electron] tray update failed', error);
+          log.warn("[electron] tray update failed", error);
         }
       }
       // Dock badge: count of chats with unseen activity (0 = cleared, also when
       // the user disabled the badge). setBadgeCount drives the macOS dock badge.
       try {
-        const rawCount = args && typeof args.dockBadgeCount === 'number' ? args.dockBadgeCount : 0;
-        const badgeCount = Number.isFinite(rawCount) ? Math.max(0, Math.floor(rawCount)) : 0;
-        if (typeof app.setBadgeCount === 'function') {
+        const rawCount =
+          args && typeof args.dockBadgeCount === "number"
+            ? args.dockBadgeCount
+            : 0;
+        const badgeCount = Number.isFinite(rawCount)
+          ? Math.max(0, Math.floor(rawCount))
+          : 0;
+        if (typeof app.setBadgeCount === "function") {
           app.setBadgeCount(badgeCount);
         }
       } catch (error) {
-        log.warn('[electron] dock badge update failed', error);
+        log.warn("[electron] dock badge update failed", error);
       }
       return null;
 
-    case 'desktop_clear_cache':
+    case "desktop_clear_cache":
       await session.defaultSession.clearStorageData();
       for (const browserWindow of BrowserWindow.getAllWindows()) {
         browserWindow.webContents.reload();
       }
       return null;
 
-    case 'desktop_open_path': {
-      const targetPath = typeof args.path === 'string' ? args.path.trim() : '';
-      const appName = typeof args.app === 'string' ? args.app.trim() : '';
-      if (!targetPath) throw new Error('Path is required');
-      if (process.platform === 'darwin') {
-        const openArgs = appName ? ['-a', appName, targetPath] : [targetPath];
-        spawn('open', openArgs, { detached: true, stdio: 'ignore' }).unref();
+    case "desktop_open_path": {
+      const targetPath = typeof args.path === "string" ? args.path.trim() : "";
+      const appName = typeof args.app === "string" ? args.app.trim() : "";
+      const validated = await validateLocalPath(targetPath);
+      if (process.platform === "darwin") {
+        const openArgs = appName
+          ? ["-a", appName, validated.path]
+          : [validated.path];
+        spawn("open", openArgs, { detached: true, stdio: "ignore" }).unref();
         return null;
       }
-      await shell.openPath(targetPath);
+      if (
+        appName &&
+        process.platform !== "linux" &&
+        process.platform !== "win32"
+      ) {
+        throw new Error(unsupportedAppSpecificOpenError("paths"));
+      }
+      const errorMessage = await shell.openPath(validated.path);
+      if (errorMessage) {
+        throw new Error(`Failed to open path: ${errorMessage}`);
+      }
       return null;
     }
 
-    case 'desktop_open_external_url': {
-      const target = typeof args.url === 'string' ? args.url.trim() : '';
-      if (!target) throw new Error('URL is required');
+    case "desktop_open_external_url": {
+      const target = typeof args.url === "string" ? args.url.trim() : "";
+      if (!target) throw new Error("URL is required");
 
       const parsed = new URL(target);
-      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-        throw new Error('Only HTTP URLs can be opened externally');
+      if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+        throw new Error("Only HTTP URLs can be opened externally");
       }
 
       await shell.openExternal(parsed.toString());
       return null;
     }
 
-    case 'desktop_reveal_path': {
-      const targetPath = typeof args.path === 'string' ? args.path.trim() : '';
-      if (!targetPath) {
-        throw new Error('Path is required');
-      }
-
-      const stats = await fsp.stat(targetPath).catch(() => null);
-      if (stats?.isDirectory()) {
-        await shell.openPath(targetPath);
+    case "desktop_reveal_path": {
+      const validated = await validateLocalPath(
+        typeof args.path === "string" ? args.path.trim() : "",
+      );
+      if (validated.stats.isDirectory()) {
+        const errorMessage = await shell.openPath(validated.path);
+        if (errorMessage) {
+          throw new Error(`Failed to reveal path: ${errorMessage}`);
+        }
         return null;
       }
 
-      shell.showItemInFolder(targetPath);
+      shell.showItemInFolder(validated.path);
       return null;
     }
 
-    case 'desktop_open_in_app': {
-      const projectPath = typeof args.projectPath === 'string' ? args.projectPath.trim() : '';
-      const appId = typeof args.appId === 'string' ? args.appId.trim().toLowerCase() : '';
-      const appName = typeof args.appName === 'string' ? args.appName.trim() : '';
+    case "desktop_open_in_app": {
+      const projectPath =
+        typeof args.projectPath === "string" ? args.projectPath.trim() : "";
+      const appId =
+        typeof args.appId === "string" ? args.appId.trim().toLowerCase() : "";
+      const appName =
+        typeof args.appName === "string" ? args.appName.trim() : "";
       if (!projectPath || !appId || !appName) {
-        throw new Error('Project path, app id, and app name are required');
+        throw new Error("Project path, app id, and app name are required");
       }
-      if (process.platform === 'win32') {
-        if (appId === 'finder') {
-          const error = await shell.openPath(projectPath);
+      const validated = await validateLocalPath(projectPath, "Project path");
+      if (process.platform === "win32") {
+        if (appId === "finder") {
+          const error = await shell.openPath(validated.path);
           if (error) throw new Error(error);
           return null;
         }
-        runSpecChain(buildWindowsOpenProjectSpecs({ projectPath, appId, appName }), appName);
+        runSpecChain(
+          buildWindowsOpenProjectSpecs({
+            projectPath: validated.path,
+            appId,
+            appName,
+          }),
+          appName,
+        );
         return null;
       }
-      if (process.platform !== 'darwin') {
-        throw new Error('desktop_open_in_app is only supported on macOS and Windows');
+      if (process.platform === "linux") {
+        const entries = await getLinuxDesktopEntries();
+        await runLinuxSpecChain(
+          buildLinuxOpenSpecs({
+            targetPath: validated.path,
+            appId,
+            appName,
+            targetKind: "project",
+            entries,
+          }),
+          appName,
+        );
+        return null;
       }
-      runSpecChain(buildOpenProjectSpecs({ projectPath, appId, appName }), appName);
+      if (process.platform !== "darwin") {
+        throw new Error(unsupportedAppSpecificOpenError("projects"));
+      }
+      runSpecChain(
+        buildOpenProjectSpecs({ projectPath: validated.path, appId, appName }),
+        appName,
+      );
       return null;
     }
 
-    case 'desktop_open_file_in_app': {
-      const filePath = typeof args.filePath === 'string' ? args.filePath.trim() : '';
-      const appId = typeof args.appId === 'string' ? args.appId.trim().toLowerCase() : '';
-      const appName = typeof args.appName === 'string' ? args.appName.trim() : '';
+    case "desktop_open_file_in_app": {
+      const filePath =
+        typeof args.filePath === "string" ? args.filePath.trim() : "";
+      const appId =
+        typeof args.appId === "string" ? args.appId.trim().toLowerCase() : "";
+      const appName =
+        typeof args.appName === "string" ? args.appName.trim() : "";
       if (!filePath || !appId || !appName) {
-        throw new Error('File path, app id, and app name are required');
+        throw new Error("File path, app id, and app name are required");
       }
-      if (process.platform === 'win32') {
-        runSpecChain(buildWindowsOpenFileSpecs({ filePath, appId, appName }), appName);
+      const validated = await validateLocalPath(filePath, "File path");
+      if (process.platform === "win32") {
+        runSpecChain(
+          buildWindowsOpenFileSpecs({
+            filePath: validated.path,
+            appId,
+            appName,
+          }),
+          appName,
+        );
         return null;
       }
-      if (process.platform !== 'darwin') {
-        throw new Error('desktop_open_file_in_app is only supported on macOS and Windows');
+      if (process.platform === "linux") {
+        const entries = await getLinuxDesktopEntries();
+        await runLinuxSpecChain(
+          buildLinuxOpenSpecs({
+            targetPath: validated.path,
+            appId,
+            appName,
+            targetKind: "file",
+            entries,
+          }),
+          appName,
+        );
+        return null;
       }
-      runSpecChain(buildOpenFileSpecs({ filePath, appId, appName }), appName);
+      if (process.platform !== "darwin") {
+        throw new Error(unsupportedAppSpecificOpenError("files"));
+      }
+      runSpecChain(
+        buildOpenFileSpecs({ filePath: validated.path, appId, appName }),
+        appName,
+      );
       return null;
     }
 
-    case 'desktop_filter_installed_apps': {
-      if (process.platform === 'win32') {
-        return (await buildWindowsInstalledApps(args.apps)).map((app) => app.name);
+    case "desktop_filter_installed_apps": {
+      if (process.platform === "win32") {
+        return (await buildWindowsInstalledApps(args.apps)).map(
+          (app) => app.name,
+        );
       }
-      if (process.platform !== 'darwin') {
-        throw new Error('desktop_filter_installed_apps is only supported on macOS');
+      if (process.platform === "linux") {
+        return filterLinuxInstalledApps(args.apps);
+      }
+      if (process.platform !== "darwin") {
+        throw new Error(
+          "desktop_filter_installed_apps is only supported on macOS, Windows, and Linux",
+        );
       }
       if (!Array.isArray(args.apps)) return [];
       const results = await Promise.all(
-        args.apps.map(async (appName) => (await isAppBundleInstalled(String(appName))) ? String(appName) : null)
+        args.apps.map(async (appName) =>
+          (await isAppBundleInstalled(String(appName)))
+            ? String(appName)
+            : null,
+        ),
       );
       return results.filter(Boolean);
     }
 
-    case 'desktop_fetch_app_icons': {
-      if (process.platform === 'win32') {
+    case "desktop_fetch_app_icons": {
+      if (process.platform === "win32") {
         const names = Array.isArray(args.apps) ? args.apps : [];
         const results = [];
         for (const name of names) {
-          const appName = String(name || '').trim();
+          const appName = String(name || "").trim();
           if (!appName) continue;
           const appId = getWindowsAppIdForName(appName);
-          const dataUrl = appId === 'terminal'
-            ? imageFileToDataUrl(resolveWindowsTerminalIconPath()) || await windowsIconToDataUrl(resolveWindowsAppIconExecutable({ appId, appName }))
-            : await windowsIconToDataUrl(resolveWindowsAppIconExecutable({ appId, appName }));
+          const dataUrl =
+            appId === "terminal"
+              ? imageFileToDataUrl(resolveWindowsTerminalIconPath()) ||
+                (await windowsIconToDataUrl(
+                  resolveWindowsAppIconExecutable({ appId, appName }),
+                ))
+              : await windowsIconToDataUrl(
+                  resolveWindowsAppIconExecutable({ appId, appName }),
+                );
           if (dataUrl) results.push({ app: appName, data_url: dataUrl });
         }
         return results;
       }
-      if (process.platform !== 'darwin') {
-        throw new Error('desktop_fetch_app_icons is only supported on macOS');
+      if (process.platform === "linux") {
+        return fetchLinuxAppIcons(Array.isArray(args.apps) ? args.apps : []);
+      }
+      if (process.platform !== "darwin") {
+        throw new Error(
+          "desktop_fetch_app_icons is only supported on macOS, Windows, and Linux",
+        );
       }
       const names = Array.isArray(args.apps) ? args.apps : [];
       const results = [];
       for (const name of names) {
         const appPath = await resolveAppBundlePath(String(name));
         if (!appPath) continue;
-        const dataUrl = await iconToDataUrl(await resolveAppIconPath(appPath), String(name));
+        const dataUrl = await iconToDataUrl(
+          await resolveAppIconPath(appPath),
+          String(name),
+        );
         if (dataUrl) results.push({ app: String(name), dataUrl });
       }
       return results;
     }
 
-    case 'desktop_get_installed_apps': {
+    case "desktop_get_installed_apps": {
       const cachePath = buildInstalledAppsCachePath();
       const now = Math.floor(Date.now() / 1000);
       let cache = null;
       try {
-        cache = JSON.parse(await fsp.readFile(cachePath, 'utf8'));
-      } catch {
-      }
+        cache = JSON.parse(await fsp.readFile(cachePath, "utf8"));
+      } catch {}
       const cachedApps = Array.isArray(cache?.apps) ? cache.apps : [];
       const hasCache = Boolean(cache);
-      const isCacheStale = !cache || (now - Number(cache.updatedAt || 0)) > INSTALLED_APPS_CACHE_TTL_SECS;
+      const isCacheStale =
+        !cache ||
+        now - Number(cache.updatedAt || 0) > INSTALLED_APPS_CACHE_TTL_SECS;
       const refresh = async () => {
-        const apps = process.platform === 'win32'
-          ? await buildWindowsInstalledApps(args.apps)
-          : await buildInstalledApps(Array.isArray(args.apps) ? args.apps : []);
+        const apps = await buildPlatformInstalledApps(
+          Array.isArray(args.apps) ? args.apps : [],
+        );
         await fsp.mkdir(path.dirname(cachePath), { recursive: true });
-        await fsp.writeFile(cachePath, JSON.stringify({ updatedAt: now, apps }, null, 2));
-        emitToAllWindows('openchamber:installed-apps-updated', apps);
+        await fsp.writeFile(
+          cachePath,
+          JSON.stringify({ updatedAt: now, apps }, null, 2),
+        );
+        emitToAllWindows("openchamber:installed-apps-updated", apps);
       };
-      if (process.platform !== 'darwin' && process.platform !== 'win32') {
-        return { apps: [], hasCache: false, isCacheStale: false, supported: false };
+      if (
+        process.platform !== "darwin" &&
+        process.platform !== "win32" &&
+        process.platform !== "linux"
+      ) {
+        return {
+          apps: [],
+          hasCache: false,
+          isCacheStale: false,
+          supported: false,
+        };
       }
       if (!hasCache || isCacheStale || args.force === true) {
         void refresh();
@@ -3807,18 +4991,28 @@ const handleInvoke = async (browserWindow, command, args = {}) => {
       return { apps: cachedApps, hasCache, isCacheStale };
     }
 
-    case 'desktop_hosts_get':
+    case "desktop_hosts_get":
       return {
         ...readDesktopHostsConfig(),
         localOrigin: state.localOrigin || state.sidecarUrl || null,
       };
 
-    case 'desktop_hosts_set': {
+    case "desktop_hosts_set": {
       const nextConfigInput = args.input || args.config || {};
       await writeDesktopHostsConfig(nextConfigInput);
       const updatedConfig = readDesktopHostsConfig();
-      const envTarget = normalizeHostUrl(process.env.OPENCHAMBER_SERVER_URL || '');
-      if (Object.prototype.hasOwnProperty.call(nextConfigInput, 'localClientToken') && isLocalRuntimeUrl(state.apiBaseUrl || state.sidecarUrl || state.localOrigin || '')) {
+      const envTarget = normalizeHostUrl(
+        process.env.OPENCHAMBER_SERVER_URL || "",
+      );
+      if (
+        Object.prototype.hasOwnProperty.call(
+          nextConfigInput,
+          "localClientToken",
+        ) &&
+        isLocalRuntimeUrl(
+          state.apiBaseUrl || state.sidecarUrl || state.localOrigin || "",
+        )
+      ) {
         state.clientToken = readDesktopLocalClientToken();
       }
       state.bootOutcome = computeBootOutcome({
@@ -3827,21 +5021,37 @@ const handleInvoke = async (browserWindow, command, args = {}) => {
         config: updatedConfig,
         localAvailable: Boolean(state.sidecarUrl || state.localOrigin),
       });
-      state.initScript = buildInitScript(state.localOrigin, state.bootOutcome, state.apiBaseUrl, state.clientToken, state.requestHeaders || {});
-      log.info('[electron] hosts config updated, recomputed bootOutcome', state.bootOutcome);
+      state.initScript = buildInitScript(
+        state.localOrigin,
+        state.bootOutcome,
+        state.apiBaseUrl,
+        state.clientToken,
+        state.requestHeaders || {},
+      );
+      syncInitScriptToWindows(state.initScript);
+      log.info(
+        "[electron] hosts config updated, recomputed bootOutcome",
+        state.bootOutcome,
+      );
       return null;
     }
 
-    case 'desktop_local_client_token_get':
+    case "desktop_local_client_token_get":
       return readDesktopLocalClientToken();
 
-    case 'desktop_install_id_get':
+    case "desktop_install_id_get":
       return getOrCreateDesktopInstallId();
 
-    case 'desktop_host_probe':
-      return probeHostWithTimeout(String(args.url || ''), 2_000, String(args.clientToken || ''), args.requestHeaders || {}, String(args.expectedServerId || ''));
+    case "desktop_host_probe":
+      return probeHostWithTimeout(
+        String(args.url || ""),
+        2_000,
+        String(args.clientToken || ""),
+        args.requestHeaders || {},
+        String(args.expectedServerId || ""),
+      );
 
-    case 'desktop_remote_password_login':
+    case "desktop_remote_password_login":
       return loginRemoteAndIssueClientToken({
         url: args.url,
         password: args.password,
@@ -3849,39 +5059,40 @@ const handleInvoke = async (browserWindow, command, args = {}) => {
         requestHeaders: args.requestHeaders || {},
       });
 
-    case 'desktop_set_window_theme': {
-      const mode = typeof args.themeMode === 'string' ? args.themeMode : '';
-      const variant = typeof args.themeVariant === 'string' ? args.themeVariant : '';
+    case "desktop_set_window_theme": {
+      const mode = typeof args.themeMode === "string" ? args.themeMode : "";
+      const variant =
+        typeof args.themeVariant === "string" ? args.themeVariant : "";
       // Priority order: themeMode expresses the user's intent (including
       // "follow OS"). Variant is just the resolved variant at send time;
       // when mode === 'system' with variant === 'dark' (because OS is
       // currently dark), we must still pin themeSource to 'system' so
       // Chromium keeps reacting to OS theme changes.
-      if (mode === 'system') {
-        nativeTheme.themeSource = 'system';
-      } else if (mode === 'light') {
-        nativeTheme.themeSource = 'light';
-      } else if (mode === 'dark') {
-        nativeTheme.themeSource = 'dark';
-      } else if (variant === 'light') {
-        nativeTheme.themeSource = 'light';
-      } else if (variant === 'dark') {
-        nativeTheme.themeSource = 'dark';
+      if (mode === "system") {
+        nativeTheme.themeSource = "system";
+      } else if (mode === "light") {
+        nativeTheme.themeSource = "light";
+      } else if (mode === "dark") {
+        nativeTheme.themeSource = "dark";
+      } else if (variant === "light") {
+        nativeTheme.themeSource = "light";
+      } else if (variant === "dark") {
+        nativeTheme.themeSource = "dark";
       } else {
-        nativeTheme.themeSource = 'system';
+        nativeTheme.themeSource = "system";
       }
       if (canUseTitleBarOverlay(browserWindow)) {
         const useDark = nativeTheme.shouldUseDarkColors;
         browserWindow.setTitleBarOverlay({
-          color: useDark ? '#151313' : '#f5f5f4',
-          symbolColor: useDark ? '#fafaf9' : '#1c1917',
+          color: useDark ? "#151313" : "#f5f5f4",
+          symbolColor: useDark ? "#fafaf9" : "#1c1917",
           height: 48,
         });
       }
       return null;
     }
 
-    case 'desktop_set_vibrancy': {
+    case "desktop_set_vibrancy": {
       // Vibrancy + transparent backing are window-creation options, so the
       // change only takes effect on a fresh launch. Persist the preference,
       // then relaunch the app.
@@ -3895,58 +5106,87 @@ const handleInvoke = async (browserWindow, command, args = {}) => {
           app.relaunch();
           app.exit(0);
         } catch (err) {
-          log.error('[electron] desktop_set_vibrancy relaunch failed', err);
+          log.error("[electron] desktop_set_vibrancy relaunch failed", err);
         }
       });
       return { enabled, requiresRestart: true };
     }
 
-    case 'desktop_check_for_updates': {
+    case "desktop_check_for_updates": {
+      if (!desktopUpdatesEnabled) {
+        state.pendingUpdate = null;
+        return {
+          updatesEnabled: false,
+          available: false,
+          currentVersion: APP_VERSION,
+          version: null,
+          body: null,
+          date: null,
+        };
+      }
       assertUpdaterCapability({ packaged: app.isPackaged });
       const currentVersion = APP_VERSION;
-      const { available, updateInfo, updateResult, nextVersion, pendingUpdate } = await checkForDesktopUpdate({
+      const {
+        available,
+        updateInfo,
+        updateResult,
+        nextVersion,
+        pendingUpdate,
+      } = await checkForDesktopUpdate({
         autoUpdater,
         currentVersion,
         pendingUpdate: state.pendingUpdate,
         compareVersions: compareSemver,
       });
       const body =
-        (typeof updateInfo?.releaseNotes === 'string' && updateInfo.releaseNotes.trim() ? updateInfo.releaseNotes : null) ||
-        await parseRelevantChangelogNotes(currentVersion, nextVersion);
+        typeof updateInfo?.releaseNotes === "string" &&
+        updateInfo.releaseNotes.trim()
+          ? updateInfo.releaseNotes
+          : null;
       state.pendingUpdate = pendingUpdate;
       return {
+        updatesEnabled: true,
         available,
         currentVersion,
         version: available ? nextVersion : null,
         body: body || null,
         date:
-          (typeof updateInfo?.releaseDate === 'string' && updateInfo.releaseDate) ||
+          (typeof updateInfo?.releaseDate === "string" &&
+            updateInfo.releaseDate) ||
           null,
       };
     }
 
-    case 'desktop_download_and_install_update':
+    case "desktop_download_and_install_update":
+      if (!desktopUpdatesEnabled) {
+        throw new Error("Desktop updates are disabled for this build");
+      }
       assertUpdaterCapability({ packaged: app.isPackaged });
       if (!state.pendingUpdate) {
-        throw new Error('No pending update');
+        throw new Error("No pending update");
       }
       setTaskbarProgress(0.01);
-      emitToAllWindows('openchamber:update-progress', mapUpdaterProgressEvent({
-        event: 'Started',
-        data: {
-          contentLength: null,
-        },
-      }));
+      emitToAllWindows(
+        "openchamber:update-progress",
+        mapUpdaterProgressEvent({
+          event: "Started",
+          data: {
+            contentLength: null,
+          },
+        }),
+      );
       try {
         if (!state.pendingUpdate.electronUpdate) {
-          throw new Error('Electron updater metadata is not available for this build');
+          throw new Error(
+            "Electron updater metadata is not available for this build",
+          );
         }
         if (!state.pendingUpdate.downloaded) {
           await new Promise((resolve, reject) => {
             let settled = false;
             const cleanup = () => {
-              autoUpdater.off('update-downloaded', onDownloaded);
-              autoUpdater.off('error', onError);
+              autoUpdater.off("update-downloaded", onDownloaded);
+              autoUpdater.off("error", onError);
             };
             const finish = (callback, value) => {
               if (settled) return;
@@ -3956,31 +5196,48 @@ const handleInvoke = async (browserWindow, command, args = {}) => {
             };
             const onDownloaded = () => finish(resolve, null);
             const onError = (error) => finish(reject, error);
-            autoUpdater.on('update-downloaded', onDownloaded);
-            autoUpdater.on('error', onError);
-            Promise.resolve(autoUpdater.downloadUpdate()).catch((error) => finish(reject, error));
+            autoUpdater.on("update-downloaded", onDownloaded);
+            autoUpdater.on("error", onError);
+            Promise.resolve(autoUpdater.downloadUpdate()).catch((error) =>
+              finish(reject, error),
+            );
           });
         }
-        emitToAllWindows('openchamber:update-progress', mapUpdaterProgressEvent({
-          event: 'Finished',
-          data: {},
-        }));
+        emitToAllWindows(
+          "openchamber:update-progress",
+          mapUpdaterProgressEvent({
+            event: "Finished",
+            data: {},
+          }),
+        );
         return null;
       } finally {
         setTaskbarProgress(-1);
       }
 
-    case 'desktop_restart': {
-      const applyUpdate = Boolean(state.pendingUpdate?.downloaded && app.isPackaged);
+    case "desktop_restart": {
+      const applyUpdate = Boolean(
+        desktopUpdatesEnabled &&
+        state.pendingUpdate?.downloaded &&
+        app.isPackaged,
+      );
       if (applyUpdate) assertUpdaterCapability({ packaged: app.isPackaged });
-      log.info(`[electron] desktop_restart applyUpdate=${applyUpdate} packaged=${app.isPackaged}`);
-      if (applyUpdate && process.platform === 'darwin' && typeof app.isInApplicationsFolder === 'function') {
+      log.info(
+        `[electron] desktop_restart applyUpdate=${applyUpdate} packaged=${app.isPackaged}`,
+      );
+      if (
+        applyUpdate &&
+        process.platform === "darwin" &&
+        typeof app.isInApplicationsFolder === "function"
+      ) {
         try {
           if (!app.isInApplicationsFolder()) {
-            throw new Error('Desktop update requires OpenChamber.app to be installed in /Applications');
+            throw new Error(
+              "Desktop update requires OpenLoop.app to be installed in /Applications",
+            );
           }
         } catch (error) {
-          log.warn('[electron] desktop_restart blocked', error);
+          log.warn("[electron] desktop_restart blocked", error);
           throw error;
         }
       }
@@ -3994,8 +5251,7 @@ const handleInvoke = async (browserWindow, command, args = {}) => {
         if (state.mainWindow && !state.mainWindow.isDestroyed()) {
           try {
             debounceWindowStatePersist(state.mainWindow, true);
-          } catch {
-          }
+          } catch {}
         }
       }
       // Defer so the IPC reply flushes before the app starts shutting down.
@@ -4012,29 +5268,35 @@ const handleInvoke = async (browserWindow, command, args = {}) => {
             app.exit(0);
           }
         } catch (err) {
-          log.error('[electron] desktop_restart failed', err);
+          log.error("[electron] desktop_restart failed", err);
         }
       });
       return null;
     }
 
-    case 'desktop_get_lan_address':
+    case "desktop_get_lan_address":
       return await detectLanIPv4Address();
 
-    case 'desktop_new_window': {
+    case "desktop_new_window": {
       const config = readDesktopHostsConfig();
-      const localUiUrl = shouldUsePackagedUi() ? buildPackagedUiUrl('/index.html') : (state.sidecarUrl || state.localOrigin);
+      const localUiUrl = shouldUsePackagedUi()
+        ? buildPackagedUiUrl("/index.html")
+        : state.sidecarUrl || state.localOrigin;
       let targetUrl = localUiUrl;
       let runtimeConfig = {
-        apiBaseUrl: state.sidecarUrl || state.localOrigin || '',
+        apiBaseUrl: state.sidecarUrl || state.localOrigin || "",
         clientToken: readDesktopLocalClientToken(),
         requestHeaders: {},
       };
       if (config.defaultHostId && config.defaultHostId !== LOCAL_HOST_ID) {
-        const host = config.hosts.find((entry) => entry.id === config.defaultHostId);
+        const host = config.hosts.find(
+          (entry) => entry.id === config.defaultHostId,
+        );
         const apiUrl = host?.apiUrl || host?.url;
         if (host?.url && apiUrl && !state.unreachableHosts.has(apiUrl)) {
-          targetUrl = shouldUsePackagedUi() ? buildPackagedUiUrl('/index.html') : host.url;
+          targetUrl = shouldUsePackagedUi()
+            ? buildPackagedUiUrl("/index.html")
+            : host.url;
           runtimeConfig = {
             apiBaseUrl: normalizeHostUrl(apiUrl),
             clientToken: sanitizeClientTokenForStorage(host.clientToken),
@@ -4046,80 +5308,142 @@ const handleInvoke = async (browserWindow, command, args = {}) => {
       return null;
     }
 
-    case 'desktop_new_window_for_host': {
+    case "desktop_new_window_for_host": {
       // Open a saved host in a new window. Hosts with a relay leg boot the
       // LOCAL UI and let the renderer pick the transport (direct first, E2EE
       // tunnel fallback) via the injected relay host id — a fixed apiBaseUrl
       // would strand the window when the direct leg is unreachable.
-      const hostId = typeof args.hostId === 'string' ? args.hostId.trim() : '';
+      const hostId = typeof args.hostId === "string" ? args.hostId.trim() : "";
       const config = readDesktopHostsConfig();
       const host = config.hosts.find((entry) => entry.id === hostId);
-      if (!host) throw new Error('Host not found');
+      if (!host) throw new Error("Host not found");
       if (host.relay) {
-        const windowUrl = shouldUsePackagedUi() ? buildPackagedUiUrl('/index.html') : (state.sidecarUrl || state.localOrigin);
+        const windowUrl = shouldUsePackagedUi()
+          ? buildPackagedUiUrl("/index.html")
+          : state.sidecarUrl || state.localOrigin;
         await createAdditionalWindow(windowUrl, {
-          apiBaseUrl: '',
-          clientToken: host.clientToken || '',
-          requestHeaders: sanitizeRuntimeRequestHeaders(host.requestHeaders || {}),
+          apiBaseUrl: "",
+          clientToken: host.clientToken || "",
+          requestHeaders: sanitizeRuntimeRequestHeaders(
+            host.requestHeaders || {},
+          ),
           relayHostId: host.id,
         });
         return null;
       }
       const targetUrl = normalizeHostUrl(host.apiUrl || host.url);
-      if (!targetUrl) throw new Error('Invalid URL');
-      const windowUrl = shouldUsePackagedUi() ? buildPackagedUiUrl('/index.html') : targetUrl;
+      if (!targetUrl) throw new Error("Invalid URL");
+      const windowUrl = shouldUsePackagedUi()
+        ? buildPackagedUiUrl("/index.html")
+        : targetUrl;
       await createAdditionalWindow(windowUrl, {
         apiBaseUrl: targetUrl,
-        clientToken: host.clientToken || '',
-        requestHeaders: sanitizeRuntimeRequestHeaders(host.requestHeaders || {}),
+        clientToken: host.clientToken || "",
+        requestHeaders: sanitizeRuntimeRequestHeaders(
+          host.requestHeaders || {},
+        ),
       });
       return null;
     }
 
-    case 'desktop_new_window_at_url': {
-      const targetUrl = normalizeHostUrl(String(args.url || ''));
+    case "desktop_new_window_at_url": {
+      const targetUrl = normalizeHostUrl(String(args.url || ""));
       if (!targetUrl) {
-        throw new Error('Invalid URL');
+        throw new Error("Invalid URL");
       }
       const config = readDesktopHostsConfig();
-      const providedToken = typeof args.clientToken === 'string' ? args.clientToken : '';
-      const clientToken = sanitizeClientTokenForStorage(providedToken) || resolveStoredClientTokenForUrl(targetUrl, config);
-      const requestHeaders = sanitizeRuntimeRequestHeaders(args.requestHeaders || config.hosts.find((host) => normalizeHostUrl(host.apiUrl || host.url) === targetUrl)?.requestHeaders || {});
+      const providedToken =
+        typeof args.clientToken === "string" ? args.clientToken : "";
+      const clientToken =
+        sanitizeClientTokenForStorage(providedToken) ||
+        resolveStoredClientTokenForUrl(targetUrl, config);
+      const requestHeaders = sanitizeRuntimeRequestHeaders(
+        args.requestHeaders ||
+          config.hosts.find(
+            (host) => normalizeHostUrl(host.apiUrl || host.url) === targetUrl,
+          )?.requestHeaders ||
+          {},
+      );
       let windowUrl = targetUrl;
-      const runtimeConfig = { apiBaseUrl: targetUrl, clientToken, requestHeaders };
+      const runtimeConfig = {
+        apiBaseUrl: targetUrl,
+        clientToken,
+        requestHeaders,
+      };
       if (shouldUsePackagedUi()) {
-        windowUrl = buildPackagedUiUrl('/index.html');
+        windowUrl = buildPackagedUiUrl("/index.html");
       }
       await createAdditionalWindow(windowUrl, runtimeConfig);
       return null;
     }
 
-    case 'desktop_open_session_mini_chat_window': {
-      const sessionId = typeof args.sessionId === 'string' ? args.sessionId.trim() : '';
-      if (!sessionId) throw new Error('Session id is required');
-      const directory = typeof args.directory === 'string' ? args.directory.trim() : '';
-      await createMiniChatWindow({ mode: 'session', sessionId, directory, runtimeConfig: resolveMiniChatRuntimeConfig(browserWindow, args) });
+    case "desktop_open_session_mini_chat_window": {
+      const sessionId =
+        typeof args.sessionId === "string" ? args.sessionId.trim() : "";
+      if (!sessionId) throw new Error("Session id is required");
+      const directory =
+        typeof args.directory === "string" ? args.directory.trim() : "";
+      await createMiniChatWindow({
+        mode: "session",
+        sessionId,
+        directory,
+        runtimeConfig: resolveMiniChatRuntimeConfig(browserWindow, args),
+      });
       return null;
     }
 
-    case 'desktop_open_draft_mini_chat_window': {
-      const directory = typeof args.directory === 'string' ? args.directory.trim() : '';
-      const projectId = typeof args.projectId === 'string' ? args.projectId.trim() : '';
-      await createMiniChatWindow({ mode: 'draft', directory, projectId, runtimeConfig: resolveMiniChatRuntimeConfig(browserWindow, args) });
+    case "desktop_open_session_window": {
+      const sessionId =
+        typeof args.sessionId === "string" ? args.sessionId.trim() : "";
+      if (!sessionId) throw new Error("Session id is required");
+      const directory =
+        typeof args.directory === "string" ? args.directory.trim() : "";
+      const runtimeConfig = resolveMiniChatRuntimeConfig(browserWindow, args);
+      const windowUrl = shouldUsePackagedUi()
+        ? buildPackagedUiUrl("/index.html")
+        : state.localOrigin || state.sidecarUrl;
+      const targetWindow = await createAdditionalWindow(
+        windowUrl,
+        runtimeConfig,
+      );
+      if (!targetWindow) throw new Error("Could not create a new window");
+      targetWindow.webContents.once("did-finish-load", () => {
+        emitToWindow(targetWindow, "openchamber:open-session", {
+          sessionId,
+          directory,
+        });
+      });
       return null;
     }
 
-    case 'desktop_set_window_pinned':
+    case "desktop_open_draft_mini_chat_window": {
+      const directory =
+        typeof args.directory === "string" ? args.directory.trim() : "";
+      const projectId =
+        typeof args.projectId === "string" ? args.projectId.trim() : "";
+      await createMiniChatWindow({
+        mode: "draft",
+        directory,
+        projectId,
+        runtimeConfig: resolveMiniChatRuntimeConfig(browserWindow, args),
+      });
+      return null;
+    }
+
+    case "desktop_set_window_pinned":
       return setMiniChatPinned(browserWindow, args.pinned === true);
 
-    case 'desktop_get_window_pinned':
+    case "desktop_get_window_pinned":
       return { pinned: Boolean(browserWindow?.__ocPinned) };
 
-    case 'desktop_focus_main_window': {
-      const sessionId = typeof args.sessionId === 'string' ? args.sessionId.trim() : '';
-      const directory = typeof args.directory === 'string' ? args.directory.trim() : '';
-      const mode = typeof args.mode === 'string' ? args.mode.trim() : '';
-      const projectId = typeof args.projectId === 'string' ? args.projectId.trim() : '';
+    case "desktop_focus_main_window": {
+      const sessionId =
+        typeof args.sessionId === "string" ? args.sessionId.trim() : "";
+      const directory =
+        typeof args.directory === "string" ? args.directory.trim() : "";
+      const mode = typeof args.mode === "string" ? args.mode.trim() : "";
+      const projectId =
+        typeof args.projectId === "string" ? args.projectId.trim() : "";
       const hasMainWindow = state.mainWindow && !state.mainWindow.isDestroyed();
 
       // No live main window (e.g. "Open in main window" from a mini-chat after
@@ -4127,7 +5451,8 @@ const handleInvoke = async (browserWindow, command, args = {}) => {
       // fresh window can't take an immediate emit, so queue the session as a
       // pending deep-link and let did-finish-load flush it once ready.
       if (!hasMainWindow) {
-        if (sessionId) pendingDeepLinks.push({ type: 'session', value: sessionId });
+        if (sessionId)
+          pendingDeepLinks.push({ type: "session", value: sessionId });
         await openMainWindow();
         return { focused: true };
       }
@@ -4136,26 +5461,37 @@ const handleInvoke = async (browserWindow, command, args = {}) => {
       state.mainWindow.show();
       state.mainWindow.focus();
       if (sessionId) {
-        emitToWindow(state.mainWindow, 'openchamber:open-session', { sessionId, directory });
-      } else if (mode === 'draft') {
-        emitToWindow(state.mainWindow, 'openchamber:open-draft-session', { directory, projectId });
+        emitToWindow(state.mainWindow, "openchamber:open-session", {
+          sessionId,
+          directory,
+        });
+      } else if (mode === "draft") {
+        emitToWindow(state.mainWindow, "openchamber:open-draft-session", {
+          directory,
+          projectId,
+        });
       }
       return { focused: true };
     }
 
-    case 'desktop_close_current_window':
+    case "desktop_close_current_window":
       if (browserWindow && !browserWindow.isDestroyed()) {
         browserWindow.close();
       }
       return null;
 
-    case 'desktop_minimize_current_window':
+    case "desktop_minimize_current_window":
       if (browserWindow && !browserWindow.isDestroyed()) {
-        browserWindow.minimize();
+        if (shouldHideMainWindowToTray(browserWindow)) {
+          debounceWindowStatePersist(browserWindow, true);
+          browserWindow.hide();
+        } else {
+          browserWindow.minimize();
+        }
       }
       return null;
 
-    case 'desktop_toggle_current_window_maximized':
+    case "desktop_toggle_current_window_maximized":
       if (browserWindow && !browserWindow.isDestroyed()) {
         if (browserWindow.isMaximized()) {
           browserWindow.unmaximize();
@@ -4166,53 +5502,66 @@ const handleInvoke = async (browserWindow, command, args = {}) => {
       }
       return { maximized: false };
 
-    case 'desktop_get_current_window_state':
-      return { maximized: Boolean(browserWindow && !browserWindow.isDestroyed() && browserWindow.isMaximized()) };
+    case "desktop_get_current_window_state":
+      return {
+        maximized: Boolean(
+          browserWindow &&
+          !browserWindow.isDestroyed() &&
+          browserWindow.isMaximized(),
+        ),
+      };
 
-    case 'desktop_show_app_menu': {
+    case "desktop_show_app_menu": {
       if (!browserWindow || browserWindow.isDestroyed()) {
         return null;
       }
 
       const menu = Menu.getApplicationMenu() || buildAutoHiddenMenu();
-      const x = Number.isFinite(Number(args.x)) ? Math.max(0, Math.round(Number(args.x))) : undefined;
-      const y = Number.isFinite(Number(args.y)) ? Math.max(0, Math.round(Number(args.y))) : undefined;
+      const x = Number.isFinite(Number(args.x))
+        ? Math.max(0, Math.round(Number(args.x)))
+        : undefined;
+      const y = Number.isFinite(Number(args.y))
+        ? Math.max(0, Math.round(Number(args.y)))
+        : undefined;
       menu.popup({ window: browserWindow, x, y });
       return null;
     }
 
-    case 'desktop_ssh_instances_get':
+    case "desktop_ssh_instances_get":
       return sshManager.readInstances();
 
-    case 'desktop_ssh_instances_set':
+    case "desktop_ssh_instances_set":
       await sshManager.setInstances(args.config || {});
       return null;
 
-    case 'desktop_ssh_import_hosts':
+    case "desktop_ssh_import_hosts":
       return await sshManager.importHosts();
 
-    case 'desktop_ssh_connect': {
-      const id = String(args.id || '').trim();
+    case "desktop_ssh_connect": {
+      const id = String(args.id || "").trim();
       await sshManager.connect(id);
       return null;
     }
 
-    case 'desktop_ssh_disconnect': {
-      const id = String(args.id || '').trim();
+    case "desktop_ssh_disconnect": {
+      const id = String(args.id || "").trim();
       await sshManager.disconnect(id);
       return null;
     }
 
-    case 'desktop_ssh_status': {
-      const id = String(args.id || '').trim();
+    case "desktop_ssh_status": {
+      const id = String(args.id || "").trim();
       return await sshManager.statusesWithDefaults(id || undefined);
     }
 
-    case 'desktop_ssh_logs':
-      return sshManager.logsForInstance(String(args.id || '').trim(), Number(args.limit) || 200);
+    case "desktop_ssh_logs":
+      return sshManager.logsForInstance(
+        String(args.id || "").trim(),
+        Number(args.limit) || 200,
+      );
 
-    case 'desktop_ssh_logs_clear':
-      sshManager.clearLogsForInstance(String(args.id || '').trim());
+    case "desktop_ssh_logs_clear":
+      sshManager.clearLogsForInstance(String(args.id || "").trim());
       return null;
 
     default:
@@ -4224,102 +5573,190 @@ const buildMacMenu = () => {
   const dispatchAction = (action) => dispatchMenuAction(action);
   const handleCopyAction = () => {
     BrowserWindow.getFocusedWindow()?.webContents.copy();
-    dispatchAction('copy');
+    dispatchAction("copy");
   };
 
   return Menu.buildFromTemplate([
     {
       label: app.name,
       submenu: [
-        { label: 'About OpenChamber', click: () => dispatchAction('about') },
+        { label: "About OpenLoop", click: () => dispatchAction("about") },
+        ...(desktopUpdatesEnabled
+          ? [
+              {
+                label: "Check for Updates",
+                click: () => dispatchCheckForUpdates(),
+              },
+            ]
+          : []),
+        { type: "separator" },
         {
-          label: 'Check for Updates',
-          click: () => dispatchCheckForUpdates(),
+          label: "Settings",
+          accelerator: "Cmd+,",
+          click: () => dispatchAction("settings"),
         },
-        { type: 'separator' },
-        { label: 'Settings', accelerator: 'Cmd+,', click: () => dispatchAction('settings') },
-        { label: 'Reload Webview', click: () => reloadMenuTargetWindow() },
-        { label: 'Restart', click: () => relaunchFromMenu() },
-        { label: 'Command Palette', accelerator: 'Cmd+P', click: () => dispatchAction('command-palette') },
-        { type: 'separator' },
-        { role: 'services' },
-        { type: 'separator' },
-        { role: 'hide' },
-        { role: 'hideOthers' },
-        { type: 'separator' },
-        { role: 'quit' },
+        { label: "Reload Webview", click: () => reloadMenuTargetWindow() },
+        { label: "Restart", click: () => relaunchFromMenu() },
+        {
+          label: "Command Palette",
+          accelerator: "Cmd+P",
+          click: () => dispatchAction("command-palette"),
+        },
+        { type: "separator" },
+        { role: "services" },
+        { type: "separator" },
+        { role: "hide" },
+        { role: "hideOthers" },
+        { type: "separator" },
+        { role: "quit" },
       ],
     },
     {
-      label: 'File',
+      label: "File",
       submenu: [
-        { label: 'New Window', accelerator: 'Cmd+Shift+Alt+N', click: () => void handleInvoke(null, 'desktop_new_window') },
-        { type: 'separator' },
-        { label: 'New Session', accelerator: 'Cmd+N', click: () => dispatchAction('new-session') },
-        { label: 'New Worktree', accelerator: 'Cmd+Shift+N', click: () => dispatchAction('new-worktree-session') },
+        {
+          label: "New Window",
+          accelerator: "Cmd+Shift+Alt+N",
+          click: () => void handleInvoke(null, "desktop_new_window"),
+        },
+        { type: "separator" },
+        {
+          label: "New Session",
+          accelerator: "Cmd+N",
+          click: () => dispatchAction("new-session"),
+        },
+        {
+          label: "New Worktree",
+          accelerator: "Cmd+Shift+N",
+          click: () => dispatchAction("new-worktree-session"),
+        },
         // registerAccelerator:false → show the shortcut hint but let the
         // renderer own the (customizable) key binding, avoiding a double open.
-        { label: 'New Mini Chat', accelerator: 'Cmd+Alt+N', registerAccelerator: false, click: () => dispatchOpenMiniChat() },
-        { type: 'separator' },
-        { label: 'Add Workspace', click: () => dispatchAction('change-workspace') },
-        { type: 'separator' },
-        { role: 'close' },
+        {
+          label: "New Mini Chat",
+          accelerator: "Cmd+Alt+N",
+          registerAccelerator: false,
+          click: () => dispatchOpenMiniChat(),
+        },
+        { type: "separator" },
+        {
+          label: "Add Workspace",
+          click: () => dispatchAction("change-workspace"),
+        },
+        { type: "separator" },
+        { role: "close" },
       ],
     },
     {
-      label: 'Edit',
+      label: "Edit",
       submenu: [
-        { role: 'undo' },
-        { role: 'redo' },
-        { type: 'separator' },
-        { role: 'cut' },
-        { label: 'Copy', accelerator: 'Cmd+C', click: () => handleCopyAction() },
-        { role: 'paste' },
-        { role: 'selectAll' },
+        { role: "undo" },
+        { role: "redo" },
+        { type: "separator" },
+        { role: "cut" },
+        {
+          label: "Copy",
+          accelerator: "Cmd+C",
+          click: () => handleCopyAction(),
+        },
+        { role: "paste" },
+        { role: "selectAll" },
       ],
     },
     {
-      label: 'View',
+      label: "View",
       submenu: [
-        { label: 'Toggle Right Sidebar', accelerator: 'Cmd+B', click: () => dispatchAction('toggle-right-sidebar') },
-        { label: 'Open Git Sidebar', accelerator: 'Cmd+Shift+G', click: () => dispatchAction('open-right-sidebar-git') },
-        { label: 'Open Files Sidebar', accelerator: 'Cmd+Shift+F', click: () => dispatchAction('open-right-sidebar-files') },
-        { type: 'separator' },
-        { label: 'Toggle Terminal Dock', accelerator: 'Cmd+J', click: () => dispatchAction('toggle-terminal') },
-        { label: 'Toggle Terminal Expanded', accelerator: 'Cmd+Shift+J', click: () => dispatchAction('toggle-terminal-expanded') },
-        { type: 'separator' },
-        { label: 'Light Theme', click: () => dispatchAction('theme-light') },
-        { label: 'Dark Theme', click: () => dispatchAction('theme-dark') },
-        { label: 'System Theme', click: () => dispatchAction('theme-system') },
-        { type: 'separator' },
-        { label: 'Toggle Session Sidebar', accelerator: 'Cmd+L', click: () => dispatchAction('toggle-sidebar') },
-        { label: 'Toggle Memory Debug', accelerator: 'Cmd+Shift+D', click: () => dispatchAction('toggle-memory-debug') },
-        { type: 'separator' },
-        { role: 'togglefullscreen' },
+        {
+          label: "Toggle Right Sidebar",
+          accelerator: "Cmd+B",
+          click: () => dispatchAction("toggle-right-sidebar"),
+        },
+        {
+          label: "Open Git Sidebar",
+          accelerator: "Cmd+Shift+G",
+          click: () => dispatchAction("open-right-sidebar-git"),
+        },
+        {
+          label: "Open Files Sidebar",
+          accelerator: "Cmd+Shift+F",
+          click: () => dispatchAction("open-right-sidebar-files"),
+        },
+        { type: "separator" },
+        {
+          label: "Toggle Terminal Dock",
+          accelerator: "Cmd+J",
+          click: () => dispatchAction("toggle-terminal"),
+        },
+        {
+          label: "Toggle Terminal Expanded",
+          accelerator: "Cmd+Shift+J",
+          click: () => dispatchAction("toggle-terminal-expanded"),
+        },
+        { type: "separator" },
+        { label: "Light Theme", click: () => dispatchAction("theme-light") },
+        { label: "Dark Theme", click: () => dispatchAction("theme-dark") },
+        { label: "System Theme", click: () => dispatchAction("theme-system") },
+        { type: "separator" },
+        {
+          label: "Toggle Session Sidebar",
+          accelerator: "Cmd+L",
+          click: () => dispatchAction("toggle-sidebar"),
+        },
+        {
+          label: "Toggle Memory Debug",
+          accelerator: "Cmd+Shift+D",
+          click: () => dispatchAction("toggle-memory-debug"),
+        },
+        { type: "separator" },
+        { role: "togglefullscreen" },
       ],
     },
     {
-      label: 'Window',
+      label: "Window",
       submenu: [
-        { role: 'minimize' },
-        { role: 'zoom' },
-        { type: 'separator' },
-        { role: 'close' },
+        { role: "minimize" },
+        { role: "zoom" },
+        { type: "separator" },
+        { role: "close" },
       ],
     },
     {
-      label: 'Help',
+      label: "Help",
       submenu: [
-        { label: 'Keyboard Shortcuts', accelerator: 'Cmd+.', click: () => dispatchAction('help-dialog') },
-        { label: 'Show Diagnostics', accelerator: 'Cmd+Shift+L', click: () => dispatchAction('download-logs') },
-        { label: 'Toggle Developer Tools', accelerator: 'Cmd+Alt+I', click: () => openDevToolsForMenuTarget() },
-        { type: 'separator' },
-        { label: 'Clear Cache', click: () => void handleInvoke(null, 'desktop_clear_cache') },
-        { type: 'separator' },
-        { label: 'Report a Bug', click: () => shell.openExternal(GITHUB_BUG_REPORT_URL) },
-        { label: 'Request a Feature', click: () => shell.openExternal(GITHUB_FEATURE_REQUEST_URL) },
-        { type: 'separator' },
-        { label: 'Join Discord', click: () => shell.openExternal(DISCORD_INVITE_URL) },
+        {
+          label: "Keyboard Shortcuts",
+          accelerator: "Cmd+.",
+          click: () => dispatchAction("help-dialog"),
+        },
+        {
+          label: "Show Diagnostics",
+          accelerator: "Cmd+Shift+L",
+          click: () => dispatchAction("download-logs"),
+        },
+        {
+          label: "Toggle Developer Tools",
+          accelerator: "Cmd+Alt+I",
+          click: () => openDevToolsForMenuTarget(),
+        },
+        { type: "separator" },
+        {
+          label: "Clear Cache",
+          click: () => void handleInvoke(null, "desktop_clear_cache"),
+        },
+        { type: "separator" },
+        {
+          label: "Report a Bug",
+          click: () => shell.openExternal(GITHUB_BUG_REPORT_URL),
+        },
+        {
+          label: "Request a Feature",
+          click: () => shell.openExternal(GITHUB_FEATURE_REQUEST_URL),
+        },
+        { type: "separator" },
+        {
+          label: "Join Discord",
+          click: () => shell.openExternal(DISCORD_INVITE_URL),
+        },
       ],
     },
   ]);
@@ -4329,110 +5766,217 @@ const buildAutoHiddenMenu = () => {
   const dispatchAction = (action) => dispatchMenuAction(action);
   const handleCopyAction = () => {
     BrowserWindow.getFocusedWindow()?.webContents.copy();
-    dispatchAction('copy');
+    dispatchAction("copy");
   };
 
   return Menu.buildFromTemplate([
     {
-      label: 'OpenChamber',
+      label: "OpenLoop",
       submenu: [
-        { label: 'About OpenChamber', click: () => dispatchAction('about') },
+        { label: "About OpenLoop", click: () => dispatchAction("about") },
+        ...(desktopUpdatesEnabled
+          ? [
+              {
+                label: "Check for Updates",
+                click: () => dispatchCheckForUpdates(),
+              },
+            ]
+          : []),
+        { type: "separator" },
         {
-          label: 'Check for Updates',
-          click: () => dispatchCheckForUpdates(),
+          label: "Settings",
+          accelerator: "Ctrl+,",
+          click: () => dispatchAction("settings"),
         },
-        { type: 'separator' },
-        { label: 'Settings', accelerator: 'Ctrl+,', click: () => dispatchAction('settings') },
-        { label: 'Reload Webview', click: () => reloadMenuTargetWindow() },
-        { label: 'Restart', click: () => relaunchFromMenu() },
-        { label: 'Command Palette', accelerator: 'Ctrl+P', click: () => dispatchAction('command-palette') },
-        { type: 'separator' },
-        { role: 'quit' },
+        { label: "Reload Webview", click: () => reloadMenuTargetWindow() },
+        { label: "Restart", click: () => relaunchFromMenu() },
+        {
+          label: "Command Palette",
+          accelerator: "Ctrl+P",
+          click: () => dispatchAction("command-palette"),
+        },
+        { type: "separator" },
+        { role: "quit" },
       ],
     },
     {
-      label: 'File',
+      label: "File",
       submenu: [
-        { label: 'New Window', accelerator: 'Ctrl+Shift+Alt+N', click: () => void handleInvoke(null, 'desktop_new_window') },
-        { type: 'separator' },
-        { label: 'New Session', accelerator: 'Ctrl+N', click: () => dispatchAction('new-session') },
-        { label: 'New Worktree', accelerator: 'Ctrl+Shift+N', click: () => dispatchAction('new-worktree-session') },
-        { type: 'separator' },
-        { label: 'Add Workspace', click: () => dispatchAction('change-workspace') },
-        { type: 'separator' },
-        { role: 'quit' },
+        {
+          label: "New Window",
+          accelerator: "Ctrl+Shift+Alt+N",
+          click: () => void handleInvoke(null, "desktop_new_window"),
+        },
+        { type: "separator" },
+        {
+          label: "New Session",
+          accelerator: "Ctrl+N",
+          click: () => dispatchAction("new-session"),
+        },
+        {
+          label: "New Worktree",
+          accelerator: "Ctrl+Shift+N",
+          click: () => dispatchAction("new-worktree-session"),
+        },
+        { type: "separator" },
+        {
+          label: "Add Workspace",
+          click: () => dispatchAction("change-workspace"),
+        },
+        { type: "separator" },
+        { role: "quit" },
       ],
     },
     {
-      label: 'Edit',
+      label: "Edit",
       submenu: [
-        { role: 'undo' },
-        { role: 'redo' },
-        { type: 'separator' },
-        { role: 'cut' },
-        { label: 'Copy', accelerator: 'Ctrl+C', click: () => handleCopyAction() },
-        { role: 'paste' },
-        { role: 'selectAll' },
+        { role: "undo" },
+        { role: "redo" },
+        { type: "separator" },
+        { role: "cut" },
+        {
+          label: "Copy",
+          accelerator: "Ctrl+C",
+          click: () => handleCopyAction(),
+        },
+        { role: "paste" },
+        { role: "selectAll" },
       ],
     },
     {
-      label: 'View',
+      label: "View",
       submenu: [
-        { role: 'reload' },
-        { role: 'forceReload' },
-        { label: 'Toggle Developer Tools', accelerator: 'Ctrl+Alt+I', click: () => openDevToolsForMenuTarget() },
-        { type: 'separator' },
-        { label: 'Toggle Right Sidebar', accelerator: 'Ctrl+B', click: () => dispatchAction('toggle-right-sidebar') },
-        { label: 'Open Git Sidebar', accelerator: 'Ctrl+Shift+G', click: () => dispatchAction('open-right-sidebar-git') },
-        { label: 'Open Files Sidebar', accelerator: 'Ctrl+Shift+F', click: () => dispatchAction('open-right-sidebar-files') },
-        { type: 'separator' },
-        { label: 'Toggle Terminal Dock', accelerator: 'Ctrl+J', click: () => dispatchAction('toggle-terminal') },
-        { label: 'Toggle Terminal Expanded', accelerator: 'Ctrl+Shift+J', click: () => dispatchAction('toggle-terminal-expanded') },
-        { type: 'separator' },
-        { label: 'Light Theme', click: () => dispatchAction('theme-light') },
-        { label: 'Dark Theme', click: () => dispatchAction('theme-dark') },
-        { label: 'System Theme', click: () => dispatchAction('theme-system') },
-        { type: 'separator' },
-        { label: 'Toggle Session Sidebar', accelerator: 'Ctrl+L', click: () => dispatchAction('toggle-sidebar') },
-        { label: 'Toggle Memory Debug', accelerator: 'Ctrl+Shift+D', click: () => dispatchAction('toggle-memory-debug') },
-        { type: 'separator' },
-        { role: 'togglefullscreen' },
+        { role: "reload" },
+        { role: "forceReload" },
+        {
+          label: "Toggle Developer Tools",
+          accelerator: "Ctrl+Alt+I",
+          click: () => openDevToolsForMenuTarget(),
+        },
+        { type: "separator" },
+        {
+          label: "Toggle Right Sidebar",
+          accelerator: "Ctrl+B",
+          click: () => dispatchAction("toggle-right-sidebar"),
+        },
+        {
+          label: "Open Git Sidebar",
+          accelerator: "Ctrl+Shift+G",
+          click: () => dispatchAction("open-right-sidebar-git"),
+        },
+        {
+          label: "Open Files Sidebar",
+          accelerator: "Ctrl+Shift+F",
+          click: () => dispatchAction("open-right-sidebar-files"),
+        },
+        { type: "separator" },
+        {
+          label: "Toggle Terminal Dock",
+          accelerator: "Ctrl+J",
+          click: () => dispatchAction("toggle-terminal"),
+        },
+        {
+          label: "Toggle Terminal Expanded",
+          accelerator: "Ctrl+Shift+J",
+          click: () => dispatchAction("toggle-terminal-expanded"),
+        },
+        { type: "separator" },
+        { label: "Light Theme", click: () => dispatchAction("theme-light") },
+        { label: "Dark Theme", click: () => dispatchAction("theme-dark") },
+        { label: "System Theme", click: () => dispatchAction("theme-system") },
+        { type: "separator" },
+        {
+          label: "Toggle Session Sidebar",
+          accelerator: "Ctrl+L",
+          click: () => dispatchAction("toggle-sidebar"),
+        },
+        {
+          label: "Toggle Memory Debug",
+          accelerator: "Ctrl+Shift+D",
+          click: () => dispatchAction("toggle-memory-debug"),
+        },
+        { type: "separator" },
+        { role: "togglefullscreen" },
       ],
     },
     {
-      label: 'Go',
+      label: "Go",
       submenu: [
-        { label: 'Back', accelerator: 'Ctrl+[', click: () => dispatchAction('go-back') },
-        { label: 'Forward', accelerator: 'Ctrl+]', click: () => dispatchAction('go-forward') },
-        { type: 'separator' },
-        { label: 'Previous Session', accelerator: 'Alt+Up', click: () => dispatchAction('previous-session') },
-        { label: 'Next Session', accelerator: 'Alt+Down', click: () => dispatchAction('next-session') },
-        { type: 'separator' },
-        { label: 'Previous Project', accelerator: 'Ctrl+Alt+Up', click: () => dispatchAction('previous-project') },
-        { label: 'Next Project', accelerator: 'Ctrl+Alt+Down', click: () => dispatchAction('next-project') },
+        {
+          label: "Back",
+          accelerator: "Ctrl+[",
+          click: () => dispatchAction("go-back"),
+        },
+        {
+          label: "Forward",
+          accelerator: "Ctrl+]",
+          click: () => dispatchAction("go-forward"),
+        },
+        { type: "separator" },
+        {
+          label: "Previous Session",
+          accelerator: "Alt+Up",
+          click: () => dispatchAction("previous-session"),
+        },
+        {
+          label: "Next Session",
+          accelerator: "Alt+Down",
+          click: () => dispatchAction("next-session"),
+        },
+        { type: "separator" },
+        {
+          label: "Previous Project",
+          accelerator: "Ctrl+Alt+Up",
+          click: () => dispatchAction("previous-project"),
+        },
+        {
+          label: "Next Project",
+          accelerator: "Ctrl+Alt+Down",
+          click: () => dispatchAction("next-project"),
+        },
       ],
     },
     {
-      label: 'Window',
+      label: "Window",
       submenu: [
-        { role: 'minimize' },
-        { role: 'togglefullscreen' },
-        { type: 'separator' },
-        { role: 'close' },
+        { role: "minimize" },
+        { role: "togglefullscreen" },
+        { type: "separator" },
+        { role: "close" },
       ],
     },
     {
-      label: 'Help',
+      label: "Help",
       submenu: [
-        { label: 'Keyboard Shortcuts', accelerator: 'Ctrl+.', click: () => dispatchAction('help-dialog') },
-        { label: 'Show Diagnostics', accelerator: 'Ctrl+Shift+L', click: () => dispatchAction('download-logs') },
-        { type: 'separator' },
-        { label: 'Clear Cache', click: () => void handleInvoke(null, 'desktop_clear_cache') },
-        { type: 'separator' },
-        { label: 'Report a Bug', click: () => shell.openExternal(GITHUB_BUG_REPORT_URL) },
-        { label: 'Request a Feature', click: () => shell.openExternal(GITHUB_FEATURE_REQUEST_URL) },
-        { type: 'separator' },
-        { label: 'Join Discord', click: () => shell.openExternal(DISCORD_INVITE_URL) },
+        {
+          label: "Keyboard Shortcuts",
+          accelerator: "Ctrl+.",
+          click: () => dispatchAction("help-dialog"),
+        },
+        {
+          label: "Show Diagnostics",
+          accelerator: "Ctrl+Shift+L",
+          click: () => dispatchAction("download-logs"),
+        },
+        { type: "separator" },
+        {
+          label: "Clear Cache",
+          click: () => void handleInvoke(null, "desktop_clear_cache"),
+        },
+        { type: "separator" },
+        {
+          label: "Report a Bug",
+          click: () => shell.openExternal(GITHUB_BUG_REPORT_URL),
+        },
+        {
+          label: "Request a Feature",
+          click: () => shell.openExternal(GITHUB_FEATURE_REQUEST_URL),
+        },
+        { type: "separator" },
+        {
+          label: "Join Discord",
+          click: () => shell.openExternal(DISCORD_INVITE_URL),
+        },
       ],
     },
   ]);
@@ -4448,10 +5992,10 @@ contextMenu({
 const loadUrlInsideWebContents = (contents, rawUrl) => {
   try {
     const url = new URL(rawUrl);
-    if (url.protocol !== 'http:' && url.protocol !== 'https:') return false;
+    if (url.protocol !== "http:" && url.protocol !== "https:") return false;
     if (contents.isDestroyed()) return false;
     void contents.loadURL(url.toString()).catch((error) => {
-      log.warn('[webview] failed to load popup URL in place:', error);
+      log.warn("[webview] failed to load popup URL in place:", error);
     });
     return true;
   } catch {
@@ -4459,12 +6003,12 @@ const loadUrlInsideWebContents = (contents, rawUrl) => {
   }
 };
 
-app.on('web-contents-created', (_event, contents) => {
-  if (contents.getType() !== 'webview') return;
+app.on("web-contents-created", (_event, contents) => {
+  if (contents.getType() !== "webview") return;
 
   contents.setWindowOpenHandler(({ url }) => {
     loadUrlInsideWebContents(contents, url);
-    return { action: 'deny' };
+    return { action: "deny" };
   });
 });
 
@@ -4482,24 +6026,34 @@ app.on('web-contents-created', (_event, contents) => {
 // need them, and a compromised remote can't use them either.
 const isLocalSender = (webContents) => {
   try {
-    const raw = typeof webContents?.getURL === 'function' ? webContents.getURL() : '';
+    const raw =
+      typeof webContents?.getURL === "function" ? webContents.getURL() : "";
     if (!raw) return false;
     const url = new URL(raw);
-    if (url.protocol === `${UI_PROTOCOL}:` && url.hostname === 'app') return true;
-    if (url.protocol !== 'http:' && url.protocol !== 'https:') return false;
+    if (url.protocol === `${UI_PROTOCOL}:` && url.hostname === "app")
+      return true;
+    if (url.protocol !== "http:" && url.protocol !== "https:") return false;
+    // In development the renderer and API intentionally run on separate
+    // loopback ports (Vite on 5173, the local API on 3901). Keep the privileged
+    // bridge restricted to the exact configured HMR UI origin; treating only
+    // the API origin as local makes every desktop-only setting fail in dev.
+    if (isDev && url.protocol === "http:") {
+      const hmrUiPort = String(process.env.OPENCHAMBER_HMR_UI_PORT || "5173");
+      const loopbackHost =
+        url.hostname === "127.0.0.1" || url.hostname === "localhost";
+      if (loopbackHost && url.port === hmrUiPort) return true;
+    }
     if (state.localOrigin) {
       try {
         const allowed = new URL(state.localOrigin);
         if (allowed.origin === url.origin) return true;
-      } catch {
-      }
+      } catch {}
     }
     if (state.sidecarUrl) {
       try {
         const allowed = new URL(state.sidecarUrl);
         if (allowed.origin === url.origin) return true;
-      } catch {
-      }
+      } catch {}
     }
     return false;
   } catch {
@@ -4508,76 +6062,124 @@ const isLocalSender = (webContents) => {
 };
 
 const COMMANDS_SAFE_FOR_REMOTE = new Set([
-  'desktop_hosts_get',
-  'desktop_host_probe',
-  'desktop_new_window',
-  'desktop_new_window_at_url',
-  'desktop_new_window_for_host',
-  'desktop_set_window_title',
-  'desktop_set_window_theme',
-  'desktop_is_window_fullscreen',
-  'desktop_start_window_drag',
-  'desktop_minimize_current_window',
-  'desktop_toggle_current_window_maximized',
-  'desktop_close_current_window',
-  'desktop_get_current_window_state',
-  'desktop_get_app_version',
-  'desktop_get_lan_address',
-  'desktop_capture_page_rect',
-  'desktop_tray_update',
+  "desktop_hosts_get",
+  "desktop_host_probe",
+  "desktop_new_window",
+  "desktop_open_session_window",
+  "desktop_new_window_at_url",
+  "desktop_new_window_for_host",
+  "desktop_set_window_title",
+  "desktop_set_window_theme",
+  "desktop_is_window_fullscreen",
+  "desktop_start_window_drag",
+  "desktop_minimize_current_window",
+  "desktop_toggle_current_window_maximized",
+  "desktop_close_current_window",
+  "desktop_get_current_window_state",
+  "desktop_get_app_version",
+  "desktop_get_lan_address",
+  "desktop_capture_page_rect",
+  "desktop_tray_update",
 ]);
 
-ipcMain.handle('openchamber:invoke', async (event, command, args) => {
-  if (!isLocalSender(event.sender) && !COMMANDS_SAFE_FOR_REMOTE.has(command)) {
-    log.warn(`[ipc] rejected ${command} from non-local origin: ${event.sender?.getURL?.() || '(unknown)'}`);
-    throw new Error('IPC not available for this origin');
+ipcMain.handle("openchamber:invoke", async (event, command, args) => {
+  const local = isLocalSender(event.sender);
+  if (!local && !COMMANDS_SAFE_FOR_REMOTE.has(command)) {
+    log.warn(
+      `[ipc] rejected ${command} from non-local origin: ${event.sender?.getURL?.() || "(unknown)"}`,
+    );
+    throw new Error("IPC not available for this origin");
   }
   const browserWindow = BrowserWindow.fromWebContents(event.sender);
+  if (isDesktopBinarySaveCommand(command)) {
+    return desktopBinarySaveController.handleIpc({
+      local,
+      sender: event.sender,
+      browserWindow,
+      command,
+      args,
+    });
+  }
   return handleInvoke(browserWindow, command, args);
 });
 
-ipcMain.handle('openchamber:dialog:open', async (event, options) => {
+ipcMain.on("openchamber:artifact-runner-message", (event, message) => {
+  artifactRunnerManager.handleRendererMessage(event.sender, message);
+});
+
+ipcMain.on("openchamber:artifact-runner-wheel-boundary", (event, detail) => {
+  artifactRunnerManager.handleWheelBoundary(event.sender, detail);
+});
+
+ipcMain.on("openchamber:artifact-runner-layout-applied", (event, detail) => {
+  artifactRunnerManager.handleLayoutApplied(event.sender, detail);
+});
+
+ipcMain.handle("openchamber:dialog:open", async (event, options) => {
   // Native file dialogs expose absolute local paths; never grant to remote.
   if (!isLocalSender(event.sender)) {
-    log.warn(`[ipc] rejected dialog:open from non-local origin: ${event.sender?.getURL?.() || '(unknown)'}`);
-    throw new Error('IPC not available for this origin');
+    log.warn(
+      `[ipc] rejected dialog:open from non-local origin: ${event.sender?.getURL?.() || "(unknown)"}`,
+    );
+    throw new Error("IPC not available for this origin");
   }
   const browserWindow = BrowserWindow.fromWebContents(event.sender);
   const result = await dialog.showOpenDialog(browserWindow || undefined, {
-    title: typeof options?.title === 'string' ? options.title : undefined,
-    defaultPath: typeof options?.defaultPath === 'string' && options.defaultPath.trim().length > 0
-      ? options.defaultPath.trim()
-      : undefined,
+    title: typeof options?.title === "string" ? options.title : undefined,
+    defaultPath:
+      typeof options?.defaultPath === "string" &&
+      options.defaultPath.trim().length > 0
+        ? options.defaultPath.trim()
+        : undefined,
     filters: Array.isArray(options?.filters)
       ? options.filters
-          .filter((filter) => filter && typeof filter === 'object')
+          .filter((filter) => filter && typeof filter === "object")
           .map((filter) => ({
-            name: typeof filter.name === 'string' && filter.name.trim().length > 0 ? filter.name : 'Files',
+            name:
+              typeof filter.name === "string" && filter.name.trim().length > 0
+                ? filter.name
+                : "Files",
             extensions: Array.isArray(filter.extensions)
-              ? filter.extensions.filter((extension) => typeof extension === 'string' && extension.trim().length > 0)
+              ? filter.extensions.filter(
+                  (extension) =>
+                    typeof extension === "string" &&
+                    extension.trim().length > 0,
+                )
               : [],
           }))
       : undefined,
     properties: [
-      options?.directory ? 'openDirectory' : 'openFile',
-      options?.multiple ? 'multiSelections' : null,
-      'createDirectory',
+      options?.directory ? "openDirectory" : "openFile",
+      options?.multiple ? "multiSelections" : null,
+      "createDirectory",
     ].filter(Boolean),
   });
   if (result.canceled) return null;
   const grantFilePath = async (filePath) => {
     if (options?.directory) return { path: filePath };
     try {
-      const grant = await mintOutsideFileGrant(filePath, { scopes: ['stat', 'read', 'raw'], fsPromises: fsp, path });
-      return { path: grant.path, outsideFileGrant: grant.outsideFileGrant, expiresAt: grant.expiresAt };
+      const grant = await mintOutsideFileGrant(filePath, {
+        scopes: ["stat", "read", "raw"],
+        fsPromises: fsp,
+        path,
+      });
+      return {
+        path: grant.path,
+        outsideFileGrant: grant.outsideFileGrant,
+        expiresAt: grant.expiresAt,
+      };
     } catch (error) {
-      log.warn(`[ipc] failed to mint outside file grant: ${error?.message || error}`);
+      log.warn(
+        `[ipc] failed to mint outside file grant: ${error?.message || error}`,
+      );
       return { path: filePath };
     }
   };
   if (options?.returnGrant) {
     if (options?.multiple) {
-      return Promise.all(result.filePaths.map((filePath) => grantFilePath(filePath)));
+      return Promise.all(
+        result.filePaths.map((filePath) => grantFilePath(filePath)),
+      );
     }
     return result.filePaths[0] ? grantFilePath(result.filePaths[0]) : null;
   }
@@ -4585,18 +6187,24 @@ ipcMain.handle('openchamber:dialog:open', async (event, options) => {
   return result.filePaths[0] || null;
 });
 
-ipcMain.handle('openchamber:file:grant-existing', async (event, filePath) => {
+ipcMain.handle("openchamber:file:grant-existing", async (event, filePath) => {
   if (!isLocalSender(event.sender)) {
-    log.warn(`[ipc] rejected file:grant-existing from non-local origin: ${event.sender?.getURL?.() || '(unknown)'}`);
-    throw new Error('IPC not available for this origin');
+    log.warn(
+      `[ipc] rejected file:grant-existing from non-local origin: ${event.sender?.getURL?.() || "(unknown)"}`,
+    );
+    throw new Error("IPC not available for this origin");
   }
 
-  const targetPath = typeof filePath === 'string' ? filePath.trim() : '';
+  const targetPath = typeof filePath === "string" ? filePath.trim() : "";
   if (!targetPath) {
-    throw new Error('Path is required');
+    throw new Error("Path is required");
   }
 
-  const grant = await mintOutsideFileGrant(targetPath, { scopes: ['stat', 'read', 'raw'], fsPromises: fsp, path });
+  const grant = await mintOutsideFileGrant(targetPath, {
+    scopes: ["stat", "read", "raw"],
+    fsPromises: fsp,
+    path,
+  });
   return {
     path: grant.path,
     outsideFileGrant: grant.outsideFileGrant,
@@ -4613,15 +6221,6 @@ ipcMain.handle('openchamber:file:grant-existing', async (event, filePath) => {
 // Icon assets: a calm outline (idle), a statically filled cube (a finished
 // session left unread), and an eased sequence the busy state breathes through.
 const TRAY_BREATH_FRAME_COUNT = 16;
-// Track the most recently focused window (main or mini-chat) so tray actions
-// can target the surface the user was last using, even when the tray menu is
-// open and nothing is focused right now.
-app.on('browser-window-focus', (_event, browserWindow) => {
-  if (browserWindow && !browserWindow.isDestroyed()) {
-    state.lastFocusedWindowId = browserWindow.id;
-  }
-});
-
 // The window the user is "on" for tray routing: the focused one, else the last
 // focused that is still alive.
 const resolveTraySurface = () => {
@@ -4635,57 +6234,82 @@ const resolveTraySurface = () => {
 };
 
 const trayIconAssets = () => {
-  const dir = path.join(resourceRoot(), 'icons', 'tray');
-  const statusDir = path.join(dir, 'status');
-  if (process.platform === 'win32') {
-    const iconPath = getWindowIconPath() || path.join(resourceRoot(), 'icons', 'icon.ico');
+  const dir = path.join(resourceRoot(), "icons", "tray");
+  const statusDir = path.join(dir, "status");
+  if (process.platform === "win32" || process.platform === "linux") {
+    const iconPath =
+      process.platform === "linux"
+        ? getWindowIconPath() || path.join(resourceRoot(), "icons", "icon.png")
+        : getWindowIconPath() || path.join(resourceRoot(), "icons", "icon.ico");
     return {
       idleIconPath: iconPath,
       unseenIconPath: iconPath,
       breathIconPaths: [iconPath],
       statusIconPaths: {
-        busy: path.join(statusDir, 'busy.png'),
-        retry: path.join(statusDir, 'retry.png'),
-        error: path.join(statusDir, 'error.png'),
-        unseen: path.join(statusDir, 'unseen.png'),
-        blank: path.join(statusDir, 'blank.png'),
+        busy: path.join(statusDir, "busy.png"),
+        retry: path.join(statusDir, "retry.png"),
+        error: path.join(statusDir, "error.png"),
+        unseen: path.join(statusDir, "unseen.png"),
+        blank: path.join(statusDir, "blank.png"),
       },
     };
   }
   return {
-    idleIconPath: path.join(dir, 'trayTemplate-idle.png'),
-    unseenIconPath: path.join(dir, 'trayTemplate-unseen.png'),
+    idleIconPath: path.join(dir, "trayTemplate-idle.png"),
+    unseenIconPath: path.join(dir, "trayTemplate-unseen.png"),
     breathIconPaths: Array.from({ length: TRAY_BREATH_FRAME_COUNT }, (_, i) =>
-      path.join(dir, `trayTemplate-breath-${String(i).padStart(2, '0')}.png`)),
+      path.join(dir, `trayTemplate-breath-${String(i).padStart(2, "0")}.png`),
+    ),
     // Per-session status icons shown in the menu rows (left, vertically centred
     // across the title + sublabel). 'blank' reserves the gutter for idle rows.
     statusIconPaths: {
-      busy: path.join(statusDir, 'busy.png'),
-      retry: path.join(statusDir, 'retry.png'),
-      error: path.join(statusDir, 'error.png'),
-      unseen: path.join(statusDir, 'unseen.png'),
-      blank: path.join(statusDir, 'blank.png'),
+      busy: path.join(statusDir, "busy.png"),
+      retry: path.join(statusDir, "retry.png"),
+      error: path.join(statusDir, "error.png"),
+      unseen: path.join(statusDir, "unseen.png"),
+      blank: path.join(statusDir, "blank.png"),
     },
   };
 };
 
 const setupTray = () => {
-  if (!['darwin', 'win32'].includes(process.platform) || state.trayController) return;
+  if (
+    !["darwin", "win32", "linux"].includes(process.platform) ||
+    state.trayController
+  )
+    return;
+  if (
+    process.platform === "darwin" &&
+    readSettingsRoot().desktopMacMenuBarEnabled === false
+  )
+    return;
   const assets = trayIconAssets();
   if (!fs.existsSync(assets.idleIconPath)) {
-    log.warn('[electron] tray icon missing, skipping tray setup', { iconPath: assets.idleIconPath });
+    log.warn("[electron] tray icon missing, skipping tray setup", {
+      iconPath: assets.idleIconPath,
+    });
     return;
   }
   try {
     state.trayController = createTrayController({
       ...assets,
-      onAction: (action) => { void dispatchTrayAction(action); },
+      onAction: (action) => {
+        void dispatchTrayAction(action);
+      },
     });
     // Seed an empty snapshot so the icon appears immediately; the renderer
     // pushes the real state once the sync stores are mounted.
     state.trayController.update({ sessions: [], approvals: [] });
+    if (!state.trayFocusListener) {
+      state.trayFocusListener = (_event, browserWindow) => {
+        if (browserWindow && !browserWindow.isDestroyed()) {
+          state.lastFocusedWindowId = browserWindow.id;
+        }
+      };
+      app.on("browser-window-focus", state.trayFocusListener);
+    }
   } catch (error) {
-    log.warn('[electron] failed to set up tray', error);
+    log.warn("[electron] failed to set up tray", error);
     state.trayController = null;
   }
 };
@@ -4698,7 +6322,7 @@ const setupTray = () => {
 const revealMainWindow = async () => {
   let target = state.mainWindow;
   if (!target || target.isDestroyed()) {
-    target = await openMainWindow().catch(() => null) || state.mainWindow;
+    target = (await openMainWindow().catch(() => null)) || state.mainWindow;
   }
   if (target && !target.isDestroyed()) {
     if (target.isMinimized()) target.restore();
@@ -4718,34 +6342,38 @@ const focusMainWindowWithSession = async (sessionId, directory) => {
     state.mainWindow.show();
     state.mainWindow.focus();
     if (sessionId) {
-      emitToWindow(state.mainWindow, 'openchamber:open-session', { sessionId, directory: directory || '' });
+      emitToWindow(state.mainWindow, "openchamber:open-session", {
+        sessionId,
+        directory: directory || "",
+      });
     }
     return;
   }
-  if (sessionId) pendingDeepLinks.push({ type: 'session', value: sessionId });
+  if (sessionId) pendingDeepLinks.push({ type: "session", value: sessionId });
   await openMainWindow();
 };
 
 const dispatchTrayAction = async (action) => {
-  if (!action || typeof action !== 'object') return;
+  if (!action || typeof action !== "object") return;
 
-  if (action.type === 'quit') {
+  if (action.type === "quit") {
     app.quit();
     return;
   }
 
   // Responding to a permission doesn't need to steal focus — just deliver it.
-  if (action.type === 'respond-permission') {
-    const target = (state.mainWindow && !state.mainWindow.isDestroyed())
-      ? state.mainWindow
-      : await revealMainWindow();
-    emitToWindow(target, 'openchamber:tray-action', action);
+  if (action.type === "respond-permission") {
+    const target =
+      state.mainWindow && !state.mainWindow.isDestroyed()
+        ? state.mainWindow
+        : await revealMainWindow();
+    emitToWindow(target, "openchamber:tray-action", action);
     return;
   }
 
   // Mini chat opens its own small window; we only need a renderer with context,
   // not to surface the main window.
-  if (action.type === 'new-mini-chat') {
+  if (action.type === "new-mini-chat") {
     let target = getMenuTargetWindow();
     if (!target) target = await revealMainWindow();
     dispatchOpenMiniChat(target);
@@ -4755,37 +6383,40 @@ const dispatchTrayAction = async (action) => {
   // Open a session on the surface the user was last on: if that's a mini-chat,
   // switch THAT window to the session in place (no new window); otherwise use
   // the main window.
-  if (action.type === 'focus-session') {
+  if (action.type === "focus-session") {
     const surface = resolveTraySurface();
     if (surface && surface.__ocMiniChat === true && action.sessionId) {
       if (surface.isMinimized()) surface.restore();
       surface.show();
       surface.focus();
-      emitToWindow(surface, 'openchamber:open-session', {
+      emitToWindow(surface, "openchamber:open-session", {
         sessionId: action.sessionId,
-        directory: action.directory || '',
+        directory: action.directory || "",
       });
       return;
     }
-    await focusMainWindowWithSession(action.sessionId, action.directory || '');
+    await focusMainWindowWithSession(action.sessionId, action.directory || "");
     return;
   }
 
   const target = await revealMainWindow();
   if (!target || target.isDestroyed()) return;
 
-  if (action.type === 'new-session') {
-    emitToWindow(target, 'openchamber:open-draft-session', { directory: '', projectId: '' });
+  if (action.type === "new-session") {
+    emitToWindow(target, "openchamber:open-draft-session", {
+      directory: "",
+      projectId: "",
+    });
   }
   // show-main-window: revealing the window above is the whole action.
 };
 
-app.on('window-all-closed', () => {
-  if (process.platform === 'darwin' && !state.quitRequested) {
+app.on("window-all-closed", () => {
+  if (process.platform === "darwin" && !state.quitRequested) {
     return;
   }
 
-  if (process.platform !== 'darwin') {
+  if (process.platform !== "darwin") {
     if (state.installingUpdate) {
       app.quit();
     } else {
@@ -4794,14 +6425,14 @@ app.on('window-all-closed', () => {
   }
 });
 
-app.on('before-quit', (event) => {
+app.on("before-quit", (event) => {
   state.quitRequested = true;
 
   if (state.installingUpdate) {
     return;
   }
 
-  if (process.platform === 'darwin' && !state.quitConfirmed) {
+  if (process.platform === "darwin" && !state.quitConfirmed) {
     event.preventDefault();
     void requestQuitWithConfirmation();
     return;
@@ -4813,9 +6444,16 @@ app.on('before-quit', (event) => {
   }
 });
 
-app.on('second-instance', (_event, argv) => {
+app.on("will-quit", () => {
+  artifactRunnerManager.dispose();
+});
+
+app.on("second-instance", (_event, argv) => {
   const urls = Array.isArray(argv)
-    ? argv.filter((arg) => typeof arg === 'string' && arg.startsWith(`${DEEP_LINK_PROTOCOL}://`))
+    ? argv.filter(
+        (arg) =>
+          typeof arg === "string" && arg.startsWith(`${DEEP_LINK_PROTOCOL}://`),
+      )
     : [];
   if (urls.length > 0) handleDeepLinks(urls);
   if (BrowserWindow.getAllWindows().length > 0) {
@@ -4825,7 +6463,7 @@ app.on('second-instance', (_event, argv) => {
   }
 });
 
-app.on('open-url', (event, url) => {
+app.on("open-url", (event, url) => {
   event.preventDefault();
   handleDeepLinks([url]);
   if (BrowserWindow.getAllWindows().length === 0) {
@@ -4833,8 +6471,10 @@ app.on('open-url', (event, url) => {
   }
 });
 
-app.on('activate', async () => {
-  const windows = BrowserWindow.getAllWindows().filter((window) => !window.isDestroyed());
+app.on("activate", async () => {
+  const windows = BrowserWindow.getAllWindows().filter(
+    (window) => !window.isDestroyed(),
+  );
   // Only spawn a main window when there is genuinely nothing to come back to.
   if (windows.length === 0) {
     await openMainWindow();
@@ -4846,74 +6486,161 @@ app.on('activate', async () => {
   // This covers e.g. "only a minimized mini-chat remains": it should un-minimize
   // rather than open the main window.
   const remembered = resolveTraySurface();
-  const targetWindow = (remembered && !remembered.isDestroyed())
-    ? remembered
-    : (windows.find((window) => window.isVisible() && !window.isMinimized()) || windows[0]);
+  const targetWindow =
+    remembered && !remembered.isDestroyed()
+      ? remembered
+      : windows.find((window) => window.isVisible() && !window.isMinimized()) ||
+        windows[0];
   if (targetWindow.isMinimized()) targetWindow.restore();
   targetWindow.show();
   targetWindow.focus();
 });
 
-app.whenReady().then(async () => {
-  const loginItemSettings = readLoginItemSettings();
-  const isBackgroundStart = shouldStartInBackground(loginItemSettings);
-  log.info('[electron] app starting', {
-    version: APP_VERSION,
-    packaged: app.isPackaged,
-    platform: process.platform,
-    arch: process.arch,
-    argv: process.argv,
-    isBackgroundStart,
-    loginItemSettings,
-  });
-  nativeTheme.themeSource = readThemeSource();
-  registerPackagedUiProtocol();
-  setupAutoUpdater();
-
-  if (process.platform === 'darwin') {
-    Menu.setApplicationMenu(buildMacMenu());
-  } else {
-    Menu.setApplicationMenu(buildAutoHiddenMenu());
-  }
-  setupTray();
-
-  if ((process.platform === 'darwin' || process.platform === 'win32') && app.isPackaged) {
-    const openAtLogin = loginItemSettings?.openAtLogin === true;
-    app.setLoginItemSettings({
-      openAtLogin,
-      ...(process.platform === 'darwin' ? { openAsHidden: openAtLogin, args: openAtLogin ? [BACKGROUND_START_ARG] : [] } : {}),
-      ...(process.platform === 'win32' ? { ...getLoginItemOptions(), enabled: openAtLogin } : {}),
+app
+  .whenReady()
+  .then(async () => {
+    const loginItemSettings = readLoginItemSettings();
+    const isBackgroundStart = shouldStartInBackground(loginItemSettings);
+    log.info("[electron] app starting", {
+      version: APP_VERSION,
+      packaged: app.isPackaged,
+      platform: process.platform,
+      arch: process.arch,
+      argv: process.argv,
+      isBackgroundStart,
+      loginItemSettings,
     });
-  }
+    void ensureMacosLaunchServicesRegistration({
+      platform: process.platform,
+      isPackaged: app.isPackaged,
+      execPath: process.execPath,
+      version: APP_VERSION,
+      userDataPath: app.getPath("userData"),
+      homeDirectory: os.homedir(),
+    }).then((result) => {
+      if (result.status === "registered") {
+        log.info("[electron] refreshed macOS LaunchServices registration");
+      } else if (result.status === "failed") {
+        log.warn(
+          "[electron] macOS LaunchServices registration failed; it will retry on the next launch",
+          { exitCode: result.exitCode },
+        );
+      }
+    }).catch((error) => {
+      log.warn(
+        "[electron] macOS LaunchServices registration could not be persisted; it will retry on the next launch",
+        { name: error instanceof Error ? error.name : "UnknownError" },
+      );
+    });
+    nativeTheme.themeSource = readThemeSource();
+    try {
+      dockIconController.initialize();
+    } catch (error) {
+      log.warn("[electron] failed to apply the persisted Dock icon", error);
+    }
+    registerPackagedUiProtocol();
+    setupAutoUpdater();
 
-  if (isBackgroundStart) {
-    const { localOrigin, bootOutcome, requestHeaders } = await resolveInitialUrl();
-    state.localOrigin = localOrigin;
-    state.bootOutcome = bootOutcome ?? null;
-    state.requestHeaders = sanitizeRuntimeRequestHeaders(requestHeaders || {});
-    state.initScript = buildInitScript(localOrigin, state.bootOutcome, '', '', state.requestHeaders);
-    log.info('[electron] started in background without window');
-    return;
-  }
+    if (process.platform === "darwin") {
+      Menu.setApplicationMenu(buildMacMenu());
+    } else {
+      Menu.setApplicationMenu(buildAutoHiddenMenu());
+    }
+    setupTray();
 
-  state.mainWindow = createBrowserWindow({
-    label: 'main',
-    restoreGeometry: true,
-    url: null,
+    if (
+      (process.platform === "darwin" || process.platform === "win32") &&
+      app.isPackaged
+    ) {
+      const openAtLogin = loginItemSettings?.openAtLogin === true;
+      app.setLoginItemSettings({
+        openAtLogin,
+        ...(process.platform === "darwin"
+          ? {
+              openAsHidden: openAtLogin,
+              args: openAtLogin ? [BACKGROUND_START_ARG] : [],
+            }
+          : {}),
+        ...(process.platform === "win32"
+          ? { ...getLoginItemOptions(), enabled: openAtLogin }
+          : {}),
+      });
+    }
+
+    if (process.platform === "linux" && app.isPackaged) {
+      try {
+        const enabled = await readLinuxAutostartEnabled();
+        if (enabled) {
+          await setLinuxAutostartEnabled({
+            enabled: true,
+            appName: app.getName(),
+            backgroundArg: BACKGROUND_START_ARG,
+          });
+        }
+      } catch (error) {
+        log.warn("[electron] failed to reconcile Linux autostart entry", error);
+      }
+    }
+
+    if (isBackgroundStart) {
+      const {
+        localOrigin,
+        bootOutcome,
+        apiBaseUrl,
+        clientToken,
+        requestHeaders,
+      } = await resolveInitialUrl();
+      state.localOrigin = localOrigin;
+      state.apiBaseUrl = apiBaseUrl;
+      state.clientToken = clientToken;
+      state.bootOutcome = bootOutcome ?? null;
+      state.requestHeaders = sanitizeRuntimeRequestHeaders(
+        requestHeaders || {},
+      );
+      // Serverless background startup re-probes the remote when a window is
+      // eventually opened instead of trusting reachability from login time.
+      state.startupResolved = !shouldSkipLocalServer();
+      state.initScript = buildInitScript(
+        localOrigin,
+        state.bootOutcome,
+        apiBaseUrl,
+        clientToken,
+        state.requestHeaders,
+      );
+      log.info("[electron] started in background without window");
+      return;
+    }
+
+    state.mainWindow = createBrowserWindow({
+      label: "main",
+      restoreGeometry: true,
+      url: null,
+    });
+
+    const initial = extractInitialDeepLinks();
+    if (initial.length > 0) handleDeepLinks(initial);
+
+    const {
+      initialUrl,
+      localOrigin,
+      bootOutcome,
+      apiBaseUrl,
+      clientToken,
+      requestHeaders,
+    } = await resolveInitialUrl();
+    await activateMainWindow(initialUrl, localOrigin, bootOutcome, {
+      apiBaseUrl,
+      clientToken,
+      requestHeaders,
+    });
+
+    // Notify renderer on OS wake-from-sleep so the SSE event pipeline can
+    // reconnect immediately instead of waiting for the heartbeat watchdog.
+    powerMonitor.on("resume", () => {
+      emitToAllWindows("openchamber:system-resume", { timestamp: Date.now() });
+    });
+  })
+  .catch((error) => {
+    log.error("[electron] startup failed:", error);
+    app.exit(1);
   });
-
-  const initial = extractInitialDeepLinks();
-  if (initial.length > 0) handleDeepLinks(initial);
-
-  const { initialUrl, localOrigin, bootOutcome, apiBaseUrl, clientToken, requestHeaders } = await resolveInitialUrl();
-  await activateMainWindow(initialUrl, localOrigin, bootOutcome, { apiBaseUrl, clientToken, requestHeaders });
-
-  // Notify renderer on OS wake-from-sleep so the SSE event pipeline can
-  // reconnect immediately instead of waiting for the heartbeat watchdog.
-  powerMonitor.on('resume', () => {
-    emitToAllWindows('openchamber:system-resume', { timestamp: Date.now() });
-  });
-}).catch((error) => {
-  log.error('[electron] startup failed:', error);
-  app.exit(1);
-});

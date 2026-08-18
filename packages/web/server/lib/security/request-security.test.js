@@ -1,11 +1,19 @@
 import { describe, expect, test } from 'bun:test';
-import { createRequestSecurityRuntime } from './request-security.js';
+import {
+  PACKAGED_CLIENT_CORS_ALLOWED_HEADERS,
+  createRequestSecurityRuntime,
+} from './request-security.js';
 
 const createRuntime = () => createRequestSecurityRuntime({
   readSettingsFromDiskMigrated: async () => ({}),
 });
 
 describe('request security runtime', () => {
+  test('publishes the exact packaged-client CORS allow-headers contract', () => {
+    expect(PACKAGED_CLIENT_CORS_ALLOWED_HEADERS).toContain('X-OpenChamber-Session-ID');
+    expect(new Set(PACKAGED_CLIENT_CORS_ALLOWED_HEADERS).size).toBe(PACKAGED_CLIENT_CORS_ALLOWED_HEADERS.length);
+  });
+
   test('allows packaged client origins for remote client transports', async () => {
     const runtime = createRuntime();
 

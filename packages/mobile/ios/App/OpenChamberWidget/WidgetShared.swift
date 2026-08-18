@@ -17,10 +17,11 @@ struct WidgetSession: Codable, Identifiable, Hashable {
 /// The session overview snapshot. Mirrors MobileWidgetSnapshot (same field names) so the
 /// JSON the app stores decodes directly.
 struct WidgetSnapshot: Codable {
+    var runtimeKey: String?
     let attentionCount: Int
     let recentSessions: [WidgetSession]
 
-    static let empty = WidgetSnapshot(attentionCount: 0, recentSessions: [])
+    static let empty = WidgetSnapshot(runtimeKey: nil, attentionCount: 0, recentSessions: [])
 }
 
 enum WidgetStore {
@@ -83,55 +84,39 @@ struct OverviewProvider: TimelineProvider {
     }
 }
 
-// MARK: - Logo (full OpenChamber mark drawn from the SVG)
+// MARK: - OpenLoop logo
 
-/// The OpenChamber logo, drawn to match packages/web/public/logo-dark-512x512.svg: an
-/// isometric cube with translucent face fills, stroked edges, and the OpenCode mark on the
-/// top face. Faces use low-opacity `.primary` so the system tint on the Lock Screen / Control
-/// Center reads as a translucent fill (no colour) rather than a flat wireframe. Coordinates are
-/// the SVG inner group (range x:-41.568…41.568, y:-48…48).
+private struct OpenLoopShape: Shape {
+    func path(in rect: CGRect) -> Path {
+        let scale = min(rect.width, rect.height) / 32
+        let offsetX = rect.midX - 16 * scale
+        let offsetY = rect.midY - 16 * scale
+        func p(_ x: CGFloat, _ y: CGFloat) -> CGPoint {
+            CGPoint(x: offsetX + x * scale, y: offsetY + y * scale)
+        }
+
+        var path = Path()
+        path.move(to: p(18.8, 3.5))
+        path.addCurve(to: p(3.2, 16.2), control1: p(10.4, 1.5), control2: p(3.2, 7.2))
+        path.addCurve(to: p(18, 29.4), control1: p(3.2, 24.7), control2: p(9.9, 30.4))
+        path.addCurve(to: p(29.2, 14.7), control1: p(25.5, 28.5), control2: p(30.1, 22.4))
+        path.addCurve(to: p(27, 7), control1: p(28.8, 11.6), control2: p(27.4, 8.5))
+        path.addCurve(to: p(25.3, 10.3), control1: p(25.9, 7.4), control2: p(24.8, 8.5))
+        path.addCurve(to: p(18, 24.6), control1: p(27.4, 17.4), control2: p(24.3, 23.5))
+        path.addCurve(to: p(7.7, 15.9), control1: p(11.6, 25.7), control2: p(7.5, 21.4))
+        path.addCurve(to: p(17.8, 7.4), control1: p(8, 10.5), control2: p(12.4, 6.8))
+        path.addCurve(to: p(21.7, 5.8), control1: p(20.1, 7.7), control2: p(21.4, 7))
+        path.addCurve(to: p(18.8, 3.5), control1: p(21.9, 4.7), control2: p(20.8, 3.8))
+        path.closeSubpath()
+        return path
+    }
+}
+
+/// The historical type name is retained because it is shared by existing widget layouts.
 struct CubeLogoView: View {
     var body: some View {
-        Canvas { context, size in
-            let halfW: CGFloat = 41.568
-            let halfH: CGFloat = 48
-            let scale = min(size.width / (halfW * 2), size.height / (halfH * 2))
-            let cx = size.width / 2
-            let cy = size.height / 2
-            let lineWidth = max(1.5, 3 * scale)
-
-            // Cube coordinate → canvas point.
-            func p(_ x: CGFloat, _ y: CGFloat) -> CGPoint { CGPoint(x: cx + x * scale, y: cy + y * scale) }
-            // OpenCode-mark local coordinate → canvas point (SVG: matrix(0.866,0.5,-0.866,0.5,0,-24) · scale(0.75)).
-            func m(_ x: CGFloat, _ y: CGFloat) -> CGPoint {
-                let s: CGFloat = 0.75
-                let mx = 0.866 * s * x - 0.866 * s * y
-                let my = 0.5 * s * x + 0.5 * s * y - 24
-                return p(mx, my)
-            }
-
-            var left = Path()
-            left.move(to: p(0, 0)); left.addLine(to: p(-halfW, -24)); left.addLine(to: p(-halfW, 24)); left.addLine(to: p(0, 48)); left.closeSubpath()
-            var right = Path()
-            right.move(to: p(0, 0)); right.addLine(to: p(halfW, -24)); right.addLine(to: p(halfW, 24)); right.addLine(to: p(0, 48)); right.closeSubpath()
-            var top = Path()
-            top.move(to: p(0, -48)); top.addLine(to: p(-halfW, -24)); top.addLine(to: p(0, 0)); top.addLine(to: p(halfW, -24)); top.closeSubpath()
-
-            context.fill(left, with: .color(.primary.opacity(0.2)))
-            context.fill(right, with: .color(.primary.opacity(0.35)))
-            context.stroke(left, with: .color(.primary), style: StrokeStyle(lineWidth: lineWidth, lineJoin: .round))
-            context.stroke(right, with: .color(.primary), style: StrokeStyle(lineWidth: lineWidth, lineJoin: .round))
-            context.stroke(top, with: .color(.primary), style: StrokeStyle(lineWidth: lineWidth, lineJoin: .round))
-
-            // OpenCode mark: square ring (even-odd) + a partial inner fill.
-            var ring = Path()
-            ring.move(to: m(-16, -20)); ring.addLine(to: m(16, -20)); ring.addLine(to: m(16, 20)); ring.addLine(to: m(-16, 20)); ring.closeSubpath()
-            ring.move(to: m(-8, -12)); ring.addLine(to: m(-8, 12)); ring.addLine(to: m(8, 12)); ring.addLine(to: m(8, -12)); ring.closeSubpath()
-            context.fill(ring, with: .color(.primary), style: FillStyle(eoFill: true))
-
-            var inner = Path()
-            inner.move(to: m(-8, -4)); inner.addLine(to: m(8, -4)); inner.addLine(to: m(8, 12)); inner.addLine(to: m(-8, 12)); inner.closeSubpath()
-            context.fill(inner, with: .color(.primary.opacity(0.4)))
-        }
+        OpenLoopShape()
+            .fill(.primary.opacity(0.2))
+            .overlay(OpenLoopShape().stroke(.primary, lineWidth: 1.5))
     }
 }

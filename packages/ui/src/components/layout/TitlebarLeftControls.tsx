@@ -28,7 +28,6 @@ const ICON_BUTTON_CLASS =
 export const TitlebarLeftControls: React.FC = () => {
   const { t } = useI18n();
   const toggleSidebar = useUIStore((state) => state.toggleSidebar);
-  const isSidebarOpen = useUIStore((state) => state.isSidebarOpen);
   const shortcutOverrides = useUIStore((state) => state.shortcutOverrides);
   const projectActionsContext = useProjectActionsContext();
   const clusterRef = React.useRef<HTMLDivElement | null>(null);
@@ -56,7 +55,9 @@ export const TitlebarLeftControls: React.FC = () => {
     }
 
     const publishWidth = () => {
-      const width = node.getBoundingClientRect().width;
+      // Prefer scrollWidth so negative child margins / overflow cannot under-report
+      // the space the overlay actually occupies over the header.
+      const width = Math.max(node.getBoundingClientRect().width, node.scrollWidth);
       document.documentElement.style.setProperty('--oc-titlebar-controls-width', `${Math.round(width)}px`);
     };
 
@@ -127,10 +128,6 @@ export const TitlebarLeftControls: React.FC = () => {
           <ProjectActionsButton
             projectRef={projectActionsContext.projectRef}
             directory={projectActionsContext.directory}
-            // While the sidebar is open the controls sit over the frosted
-            // sidebar — let the pill share its translucency instead of painting
-            // an opaque surface (handled under [data-oc-vibrancy] in CSS).
-            className={isSidebarOpen ? 'oc-vibrancy-pill' : undefined}
           />
         ) : null}
       </div>

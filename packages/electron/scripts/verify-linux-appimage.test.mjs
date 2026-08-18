@@ -17,11 +17,11 @@ const writeElf = (filePath, architecture) => {
 const createPayload = () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'openchamber-payload-test-'));
   fs.writeFileSync(path.join(root, 'openchamber.desktop'), [
-    '[Desktop Entry]', 'Name=OpenChamber', 'Exec=AppRun --no-sandbox %U', 'Icon=openchamber', 'StartupWMClass=openchamber', '',
+    '[Desktop Entry]', 'Name=OpenLoop', 'Exec=AppRun --no-sandbox %U', 'Icon=openchamber', 'StartupWMClass=openchamber', '',
   ].join('\n'));
   writeElf(path.join(root, 'openchamber'), 'x64');
   writeElf(path.join(root, 'resources/opencode-cli/opencode'), 'x64');
-  for (const name of ['better_sqlite3.node', 'pty.node', 'sherpa-onnx.node']) {
+  for (const name of ['pty.node', 'sherpa-onnx.node']) {
     writeElf(path.join(root, 'resources/app.asar.unpacked/node_modules', name), 'x64');
   }
   return root;
@@ -53,7 +53,7 @@ test('verifies identity, version, and native payload architecture', () => {
       expectedOpenCodeVersion: '1.17.18',
       runCliVersion: () => '1.17.18',
     });
-    assert.equal(result.nativeModuleCount, 3);
+    assert.equal(result.nativeModuleCount, 2);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

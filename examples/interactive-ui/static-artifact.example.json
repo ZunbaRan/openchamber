@@ -1,0 +1,15 @@
+{
+  "$schema": "openchamber://html-artifact-result/v1",
+  "schemaVersion": 1,
+  "title": "静态流程示例",
+  "summary": "可直接交给本地校验器的无脚本 SVG Artifact。",
+  "html": "<!doctype html><html lang=\"zh-CN\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><style>:root{color-scheme:light dark;--ocix-surface-subtle:#f7f7f8;--ocix-foreground:#171717;--ocix-muted-foreground:#666;--ocix-border:#d4d4d4;--ocix-primary:#4263c7}@media(prefers-color-scheme:dark){:root{--ocix-surface-subtle:#29282a;--ocix-foreground:#f3f1ef;--ocix-muted-foreground:#b7b2ae;--ocix-border:#555057;--ocix-primary:#9cb4ff}}*{box-sizing:border-box}html,body{margin:0;background:transparent;color:var(--ocix-foreground);font:14px/1.5 system-ui,sans-serif}main{padding:16px}h1{margin:0 0 4px;font-size:16px}p{margin:0 0 12px;color:var(--ocix-muted-foreground)}svg{display:block;width:100%;height:auto;border-radius:10px;background:var(--ocix-surface-subtle)}.line{stroke:var(--ocix-border);stroke-width:2}.node{fill:var(--ocix-primary)}text{fill:var(--ocix-foreground);font-size:14px;text-anchor:middle}@media(max-width:480px){main{padding:12px}}</style></head><body><main><h1>审批流程</h1><p>示例数据 · 无外部请求</p><svg viewBox=\"0 0 640 180\" role=\"img\" aria-labelledby=\"title desc\"><title id=\"title\">三级审批流程</title><desc id=\"desc\">申请依次经过主管审核、财务审核和完成节点。</desc><path class=\"line\" d=\"M110 90H530\"/><g><circle class=\"node\" cx=\"110\" cy=\"90\" r=\"24\"/><circle class=\"node\" cx=\"250\" cy=\"90\" r=\"24\"/><circle class=\"node\" cx=\"390\" cy=\"90\" r=\"24\"/><circle class=\"node\" cx=\"530\" cy=\"90\" r=\"24\"/></g><g><text x=\"110\" y=\"140\">申请</text><text x=\"250\" y=\"140\">主管审核</text><text x=\"390\" y=\"140\">财务审核</text><text x=\"530\" y=\"140\">完成</text></g></svg></main></body></html>",
+  "capabilities": {
+    "scripts": false
+  },
+  "display": {
+    "preferred": "inline",
+    "allowExpand": true,
+    "inlineHeight": 300
+  }
+}

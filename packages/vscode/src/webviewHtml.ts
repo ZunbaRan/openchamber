@@ -68,18 +68,16 @@ export function getWebviewHtml(options: WebviewHtmlOptions): string {
   const connectSrc = uniqueTokens(['*', 'ws:', 'wss:', 'http:', 'https:', devServerOrigin]);
   const imgSrc = uniqueTokens([webview.cspSource, 'data:', 'https:', devServerOrigin]);
   const fontSrc = uniqueTokens([webview.cspSource, 'data:', devServerOrigin]);
-  const workerSrc = uniqueTokens([webview.cspSource, devServerOrigin]);
+  // fflate's async browser inflater creates blob-backed workers. Keep blob:
+  // scoped to worker-src so document decompression works without allowing blob scripts.
+  const workerSrc = uniqueTokens([webview.cspSource, 'blob:', devServerOrigin]);
 
   const themeKind = getThemeKindName(vscode.window.activeColorTheme.kind);
 
   // Use VS Code CSS variables for proper theme integration
   // These variables are automatically provided by VS Code to webviews
   // 
-  // Logo geometry matches OpenChamberLogo.tsx:
-  // edge=48, cos30=0.866, sin30=0.5, centerY=50
-  // top=(50, 2), left=(8.432, 26), right=(91.568, 26), center=(50, 50)
-  // bottomLeft=(8.432, 74), bottomRight=(91.568, 74), bottom=(50, 98)
-  // topFaceCenterY = (2 + 26 + 50 + 26) / 4 = 26
+  // The loading mark mirrors the variable-width OpenLoop logo used by the shared UI.
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -112,10 +110,10 @@ export function getWebviewHtml(options: WebviewHtmlOptions): string {
       opacity: 0;
       pointer-events: none;
     }
-    /* Glow pulse on the OpenCode mark on the cube's top face — signals loading without text. */
+    /* A restrained opacity pulse signals loading without animating layout or filters. */
     @keyframes oc-logo-glow {
-      0%, 100% { filter: drop-shadow(0 0 0 transparent); }
-      50% { filter: drop-shadow(0 0 4px var(--vscode-foreground)); }
+      0%, 100% { opacity: 0.15; }
+      50% { opacity: 0.32; }
     }
     #initial-loading .logo-inner {
       animation: oc-logo-glow 1.8s ease-in-out infinite;
@@ -124,20 +122,6 @@ export function getWebviewHtml(options: WebviewHtmlOptions): string {
       #initial-loading .logo-inner { animation: none; }
     }
     /* Logo colors use VS Code foreground color */
-    #initial-loading .logo-stroke {
-      stroke: var(--vscode-foreground);
-    }
-    #initial-loading .logo-fill {
-      fill: var(--vscode-foreground);
-      opacity: 0.15;
-    }
-    #initial-loading .logo-fill-solid {
-      fill: var(--vscode-foreground);
-    }
-    #initial-loading .logo-fill-dim {
-      fill: var(--vscode-foreground);
-      opacity: 0.4;
-    }
     #initial-loading .status-text {
       font-size: 13px;
       color: var(--vscode-descriptionForeground, var(--vscode-foreground));
@@ -150,24 +134,13 @@ export function getWebviewHtml(options: WebviewHtmlOptions): string {
       max-width: 280px;
     }
   </style>
-  <title>OpenChamber</title>
+  <title>OpenLoop</title>
 </head>
 <body>
-  <!-- Initial loading screen with simplified OpenChamber logo -->
+  <!-- Initial loading screen with simplified OpenLoop logo -->
   <div id="initial-loading">
-    <svg class="logo" width="70" height="70" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
-      <!-- Left face -->
-      <path class="logo-fill logo-stroke" d="M50 50 L8.432 26 L8.432 74 L50 98 Z" stroke-width="2" stroke-linejoin="round"/>
-      <!-- Right face -->
-      <path class="logo-fill logo-stroke" d="M50 50 L91.568 26 L91.568 74 L50 98 Z" stroke-width="2" stroke-linejoin="round"/>
-      <!-- Top face (no fill, stroke only) -->
-      <path class="logo-stroke" d="M50 2 L8.432 26 L50 50 L91.568 26 Z" fill="none" stroke-width="2" stroke-linejoin="round"/>
-      
-      <!-- OpenCode logo on top face -->
-      <g class="logo-inner" transform="matrix(0.866, 0.5, -0.866, 0.5, 50, 26) scale(0.75)">
-        <path class="logo-fill-solid" fill-rule="evenodd" clip-rule="evenodd" d="M-16 -20 L16 -20 L16 20 L-16 20 Z M-8 -12 L-8 12 L8 12 L8 -12 Z"/>
-        <path class="logo-fill-dim" d="M-8 -4 L8 -4 L8 12 L-8 12 Z"/>
-      </g>
+    <svg class="logo" width="70" height="70" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="OpenLoop loading icon">
+      <path class="logo-inner" d="M18.8 3.5C10.4 1.5 3.2 7.2 3.2 16.2C3.2 24.7 9.9 30.4 18 29.4C25.5 28.5 30.1 22.4 29.2 14.7C28.8 11.6 27.4 8.5 27 7C25.9 7.4 24.8 8.5 25.3 10.3C27.4 17.4 24.3 23.5 18 24.6C11.6 25.7 7.5 21.4 7.7 15.9C8 10.5 12.4 6.8 17.8 7.4C20.1 7.7 21.4 7 21.7 5.8C21.9 4.7 20.8 3.8 18.8 3.5Z" fill="var(--vscode-foreground)" stroke="var(--vscode-foreground)" stroke-width="0.9" stroke-linejoin="round"/>
     </svg>
     <!-- Status text stays empty while things are fine; populated only on error. -->
     <div class="status-text" id="loading-status"></div>
@@ -366,7 +339,7 @@ export function getWebviewHtml(options: WebviewHtmlOptions): string {
           })
           .catch((error) => {
             attempt += 1;
-            console.warn('[OpenChamber] VS Code webview dev bundle unavailable, retrying...', error);
+            console.warn('[OpenLoop] VS Code webview dev bundle unavailable, retrying...', error);
             setStatus(devMessages.waitingDevServer(hostLabel, attempt));
             window.setTimeout(() => {
               tryLoadDevBundle();
