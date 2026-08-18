@@ -76,3 +76,14 @@ cd openchamber && bun install
 - P1 中的人工视觉、真实模型、真机和跨平台证据仍是 open-accept，不阻塞源码保存。
 - OpenCode v1.18.16 fork 的 CLI/SDK 尚未正式发布，也尚未升级 OpenLoop 的消费 pin。
 - 如恢复发布，必须重新安装依赖、重新构建、重跑对应验收；不要引用已经删除的本地构建产物作为发布证据。
+
+## 历史 Sol/Pi 草稿归档
+
+清理 44 个带未提交内容的历史审查工作树前，已把每个工作树固化为隔离 archive commit，并生成可验证的 Git bundle：
+
+- `/Users/loloru/Documents/data/project/openChamber/openchamber-sol-pi-drafts-2026-08-18.bundle`
+  - SHA-256：`799f613729ce7d81aff52e0c828682ac34f8e0a7c73df853273ab0011422fa41`
+- `/Users/loloru/Documents/data/project/openChamber/opencode-sol-pi-drafts-2026-08-18.bundle`
+  - SHA-256：`5734c7755aefcb1a208c7c7c1c4f101ede6957e35cd8b70a4dfd8408bbf4734c`
+
+这些 bundle 只用于找回未进入正式产品分支的历史草稿；正常恢复开发不需要导入它们。
